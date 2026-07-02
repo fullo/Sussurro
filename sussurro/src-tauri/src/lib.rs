@@ -54,6 +54,7 @@ pub fn run() {
             commands::get_settings,
             commands::set_settings,
             commands::get_history,
+            commands::clear_history,
             commands::model_is_downloaded,
             commands::download_model
         ])

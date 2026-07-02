@@ -35,6 +35,17 @@ const CLEANUP_LEVELS: { value: CleanupLevel; label: string; hint: string }[] = [
   { value: "high", label: "High", hint: "rewrite" },
 ];
 
+/* ---------- Info tooltip ---------- */
+
+function Tip({ text }: { text: string }) {
+  return (
+    <span className="tip" tabIndex={0} role="note" aria-label={text}>
+      ?
+      <span className="tip-bubble">{text}</span>
+    </span>
+  );
+}
+
 /* ---------- Hotkey recorder widget ---------- */
 
 /** Map a KeyboardEvent to the tauri-plugin-global-shortcut string, or null if incomplete. */
@@ -171,6 +182,22 @@ export default function App() {
     }
   };
 
+  const [confirmClear, setConfirmClear] = useState(false);
+  const clearHistory = async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 3000);
+      return;
+    }
+    setConfirmClear(false);
+    try {
+      await invoke("clear_history");
+      setHistory([]);
+    } catch (e) {
+      setBusy(String(e));
+    }
+  };
+
   const state = status.split(":")[0]; // idle | recording | processing | error
   const statusLabel =
     state === "recording" ? "Recording — speak now"
@@ -193,7 +220,7 @@ export default function App() {
         <h2>Dictation</h2>
         <div className="field">
           <div className="field-label">
-            <span>Shortcut</span>
+            <span>Shortcut <Tip text="The system-wide key combination that triggers dictation in any app. Click the field, then press the keys you want (Esc cancels)." /></span>
             <small>{settings.push_to_talk ? "hold to record" : "tap to start / stop"}</small>
           </div>
           <HotkeyRecorder
@@ -204,7 +231,7 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
-            <span>Push-to-talk</span>
+            <span>Push-to-talk <Tip text="On: recording lasts only while you hold the shortcut, like a walkie-talkie. Off: one tap starts recording, a second tap stops it." /></span>
             <small>off = toggle mode</small>
           </div>
           <label className="switch">
@@ -219,7 +246,7 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
-            <span>Whisper model</span>
+            <span>Whisper model <Tip text="The local speech-to-text model (whisper.cpp) that turns your voice into text. Bigger = more accurate but slower to load and run. 'English' models are faster if you only dictate in English; multilingual models handle 90+ languages." /></span>
             <small>speech-to-text, fully offline</small>
           </div>
           <div className="model-row">
@@ -244,7 +271,7 @@ export default function App() {
         <h2>Cleanup <span className="via">via Ollama</span></h2>
         <div className="field">
           <div className="field-label">
-            <span>Level</span>
+            <span>Level <Tip text="How much the local LLM edits your transcript. None: exactly what you said, mistakes included. Light: removes 'um/uh' and fixes grammar. Medium: also tightens for clarity and conciseness. High: rewrites for brevity and polish. If Ollama is unreachable you always get the raw transcript." /></span>
             <small>{CLEANUP_LEVELS.find((l) => l.value === settings.cleanup_level)?.hint}</small>
           </div>
           <div className="segmented" role="radiogroup" aria-label="Cleanup level">
@@ -263,7 +290,7 @@ export default function App() {
         </div>
 
         <div className="field">
-          <div className="field-label"><span>Server</span></div>
+          <div className="field-label"><span>Server <Tip text="Address of your Ollama server — the local service that runs the cleanup LLM. The default http://localhost:11434 is correct if Ollama runs on this machine; change it only if Ollama runs elsewhere (e.g. another PC on your network)." /></span></div>
           <input
             value={settings.ollama_url}
             onChange={(e) => setSettings({ ...settings, ollama_url: e.target.value })}
@@ -273,7 +300,7 @@ export default function App() {
         </div>
 
         <div className="field">
-          <div className="field-label"><span>LLM model</span></div>
+          <div className="field-label"><span>LLM model <Tip text="The Ollama model that cleans up the transcript (filler removal, grammar, rewriting). Any small instruct model works — llama3.2:3b is a good default; qwen2.5:3b and gemma3:4b also work well. Pull it first: 'ollama pull <name>'." /></span></div>
           <input
             value={settings.ollama_model}
             onChange={(e) => setSettings({ ...settings, ollama_model: e.target.value })}
@@ -284,7 +311,7 @@ export default function App() {
 
         <div className="field field-col">
           <div className="field-label">
-            <span>Personal dictionary</span>
+            <span>Personal dictionary <Tip text="Names, brands and jargon the models tend to misspell (e.g. Sussurro, Tauri). One per line. They are fed to Whisper as recognition hints and to the LLM as preferred spellings." /></span>
             <small>names & jargon, one per line — biases both Whisper and the LLM</small>
           </div>
           <textarea
@@ -306,7 +333,17 @@ export default function App() {
       {busy && <p className="busy" role="alert">{busy}</p>}
 
       <section className="history">
-        <h2>History</h2>
+        <div className="history-head">
+          <h2>History</h2>
+          {history.length > 0 && (
+            <button
+              className={`btn-ghost${confirmClear ? " danger" : ""}`}
+              onClick={clearHistory}
+            >
+              {confirmClear ? "Click again to delete" : "Clear"}
+            </button>
+          )}
+        </div>
         {history.length === 0 && (
           <p className="empty">Nothing yet. Hold the shortcut and speak.</p>
         )}

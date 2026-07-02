@@ -322,6 +322,106 @@ kbd {
 .segmented button:hover { color: var(--c-dark); }
 .segmented button.on { background: var(--c-dark); color: #fff; }
 
+/* ---------- Info tooltips ---------- */
+
+.tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 0.15rem;
+  vertical-align: text-top;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--c-surface-alt);
+  color: var(--c-text-light);
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: help;
+  transition: all var(--transition);
+}
+.tip:hover, .tip:focus-visible {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-text);
+}
+
+.tip-bubble {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%) translateY(3px);
+  width: 260px;
+  background: var(--c-dark);
+  color: #f3f2ee;
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition), transform var(--transition), visibility var(--transition);
+  z-index: 10;
+  pointer-events: none;
+}
+.tip-bubble::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--c-dark);
+}
+.tip:hover .tip-bubble, .tip:focus-visible .tip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+/* Tooltips on the first fields of a card open below, not above,
+   so they never clip against the window edge. */
+.field:first-of-type .tip-bubble {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform: translateX(-50%) translateY(-3px);
+}
+.field:first-of-type .tip-bubble::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--c-dark);
+}
+.field:first-of-type .tip:hover .tip-bubble,
+.field:first-of-type .tip:focus-visible .tip-bubble {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ---------- Ghost / danger buttons ---------- */
+
+.btn-ghost {
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--c-text-light);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 0.25rem 0.8rem;
+  min-height: 30px;
+  transition: all var(--transition);
+}
+.btn-ghost:hover { color: var(--c-dark); border-color: var(--c-dark); }
+.btn-ghost.danger {
+  color: #fff;
+  background: var(--brand);
+  border-color: var(--brand-darker);
+}
+
 /* ---------- Busy / errors ---------- */
 
 .busy {
@@ -336,6 +436,13 @@ kbd {
 /* ---------- History: the editorial page ---------- */
 
 .history { margin-top: 2rem; }
+
+.history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
 
 .history ol { list-style: none; margin: 0; padding: 0; }
 

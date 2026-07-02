@@ -17,6 +17,14 @@ pub fn append(path: &Path, entry: &HistoryEntry) -> std::io::Result<()> {
     writeln!(f, "{}", serde_json::to_string(entry).expect("entry serialize"))
 }
 
+/// Delete all history. A missing file already counts as cleared.
+pub fn clear(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        r => r,
+    }
+}
+
 /// Newest first. Corrupt lines are skipped, not fatal.
 pub fn read_last(path: &Path, n: usize) -> Vec<HistoryEntry> {
     let Ok(content) = std::fs::read_to_string(path) else {
@@ -70,5 +78,15 @@ mod tests {
     fn missing_file_reads_empty() {
         let dir = tempfile::tempdir().unwrap();
         assert!(read_last(&dir.path().join("nope.jsonl"), 10).is_empty());
+    }
+
+    #[test]
+    fn clear_removes_all_entries_and_tolerates_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        append(&path, &entry(1)).unwrap();
+        clear(&path).unwrap();
+        assert!(read_last(&path, 10).is_empty());
+        clear(&path).unwrap(); // second clear: file already gone, still Ok
     }
 }

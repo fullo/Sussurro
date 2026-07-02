@@ -38,6 +38,11 @@ pub fn get_history(state: State<'_, AppState>, n: usize) -> Vec<HistoryEntry> {
 }
 
 #[tauri::command]
+pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
+    history::clear(&state.paths.history_file).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     let settings = state.settings.lock().unwrap();
     models::model_exists(&state.paths.models_dir, &settings.whisper_model)
