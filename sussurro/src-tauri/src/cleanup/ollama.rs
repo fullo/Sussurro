@@ -50,6 +50,23 @@ pub fn list_models(url: &str) -> Result<Vec<String>> {
         .unwrap_or_default())
 }
 
+/// Command mode: apply a spoken instruction to the selected text. Unlike
+/// cleanup(), errors propagate — silently pasting the untouched selection
+/// back would look like success.
+pub fn command_edit(url: &str, model: &str, instruction: &str, text: &str) -> Result<String> {
+    let system = "You edit text following a spoken instruction. Apply the instruction to the \
+                  text and output only the resulting text, with no preamble, quotes, or \
+                  commentary. If the instruction asks a question about the text, output only \
+                  the answer.";
+    let messages = vec![
+        json!({"role": "system", "content": system}),
+        json!({"role": "user", "content": format!("Instruction: {instruction}\n\nText:\n{text}")}),
+    ];
+    let out = chat(url, model, &messages)?;
+    anyhow::ensure!(!out.trim().is_empty(), "empty response from ollama");
+    Ok(out.trim().to_string())
+}
+
 fn chat(url: &str, model: &str, messages: &[Value]) -> Result<String> {
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(2))

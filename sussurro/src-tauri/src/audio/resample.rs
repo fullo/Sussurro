@@ -40,9 +40,64 @@ pub fn is_mostly_silence(samples: &[f32], threshold: f32) -> bool {
     rms < threshold
 }
 
+/// Amplify quiet speech (whisper mode). Clamps to [-1, 1] to avoid clipping
+/// artifacts turning into garbage transcripts.
+pub fn boost_gain(samples: &mut [f32], gain: f32) {
+    for s in samples.iter_mut() {
+        *s = (*s * gain).clamp(-1.0, 1.0);
+    }
+}
+
+/// VAD-lite: cut leading/trailing silence by RMS windows, keeping `pad`
+/// samples of context around the speech. Falls back to the input when no
+/// window clears the threshold (the silence gate handles that case).
+pub fn trim_silence(samples: &[f32], threshold: f32, window: usize, pad: usize) -> Vec<f32> {
+    if samples.is_empty() || window == 0 {
+        return samples.to_vec();
+    }
+    let rms = |w: &[f32]| (w.iter().map(|s| s * s).sum::<f32>() / w.len() as f32).sqrt();
+    let Some(first) = samples.chunks(window).position(|w| rms(w) >= threshold) else {
+        return samples.to_vec();
+    };
+    let last = samples
+        .chunks(window)
+        .rposition(|w| rms(w) >= threshold)
+        .unwrap_or(first);
+    let start = (first * window).saturating_sub(pad);
+    let end = ((last + 1) * window + pad).min(samples.len());
+    samples[start..end].to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn boost_amplifies_and_clamps() {
+        let mut s = vec![0.1, -0.5, 0.0];
+        boost_gain(&mut s, 3.0);
+        assert!((s[0] - 0.3).abs() < 1e-6);
+        assert_eq!(s[1], -1.0); // clamped
+        assert_eq!(s[2], 0.0);
+    }
+
+    #[test]
+    fn trim_cuts_leading_and_trailing_silence() {
+        // 1s silence + 1s tone + 1s silence, window 0.1s, pad 0.2s
+        let mut samples = vec![0.0f32; 16_000];
+        samples.extend((0..16_000).map(|i| if (i / 18) % 2 == 0 { 0.2 } else { -0.2 }));
+        samples.extend(vec![0.0f32; 16_000]);
+        let trimmed = trim_silence(&samples, 0.01, 1_600, 3_200);
+        // tone (16000) + up to 2*pad (6400): far shorter than the 48000 input
+        assert!(trimmed.len() <= 16_000 + 6_400 + 1_600);
+        assert!(trimmed.len() >= 16_000);
+    }
+
+    #[test]
+    fn all_silence_is_returned_unchanged() {
+        let samples = vec![0.0f32; 8_000];
+        assert_eq!(trim_silence(&samples, 0.01, 1_600, 3_200).len(), 8_000);
+    }
 
     #[test]
     fn silence_is_detected() {

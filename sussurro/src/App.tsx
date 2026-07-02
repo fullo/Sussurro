@@ -32,6 +32,10 @@ interface Settings {
   snippets: Snippet[];
   live_preview: boolean;
   app_styles: AppStyle[];
+  models_dir: string;
+  command_hotkey: string;
+  whisper_mode: boolean;
+  stream_injection: boolean;
 }
 
 const LANGUAGES: [string, string][] = [
@@ -341,6 +345,47 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
+            <span>Command shortcut <Tip text="Command mode: select text anywhere, hold this shortcut and SPEAK AN INSTRUCTION ('make it shorter', 'translate to English', 'fix the grammar') — the LLM applies it to the selection and the result replaces it." /></span>
+            <small>speak an instruction, applied to the selection</small>
+          </div>
+          <HotkeyRecorder
+            value={settings.command_hotkey}
+            onChange={(combo) => save({ ...settings, command_hotkey: combo })}
+          />
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Whisper mode <Tip text="For dictating quietly (open office, late night): boosts microphone gain 3x and lowers the silence gate so soft speech still registers." /></span>
+            <small>for quiet speech</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.whisper_mode}
+              onChange={(e) => save({ ...settings, whisper_mode: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Streaming typing <Tip text="EXPERIMENTAL: types the text into the app WHILE you speak (holding back the last 2 words, completed when you release). Only active with Cleanup level None — streamed text is the raw transcript." /></span>
+            <small>experimental · needs Cleanup: None</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.stream_injection}
+              onChange={(e) => save({ ...settings, stream_injection: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
             <span>Push-to-talk <Tip text="On: recording lasts while you hold the shortcut or the Dictate button, like a walkie-talkie. Off: one tap/click starts recording, a second one stops it. Applies to both the keyboard shortcut and the Dictate button in the header." /></span>
             <small>off = toggle mode</small>
           </div>
@@ -460,6 +505,20 @@ export default function App() {
               </button>
             )}
           </div>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Models folder <Tip text="Where downloaded STT models are stored (up to a few GB). Leave empty for the default app-data folder, or point it at a roomier disk. Already-downloaded models must be moved there manually." /></span>
+            <small>empty = app data default</small>
+          </div>
+          <input
+            value={settings.models_dir}
+            placeholder="F:\claude\models"
+            onChange={(e) => setSettings({ ...settings, models_dir: e.target.value })}
+            onBlur={() => save(settings)}
+            spellCheck={false}
+          />
         </div>
       </CollapsibleCard>
 

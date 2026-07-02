@@ -23,10 +23,24 @@ impl AppPaths {
     }
 }
 
+/// The models directory honouring the user override (empty = app data default).
+pub fn resolve_models_dir(paths: &AppPaths, settings: &Settings) -> PathBuf {
+    let custom = settings.models_dir.trim();
+    if custom.is_empty() {
+        paths.models_dir.clone()
+    } else {
+        PathBuf::from(custom)
+    }
+}
+
 pub struct AppState {
     pub recorder: Mutex<Recorder>,
     /// Lazily loaded on first dictation; reset to None when engine/model change.
     pub transcriber: Mutex<Option<AnyTranscriber>>,
     pub settings: Mutex<Settings>,
     pub paths: AppPaths,
+    /// True while the current recording was started by the command hotkey.
+    pub command_mode: std::sync::atomic::AtomicBool,
+    /// Text already typed into the target app by streaming injection.
+    pub stream_injected: Mutex<String>,
 }

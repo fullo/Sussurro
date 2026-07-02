@@ -30,9 +30,16 @@ pub fn run() {
         ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     let pressed = event.state() == ShortcutState::Pressed;
-                    pipeline::handle_trigger(app, pressed);
+                    let is_command = {
+                        let state = app.state::<state::AppState>();
+                        let cmd = state.settings.lock().unwrap().command_hotkey.clone();
+                        cmd.parse::<tauri_plugin_global_shortcut::Shortcut>()
+                            .map(|c| c == *shortcut)
+                            .unwrap_or(false)
+                    };
+                    pipeline::handle_trigger(app, pressed, is_command);
                 })
                 .build(),
         )
@@ -40,13 +47,15 @@ pub fn run() {
             let handle = app.handle();
             let paths = AppPaths::from_app(handle);
             let settings = Settings::load(&paths.settings_file);
-            hotkey::apply(handle, &settings.hotkey)?;
+            hotkey::apply(handle, &settings.hotkey, &settings.command_hotkey)?;
             tray::setup(handle)?;
             app.manage(AppState {
                 recorder: Mutex::new(Recorder::default()),
                 transcriber: Mutex::new(None),
                 settings: Mutex::new(settings),
                 paths,
+                command_mode: std::sync::atomic::AtomicBool::new(false),
+                stream_injected: Mutex::new(String::new()),
             });
             // Launched at login: live in the tray, don't pop the window.
             if std::env::args().any(|a| a == "--autostart") {

@@ -16,7 +16,7 @@ pub fn beep(freq: f32, dur_ms: u64) {
         }
         let rate = config.sample_rate().0 as f32;
         let channels = config.channels() as usize;
-        let total = (rate * dur_ms as f32 / 1000.0) as f32;
+        let total = rate * dur_ms as f32 / 1000.0;
         let mut n = 0f32;
 
         let stream = device.build_output_stream(

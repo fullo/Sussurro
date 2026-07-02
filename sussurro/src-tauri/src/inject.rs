@@ -23,11 +23,10 @@ pub fn inject_text(text: &str) -> Result<()> {
     // Give the OS clipboard a beat to propagate before pasting.
     std::thread::sleep(Duration::from_millis(120));
 
-    let mut enigo = Enigo::new(&EnigoSettings::default()).context("init enigo")?;
-    let modifier = paste_modifier();
-    enigo.key(modifier, Direction::Press).context("modifier down")?;
-    enigo.key(Key::Unicode('v'), Direction::Click).context("press V")?;
-    enigo.key(modifier, Direction::Release).context("modifier up")?;
+    let paste_result = synth_paste();
+    #[cfg(target_os = "linux")]
+    let paste_result = paste_result.or_else(|_| wayland_type_fallback(text));
+    paste_result?;
 
     // Let the target app read the clipboard before we restore it.
     std::thread::sleep(Duration::from_millis(200));
@@ -35,6 +34,57 @@ pub fn inject_text(text: &str) -> Result<()> {
         let _ = clipboard.set_text(prev);
     }
     Ok(())
+}
+
+/// Synthesize Ctrl/Cmd+V in the focused app.
+fn synth_paste() -> Result<()> {
+    let mut enigo = Enigo::new(&EnigoSettings::default()).context("init enigo")?;
+    let modifier = paste_modifier();
+    enigo.key(modifier, Direction::Press).context("modifier down")?;
+    enigo.key(Key::Unicode('v'), Direction::Click).context("press V")?;
+    enigo.key(modifier, Direction::Release).context("modifier up")?;
+    Ok(())
+}
+
+/// Wayland blocks cross-app synthetic input; `wtype` (virtual-keyboard
+/// protocol) types the text directly when available.
+#[cfg(target_os = "linux")]
+fn wayland_type_fallback(text: &str) -> Result<()> {
+    anyhow::ensure!(
+        std::env::var("WAYLAND_DISPLAY").is_ok(),
+        "not a Wayland session"
+    );
+    let status = std::process::Command::new("wtype")
+        .arg(text)
+        .status()
+        .context("paste failed and wtype is not installed (needed on Wayland)")?;
+    anyhow::ensure!(status.success(), "wtype exited with {status}");
+    Ok(())
+}
+
+/// Copy the current selection via Ctrl/Cmd+C and return it (None when nothing
+/// is selected). The selection stays active, so pasting right after replaces
+/// it — exactly what command mode needs.
+pub fn copy_selection() -> Result<Option<String>> {
+    let mut clipboard = arboard::Clipboard::new().context("open clipboard")?;
+    let before = clipboard.get_text().ok();
+    let _ = clipboard.clear();
+
+    let mut enigo = Enigo::new(&EnigoSettings::default()).context("init enigo")?;
+    let modifier = paste_modifier();
+    enigo.key(modifier, Direction::Press).context("modifier down")?;
+    enigo.key(Key::Unicode('c'), Direction::Click).context("press C")?;
+    enigo.key(modifier, Direction::Release).context("modifier up")?;
+    std::thread::sleep(Duration::from_millis(250));
+
+    let text = clipboard.get_text().ok().filter(|t| !t.trim().is_empty());
+    if text.is_none() {
+        // Nothing selected: put the user's clipboard back.
+        if let Some(prev) = before {
+            let _ = clipboard.set_text(prev);
+        }
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

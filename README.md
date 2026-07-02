@@ -159,6 +159,16 @@ combination; Esc cancels).
 - **Per-app tone styles** — Wispr-style tone matching: rules like
   slack → "casual, emojis welcome" adapt the cleanup prompt to whatever app
   you dictate into (detected at the moment you release the trigger).
+- **Command mode** — select text anywhere, hold the command shortcut
+  (default `Ctrl+Alt+Space`) and speak an instruction ("make it shorter",
+  "translate to English"): the LLM applies it and the result replaces the
+  selection.
+- **Whisper mode** — dictate quietly: 3x mic gain and a lower silence gate.
+- **Streaming typing** (experimental) — with Cleanup None, text is typed into
+  the app while you speak, holding back the last two words until the final
+  pass completes them.
+- **Models folder** — settable in Settings (default: app data); silence is
+  trimmed before inference (VAD-lite) so long pauses don't cost GPU time.
 
 ## Releases & auto-update
 
@@ -180,11 +190,12 @@ Note: the updater endpoint points at this repo's GitHub releases. While the
 repo is **private**, installed apps cannot reach `latest.json` anonymously —
 make the repo (or at least its releases) public to activate auto-updates.
 
-## Known limits (v1)
+## Known limits
 
-- Streaming is preview-only: the injected text still lands after you release
-  the hotkey (true incremental injection is future work).
-- Linux Wayland injection is experimental (see above).
+- Streaming typing is experimental and only works with Cleanup level None;
+  with cleanup enabled the text lands after you release the hotkey.
+- Linux Wayland: paste injection falls back to `wtype` when enigo fails —
+  install it (`sudo apt install wtype`); untested on real Wayland yet.
 - Linux builds are CPU-only by default (Vulkan needs the SDK; Windows uses
   Vulkan, macOS uses Metal — see the Cargo.toml target-specific deps).
 - cpal is pinned to 0.16 (0.18 has a windows-core version conflict with the

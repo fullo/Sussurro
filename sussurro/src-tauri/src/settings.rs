@@ -65,6 +65,17 @@ pub struct Settings {
     pub live_preview: bool,
     /// Per-app tone rules (Wispr-style tone matching).
     pub app_styles: Vec<AppStyle>,
+    /// Where STT models are stored. Empty = the app data dir default.
+    /// Point it at a roomier disk (e.g. F:\claude\models) if C: is tight.
+    pub models_dir: String,
+    /// Command mode shortcut: the spoken instruction is applied to the
+    /// currently selected text via the LLM (Wispr's command mode).
+    pub command_hotkey: String,
+    /// Quiet-speech mode: boosts mic gain and lowers the silence gate.
+    pub whisper_mode: bool,
+    /// EXPERIMENTAL: type text into the app while speaking (requires
+    /// cleanup level None; the final pass completes the tail).
+    pub stream_injection: bool,
 }
 
 impl Default for Settings {
@@ -84,6 +95,10 @@ impl Default for Settings {
             snippets: Vec::new(),
             live_preview: true,
             app_styles: Vec::new(),
+            models_dir: String::new(),
+            command_hotkey: "CommandOrControl+Alt+Space".into(),
+            whisper_mode: false,
+            stream_injection: false,
         }
     }
 }
@@ -124,10 +139,12 @@ mod tests {
     fn save_then_load_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("settings.json");
-        let mut s = Settings::default();
-        s.hotkey = "Alt+Space".into();
-        s.dictionary = vec!["Sussurro".into(), "Tauri".into()];
-        s.cleanup_level = CleanupLevel::High;
+        let s = Settings {
+            hotkey: "Alt+Space".into(),
+            dictionary: vec!["Sussurro".into(), "Tauri".into()],
+            cleanup_level: CleanupLevel::High,
+            ..Default::default()
+        };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
     }

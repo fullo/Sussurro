@@ -17,7 +17,7 @@ pub fn set_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
-    hotkey::apply(&app, &settings.hotkey).map_err(|e| e.to_string())?;
+    hotkey::apply(&app, &settings.hotkey, &settings.command_hotkey).map_err(|e| e.to_string())?;
     // Only touch the OS launch entry when the state actually changes:
     // disabling a never-registered entry fails with os error 2 on Windows.
     let autolaunch = app.autolaunch();
@@ -33,7 +33,8 @@ pub fn set_settings(
     let model_changed = {
         let mut current = state.settings.lock().unwrap();
         let changed = current.whisper_model != settings.whisper_model
-            || current.engine != settings.engine;
+            || current.engine != settings.engine
+            || current.models_dir != settings.models_dir;
         *current = settings;
         changed
     };
@@ -47,7 +48,7 @@ pub fn set_settings(
 /// press/release, so push-to-talk vs toggle behaves identically.
 #[tauri::command]
 pub fn trigger_dictation(app: AppHandle, pressed: bool) {
-    crate::pipeline::handle_trigger(&app, pressed);
+    crate::pipeline::handle_trigger(&app, pressed, false);
 }
 
 #[tauri::command]
@@ -100,11 +101,12 @@ pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     let settings = state.settings.lock().unwrap();
+    let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
     match settings.engine {
         crate::settings::SttEngine::Whisper => {
-            models::model_exists(&state.paths.models_dir, &settings.whisper_model)
+            models::model_exists(&models_dir, &settings.whisper_model)
         }
-        crate::settings::SttEngine::Parakeet => models::parakeet_exists(&state.paths.models_dir),
+        crate::settings::SttEngine::Parakeet => models::parakeet_exists(&models_dir),
     }
 }
 
@@ -159,7 +161,7 @@ pub async fn download_model(state: State<'_, AppState>) -> Result<String, String
     let (dir, file, engine) = {
         let settings = state.settings.lock().unwrap();
         (
-            state.paths.models_dir.clone(),
+            crate::state::resolve_models_dir(&state.paths, &settings),
             settings.whisper_model.clone(),
             settings.engine.clone(),
         )
