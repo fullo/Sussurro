@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import "./App.css";
 
 type CleanupLevel = "none" | "light" | "medium" | "high";
@@ -762,6 +764,27 @@ export default function App() {
 
       <footer>
         <span>すべてローカル — everything stays local</span>
+        <button
+          className="btn-ghost"
+          onClick={async () => {
+            setBusy("Checking for updates…");
+            try {
+              const update = await check();
+              if (update) {
+                setBusy(`Updating to ${update.version}…`);
+                await update.downloadAndInstall();
+                await relaunch();
+              } else {
+                setBusy("You're on the latest version.");
+                setTimeout(() => setBusy(""), 3000);
+              }
+            } catch (e) {
+              setBusy(`Update check failed: ${e}`);
+            }
+          }}
+        >
+          Check for updates
+        </button>
       </footer>
     </main>
   );
