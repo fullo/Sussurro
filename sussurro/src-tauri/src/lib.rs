@@ -2,7 +2,9 @@ pub mod audio;
 pub mod cleanup;
 pub mod history;
 pub mod inject;
+pub mod pipeline;
 pub mod settings;
+pub mod state;
 pub mod stt;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
