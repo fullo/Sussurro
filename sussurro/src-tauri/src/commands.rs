@@ -50,6 +50,41 @@ pub fn trigger_dictation(app: AppHandle, pressed: bool) {
 }
 
 #[tauri::command]
+pub fn copy_text(text: String) -> Result<(), String> {
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.set_text(text))
+        .map_err(|e| e.to_string())
+}
+
+/// Re-run cleanup on a past raw transcript with the CURRENT settings
+/// (level/model/dictionary). Appends the result as a new history entry.
+#[tauri::command]
+pub async fn reclean(state: State<'_, AppState>, raw: String) -> Result<HistoryEntry, String> {
+    let (settings, history_file) = {
+        let s = state.settings.lock().unwrap().clone();
+        (s, state.paths.history_file.clone())
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let cleaned = crate::cleanup::ollama::cleanup(
+            &settings.ollama_url,
+            &settings.ollama_model,
+            &settings.cleanup_level,
+            &settings.dictionary,
+            &raw,
+        );
+        let entry = HistoryEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            raw,
+            cleaned,
+        };
+        let _ = history::append(&history_file, &entry);
+        Ok(entry)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub fn get_history(state: State<'_, AppState>, n: usize) -> Vec<HistoryEntry> {
     history::read_last(&state.paths.history_file, n)
 }

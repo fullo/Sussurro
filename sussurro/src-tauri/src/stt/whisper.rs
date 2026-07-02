@@ -17,11 +17,17 @@ impl Transcriber {
         Ok(Self { ctx })
     }
 
-    /// samples: 16 kHz mono f32. initial_prompt biases vocabulary (personal dictionary).
-    pub fn transcribe(&self, samples: &[f32], initial_prompt: Option<&str>) -> Result<String> {
+    /// samples: 16 kHz mono f32. initial_prompt biases vocabulary (personal
+    /// dictionary). language: "auto" or an ISO 639-1 code like "it".
+    pub fn transcribe(
+        &self,
+        samples: &[f32],
+        initial_prompt: Option<&str>,
+        language: &str,
+    ) -> Result<String> {
         let mut state = self.ctx.create_state().context("create whisper state")?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-        params.set_language(Some("auto"));
+        params.set_language(Some(language));
         params.set_print_progress(false);
         params.set_print_special(false);
         params.set_print_realtime(false);
@@ -54,7 +60,7 @@ mod tests {
         let model = std::env::var("SUSSURRO_TEST_MODEL").expect("set SUSSURRO_TEST_MODEL");
         let t = Transcriber::load(std::path::Path::new(&model)).unwrap();
         let silence = vec![0.0f32; 16_000]; // 1 s of silence
-        let text = t.transcribe(&silence, None).unwrap();
+        let text = t.transcribe(&silence, None, "auto").unwrap();
         println!("transcript of silence: {text:?}");
     }
 }

@@ -129,7 +129,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
         guard
             .as_ref()
             .expect("transcriber loaded above")
-            .transcribe(&samples, prompt.as_deref())?
+            .transcribe(&samples, prompt.as_deref(), &settings.language)?
     };
     if raw.is_empty() {
         return Ok(());

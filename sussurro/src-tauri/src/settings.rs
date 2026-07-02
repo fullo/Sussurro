@@ -28,6 +28,8 @@ pub struct Settings {
     pub autostart: bool,
     /// Audible tick when recording starts/stops.
     pub sound_feedback: bool,
+    /// Whisper language hint: "auto" or an ISO 639-1 code like "it", "en".
+    pub language: String,
 }
 
 impl Default for Settings {
@@ -42,6 +44,7 @@ impl Default for Settings {
             dictionary: Vec::new(),
             autostart: false,
             sound_feedback: true,
+            language: "auto".into(),
         }
     }
 }

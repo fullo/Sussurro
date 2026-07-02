@@ -484,6 +484,15 @@ kbd {
   to { opacity: 1; transform: none; }
 }
 
+.entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.entry-actions { display: flex; gap: 0.4rem; opacity: 0; transition: opacity var(--transition); }
+.history li:hover .entry-actions,
+.history li:focus-within .entry-actions { opacity: 1; }
+
 .history time {
   font-family: var(--f-mono);
   font-size: 0.75rem;

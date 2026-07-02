@@ -15,7 +15,21 @@ interface Settings {
   dictionary: string[];
   autostart: boolean;
   sound_feedback: boolean;
+  language: string;
 }
+
+const LANGUAGES: [string, string][] = [
+  ["auto", "Auto-detect"],
+  ["it", "Italiano"],
+  ["en", "English"],
+  ["es", "Español"],
+  ["fr", "Français"],
+  ["de", "Deutsch"],
+  ["pt", "Português"],
+  ["nl", "Nederlands"],
+  ["ja", "日本語"],
+  ["zh", "中文"],
+];
 
 interface HistoryEntry {
   timestamp: string;
@@ -354,6 +368,21 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
+            <span>Language <Tip text="Tell Whisper which language you dictate in. A fixed language is more accurate and slightly faster than auto-detect — especially on smaller models. Note: the English-only models ignore this." /></span>
+            <small>hint for the transcriber</small>
+          </div>
+          <select
+            value={settings.language}
+            onChange={(e) => save({ ...settings, language: e.target.value })}
+          >
+            {LANGUAGES.map(([code, label]) => (
+              <option key={code} value={code}>{label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
             <span>Whisper model <Tip text="The local speech-to-text model (whisper.cpp) that turns your voice into text. Bigger = more accurate but slower to load and run. 'English' models are faster if you only dictate in English; multilingual models handle 90+ languages." /></span>
             <small>speech-to-text, fully offline</small>
           </div>
@@ -487,7 +516,35 @@ export default function App() {
         <ol>
           {history.map((h) => (
             <li key={h.timestamp}>
-              <time>{new Date(h.timestamp).toLocaleTimeString()}</time>
+              <div className="entry-head">
+                <time>{new Date(h.timestamp).toLocaleTimeString()}</time>
+                <span className="entry-actions">
+                  <button
+                    className="btn-ghost"
+                    onClick={async () => {
+                      await invoke("copy_text", { text: h.cleaned });
+                    }}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    title="Clean the raw transcript again with the current level"
+                    onClick={async () => {
+                      setBusy("Re-cleaning…");
+                      try {
+                        await invoke("reclean", { raw: h.raw });
+                        setBusy("");
+                        refresh();
+                      } catch (e) {
+                        setBusy(String(e));
+                      }
+                    }}
+                  >
+                    Re-clean
+                  </button>
+                </span>
+              </div>
               <p className="cleaned">{h.cleaned}</p>
               {h.cleaned !== h.raw && <p className="raw">{h.raw}</p>}
             </li>

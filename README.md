@@ -139,6 +139,10 @@ combination; Esc cancels).
   Linux); closing the window hides to tray.
 - All sections are collapsible and remember their state; the Cleanup card
   reads the installed model list live from your Ollama server.
+- **History actions** — hover an entry to Copy the cleaned text or Re-clean
+  the raw transcript with the current cleanup level (appends a new entry).
+- **Language** — pick your dictation language (or auto-detect) in Settings;
+  a fixed language is more accurate on smaller multilingual models.
 
 ## Known limits (v1)
 

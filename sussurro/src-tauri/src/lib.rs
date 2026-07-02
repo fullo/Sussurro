@@ -68,7 +68,9 @@ pub fn run() {
             commands::model_is_downloaded,
             commands::download_model,
             commands::list_ollama_models,
-            commands::trigger_dictation
+            commands::trigger_dictation,
+            commands::copy_text,
+            commands::reclean
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
