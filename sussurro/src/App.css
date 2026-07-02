@@ -191,7 +191,8 @@ main.loading {
 .field-col { flex-direction: column; align-items: stretch; }
 
 .field-label { display: flex; flex-direction: column; min-width: 130px; }
-.field-label span { font-weight: 600; color: var(--c-dark); }
+/* Direct child only — must not bleed into .tip / .tip-bubble spans inside. */
+.field-label > span { font-weight: 600; color: var(--c-dark); }
 .field-label small { color: var(--c-text-light); font-size: 0.8rem; }
 
 /* ---------- Inputs ---------- */
