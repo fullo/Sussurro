@@ -176,8 +176,17 @@ fn preview_loop(app: &AppHandle) {
     }
 }
 
+/// Name of the app that will receive the injected text. Read at Finish time,
+/// i.e. exactly when the user releases the trigger with the target focused.
+fn focused_app_name() -> String {
+    active_win_pos_rs::get_active_window()
+        .map(|w| w.app_name)
+        .unwrap_or_default()
+}
+
 fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     let state = app.state::<AppState>();
+    let target_app = focused_app_name();
 
     let samples = state.recorder.lock().unwrap().stop()?;
     if samples.len() < 4_800 {
@@ -218,11 +227,13 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let style = crate::cleanup::prompt::find_style(&settings.app_styles, &target_app);
     let cleaned = ollama::cleanup(
         &settings.ollama_url,
         &settings.ollama_model,
         &settings.cleanup_level,
         &settings.dictionary,
+        style,
         &raw,
     );
 

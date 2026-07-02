@@ -156,6 +156,9 @@ combination; Esc cancels).
 - **Two STT engines** — Whisper (GPU, any language, multiple sizes) or
   NVIDIA Parakeet TDT v3 (single 456 MB int8 model, CPU-optimized,
   auto-detects 25 European languages). Switch in Settings → Engine.
+- **Per-app tone styles** — Wispr-style tone matching: rules like
+  slack → "casual, emojis welcome" adapt the cleanup prompt to whatever app
+  you dictate into (detected at the moment you release the trigger).
 
 ## Known limits (v1)
 

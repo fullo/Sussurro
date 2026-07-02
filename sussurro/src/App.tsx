@@ -10,6 +10,11 @@ interface Snippet {
   text: string;
 }
 
+interface AppStyle {
+  app_match: string;
+  style: string;
+}
+
 interface Settings {
   hotkey: string;
   push_to_talk: boolean;
@@ -24,6 +29,7 @@ interface Settings {
   language: string;
   snippets: Snippet[];
   live_preview: boolean;
+  app_styles: AppStyle[];
 }
 
 const LANGUAGES: [string, string][] = [
@@ -516,6 +522,58 @@ export default function App() {
               spellCheck={false}
             />
           )}
+        </div>
+
+        <div className="field field-col">
+          <div className="field-label">
+            <span>App styles <Tip text="Tone matching per application: when you dictate into an app whose name contains the match (e.g. 'slack'), the style instruction is added to the cleanup prompt. Example: slack → 'Casual and friendly, emojis welcome'; outlook → 'Professional business tone'." /></span>
+            <small>adapt the tone to the app you dictate into</small>
+          </div>
+          {settings.app_styles.map((s, i) => (
+            <div className="snippet-row" key={i}>
+              <input
+                placeholder="app name contains…"
+                value={s.app_match}
+                onChange={(e) => {
+                  const app_styles = settings.app_styles.slice();
+                  app_styles[i] = { ...s, app_match: e.target.value };
+                  setSettings({ ...settings, app_styles });
+                }}
+                onBlur={() => save(settings)}
+                spellCheck={false}
+              />
+              <textarea
+                placeholder="tone instruction for the LLM"
+                rows={2}
+                value={s.style}
+                onChange={(e) => {
+                  const app_styles = settings.app_styles.slice();
+                  app_styles[i] = { ...s, style: e.target.value };
+                  setSettings({ ...settings, app_styles });
+                }}
+                onBlur={() => save(settings)}
+              />
+              <button
+                className="btn-ghost"
+                onClick={() =>
+                  save({ ...settings, app_styles: settings.app_styles.filter((_, j) => j !== i) })
+                }
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <button
+            className="btn-ghost"
+            onClick={() =>
+              setSettings({
+                ...settings,
+                app_styles: [...settings.app_styles, { app_match: "", style: "" }],
+              })
+            }
+          >
+            + Add app style
+          </button>
         </div>
 
         <div className="field field-col">

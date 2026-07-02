@@ -21,6 +21,15 @@ pub enum SttEngine {
     Parakeet,
 }
 
+/// Tone rule applied when dictating into a matching application.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AppStyle {
+    /// Case-insensitive substring of the focused app's name (e.g. "slack").
+    pub app_match: String,
+    /// Style instruction appended to the cleanup prompt.
+    pub style: String,
+}
+
 /// A voice shortcut: say the cue, get the full text pasted.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Snippet {
@@ -54,6 +63,8 @@ pub struct Settings {
     pub snippets: Vec<Snippet>,
     /// Show a live partial transcript in the overlay while speaking.
     pub live_preview: bool,
+    /// Per-app tone rules (Wispr-style tone matching).
+    pub app_styles: Vec<AppStyle>,
 }
 
 impl Default for Settings {
@@ -72,6 +83,7 @@ impl Default for Settings {
             language: "auto".into(),
             snippets: Vec::new(),
             live_preview: true,
+            app_styles: Vec::new(),
         }
     }
 }

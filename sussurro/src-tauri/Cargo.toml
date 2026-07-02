@@ -35,6 +35,7 @@ transcribe-rs = { version = "0.3.11", features = ["onnx"] }
 flate2 = "1.1.9"
 tar = "0.4.46"
 sha2 = "0.10"
+active-win-pos-rs = "0.11.0"
 
 # GPU acceleration per platform: Vulkan on Windows (needs the Vulkan SDK at
 # build time), Metal on macOS (ships with Xcode). Linux stays CPU-only by

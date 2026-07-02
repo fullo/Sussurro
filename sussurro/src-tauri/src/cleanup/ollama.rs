@@ -11,9 +11,10 @@ pub fn cleanup(
     model: &str,
     level: &CleanupLevel,
     dictionary: &[String],
+    style: Option<&str>,
     transcript: &str,
 ) -> String {
-    let Some(messages) = build_messages(level, dictionary, transcript) else {
+    let Some(messages) = build_messages(level, dictionary, style, transcript) else {
         return transcript.to_string();
     };
     match chat(url, model, &messages) {
@@ -83,7 +84,7 @@ mod tests {
     #[test]
     fn level_none_skips_network_entirely() {
         // Would panic/hang if it tried the network: URL is unroutable.
-        let out = cleanup("http://0.0.0.0:1", "m", &CleanupLevel::None, &[], "um raw text");
+        let out = cleanup("http://0.0.0.0:1", "m", &CleanupLevel::None, &[], None, "um raw text");
         assert_eq!(out, "um raw text");
     }
 
@@ -94,6 +95,7 @@ mod tests {
             "llama3.2:3b",
             &CleanupLevel::Light,
             &[],
+            None,
             "um raw text",
         );
         assert_eq!(out, "um raw text");
@@ -124,6 +126,7 @@ mod tests {
             "llama3.2:3b",
             &CleanupLevel::Light,
             &[],
+            None,
             "um so basically i think uh we should ship it",
         );
         println!("cleaned: {out}");
