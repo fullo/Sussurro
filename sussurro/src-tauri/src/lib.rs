@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod cleanup;
 pub mod settings;
 pub mod stt;
 
