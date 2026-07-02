@@ -160,6 +160,26 @@ combination; Esc cancels).
   slack → "casual, emojis welcome" adapt the cleanup prompt to whatever app
   you dictate into (detected at the moment you release the trigger).
 
+## Releases & auto-update
+
+Pushing a `v*` tag (e.g. `git tag v0.2.0 && git push origin v0.2.0`) triggers
+the GitHub Actions release workflow: signed installers for Windows, macOS
+(Intel + Apple Silicon) and Linux, published as a draft release together with
+the updater manifest (`latest.json`). The in-app **Check for updates** button
+(footer) downloads and installs the new version.
+
+One-time setup — the updater signing key lives outside the repo
+(`F:\claude\keys\sussurro-updater.key`); upload it to the repo secrets:
+
+```powershell
+gh secret set TAURI_SIGNING_PRIVATE_KEY --body (Get-Content F:\claude\keys\sussurro-updater.key -Raw)
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --body '""'
+```
+
+Note: the updater endpoint points at this repo's GitHub releases. While the
+repo is **private**, installed apps cannot reach `latest.json` anonymously —
+make the repo (or at least its releases) public to activate auto-updates.
+
 ## Known limits (v1)
 
 - Streaming is preview-only: the injected text still lands after you release
