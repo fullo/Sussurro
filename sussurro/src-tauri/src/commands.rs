@@ -4,6 +4,7 @@ use crate::settings::Settings;
 use crate::state::AppState;
 use crate::stt::models;
 use tauri::{AppHandle, State};
+use tauri_plugin_autostart::ManagerExt;
 
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Settings {
@@ -17,6 +18,12 @@ pub fn set_settings(
     settings: Settings,
 ) -> Result<(), String> {
     hotkey::apply(&app, &settings.hotkey).map_err(|e| e.to_string())?;
+    let autolaunch = app.autolaunch();
+    if settings.autostart {
+        autolaunch.enable().map_err(|e| e.to_string())?;
+    } else {
+        autolaunch.disable().map_err(|e| e.to_string())?;
+    }
     settings
         .save(&state.paths.settings_file)
         .map_err(|e| e.to_string())?;

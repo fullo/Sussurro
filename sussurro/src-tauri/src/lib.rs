@@ -21,6 +21,10 @@ use tauri_plugin_global_shortcut::ShortcutState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -41,6 +45,12 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 paths,
             });
+            // Launched at login: live in the tray, don't pop the window.
+            if std::env::args().any(|a| a == "--autostart") {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
             Ok(())
         })
         // Closing the window hides to tray; Quit lives in the tray menu.

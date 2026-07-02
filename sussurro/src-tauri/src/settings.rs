@@ -24,6 +24,8 @@ pub struct Settings {
     pub cleanup_level: CleanupLevel,
     /// Personal dictionary: names/jargon fed to both Whisper and the LLM.
     pub dictionary: Vec<String>,
+    /// Start Sussurro (hidden in the tray) when the user logs in.
+    pub autostart: bool,
 }
 
 impl Default for Settings {
@@ -36,6 +38,7 @@ impl Default for Settings {
             ollama_model: "llama3.2:3b".into(),
             cleanup_level: CleanupLevel::Light,
             dictionary: Vec::new(),
+            autostart: false,
         }
     }
 }
@@ -69,6 +72,7 @@ mod tests {
         assert_eq!(s.cleanup_level, CleanupLevel::Light);
         assert_eq!(s.ollama_url, "http://localhost:11434");
         assert!(s.dictionary.is_empty());
+        assert!(!s.autostart);
     }
 
     #[test]

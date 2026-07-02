@@ -13,6 +13,7 @@ interface Settings {
   ollama_model: string;
   cleanup_level: CleanupLevel;
   dictionary: string[];
+  autostart: boolean;
 }
 
 interface HistoryEntry {
@@ -239,6 +240,21 @@ export default function App() {
               type="checkbox"
               checked={settings.push_to_talk}
               onChange={(e) => save({ ...settings, push_to_talk: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Launch at login <Tip text="Start Sussurro automatically when you log in. It starts hidden in the tray — click the tray icon or press your shortcut to use it." /></span>
+            <small>starts hidden in the tray</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.autostart}
+              onChange={(e) => save({ ...settings, autostart: e.target.checked })}
             />
             <span className="slider" />
           </label>

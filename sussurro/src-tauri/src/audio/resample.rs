@@ -29,9 +29,35 @@ pub fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> 
         .collect()
 }
 
+/// True when the clip's RMS energy is below `threshold` (~0.01 for typical
+/// mics): nothing worth transcribing. Whisper hallucinates text ("you",
+/// "thank you") on silence, so we gate it out before inference.
+pub fn is_mostly_silence(samples: &[f32], threshold: f32) -> bool {
+    if samples.is_empty() {
+        return true;
+    }
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+    rms < threshold
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn silence_is_detected() {
+        assert!(is_mostly_silence(&[], 0.01));
+        assert!(is_mostly_silence(&vec![0.0; 16_000], 0.01));
+        let faint_noise: Vec<f32> = (0..16_000).map(|i| if i % 2 == 0 { 0.002 } else { -0.002 }).collect();
+        assert!(is_mostly_silence(&faint_noise, 0.01));
+    }
+
+    #[test]
+    fn speech_level_signal_is_not_silence() {
+        // A 440 Hz-ish square wave at 0.1 amplitude — loud enough to matter.
+        let signal: Vec<f32> = (0..16_000).map(|i| if (i / 18) % 2 == 0 { 0.1 } else { -0.1 }).collect();
+        assert!(!is_mostly_silence(&signal, 0.01));
+    }
 
     #[test]
     fn mono_passthrough() {

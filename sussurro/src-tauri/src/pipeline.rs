@@ -66,6 +66,10 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
         // <0.3 s: accidental tap, nothing to transcribe.
         return Ok(());
     }
+    if crate::audio::resample::is_mostly_silence(&samples, 0.01) {
+        // No speech energy — skip inference, Whisper would hallucinate.
+        return Ok(());
+    }
 
     let settings = state.settings.lock().unwrap().clone();
 
