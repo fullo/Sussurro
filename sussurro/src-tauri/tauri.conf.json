@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "sussurro",
-        "width": 800,
-        "height": 600
+        "title": "Sussurro",
+        "width": 700,
+        "height": 860,
+        "minWidth": 560,
+        "minHeight": 640
       }
     ],
     "security": {
