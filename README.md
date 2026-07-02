@@ -42,8 +42,20 @@ Build prerequisites (one-time, elevated PowerShell):
 ```powershell
 winget install Rustlang.Rustup OpenJS.NodeJS.LTS Kitware.CMake LLVM.LLVM Ollama.Ollama
 winget install Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools;includeRecommended"
+winget install KhronosGroup.VulkanSDK   # GPU acceleration (whisper.cpp Vulkan backend)
 setx LIBCLANG_PATH "C:\Program Files\LLVM\bin"
 ```
+
+GPU notes:
+- Transcription runs on the GPU via **Vulkan** (NVIDIA/AMD/Intel alike). The
+  Vulkan SDK is needed at *build* time only; end users just need a Vulkan
+  driver (any modern GPU driver ships one).
+- `src-tauri/.cargo/config.toml` pins the cargo target dir to a short path
+  (`F:/sbuild`): whisper.cpp's Vulkan shader sub-build otherwise exceeds
+  Windows' 260-char MAX_PATH and MSBuild fails with FTK1011. Adjust the path
+  to your drive, or delete the file on macOS/Linux.
+- The very first transcription on a machine compiles GPU shaders (~10 s,
+  one-time); the driver caches them afterwards.
 
 Then open a **new** terminal and build (see *Build & run* below).
 
@@ -129,5 +141,7 @@ combination; Esc cancels).
 
 - No streaming transcription yet — text lands after you release the hotkey.
 - Linux Wayland injection is experimental (see above).
+- Linux builds are CPU-only by default (Vulkan needs the SDK; Windows uses
+  Vulkan, macOS uses Metal — see the Cargo.toml target-specific deps).
 - cpal is pinned to 0.16 (0.18 has a windows-core version conflict with the
   Tauri stack on Windows).

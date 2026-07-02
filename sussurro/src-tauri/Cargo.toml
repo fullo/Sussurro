@@ -32,6 +32,15 @@ tauri-plugin-global-shortcut = "2.3.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
 tauri-plugin-autostart = "2.5.1"
 
+# GPU acceleration per platform: Vulkan on Windows (needs the Vulkan SDK at
+# build time), Metal on macOS (ships with Xcode). Linux stays CPU-only by
+# default so contributor builds don't require the SDK.
+[target.'cfg(windows)'.dependencies]
+whisper-rs = { version = "0.16.0", features = ["vulkan"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16.0", features = ["metal"] }
+
 [dev-dependencies]
 tempfile = "3.27.0"
 

@@ -1,0 +1,7 @@
+# Windows: whisper.cpp's Vulkan shader sub-build nests paths past the 260-char
+# MAX_PATH limit and MSBuild's FileTracker chokes (FTK1011) even with NTFS long
+# paths enabled. A short target dir keeps every generated path under the limit.
+# On macOS/Linux this just creates an odd-named local folder — harmless — but
+# feel free to delete this file there.
+[build]
+target-dir = "F:/sbuild"
