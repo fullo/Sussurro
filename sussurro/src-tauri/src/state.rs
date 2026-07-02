@@ -1,6 +1,6 @@
 use crate::audio::recorder::Recorder;
 use crate::settings::Settings;
-use crate::stt::whisper::Transcriber;
+use crate::stt::AnyTranscriber;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
@@ -25,8 +25,8 @@ impl AppPaths {
 
 pub struct AppState {
     pub recorder: Mutex<Recorder>,
-    /// Lazily loaded on first dictation; reset to None when the model changes.
-    pub transcriber: Mutex<Option<Transcriber>>,
+    /// Lazily loaded on first dictation; reset to None when engine/model change.
+    pub transcriber: Mutex<Option<AnyTranscriber>>,
     pub settings: Mutex<Settings>,
     pub paths: AppPaths,
 }

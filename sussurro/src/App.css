@@ -245,8 +245,9 @@ input:hover, select:hover, textarea:hover { border-color: var(--c-dark); }
 textarea { width: 100%; resize: vertical; font-family: var(--f-mono); font-size: 0.9rem; }
 textarea::placeholder { color: var(--border-strong); }
 
-.model-row { display: flex; gap: 0.5rem; flex: 1; }
+.model-row { display: flex; gap: 0.5rem; flex: 1; align-items: center; }
 .model-row select { flex: 1; }
+.fixed-model { flex: 1; color: var(--c-text-light); font-size: 0.9rem; }
 
 button { cursor: pointer; }
 

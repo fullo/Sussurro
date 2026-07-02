@@ -10,6 +10,17 @@ pub enum CleanupLevel {
     High,
 }
 
+/// Which local speech-to-text engine transcribes the audio.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SttEngine {
+    /// whisper.cpp — GPU-accelerated, any language, pick a model size.
+    Whisper,
+    /// NVIDIA Parakeet TDT v3 (ONNX) — CPU-optimized, ~10x faster than
+    /// Whisper on CPU, auto-detects 25 European languages.
+    Parakeet,
+}
+
 /// A voice shortcut: say the cue, get the full text pasted.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Snippet {
@@ -26,6 +37,8 @@ pub struct Settings {
     pub push_to_talk: bool,
     /// GGML model file name inside the app's models dir.
     pub whisper_model: String,
+    /// Speech-to-text engine (whisper_model only applies to Whisper).
+    pub engine: SttEngine,
     pub ollama_url: String,
     pub ollama_model: String,
     pub cleanup_level: CleanupLevel,
@@ -49,6 +62,7 @@ impl Default for Settings {
             hotkey: "CommandOrControl+Shift+Space".into(),
             push_to_talk: true,
             whisper_model: "ggml-large-v3-turbo-q5_0.bin".into(),
+            engine: SttEngine::Whisper,
             ollama_url: "http://localhost:11434".into(),
             ollama_model: "llama3.2:3b".into(),
             cleanup_level: CleanupLevel::Light,

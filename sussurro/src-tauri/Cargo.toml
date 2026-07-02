@@ -31,6 +31,10 @@ whisper-rs = "0.16.0"
 tauri-plugin-global-shortcut = "2.3.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
 tauri-plugin-autostart = "2.5.1"
+transcribe-rs = { version = "0.3.11", features = ["onnx"] }
+flate2 = "1.1.9"
+tar = "0.4.46"
+sha2 = "0.10"
 
 # GPU acceleration per platform: Vulkan on Windows (needs the Vulkan SDK at
 # build time), Metal on macOS (ships with Xcode). Linux stays CPU-only by

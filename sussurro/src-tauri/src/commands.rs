@@ -32,12 +32,13 @@ pub fn set_settings(
         .map_err(|e| e.to_string())?;
     let model_changed = {
         let mut current = state.settings.lock().unwrap();
-        let changed = current.whisper_model != settings.whisper_model;
+        let changed = current.whisper_model != settings.whisper_model
+            || current.engine != settings.engine;
         *current = settings;
         changed
     };
     if model_changed {
-        *state.transcriber.lock().unwrap() = None; // reload lazily with the new model
+        *state.transcriber.lock().unwrap() = None; // reload lazily with the new engine/model
     }
     Ok(())
 }
@@ -97,7 +98,12 @@ pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     let settings = state.settings.lock().unwrap();
-    models::model_exists(&state.paths.models_dir, &settings.whisper_model)
+    match settings.engine {
+        crate::settings::SttEngine::Whisper => {
+            models::model_exists(&state.paths.models_dir, &settings.whisper_model)
+        }
+        crate::settings::SttEngine::Parakeet => models::parakeet_exists(&state.paths.models_dir),
+    }
 }
 
 /// Save a user correction of a past transcript: new words are auto-added to
@@ -148,12 +154,20 @@ pub async fn list_ollama_models(state: State<'_, AppState>) -> Result<Vec<String
 /// Blocking download (~0.5–3 GB) run off the async runtime.
 #[tauri::command]
 pub async fn download_model(state: State<'_, AppState>) -> Result<String, String> {
-    let (dir, file) = {
+    let (dir, file, engine) = {
         let settings = state.settings.lock().unwrap();
-        (state.paths.models_dir.clone(), settings.whisper_model.clone())
+        (
+            state.paths.models_dir.clone(),
+            settings.whisper_model.clone(),
+            settings.engine.clone(),
+        )
     };
     tauri::async_runtime::spawn_blocking(move || {
-        models::ensure_model(&dir, &file)
+        let result = match engine {
+            crate::settings::SttEngine::Whisper => models::ensure_model(&dir, &file),
+            crate::settings::SttEngine::Parakeet => models::ensure_parakeet(&dir),
+        };
+        result
             .map(|p| p.display().to_string())
             .map_err(|e| format!("{e:#}"))
     })

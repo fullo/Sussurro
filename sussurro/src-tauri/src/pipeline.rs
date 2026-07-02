@@ -1,9 +1,10 @@
 use crate::cleanup::ollama;
 use crate::history::{self, HistoryEntry};
 use crate::inject;
+use crate::settings::SttEngine;
 use crate::state::AppState;
 use crate::stt::whisper::Transcriber;
-use crate::stt::{dictionary_prompt, models};
+use crate::stt::{dictionary_prompt, models, parakeet::ParakeetTranscriber, AnyTranscriber};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, PartialEq)]
@@ -99,15 +100,33 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool) {
     }
 }
 
-/// Lazy-load the whisper model into AppState (load takes seconds; do it once).
+/// Lazy-load the configured STT engine into AppState (load takes seconds; do it once).
 fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) -> anyhow::Result<()> {
     let mut guard = state.transcriber.lock().unwrap();
     if guard.is_none() {
-        if !models::model_exists(&state.paths.models_dir, &settings.whisper_model) {
-            anyhow::bail!("model not downloaded — open Settings and click 'Download model'");
-        }
-        let path = state.paths.models_dir.join(&settings.whisper_model);
-        *guard = Some(Transcriber::load(&path)?);
+        *guard = Some(match settings.engine {
+            SttEngine::Whisper => {
+                if !models::model_exists(&state.paths.models_dir, &settings.whisper_model) {
+                    anyhow::bail!(
+                        "model not downloaded — open Settings and click 'Download model'"
+                    );
+                }
+                let path = state.paths.models_dir.join(&settings.whisper_model);
+                AnyTranscriber::Whisper(Transcriber::load(&path)?)
+            }
+            SttEngine::Parakeet => {
+                if !models::parakeet_exists(&state.paths.models_dir) {
+                    anyhow::bail!(
+                        "Parakeet model not downloaded — open Settings and click 'Download model'"
+                    );
+                }
+                let dir = state
+                    .paths
+                    .models_dir
+                    .join(crate::stt::parakeet::PARAKEET_DIR);
+                AnyTranscriber::Parakeet(ParakeetTranscriber::load(&dir)?)
+            }
+        });
     }
     Ok(())
 }
@@ -142,10 +161,10 @@ fn preview_loop(app: &AppHandle) {
         last_len = samples.len();
 
         // Never queue behind the final transcription: skip a beat if busy.
-        let Ok(guard) = state.transcriber.try_lock() else {
+        let Ok(mut guard) = state.transcriber.try_lock() else {
             continue;
         };
-        let Some(transcriber) = guard.as_ref() else {
+        let Some(transcriber) = guard.as_mut() else {
             return;
         };
         if let Ok(text) = transcriber.transcribe(&samples, prompt.as_deref(), &settings.language)
@@ -175,9 +194,9 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
 
     let prompt = dictionary_prompt(&settings.dictionary);
     let raw = {
-        let guard = state.transcriber.lock().unwrap();
+        let mut guard = state.transcriber.lock().unwrap();
         guard
-            .as_ref()
+            .as_mut()
             .expect("transcriber loaded above")
             .transcribe(&samples, prompt.as_deref(), &settings.language)?
     };

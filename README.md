@@ -12,7 +12,8 @@ text appears wherever your cursor is.
 ```
 global hotkey (press/release)
   → microphone capture (cpal, resampled to 16 kHz mono)
-  → whisper.cpp transcription (whisper-rs, fully offline)
+  → local STT: whisper.cpp (GPU: Vulkan/Metal) or NVIDIA Parakeet TDT v3
+    (ONNX, CPU-optimized ~10x faster than Whisper without a GPU)
   → Ollama /api/chat cleanup — None / Light / Medium / High,
     falls back to the raw transcript if Ollama is unreachable
   → clipboard-paste injection into the focused app (clipboard restored)
@@ -152,6 +153,9 @@ combination; Esc cancels).
 - **Self-learning dictionary** — Edit a history entry to correct it: words
   you introduce (real misspelling fixes, not case-only changes) are added to
   your personal dictionary automatically, Wispr-style.
+- **Two STT engines** — Whisper (GPU, any language, multiple sizes) or
+  NVIDIA Parakeet TDT v3 (single 456 MB int8 model, CPU-optimized,
+  auto-detects 25 European languages). Switch in Settings → Engine.
 
 ## Known limits (v1)
 

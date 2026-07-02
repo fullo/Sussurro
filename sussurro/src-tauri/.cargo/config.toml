@@ -4,4 +4,4 @@
 # On macOS/Linux this just creates an odd-named local folder — harmless — but
 # feel free to delete this file there.
 [build]
-target-dir = "F:/sbuild"
+target-dir = "F:/claude/builds/sussurro"

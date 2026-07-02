@@ -14,6 +14,7 @@ interface Settings {
   hotkey: string;
   push_to_talk: boolean;
   whisper_model: string;
+  engine: "whisper" | "parakeet";
   ollama_url: string;
   ollama_model: string;
   cleanup_level: CleanupLevel;
@@ -392,33 +393,59 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
-            <span>Language <Tip text="Tell Whisper which language you dictate in. A fixed language is more accurate and slightly faster than auto-detect — especially on smaller models. Note: the English-only models ignore this." /></span>
-            <small>hint for the transcriber</small>
+            <span>Engine <Tip text="Whisper: GPU-accelerated, any language, choose the model size below. Parakeet: NVIDIA's CPU-optimized model — roughly 10x faster than Whisper without a GPU, auto-detects 25 European languages, one fixed 456 MB model." /></span>
+            <small>{settings.engine === "whisper" ? "whisper.cpp · GPU" : "Parakeet TDT v3 · CPU"}</small>
           </div>
-          <select
-            value={settings.language}
-            onChange={(e) => save({ ...settings, language: e.target.value })}
-          >
-            {LANGUAGES.map(([code, label]) => (
-              <option key={code} value={code}>{label}</option>
+          <div className="segmented" role="radiogroup" aria-label="STT engine">
+            {(["whisper", "parakeet"] as const).map((e) => (
+              <button
+                key={e}
+                role="radio"
+                aria-checked={settings.engine === e}
+                className={settings.engine === e ? "on" : ""}
+                onClick={() => save({ ...settings, engine: e })}
+              >
+                {e === "whisper" ? "Whisper" : "Parakeet"}
+              </button>
             ))}
-          </select>
+          </div>
         </div>
+
+        {settings.engine === "whisper" && (
+          <div className="field">
+            <div className="field-label">
+              <span>Language <Tip text="Tell Whisper which language you dictate in. A fixed language is more accurate and slightly faster than auto-detect — especially on smaller models. Note: the English-only models ignore this." /></span>
+              <small>hint for the transcriber</small>
+            </div>
+            <select
+              value={settings.language}
+              onChange={(e) => save({ ...settings, language: e.target.value })}
+            >
+              {LANGUAGES.map(([code, label]) => (
+                <option key={code} value={code}>{label}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="field">
           <div className="field-label">
-            <span>Whisper model <Tip text="The local speech-to-text model (whisper.cpp) that turns your voice into text. Bigger = more accurate but slower to load and run. 'English' models are faster if you only dictate in English; multilingual models handle 90+ languages." /></span>
+            <span>Model <Tip text="Whisper: bigger = more accurate but slower; 'English' variants are faster for English-only dictation. Parakeet has a single fixed model (int8, 456 MB)." /></span>
             <small>speech-to-text, fully offline</small>
           </div>
           <div className="model-row">
-            <select
-              value={settings.whisper_model}
-              onChange={(e) => save({ ...settings, whisper_model: e.target.value })}
-            >
-              {MODELS.map((m) => (
-                <option key={m.file} value={m.file}>{m.label}</option>
-              ))}
-            </select>
+            {settings.engine === "whisper" ? (
+              <select
+                value={settings.whisper_model}
+                onChange={(e) => save({ ...settings, whisper_model: e.target.value })}
+              >
+                {MODELS.map((m) => (
+                  <option key={m.file} value={m.file}>{m.label}</option>
+                ))}
+              </select>
+            ) : (
+              <span className="fixed-model">Parakeet TDT 0.6B v3 · int8 · 456 MB</span>
+            )}
             {!modelReady && (
               <button className="btn-primary" onClick={downloadModel}>
                 Download
