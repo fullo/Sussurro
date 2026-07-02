@@ -4,9 +4,15 @@ use tauri::{AppHandle, Manager};
 
 fn toggle_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        if w.is_visible().unwrap_or(false) {
+        let visible = w.is_visible().unwrap_or(false);
+        let minimized = w.is_minimized().unwrap_or(false);
+        // A minimized window still reports visible — treat it as "not on
+        // screen", otherwise we hide a minimized window and show() can never
+        // bring it back (it reappears still minimized).
+        if visible && !minimized {
             let _ = w.hide();
         } else {
+            let _ = w.unminimize();
             let _ = w.show();
             let _ = w.set_focus();
         }
