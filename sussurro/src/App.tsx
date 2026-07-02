@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -44,6 +44,44 @@ function Tip({ text }: { text: string }) {
       ?
       <span className="tip-bubble">{text}</span>
     </span>
+  );
+}
+
+/* ---------- Collapsible section ---------- */
+
+function CollapsibleCard({
+  storageKey,
+  title,
+  className = "card",
+  headerExtra,
+  children,
+}: {
+  storageKey: string;
+  title: ReactNode;
+  className?: string;
+  headerExtra?: ReactNode;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(() => localStorage.getItem(storageKey) !== "0");
+  return (
+    <details
+      className={`collapsible ${className}`}
+      open={open}
+      onToggle={(e) => {
+        const o = (e.target as HTMLDetailsElement).open;
+        setOpen(o);
+        localStorage.setItem(storageKey, o ? "1" : "0");
+      }}
+    >
+      <summary>
+        <h2>{title}</h2>
+        <span className="summary-right">
+          {headerExtra}
+          <span className="chevron" aria-hidden="true">▾</span>
+        </span>
+      </summary>
+      {children}
+    </details>
   );
 }
 
@@ -144,9 +182,6 @@ export default function App() {
   const [confirmClear, setConfirmClear] = useState(false);
   /** null = Ollama unreachable → free-text fallback */
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
-  const [cleanupOpen, setCleanupOpen] = useState(
-    () => localStorage.getItem("cleanupOpen") !== "0"
-  );
 
   const loadOllamaModels = async () => {
     try {
@@ -234,8 +269,7 @@ export default function App() {
         <p className={`status status-${state}`} role="status">{statusLabel}</p>
       </header>
 
-      <section className="card">
-        <h2>Dictation</h2>
+      <CollapsibleCard storageKey="dictationOpen" title="Dictation">
         <div className="field">
           <div className="field-label">
             <span>Shortcut <Tip text="The system-wide key combination that triggers dictation in any app. Click the field, then press the keys you want (Esc cancels)." /></span>
@@ -298,21 +332,12 @@ export default function App() {
             )}
           </div>
         </div>
-      </section>
+      </CollapsibleCard>
 
-      <details
-        className="card"
-        open={cleanupOpen}
-        onToggle={(e) => {
-          const open = (e.target as HTMLDetailsElement).open;
-          setCleanupOpen(open);
-          localStorage.setItem("cleanupOpen", open ? "1" : "0");
-        }}
+      <CollapsibleCard
+        storageKey="cleanupOpen"
+        title={<>Cleanup <span className="via">via Ollama</span></>}
       >
-        <summary>
-          <h2>Cleanup <span className="via">via Ollama</span></h2>
-          <span className="chevron" aria-hidden="true">▾</span>
-        </summary>
         <div className="field">
           <div className="field-label">
             <span>Level <Tip text="How much the local LLM edits your transcript. None: exactly what you said, mistakes included. Light: removes 'um/uh' and fixes grammar. Medium: also tightens for clarity and conciseness. High: rewrites for brevity and polish. If Ollama is unreachable you always get the raw transcript." /></span>
@@ -391,22 +416,30 @@ export default function App() {
             placeholder="Sussurro&#10;Tauri"
           />
         </div>
-      </details>
+      </CollapsibleCard>
 
       {busy && <p className="busy" role="alert">{busy}</p>}
 
-      <section className="history">
-        <div className="history-head">
-          <h2>History</h2>
-          {history.length > 0 && (
+      <CollapsibleCard
+        storageKey="historyOpen"
+        className="history"
+        title="History"
+        headerExtra={
+          history.length > 0 ? (
             <button
               className={`btn-ghost${confirmClear ? " danger" : ""}`}
-              onClick={clearHistory}
+              onClick={(e) => {
+                // Inside <summary>: don't let the click toggle the accordion.
+                e.preventDefault();
+                e.stopPropagation();
+                clearHistory();
+              }}
             >
               {confirmClear ? "Click again to delete" : "Clear"}
             </button>
-          )}
-        </div>
+          ) : undefined
+        }
+      >
         {history.length === 0 && (
           <p className="empty">Nothing yet. Hold the shortcut and speak.</p>
         )}
@@ -419,7 +452,7 @@ export default function App() {
             </li>
           ))}
         </ol>
-      </section>
+      </CollapsibleCard>
 
       <footer>
         <span>すべてローカル — everything stays local</span>
