@@ -422,7 +422,7 @@ export default function App() {
 
       <CollapsibleCard
         storageKey="historyOpen"
-        className="history"
+        className="card history"
         title="History"
         headerExtra={
           history.length > 0 ? (

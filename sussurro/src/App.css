@@ -460,7 +460,7 @@ kbd {
 
 /* ---------- History: the editorial page ---------- */
 
-.history { margin-top: 2rem; }
+/* History shares the .card surface; spacing comes from card margins. */
 
 .history ol { list-style: none; margin: 0; padding: 0; }
 
