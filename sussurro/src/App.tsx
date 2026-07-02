@@ -140,6 +140,7 @@ export default function App() {
   const [status, setStatus] = useState("idle");
   const [modelReady, setModelReady] = useState(true);
   const [busy, setBusy] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const refresh = async () => {
     setSettings(await invoke<Settings>("get_settings"));
@@ -182,7 +183,6 @@ export default function App() {
     }
   };
 
-  const [confirmClear, setConfirmClear] = useState(false);
   const clearHistory = async () => {
     if (!confirmClear) {
       setConfirmClear(true);
