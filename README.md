@@ -132,6 +132,9 @@ combination; Esc cancels).
 - **Sound feedback** — a rising tick when recording starts and a falling one
   when it stops, so the trigger is audible even with the window hidden
   (toggle in Settings).
+- **Recording overlay** — a small floating pill near the bottom of the screen
+  while recording (red, pulsing) and transcribing (spinner). Always on top,
+  never steals focus, disappears when idle.
 - **Tray** — left-click the tray icon to show/hide the window (menu on
   Linux); closing the window hides to tray.
 - All sections are collapsible and remember their state; the Cleanup card

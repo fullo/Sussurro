@@ -1,0 +1,54 @@
+/* The overlay window is transparent — only the pill paints pixels. */
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.overlay-pill {
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #f3f2ee;
+  background: rgba(26, 26, 26, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 100px;
+  user-select: none;
+  cursor: default;
+}
+
+.overlay-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.overlay-pill.recording .overlay-dot {
+  background: #e52520;
+  animation: overlay-pulse 1.2s ease-in-out infinite;
+}
+
+.overlay-pill.processing .overlay-dot {
+  background: transparent;
+  border: 2px solid #d68910;
+  border-top-color: transparent;
+  animation: overlay-spin 0.9s linear infinite;
+}
+
+@keyframes overlay-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 37, 32, 0.55); }
+  50% { box-shadow: 0 0 0 7px rgba(229, 37, 32, 0); }
+}
+@keyframes overlay-spin {
+  to { transform: rotate(360deg); }
+}

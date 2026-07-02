@@ -25,7 +25,37 @@ pub fn trigger_action(push_to_talk: bool, pressed: bool, recording: bool) -> Tri
 
 /// Emit pipeline status to the frontend: "idle" | "recording" | "processing" | "error: ...".
 fn set_status(app: &AppHandle, status: &str) {
+    update_overlay(app, status.split(':').next().unwrap_or("idle"));
     let _ = app.emit("pipeline-status", status.to_string());
+}
+
+/// The floating pill near the bottom of the screen: visible while recording
+/// or processing, hidden otherwise. Never takes focus (focusable: false).
+fn update_overlay(app: &AppHandle, state: &str) {
+    let Some(w) = app.get_webview_window("overlay") else {
+        return;
+    };
+    match state {
+        "recording" | "processing" => {
+            position_overlay(&w);
+            let _ = w.show();
+        }
+        _ => {
+            let _ = w.hide();
+        }
+    }
+}
+
+fn position_overlay(w: &tauri::WebviewWindow) {
+    if let Ok(Some(monitor)) = w.current_monitor() {
+        let screen = monitor.size();
+        let size = w
+            .outer_size()
+            .unwrap_or_else(|_| tauri::PhysicalSize::new(210, 52));
+        let x = screen.width.saturating_sub(size.width) / 2;
+        let y = screen.height.saturating_sub(size.height + 96);
+        let _ = w.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
+    }
 }
 
 /// Called from the global-shortcut handler. Must return fast — heavy work is spawned.

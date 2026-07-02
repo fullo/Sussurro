@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Sussurro",
@@ -17,6 +18,20 @@
         "height": 860,
         "minWidth": 560,
         "minHeight": 640
+      },
+      {
+        "label": "overlay",
+        "title": "Sussurro overlay",
+        "width": 210,
+        "height": 52,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focusable": false,
+        "shadow": false
       }
     ],
     "security": {
