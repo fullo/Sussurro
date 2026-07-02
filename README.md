@@ -143,6 +143,12 @@ combination; Esc cancels).
   the raw transcript with the current cleanup level (appends a new entry).
 - **Language** — pick your dictation language (or auto-detect) in Settings;
   a fixed language is more accurate on smaller multilingual models.
+- **Voice snippets** — say a cue exactly (e.g. "firma email") and Sussurro
+  pastes the snippet's full text instead of transcribing. Matching ignores
+  case and punctuation; the AI cleanup is skipped.
+- **Self-learning dictionary** — Edit a history entry to correct it: words
+  you introduce (real misspelling fixes, not case-only changes) are added to
+  your personal dictionary automatically, Wispr-style.
 
 ## Known limits (v1)
 

@@ -6,6 +6,7 @@ pub mod hotkey;
 pub mod inject;
 pub mod pipeline;
 pub mod settings;
+pub mod snippets;
 pub mod state;
 pub mod stt;
 pub mod tray;
@@ -70,7 +71,8 @@ pub fn run() {
             commands::list_ollama_models,
             commands::trigger_dictation,
             commands::copy_text,
-            commands::reclean
+            commands::reclean,
+            commands::learn_correction
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

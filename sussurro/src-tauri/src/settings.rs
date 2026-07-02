@@ -10,6 +10,13 @@ pub enum CleanupLevel {
     High,
 }
 
+/// A voice shortcut: say the cue, get the full text pasted.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct Snippet {
+    pub cue: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
@@ -30,6 +37,8 @@ pub struct Settings {
     pub sound_feedback: bool,
     /// Whisper language hint: "auto" or an ISO 639-1 code like "it", "en".
     pub language: String,
+    /// Voice shortcuts: dictating exactly a cue pastes its text instead.
+    pub snippets: Vec<Snippet>,
 }
 
 impl Default for Settings {
@@ -45,6 +54,7 @@ impl Default for Settings {
             autostart: false,
             sound_feedback: true,
             language: "auto".into(),
+            snippets: Vec::new(),
         }
     }
 }

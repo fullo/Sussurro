@@ -5,6 +5,11 @@ import "./App.css";
 
 type CleanupLevel = "none" | "light" | "medium" | "high";
 
+interface Snippet {
+  cue: string;
+  text: string;
+}
+
 interface Settings {
   hotkey: string;
   push_to_talk: boolean;
@@ -16,6 +21,7 @@ interface Settings {
   autostart: boolean;
   sound_feedback: boolean;
   language: string;
+  snippets: Snippet[];
 }
 
 const LANGUAGES: [string, string][] = [
@@ -198,6 +204,8 @@ export default function App() {
   /** null = Ollama unreachable → free-text fallback */
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
   const [pillHover, setPillHover] = useState(false);
+  /** timestamp of the history entry being edited, and its draft text */
+  const [editing, setEditing] = useState<{ ts: string; draft: string } | null>(null);
 
   const loadOllamaModels = async () => {
     try {
@@ -488,6 +496,59 @@ export default function App() {
         </div>
       </CollapsibleCard>
 
+      <CollapsibleCard
+        storageKey="snippetsOpen"
+        title={<>Snippets <span className="via">voice shortcuts</span></>}
+      >
+        <p className="card-hint">
+          Say a cue exactly — Sussurro pastes the full text instead of transcribing.
+          <Tip text="Example: cue 'firma email' → pastes your full signature. Matching ignores case and punctuation, and skips the AI cleanup entirely." />
+        </p>
+        {settings.snippets.map((s, i) => (
+          <div className="snippet-row" key={i}>
+            <input
+              placeholder="cue (what you say)"
+              value={s.cue}
+              onChange={(e) => {
+                const snippets = settings.snippets.slice();
+                snippets[i] = { ...s, cue: e.target.value };
+                setSettings({ ...settings, snippets });
+              }}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+            />
+            <textarea
+              placeholder="text to paste"
+              rows={2}
+              value={s.text}
+              onChange={(e) => {
+                const snippets = settings.snippets.slice();
+                snippets[i] = { ...s, text: e.target.value };
+                setSettings({ ...settings, snippets });
+              }}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+            />
+            <button
+              className="btn-ghost"
+              onClick={() =>
+                save({ ...settings, snippets: settings.snippets.filter((_, j) => j !== i) })
+              }
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <button
+          className="btn-ghost"
+          onClick={() =>
+            setSettings({ ...settings, snippets: [...settings.snippets, { cue: "", text: "" }] })
+          }
+        >
+          + Add snippet
+        </button>
+      </CollapsibleCard>
+
       {busy && <p className="busy" role="alert">{busy}</p>}
 
       <CollapsibleCard
@@ -543,9 +604,55 @@ export default function App() {
                   >
                     Re-clean
                   </button>
+                  <button
+                    className="btn-ghost"
+                    title="Correct the text — new words are added to your dictionary"
+                    onClick={() => setEditing({ ts: h.timestamp, draft: h.cleaned })}
+                  >
+                    Edit
+                  </button>
                 </span>
               </div>
-              <p className="cleaned">{h.cleaned}</p>
+              {editing?.ts === h.timestamp ? (
+                <div className="edit-box">
+                  <textarea
+                    rows={3}
+                    value={editing.draft}
+                    onChange={(e) => setEditing({ ts: h.timestamp, draft: e.target.value })}
+                    autoFocus
+                  />
+                  <div className="edit-actions">
+                    <button
+                      className="btn-primary"
+                      onClick={async () => {
+                        try {
+                          const learned = await invoke<string[]>("learn_correction", {
+                            raw: h.raw,
+                            original: h.cleaned,
+                            corrected: editing.draft,
+                          });
+                          setEditing(null);
+                          setBusy(
+                            learned.length > 0
+                              ? `Learned: ${learned.join(", ")} → added to your dictionary`
+                              : ""
+                          );
+                          refresh();
+                        } catch (e) {
+                          setBusy(String(e));
+                        }
+                      }}
+                    >
+                      Save correction
+                    </button>
+                    <button className="btn-ghost" onClick={() => setEditing(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="cleaned">{h.cleaned}</p>
+              )}
               {h.cleaned !== h.raw && <p className="raw">{h.raw}</p>}
             </li>
           ))}

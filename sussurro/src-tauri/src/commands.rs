@@ -100,6 +100,39 @@ pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     models::model_exists(&state.paths.models_dir, &settings.whisper_model)
 }
 
+/// Save a user correction of a past transcript: new words are auto-added to
+/// the personal dictionary (Wispr-style learning) and the corrected text is
+/// appended to history. Returns the words learned.
+#[tauri::command]
+pub fn learn_correction(
+    state: State<'_, AppState>,
+    raw: String,
+    original: String,
+    corrected: String,
+) -> Result<Vec<String>, String> {
+    let learned = {
+        let mut settings = state.settings.lock().unwrap();
+        let learned = crate::snippets::learned_words(&original, &corrected, &settings.dictionary);
+        if !learned.is_empty() {
+            settings.dictionary.extend(learned.iter().cloned());
+            settings
+                .save(&state.paths.settings_file)
+                .map_err(|e| e.to_string())?;
+        }
+        learned
+    };
+    history::append(
+        &state.paths.history_file,
+        &HistoryEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            raw,
+            cleaned: corrected,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(learned)
+}
+
 /// Models available on the configured Ollama server. Errors when unreachable —
 /// the frontend falls back to a free-text field.
 #[tauri::command]

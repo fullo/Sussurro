@@ -135,6 +135,20 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Voice shortcut: the transcript IS a snippet cue → paste its text, no LLM.
+    if let Some(snippet) = crate::snippets::find(&settings.snippets, &raw) {
+        inject::inject_text(&snippet.text)?;
+        let _ = history::append(
+            &state.paths.history_file,
+            &HistoryEntry {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                raw,
+                cleaned: snippet.text.clone(),
+            },
+        );
+        return Ok(());
+    }
+
     let cleaned = ollama::cleanup(
         &settings.ollama_url,
         &settings.ollama_model,

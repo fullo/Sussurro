@@ -456,6 +456,29 @@ kbd {
   border-color: var(--brand-darker);
 }
 
+/* ---------- Snippets ---------- */
+
+.card-hint {
+  font-size: 0.85rem;
+  color: var(--c-text-light);
+  margin: 0 0 0.75rem;
+}
+.snippet-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto;
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+}
+.snippet-row textarea { margin: 0; }
+
+/* ---------- History edit ---------- */
+
+.edit-box textarea { width: 100%; font-family: var(--f-serif); font-size: 1rem; }
+.edit-actions { display: flex; gap: 0.5rem; margin-top: 0.4rem; }
+.edit-actions .btn-primary { min-height: 34px; padding: 0.3rem 0.9rem; }
+
 /* ---------- Busy / errors ---------- */
 
 .busy {
