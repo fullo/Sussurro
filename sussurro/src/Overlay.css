@@ -1,4 +1,4 @@
-/* The overlay window is transparent — only the pill paints pixels. */
+/* The overlay window is transparent — only pill and text paint pixels. */
 html, body, #root {
   margin: 0;
   padding: 0;
@@ -6,14 +6,23 @@ html, body, #root {
   overflow: hidden;
 }
 
-.overlay-pill {
+.overlay-wrap {
   box-sizing: border-box;
   width: 100vw;
   height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.overlay-pill {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
+  padding: 0.45rem 1rem;
   font-family: 'Inter', system-ui, sans-serif;
   font-size: 0.85rem;
   font-weight: 600;
@@ -24,6 +33,22 @@ html, body, #root {
   border-radius: 100px;
   user-select: none;
   cursor: default;
+}
+
+.overlay-text {
+  margin: 0;
+  max-width: 90%;
+  font-family: Lora, Georgia, serif;
+  font-size: 0.95rem;
+  line-height: 1.35;
+  color: #f3f2ee;
+  background: rgba(26, 26, 26, 0.85);
+  border-radius: 12px;
+  padding: 0.4rem 0.8rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .overlay-dot {

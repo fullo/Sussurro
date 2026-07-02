@@ -39,6 +39,8 @@ pub struct Settings {
     pub language: String,
     /// Voice shortcuts: dictating exactly a cue pastes its text instead.
     pub snippets: Vec<Snippet>,
+    /// Show a live partial transcript in the overlay while speaking.
+    pub live_preview: bool,
 }
 
 impl Default for Settings {
@@ -55,6 +57,7 @@ impl Default for Settings {
             sound_feedback: true,
             language: "auto".into(),
             snippets: Vec::new(),
+            live_preview: true,
         }
     }
 }

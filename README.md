@@ -135,6 +135,9 @@ combination; Esc cancels).
 - **Recording overlay** — a small floating pill near the bottom of the screen
   while recording (red, pulsing) and transcribing (spinner). Always on top,
   never steals focus, disappears when idle.
+- **Live preview** — while you speak, the overlay shows a rolling partial
+  transcript, re-transcribed every ~1.2 s from the growing buffer. The pasted
+  text always comes from the final full-quality pass (toggle in Settings).
 - **Tray** — left-click the tray icon to show/hide the window (menu on
   Linux); closing the window hides to tray.
 - All sections are collapsible and remember their state; the Cleanup card
@@ -152,7 +155,8 @@ combination; Esc cancels).
 
 ## Known limits (v1)
 
-- No streaming transcription yet — text lands after you release the hotkey.
+- Streaming is preview-only: the injected text still lands after you release
+  the hotkey (true incremental injection is future work).
 - Linux Wayland injection is experimental (see above).
 - Linux builds are CPU-only by default (Vulkan needs the SDK; Windows uses
   Vulkan, macOS uses Metal — see the Cargo.toml target-specific deps).

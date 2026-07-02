@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -9,10 +10,14 @@ pub const TARGET_RATE: u32 = 16_000;
 
 /// Owns no audio resources directly — the cpal Stream is !Send, so each
 /// recording runs on its own thread and hands samples back over a channel.
+/// The raw buffer is shared so live previews can snapshot it mid-recording.
 #[derive(Default)]
 pub struct Recorder {
     stop_tx: Option<Sender<()>>,
     result_rx: Option<Receiver<Result<Vec<f32>>>>,
+    live: Arc<Mutex<Vec<f32>>>,
+    /// (device sample rate, channel count) — 0 until the stream is up.
+    meta: Arc<(AtomicU32, AtomicUsize)>,
 }
 
 impl Recorder {
@@ -24,14 +29,34 @@ impl Recorder {
         if self.is_recording() {
             return Ok(());
         }
+        self.live.lock().unwrap().clear();
+        self.meta.0.store(0, Ordering::Relaxed);
+        self.meta.1.store(0, Ordering::Relaxed);
+
         let (stop_tx, stop_rx) = channel();
         let (result_tx, result_rx) = channel();
+        let buffer = self.live.clone();
+        let meta = self.meta.clone();
         std::thread::spawn(move || {
-            let _ = result_tx.send(record_until_stopped(stop_rx));
+            let _ = result_tx.send(record_until_stopped(stop_rx, buffer, meta));
         });
         self.stop_tx = Some(stop_tx);
         self.result_rx = Some(result_rx);
         Ok(())
+    }
+
+    /// Copy of everything captured so far, already 16 kHz mono — for live
+    /// preview transcription while the recording continues. None until the
+    /// audio stream has actually started.
+    pub fn snapshot_16k(&self) -> Option<Vec<f32>> {
+        let rate = self.meta.0.load(Ordering::Relaxed);
+        let channels = self.meta.1.load(Ordering::Relaxed);
+        if !self.is_recording() || rate == 0 || channels == 0 {
+            return None;
+        }
+        let raw = self.live.lock().unwrap().clone();
+        let mono = downmix_to_mono(&raw, channels);
+        Some(resample_linear(&mono, rate, TARGET_RATE))
     }
 
     /// Returns 16 kHz mono f32 samples.
@@ -43,7 +68,11 @@ impl Recorder {
     }
 }
 
-fn record_until_stopped(stop_rx: Receiver<()>) -> Result<Vec<f32>> {
+fn record_until_stopped(
+    stop_rx: Receiver<()>,
+    buffer: Arc<Mutex<Vec<f32>>>,
+    meta: Arc<(AtomicU32, AtomicUsize)>,
+) -> Result<Vec<f32>> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -51,8 +80,9 @@ fn record_until_stopped(stop_rx: Receiver<()>) -> Result<Vec<f32>> {
     let config = device.default_input_config()?;
     let channels = config.channels() as usize;
     let rate = config.sample_rate().0;
+    meta.0.store(rate, Ordering::Relaxed);
+    meta.1.store(channels, Ordering::Relaxed);
 
-    let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
     let err_fn = |e| eprintln!("audio stream error: {e}");
 
     let stream = match config.sample_format() {
@@ -101,6 +131,12 @@ mod tests {
         assert!(r.stop().is_err());
     }
 
+    #[test]
+    fn snapshot_is_none_when_idle() {
+        let r = Recorder::default();
+        assert!(r.snapshot_16k().is_none());
+    }
+
     /// Needs a real microphone. Run manually: cargo test record_one_second -- --ignored --nocapture
     #[test]
     #[ignore]
@@ -108,10 +144,18 @@ mod tests {
         let mut r = Recorder::default();
         r.start().unwrap();
         assert!(r.is_recording());
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let snap = r.snapshot_16k();
+        std::thread::sleep(std::time::Duration::from_millis(400));
         let samples = r.stop().unwrap();
-        println!("captured {} samples at 16 kHz", samples.len());
+        println!(
+            "captured {} samples at 16 kHz (snapshot at 600ms: {:?})",
+            samples.len(),
+            snap.as_ref().map(Vec::len)
+        );
         // ~1 s of 16 kHz audio, generous tolerance for stream startup latency
         assert!(samples.len() > 8_000, "expected >8000 samples, got {}", samples.len());
+        let snap = snap.expect("snapshot mid-recording");
+        assert!(snap.len() < samples.len());
     }
 }

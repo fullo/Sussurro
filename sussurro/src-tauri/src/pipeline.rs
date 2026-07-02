@@ -51,7 +51,7 @@ fn position_overlay(w: &tauri::WebviewWindow) {
         let screen = monitor.size();
         let size = w
             .outer_size()
-            .unwrap_or_else(|_| tauri::PhysicalSize::new(210, 52));
+            .unwrap_or_else(|_| tauri::PhysicalSize::new(480, 130));
         let x = screen.width.saturating_sub(size.width) / 2;
         let y = screen.height.saturating_sub(size.height + 96);
         let _ = w.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
@@ -71,10 +71,15 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool) {
                 set_status(app, &format!("error: {e}"));
                 return;
             }
-            if state.settings.lock().unwrap().sound_feedback {
+            let settings = state.settings.lock().unwrap().clone();
+            if settings.sound_feedback {
                 crate::audio::beep::record_start();
             }
             set_status(app, "recording");
+            if settings.live_preview {
+                let app = app.clone();
+                std::thread::spawn(move || preview_loop(&app));
+            }
         }
         TriggerAction::Finish => {
             if state.settings.lock().unwrap().sound_feedback {
@@ -94,6 +99,64 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool) {
     }
 }
 
+/// Lazy-load the whisper model into AppState (load takes seconds; do it once).
+fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) -> anyhow::Result<()> {
+    let mut guard = state.transcriber.lock().unwrap();
+    if guard.is_none() {
+        if !models::model_exists(&state.paths.models_dir, &settings.whisper_model) {
+            anyhow::bail!("model not downloaded — open Settings and click 'Download model'");
+        }
+        let path = state.paths.models_dir.join(&settings.whisper_model);
+        *guard = Some(Transcriber::load(&path)?);
+    }
+    Ok(())
+}
+
+/// Live preview: while the recording lasts, periodically re-transcribe the
+/// accumulated buffer and emit the partial text to the overlay. Best-effort —
+/// any failure just means no preview.
+fn preview_loop(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let settings = state.settings.lock().unwrap().clone();
+    if ensure_transcriber(&state, &settings).is_err() {
+        return; // no model yet — the final pass will surface the error
+    }
+    let prompt = dictionary_prompt(&settings.dictionary);
+    let mut last_len = 0usize;
+
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        if !state.recorder.lock().unwrap().is_recording() {
+            return;
+        }
+        let Some(samples) = state.recorder.lock().unwrap().snapshot_16k() else {
+            continue;
+        };
+        // Wait for at least 1 s of audio and 0.5 s of NEW audio per pass.
+        if samples.len() < 16_000 || samples.len() < last_len + 8_000 {
+            continue;
+        }
+        if crate::audio::resample::is_mostly_silence(&samples, 0.01) {
+            continue;
+        }
+        last_len = samples.len();
+
+        // Never queue behind the final transcription: skip a beat if busy.
+        let Ok(guard) = state.transcriber.try_lock() else {
+            continue;
+        };
+        let Some(transcriber) = guard.as_ref() else {
+            return;
+        };
+        if let Ok(text) = transcriber.transcribe(&samples, prompt.as_deref(), &settings.language)
+        {
+            if !text.is_empty() {
+                let _ = app.emit("partial-transcript", text);
+            }
+        }
+    }
+}
+
 fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     let state = app.state::<AppState>();
 
@@ -108,20 +171,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     }
 
     let settings = state.settings.lock().unwrap().clone();
-
-    // Lazy-load the transcriber (model load takes seconds; do it once).
-    {
-        let mut guard = state.transcriber.lock().unwrap();
-        if guard.is_none() {
-            if !models::model_exists(&state.paths.models_dir, &settings.whisper_model) {
-                anyhow::bail!(
-                    "model not downloaded — open Settings and click 'Download model'"
-                );
-            }
-            let path = state.paths.models_dir.join(&settings.whisper_model);
-            *guard = Some(Transcriber::load(&path)?);
-        }
-    }
+    ensure_transcriber(&state, &settings)?;
 
     let prompt = dictionary_prompt(&settings.dictionary);
     let raw = {

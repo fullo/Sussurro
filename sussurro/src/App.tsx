@@ -22,6 +22,7 @@ interface Settings {
   sound_feedback: boolean;
   language: string;
   snippets: Snippet[];
+  live_preview: boolean;
 }
 
 const LANGUAGES: [string, string][] = [
@@ -339,6 +340,21 @@ export default function App() {
               type="checkbox"
               checked={settings.push_to_talk}
               onChange={(e) => save({ ...settings, push_to_talk: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Live preview <Tip text="While you speak, the overlay shows a rolling partial transcript (re-transcribed every ~1.2s). Costs extra GPU/CPU during recording; the pasted text always comes from the final, full-quality pass." /></span>
+            <small>partial transcript in the overlay</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.live_preview}
+              onChange={(e) => save({ ...settings, live_preview: e.target.checked })}
             />
             <span className="slider" />
           </label>

@@ -22,8 +22,8 @@
       {
         "label": "overlay",
         "title": "Sussurro overlay",
-        "width": 210,
-        "height": 52,
+        "width": 480,
+        "height": 130,
         "visible": false,
         "decorations": false,
         "transparent": true,
