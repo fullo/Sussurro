@@ -14,6 +14,7 @@ interface Settings {
   cleanup_level: CleanupLevel;
   dictionary: string[];
   autostart: boolean;
+  sound_feedback: boolean;
 }
 
 interface HistoryEntry {
@@ -182,6 +183,7 @@ export default function App() {
   const [confirmClear, setConfirmClear] = useState(false);
   /** null = Ollama unreachable → free-text fallback */
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
+  const [pillHover, setPillHover] = useState(false);
 
   const loadOllamaModels = async () => {
     try {
@@ -252,11 +254,21 @@ export default function App() {
   };
 
   const state = status.split(":")[0]; // idle | recording | processing | error
-  const statusLabel =
-    state === "recording" ? "Recording — speak now"
-    : state === "processing" ? "Transcribing…"
-    : state === "error" ? status
-    : modelReady ? "Ready" : "Model not downloaded yet";
+  const pushToTalk = settings.push_to_talk;
+  const pillLabel =
+    state === "recording"
+      ? pushToTalk ? "● Recording — release to stop" : "■ Recording — click to stop"
+      : state === "processing" ? "Transcribing…"
+      : state === "error" ? status
+      : !modelReady ? "Model not downloaded yet"
+      : pillHover ? (pushToTalk ? "● Dictate — hold" : "● Dictate") : "Ready";
+
+  const pillDown = () => {
+    if (state === "idle" || state === "recording") invoke("trigger_dictation", { pressed: true });
+  };
+  const pillUp = () => {
+    invoke("trigger_dictation", { pressed: false });
+  };
 
   return (
     <main>
@@ -266,7 +278,21 @@ export default function App() {
           <h1>Sussurro</h1>
         </div>
         <p className="tagline">Local dictation. Your voice never leaves this machine.</p>
-        <p className={`status status-${state}`} role="status">{statusLabel}</p>
+        <button
+          type="button"
+          className={`status status-${state} pill-btn`}
+          onMouseEnter={() => setPillHover(true)}
+          onMouseLeave={() => {
+            setPillHover(false);
+            // Dragging off the button while holding must stop push-to-talk.
+            if (state === "recording" && pushToTalk) pillUp();
+          }}
+          onMouseDown={pillDown}
+          onMouseUp={pillUp}
+          aria-label="Dictate: hold (push-to-talk) or click (toggle) to record"
+        >
+          {pillLabel}
+        </button>
       </header>
 
       <CollapsibleCard storageKey="dictationOpen" title="Dictation">
@@ -283,7 +309,7 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
-            <span>Push-to-talk <Tip text="On: recording lasts only while you hold the shortcut, like a walkie-talkie. Off: one tap starts recording, a second tap stops it." /></span>
+            <span>Push-to-talk <Tip text="On: recording lasts while you hold the shortcut or the Dictate button, like a walkie-talkie. Off: one tap/click starts recording, a second one stops it. Applies to both the keyboard shortcut and the Dictate button in the header." /></span>
             <small>off = toggle mode</small>
           </div>
           <label className="switch">
@@ -291,6 +317,21 @@ export default function App() {
               type="checkbox"
               checked={settings.push_to_talk}
               onChange={(e) => save({ ...settings, push_to_talk: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Sound feedback <Tip text="A short rising tick when recording starts and a falling one when it stops — so you know the trigger worked without looking at this window." /></span>
+            <small>tick on start / stop</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.sound_feedback}
+              onChange={(e) => save({ ...settings, sound_feedback: e.target.checked })}
             />
             <span className="slider" />
           </label>

@@ -143,6 +143,15 @@ main.loading {
   margin: 0;
   transition: all var(--transition);
 }
+/* The status pill IS the Dictate button. */
+.pill-btn { cursor: pointer; font-family: inherit; }
+.pill-btn.status-idle:hover {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-text);
+}
+.pill-btn:active { transform: scale(0.97); }
+
 .status-recording { background: var(--brand); border-color: var(--brand-darker); color: #fff; }
 .status-processing { background: var(--c-surface-alt); color: var(--c-text); }
 .status-error {

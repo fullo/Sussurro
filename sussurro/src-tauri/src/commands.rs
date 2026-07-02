@@ -42,6 +42,13 @@ pub fn set_settings(
     Ok(())
 }
 
+/// Drive dictation from the in-app Dictate button: mirrors the global hotkey
+/// press/release, so push-to-talk vs toggle behaves identically.
+#[tauri::command]
+pub fn trigger_dictation(app: AppHandle, pressed: bool) {
+    crate::pipeline::handle_trigger(&app, pressed);
+}
+
 #[tauri::command]
 pub fn get_history(state: State<'_, AppState>, n: usize) -> Vec<HistoryEntry> {
     history::read_last(&state.paths.history_file, n)

@@ -26,6 +26,8 @@ pub struct Settings {
     pub dictionary: Vec<String>,
     /// Start Sussurro (hidden in the tray) when the user logs in.
     pub autostart: bool,
+    /// Audible tick when recording starts/stops.
+    pub sound_feedback: bool,
 }
 
 impl Default for Settings {
@@ -39,6 +41,7 @@ impl Default for Settings {
             cleanup_level: CleanupLevel::Light,
             dictionary: Vec::new(),
             autostart: false,
+            sound_feedback: true,
         }
     }
 }

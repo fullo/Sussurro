@@ -114,6 +114,17 @@ next to the wordmark is hollow when idle and painted red while recording.
 The shortcut is set via a click-to-record hotkey widget (press the actual
 combination; Esc cancels).
 
+- **Dictate button** — the status pill in the header is a live button: hold it
+  (push-to-talk) or click it (toggle mode) to dictate without touching the
+  keyboard. It follows the same Push-to-talk setting as the shortcut.
+- **Sound feedback** — a rising tick when recording starts and a falling one
+  when it stops, so the trigger is audible even with the window hidden
+  (toggle in Settings).
+- **Tray** — left-click the tray icon to show/hide the window (menu on
+  Linux); closing the window hides to tray.
+- All sections are collapsible and remember their state; the Cleanup card
+  reads the installed model list live from your Ollama server.
+
 ## Known limits (v1)
 
 - No streaming transcription yet — text lands after you release the hotkey.

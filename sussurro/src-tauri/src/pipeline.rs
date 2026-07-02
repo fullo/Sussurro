@@ -41,9 +41,15 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool) {
                 set_status(app, &format!("error: {e}"));
                 return;
             }
+            if state.settings.lock().unwrap().sound_feedback {
+                crate::audio::beep::record_start();
+            }
             set_status(app, "recording");
         }
         TriggerAction::Finish => {
+            if state.settings.lock().unwrap().sound_feedback {
+                crate::audio::beep::record_stop();
+            }
             set_status(app, "processing");
             let app = app.clone();
             // whisper + ollama take seconds — never block the event thread.
