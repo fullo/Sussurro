@@ -1,9 +1,16 @@
-/* The overlay window is transparent — only pill and text paint pixels. */
-html, body, #root {
+/* The overlay window is transparent — only pill and text paint pixels.
+   Scoped to body.overlay-window: this CSS is bundled with the main window
+   too, and must not disable its scrolling or background. */
+body.overlay-window {
   margin: 0;
   padding: 0;
   background: transparent;
   overflow: hidden;
+}
+body.overlay-window #root {
+  margin: 0;
+  padding: 0;
+  background: transparent;
 }
 
 .overlay-wrap {
