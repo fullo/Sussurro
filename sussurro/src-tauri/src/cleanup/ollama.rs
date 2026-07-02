@@ -26,6 +26,29 @@ pub fn cleanup(
     }
 }
 
+/// Model names available on the Ollama server (GET /api/tags).
+pub fn list_models(url: &str) -> Result<Vec<String>> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let resp: Value = client
+        .get(format!("{}/api/tags", url.trim_end_matches('/')))
+        .send()
+        .context("ollama not reachable")?
+        .error_for_status()?
+        .json()
+        .context("unexpected /api/tags response")?;
+    Ok(resp["models"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m["name"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 fn chat(url: &str, model: &str, messages: &[Value]) -> Result<String> {
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(2))
@@ -74,6 +97,21 @@ mod tests {
             "um raw text",
         );
         assert_eq!(out, "um raw text");
+    }
+
+    #[test]
+    fn list_models_errors_when_unreachable() {
+        assert!(list_models("http://127.0.0.1:9").is_err());
+    }
+
+    /// Needs a running Ollama. Run manually:
+    /// cargo test live_list_models -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_list_models() {
+        let models = list_models("http://localhost:11434").unwrap();
+        println!("models: {models:?}");
+        assert!(models.iter().any(|m| m.starts_with("llama3.2")));
     }
 
     /// Needs a running Ollama with the model pulled. Run manually:

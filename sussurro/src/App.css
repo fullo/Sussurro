@@ -164,6 +164,25 @@ main.loading {
   margin-bottom: 1.25rem;
 }
 
+/* Collapsible card (details/summary accordion) */
+details.card summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+details.card summary::-webkit-details-marker { display: none; }
+details.card summary h2 { margin: 0; }
+details.card[open] summary { margin-bottom: 1rem; }
+details.card .chevron {
+  color: var(--c-text-light);
+  font-size: 0.9rem;
+  transition: transform var(--transition);
+}
+details.card:not([open]) .chevron { transform: rotate(-90deg); }
+
 .card h2, .history h2 {
   font-size: 0.8rem;
   font-weight: 700;

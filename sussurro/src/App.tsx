@@ -142,6 +142,20 @@ export default function App() {
   const [modelReady, setModelReady] = useState(true);
   const [busy, setBusy] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
+  /** null = Ollama unreachable → free-text fallback */
+  const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
+  const [cleanupOpen, setCleanupOpen] = useState(
+    () => localStorage.getItem("cleanupOpen") !== "0"
+  );
+
+  const loadOllamaModels = async () => {
+    try {
+      const models = await invoke<string[]>("list_ollama_models");
+      setOllamaModels(models.length > 0 ? models : null);
+    } catch {
+      setOllamaModels(null);
+    }
+  };
 
   const refresh = async () => {
     setSettings(await invoke<Settings>("get_settings"));
@@ -151,6 +165,7 @@ export default function App() {
 
   useEffect(() => {
     refresh();
+    loadOllamaModels();
     const unlisten = listen<string>("pipeline-status", (e) => {
       setStatus(e.payload);
       if (e.payload === "idle") refresh();
@@ -163,11 +178,13 @@ export default function App() {
   if (!settings) return <main className="loading">Loading…</main>;
 
   const save = async (next: Settings) => {
+    const serverChanged = next.ollama_url !== settings.ollama_url;
     setSettings(next);
     try {
       await invoke("set_settings", { settings: next });
       setBusy("");
       setModelReady(await invoke<boolean>("model_is_downloaded"));
+      if (serverChanged) loadOllamaModels();
     } catch (e) {
       setBusy(String(e));
     }
@@ -283,8 +300,19 @@ export default function App() {
         </div>
       </section>
 
-      <section className="card">
-        <h2>Cleanup <span className="via">via Ollama</span></h2>
+      <details
+        className="card"
+        open={cleanupOpen}
+        onToggle={(e) => {
+          const open = (e.target as HTMLDetailsElement).open;
+          setCleanupOpen(open);
+          localStorage.setItem("cleanupOpen", open ? "1" : "0");
+        }}
+      >
+        <summary>
+          <h2>Cleanup <span className="via">via Ollama</span></h2>
+          <span className="chevron" aria-hidden="true">▾</span>
+        </summary>
         <div className="field">
           <div className="field-label">
             <span>Level <Tip text="How much the local LLM edits your transcript. None: exactly what you said, mistakes included. Light: removes 'um/uh' and fixes grammar. Medium: also tightens for clarity and conciseness. High: rewrites for brevity and polish. If Ollama is unreachable you always get the raw transcript." /></span>
@@ -316,13 +344,32 @@ export default function App() {
         </div>
 
         <div className="field">
-          <div className="field-label"><span>LLM model <Tip text="The Ollama model that cleans up the transcript (filler removal, grammar, rewriting). Any small instruct model works — llama3.2:3b is a good default; qwen2.5:3b and gemma3:4b also work well. Pull it first: 'ollama pull <name>'." /></span></div>
-          <input
-            value={settings.ollama_model}
-            onChange={(e) => setSettings({ ...settings, ollama_model: e.target.value })}
-            onBlur={() => save(settings)}
-            spellCheck={false}
-          />
+          <div className="field-label">
+            <span>LLM model <Tip text="The Ollama model that cleans up the transcript (filler removal, grammar, rewriting). Any small instruct model works — llama3.2:3b is a good default. The list shows what is installed on your Ollama server; add more with 'ollama pull'." /></span>
+            {ollamaModels === null && <small>server unreachable — type the name</small>}
+          </div>
+          {ollamaModels ? (
+            <select
+              value={settings.ollama_model}
+              onChange={(e) => save({ ...settings, ollama_model: e.target.value })}
+            >
+              {!ollamaModels.includes(settings.ollama_model) && (
+                <option value={settings.ollama_model}>
+                  {settings.ollama_model} (not installed)
+                </option>
+              )}
+              {ollamaModels.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={settings.ollama_model}
+              onChange={(e) => setSettings({ ...settings, ollama_model: e.target.value })}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+            />
+          )}
         </div>
 
         <div className="field field-col">
@@ -344,7 +391,7 @@ export default function App() {
             placeholder="Sussurro&#10;Tauri"
           />
         </div>
-      </section>
+      </details>
 
       {busy && <p className="busy" role="alert">{busy}</p>}
 

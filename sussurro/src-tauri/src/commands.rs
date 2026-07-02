@@ -18,10 +18,13 @@ pub fn set_settings(
     settings: Settings,
 ) -> Result<(), String> {
     hotkey::apply(&app, &settings.hotkey).map_err(|e| e.to_string())?;
+    // Only touch the OS launch entry when the state actually changes:
+    // disabling a never-registered entry fails with os error 2 on Windows.
     let autolaunch = app.autolaunch();
-    if settings.autostart {
+    let currently_enabled = autolaunch.is_enabled().unwrap_or(false);
+    if settings.autostart && !currently_enabled {
         autolaunch.enable().map_err(|e| e.to_string())?;
-    } else {
+    } else if !settings.autostart && currently_enabled {
         autolaunch.disable().map_err(|e| e.to_string())?;
     }
     settings
@@ -53,6 +56,18 @@ pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     let settings = state.settings.lock().unwrap();
     models::model_exists(&state.paths.models_dir, &settings.whisper_model)
+}
+
+/// Models available on the configured Ollama server. Errors when unreachable —
+/// the frontend falls back to a free-text field.
+#[tauri::command]
+pub async fn list_ollama_models(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let url = { state.settings.lock().unwrap().ollama_url.clone() };
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::cleanup::ollama::list_models(&url).map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Blocking download (~0.5–3 GB) run off the async runtime.
