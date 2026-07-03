@@ -54,6 +54,32 @@ project decisions here, not in per-machine memory.**
   `std::filesystem`); it is set to 11.0 (arm64 baseline) in
   `tauri.conf.json`.
 
+## Roadmap (agreed 2026-07-03, current version 0.2.1)
+
+### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
+
+1. Runtime smoke test on real Windows with the CI-built installer (msi/exe):
+   hotkey → recording → Vulkan GPU transcription → paste injection.
+2. Runtime smoke test on real Linux (AppImage/deb on Ubuntu 24.04).
+3. **Native Wayland injection (wtype/ydotool)** — the biggest functional
+   gap: modern distros default to Wayland and injection there is fragile.
+   Recommended starting point for development work.
+
+### 0.4.0 — quality & tech debt
+
+4. Streaming typing with cleanup enabled (today only works with Cleanup None).
+5. Unpin cpal 0.16 → 0.18 (retest the windows-core conflict with Tauri).
+6. Move `ort` from 2.0.0-rc.12 to stable when released (coordinate with the
+   pinned ONNX Runtime version in test.yml — see CI gotchas).
+7. Optional Vulkan GPU build on Linux (feature flag; CPU-only today).
+8. Minimal E2E smoke test in CI (app launches, window exists).
+
+### 0.5.0 — go public
+
+9. macOS Developer ID signing + notarization (ad-hoc today → Gatekeeper
+   blocks public users). Consider Windows code signing for SmartScreen.
+10. Make the repo public → auto-update unfreezes (see standing decisions).
+
 ## Per-machine setup
 
 - **Windows dev machines must set a short `CARGO_TARGET_DIR`**
