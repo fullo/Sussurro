@@ -25,6 +25,7 @@ interface Settings {
   ollama_url: string;
   ollama_model: string;
   cleanup_level: CleanupLevel;
+  output_language: string;
   dictionary: string[];
   autostart: boolean;
   sound_feedback: boolean;
@@ -563,6 +564,22 @@ export default function App() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Translate to <Tip text="Dictate in one language and get the cleaned text in another — the LLM translates while cleaning. 'Keep language' disables translation. Works even with Cleanup None (translate-only). Something Wispr Flow can't do locally." /></span>
+            <small>output language</small>
+          </div>
+          <select
+            value={settings.output_language}
+            onChange={(e) => save({ ...settings, output_language: e.target.value })}
+          >
+            <option value="">Keep language</option>
+            {LANGUAGES.filter(([code]) => code !== "auto").map(([code, label]) => (
+              <option key={code} value={code}>{label}</option>
+            ))}
+          </select>
         </div>
 
         <div className="field">

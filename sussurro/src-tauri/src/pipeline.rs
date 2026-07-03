@@ -218,7 +218,10 @@ fn preview_loop(app: &AppHandle) {
     }
     let prompt = dictionary_prompt(&settings.dictionary);
     let streaming = settings.stream_injection;
-    let raw_streaming = settings.cleanup_level == crate::settings::CleanupLevel::None;
+    // Word-by-word raw streaming only when there's truly no LLM step: cleanup
+    // None AND no translation. Otherwise stream sentence by sentence.
+    let raw_streaming = settings.cleanup_level == crate::settings::CleanupLevel::None
+        && crate::cleanup::prompt::output_language_name(&settings.output_language).is_none();
     let mut last_len = 0usize;
 
     loop {
@@ -280,6 +283,7 @@ fn preview_loop(app: &AppHandle) {
                             &settings.cleanup_level,
                             &settings.dictionary,
                             style,
+                            &settings.output_language,
                             chunk.trim(),
                         );
                         let cleaned = cleaned.trim().to_string();
@@ -394,8 +398,9 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
             (stream.raw_consumed.clone(), stream.injected.clone())
         };
         if !raw_consumed.is_empty() {
-            let raw_streaming =
-                settings.cleanup_level == crate::settings::CleanupLevel::None;
+            let raw_streaming = settings.cleanup_level == crate::settings::CleanupLevel::None
+                && crate::cleanup::prompt::output_language_name(&settings.output_language)
+                    .is_none();
             let mut final_text = injected_so_far;
             if let Some(tail) = raw.strip_prefix(raw_consumed.as_str()) {
                 if !tail.trim().is_empty() {
@@ -412,6 +417,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
                             &settings.cleanup_level,
                             &settings.dictionary,
                             style,
+                            &settings.output_language,
                             tail.trim(),
                         )
                     };
@@ -454,6 +460,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
         &settings.cleanup_level,
         &settings.dictionary,
         style,
+        &settings.output_language,
         &raw,
     );
 

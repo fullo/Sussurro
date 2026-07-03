@@ -6,15 +6,17 @@ use std::time::Duration;
 
 /// Clean `transcript` via Ollama. NEVER fails the pipeline: any error
 /// (server down, model missing, timeout, empty reply) returns the raw transcript.
+#[allow(clippy::too_many_arguments)]
 pub fn cleanup(
     url: &str,
     model: &str,
     level: &CleanupLevel,
     dictionary: &[String],
     style: Option<&str>,
+    out_lang: &str,
     transcript: &str,
 ) -> String {
-    let Some(messages) = build_messages(level, dictionary, style, transcript) else {
+    let Some(messages) = build_messages(level, dictionary, style, out_lang, transcript) else {
         return transcript.to_string();
     };
     match chat(url, model, &messages) {
@@ -101,7 +103,7 @@ mod tests {
     #[test]
     fn level_none_skips_network_entirely() {
         // Would panic/hang if it tried the network: URL is unroutable.
-        let out = cleanup("http://0.0.0.0:1", "m", &CleanupLevel::None, &[], None, "um raw text");
+        let out = cleanup("http://0.0.0.0:1", "m", &CleanupLevel::None, &[], None, "", "um raw text");
         assert_eq!(out, "um raw text");
     }
 
@@ -113,6 +115,7 @@ mod tests {
             &CleanupLevel::Light,
             &[],
             None,
+            "",
             "um raw text",
         );
         assert_eq!(out, "um raw text");
@@ -144,6 +147,7 @@ mod tests {
             &CleanupLevel::Light,
             &[],
             None,
+            "",
             "um so basically i think uh we should ship it",
         );
         println!("cleaned: {out}");
