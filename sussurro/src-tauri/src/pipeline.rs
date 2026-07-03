@@ -69,7 +69,8 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool, command: bool) {
     match trigger_action(push_to_talk, pressed, recording) {
         TriggerAction::Ignore => {}
         TriggerAction::Start => {
-            if let Err(e) = state.recorder.lock().unwrap().start() {
+            let device = state.settings.lock().unwrap().input_device.clone();
+            if let Err(e) = state.recorder.lock().unwrap().start(&device) {
                 set_status(app, &format!("error: {e}"));
                 return;
             }
