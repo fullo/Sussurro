@@ -486,6 +486,18 @@ kbd {
 }
 .advanced-group .field:first-of-type { border-top: none; }
 
+.prompt-override { margin-top: 0.5rem; }
+.prompt-override .prompt-level {
+  display: block;
+  font-family: var(--f-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--c-text-light);
+  margin-bottom: 0.2rem;
+}
+.prompt-override textarea { font-size: 0.82rem; }
+
 /* ---------- Snippets ---------- */
 
 .card-hint {

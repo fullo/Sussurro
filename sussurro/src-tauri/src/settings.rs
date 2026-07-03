@@ -21,6 +21,16 @@ pub enum SttEngine {
     Parakeet,
 }
 
+/// Optional user overrides for the per-level cleanup instructions sent to the
+/// LLM. Empty string = use the built-in default for that level.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct PromptOverrides {
+    pub light: String,
+    pub medium: String,
+    pub high: String,
+}
+
 /// Tone rule applied when dictating into a matching application.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct AppStyle {
@@ -85,6 +95,8 @@ pub struct Settings {
     /// Interpret spoken editing commands ("a capo"/"new line", and with
     /// cleanup on also "scratch that"/"cancella quello").
     pub voice_commands: bool,
+    /// Advanced: custom per-level cleanup instructions (empty = default).
+    pub prompt_overrides: PromptOverrides,
 }
 
 impl Default for Settings {
@@ -111,6 +123,7 @@ impl Default for Settings {
             whisper_mode: false,
             stream_injection: false,
             voice_commands: true,
+            prompt_overrides: PromptOverrides::default(),
         }
     }
 }
