@@ -63,10 +63,10 @@ project decisions here, not in per-machine memory.**
 2. Runtime smoke test on real Linux (AppImage/deb on Ubuntu 24.04).
 3. **Native Wayland injection** — the biggest functional gap: modern distros
    default to Wayland and injection there is fragile. Status: wtype/ydotool
-   ladder shipped; **issue #40 (KDE/GNOME reject virtual-keyboard → adopt the
-   RemoteDesktop portal via ashpd) is scheduled for 0.3.9** — portal is the
-   primary backend, tools stay as fallbacks. Needs runtime verification on a
-   real KDE/GNOME Wayland session (reporter can test).
+   ladder shipped; the RemoteDesktop portal (ashpd, issue #40) **shipped as
+   the primary backend in 0.3.9** behind the default-on `wayland-portal`
+   feature. Issue #40 stays open until the reporter verifies at runtime on
+   KDE Plasma 6 Wayland.
 
 ### 0.4.0 — quality & tech debt
 
@@ -88,6 +88,11 @@ project decisions here, not in per-machine memory.**
 9. macOS Developer ID signing + notarization (ad-hoc today → Gatekeeper
    blocks public users). Consider Windows code signing for SmartScreen.
 10. Make the repo public → auto-update unfreezes (see standing decisions).
+11. **Flatpak** (deferred here from 0.3.10 on 2026-07-03): distribution-only,
+    no app changes. A ready manifest + release-workflow job live on the
+    closed PR #46 / branch `feat/flatpak` — reuse them, then submit to
+    Flathub (needs the public repo). AppImage already ships in every release
+    (it's the updater's Linux format) — nothing to add there.
 
 ## Per-machine setup
 
