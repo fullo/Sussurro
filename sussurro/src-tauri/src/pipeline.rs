@@ -63,6 +63,10 @@ fn position_overlay(w: &tauri::WebviewWindow) {
 /// spawned. `command`: the trigger was the command-mode hotkey.
 pub fn handle_trigger(app: &AppHandle, pressed: bool, command: bool) {
     let state = app.state::<AppState>();
+    // A running mic test yields to the real thing: stop it and discard the audio.
+    if state.mic_test.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        let _ = state.recorder.lock().unwrap().stop();
+    }
     let push_to_talk = state.settings.lock().unwrap().push_to_talk;
     let recording = state.recorder.lock().unwrap().is_recording();
 

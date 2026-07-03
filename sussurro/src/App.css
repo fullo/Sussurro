@@ -463,6 +463,26 @@ kbd {
 }
 .btn-ghost:hover { color: var(--c-dark); border-color: var(--c-dark); }
 
+/* ---------- Microphone test / VU meter ---------- */
+
+.mic-col { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; flex: 1; max-width: 320px; }
+.mic-row { display: flex; align-items: center; gap: 0.5rem; }
+.mic-row select { flex: 1; min-width: 0; }
+.vu {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--c-surface-alt);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.vu-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--c-dark), var(--brand));
+  transition: width 120ms linear;
+}
+
 /* A select disguised as a ghost button (per-row Translate…). */
 .translate-select {
   appearance: none;

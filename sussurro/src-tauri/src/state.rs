@@ -41,6 +41,8 @@ pub struct AppState {
     pub paths: AppPaths,
     /// True while the current recording was started by the command hotkey.
     pub command_mode: std::sync::atomic::AtomicBool,
+    /// True while the recorder is running only to feed the mic-test VU meter.
+    pub mic_test: std::sync::atomic::AtomicBool,
     /// Streaming-injection progress for the recording in flight.
     pub stream: Mutex<StreamState>,
 }

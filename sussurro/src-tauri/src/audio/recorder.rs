@@ -61,6 +61,19 @@ impl Recorder {
         Some(resample_linear(&mono, rate, TARGET_RATE))
     }
 
+    /// RMS amplitude of the most recent ~100 ms of raw capture — the live
+    /// input level for the mic VU meter. None until the stream is up.
+    pub fn level(&self) -> Option<f32> {
+        let rate = self.meta.0.load(Ordering::Relaxed);
+        let channels = self.meta.1.load(Ordering::Relaxed);
+        if !self.is_recording() || rate == 0 || channels == 0 {
+            return None;
+        }
+        let buf = self.live.lock().unwrap();
+        let window = (rate as usize * channels) / 10;
+        Some(crate::audio::resample::rms(&buf[buf.len().saturating_sub(window)..]))
+    }
+
     /// Returns 16 kHz mono f32 samples.
     pub fn stop(&mut self) -> Result<Vec<f32>> {
         let stop_tx = self.stop_tx.take().ok_or_else(|| anyhow!("not recording"))?;
@@ -155,6 +168,12 @@ mod tests {
     fn snapshot_is_none_when_idle() {
         let r = Recorder::default();
         assert!(r.snapshot_16k().is_none());
+    }
+
+    #[test]
+    fn level_is_none_when_idle() {
+        let r = Recorder::default();
+        assert!(r.level().is_none());
     }
 
     /// Needs a real microphone. Run manually: cargo test record_one_second -- --ignored --nocapture

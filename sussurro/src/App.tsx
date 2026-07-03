@@ -260,6 +260,8 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<HistoryEntry[] | null>(null);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
   const [setupDismissed, setSetupDismissed] = useState(false);
+  const [micTest, setMicTest] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
 
   const checkOllama = async () => {
     try {
@@ -312,7 +314,47 @@ export default function App() {
     };
   }, []);
 
+  const recordingNow = status.startsWith("recording");
+
+  // Feed the VU meter while a mic test or a real recording is running.
+  useEffect(() => {
+    if (!micTest && !recordingNow) {
+      setMicLevel(0);
+      return;
+    }
+    // Dictation takes over the recorder: the backend already stopped the test.
+    if (micTest && recordingNow) setMicTest(false);
+    const id = setInterval(() => {
+      invoke<number>("mic_level").then(setMicLevel).catch(() => {});
+    }, 120);
+    return () => clearInterval(id);
+  }, [micTest, recordingNow]);
+
+  // Don't leave the mic open if the window unmounts mid-test.
+  useEffect(() => () => {
+    invoke("stop_mic_test").catch(() => {});
+  }, []);
+
   if (!settings) return <main className="loading">Loading…</main>;
+
+  const toggleMicTest = async () => {
+    try {
+      if (micTest) {
+        await invoke("stop_mic_test");
+        setMicTest(false);
+      } else {
+        await invoke("start_mic_test");
+        setMicTest(true);
+      }
+    } catch (e) {
+      setBusy(String(e));
+    }
+  };
+
+  // RMS → dB, mapped so -60 dB (silence) = 0% and 0 dB (clipping) = 100%.
+  const vuPct = micLevel > 0
+    ? Math.max(0, Math.min(100, ((20 * Math.log10(micLevel) + 60) / 60) * 100))
+    : 0;
 
   const save = async (next: Settings) => {
     const serverChanged = next.ollama_url !== settings.ollama_url;
@@ -492,20 +534,43 @@ export default function App() {
             <span>Microphone <Tip text="Which input device to record from. Default follows the system microphone; pick a specific one if you have several (headset, webcam, desk mic). If the chosen device is unplugged, Sussurro falls back to the default." /></span>
             <small>capture device</small>
           </div>
-          <select
-            value={settings.input_device}
-            onChange={(e) => save({ ...settings, input_device: e.target.value })}
-          >
-            <option value="">System default</option>
-            {inputDevices.map((d) => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-            {settings.input_device && !inputDevices.includes(settings.input_device) && (
-              <option value={settings.input_device}>
-                {settings.input_device} (unavailable)
-              </option>
+          <div className="mic-col">
+            <div className="mic-row">
+              <select
+                value={settings.input_device}
+                onChange={(e) => save({ ...settings, input_device: e.target.value })}
+              >
+                <option value="">System default</option>
+                {inputDevices.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+                {settings.input_device && !inputDevices.includes(settings.input_device) && (
+                  <option value={settings.input_device}>
+                    {settings.input_device} (unavailable)
+                  </option>
+                )}
+              </select>
+              <button
+                className="btn-ghost"
+                onClick={toggleMicTest}
+                title="Listen to the input level to check the right microphone is picked up"
+              >
+                {micTest ? "Stop" : "Test"}
+              </button>
+            </div>
+            {(micTest || recordingNow) && (
+              <div
+                className="vu"
+                role="meter"
+                aria-label="Input level"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(vuPct)}
+              >
+                <div className="vu-fill" style={{ width: `${vuPct}%` }} />
+              </div>
             )}
-          </select>
+          </div>
         </div>
 
         <div className="field">

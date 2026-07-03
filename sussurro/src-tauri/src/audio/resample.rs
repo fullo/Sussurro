@@ -29,6 +29,14 @@ pub fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> 
         .collect()
 }
 
+/// Root-mean-square amplitude of the clip; 0.0 for empty input.
+pub fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+}
+
 /// True when the clip's RMS energy is below `threshold` (~0.01 for typical
 /// mics): nothing worth transcribing. Whisper hallucinates text ("you",
 /// "thank you") on silence, so we gate it out before inference.
@@ -97,6 +105,19 @@ mod tests {
     fn all_silence_is_returned_unchanged() {
         let samples = vec![0.0f32; 8_000];
         assert_eq!(trim_silence(&samples, 0.01, 1_600, 3_200).len(), 8_000);
+    }
+
+    #[test]
+    fn rms_of_empty_and_silence_is_zero() {
+        assert_eq!(rms(&[]), 0.0);
+        assert_eq!(rms(&vec![0.0; 1_000]), 0.0);
+    }
+
+    #[test]
+    fn rms_of_constant_signal_is_its_amplitude() {
+        let signal: Vec<f32> = (0..1_000).map(|i| if i % 2 == 0 { 0.3 } else { -0.3 }).collect();
+        // f32 accumulation over 1000 samples: tolerance well above epsilon
+        assert!((rms(&signal) - 0.3).abs() < 1e-4);
     }
 
     #[test]
