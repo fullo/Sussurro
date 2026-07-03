@@ -74,6 +74,7 @@ pub async fn reclean(state: State<'_, AppState>, raw: String) -> Result<HistoryE
             &settings.cleanup_level,
             &settings.dictionary,
             None,
+            &settings.output_language,
             &raw,
         );
         let entry = HistoryEntry {

@@ -59,6 +59,9 @@ pub struct Settings {
     pub sound_feedback: bool,
     /// Whisper language hint: "auto" or an ISO 639-1 code like "it", "en".
     pub language: String,
+    /// Translate the cleaned text into this language. Empty/"same" = keep the
+    /// dictated language. An ISO 639-1 code otherwise (e.g. "en").
+    pub output_language: String,
     /// Voice shortcuts: dictating exactly a cue pastes its text instead.
     pub snippets: Vec<Snippet>,
     /// Show a live partial transcript in the overlay while speaking.
@@ -95,6 +98,7 @@ impl Default for Settings {
             autostart: false,
             sound_feedback: true,
             language: "auto".into(),
+            output_language: String::new(),
             snippets: Vec::new(),
             live_preview: true,
             app_styles: Vec::new(),
