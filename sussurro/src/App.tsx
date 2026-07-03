@@ -41,6 +41,7 @@ interface Settings {
   stream_injection: boolean;
   voice_commands: boolean;
   prompt_overrides: { light: string; medium: string; high: string };
+  history_retention_days: number;
 }
 
 const LANGUAGES: [string, string][] = [
@@ -244,6 +245,21 @@ export default function App() {
   const [pillHover, setPillHover] = useState(false);
   /** timestamp of the history entry being edited, and its draft text */
   const [editing, setEditing] = useState<{ ts: string; draft: string } | null>(null);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<HistoryEntry[] | null>(null);
+
+  const runHistorySearch = async (query: string) => {
+    setHistoryQuery(query);
+    if (!query.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    try {
+      setSearchResults(await invoke<HistoryEntry[]>("search_history", { query, n: 50 }));
+    } catch {
+      setSearchResults(null);
+    }
+  };
 
   const loadOllamaModels = async () => {
     try {
@@ -917,11 +933,41 @@ export default function App() {
           ) : undefined
         }
       >
-        {history.length === 0 && (
+        <div className="field">
+          <div className="field-label">
+            <span>Search & retention <Tip text="Search the WHOLE history (raw and cleaned text, case-insensitive). Retention auto-deletes entries older than the chosen window — a privacy tool: what you dictated last month doesn't need to live on disk forever." /></span>
+            <small>{searchResults !== null ? `${searchResults.length} matches` : "full-text, whole history"}</small>
+          </div>
+          <div className="model-row">
+            <input
+              type="search"
+              placeholder="search dictations…"
+              value={historyQuery}
+              onChange={(e) => runHistorySearch(e.target.value)}
+              spellCheck={false}
+            />
+            <select
+              value={settings.history_retention_days}
+              onChange={(e) =>
+                save({ ...settings, history_retention_days: Number(e.target.value) })
+              }
+              title="Auto-delete entries older than"
+            >
+              <option value={0}>Keep forever</option>
+              <option value={7}>7 days</option>
+              <option value={30}>30 days</option>
+              <option value={90}>90 days</option>
+            </select>
+          </div>
+        </div>
+        {history.length === 0 && searchResults === null && (
           <p className="empty">Nothing yet. Hold the shortcut and speak.</p>
         )}
+        {searchResults !== null && searchResults.length === 0 && (
+          <p className="empty">No matches for “{historyQuery}”.</p>
+        )}
         <ol>
-          {history.map((h) => (
+          {(searchResults ?? history).map((h) => (
             <li key={h.timestamp}>
               <div className="entry-head">
                 <time>{new Date(h.timestamp).toLocaleTimeString()}</time>

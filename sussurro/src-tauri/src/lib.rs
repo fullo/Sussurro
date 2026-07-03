@@ -50,6 +50,7 @@ pub fn run() {
             let handle = app.handle();
             let paths = AppPaths::from_app(handle);
             let settings = Settings::load(&paths.settings_file);
+            let _ = history::prune_older_than(&paths.history_file, settings.history_retention_days);
             // Neither a failed shortcut registration (e.g. GNOME Wayland
             // policy) nor a missing tray host (headless CI, minimal WMs) is
             // fatal: the window and the in-app Dictate button still work.
@@ -86,6 +87,7 @@ pub fn run() {
             commands::get_settings,
             commands::set_settings,
             commands::get_history,
+            commands::search_history,
             commands::clear_history,
             commands::model_is_downloaded,
             commands::download_model,
