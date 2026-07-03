@@ -647,3 +647,19 @@ footer {
   color: var(--c-text-light);
   letter-spacing: 0.05em;
 }
+footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+footer a:hover { color: var(--c-dark); }
+
+/* Inline spinner for buttons with a long-running action. */
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 0.35em;
+  vertical-align: -2px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: daruma-spin 0.8s linear infinite;
+}
+.btn-icon .btn-spinner { margin-right: 0; width: 16px; height: 16px; vertical-align: middle; }

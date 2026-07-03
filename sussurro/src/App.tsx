@@ -245,6 +245,8 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [status, setStatus] = useState("idle");
   const [modelReady, setModelReady] = useState(true);
+  const [downloadingModel, setDownloadingModel] = useState(false);
+  const [pullingModel, setPullingModel] = useState(false);
   const [busy, setBusy] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   /** null = Ollama unreachable → free-text fallback */
@@ -326,6 +328,7 @@ export default function App() {
   };
 
   const downloadModel = async () => {
+    setDownloadingModel(true);
     setBusy("Downloading model — this can take a while…");
     try {
       await invoke("download_model");
@@ -333,6 +336,8 @@ export default function App() {
       setModelReady(true);
     } catch (e) {
       setBusy(String(e));
+    } finally {
+      setDownloadingModel(false);
     }
   };
 
@@ -436,7 +441,9 @@ export default function App() {
                 is not on your Ollama server.
                 <button
                   className="btn-ghost"
+                  disabled={pullingModel}
                   onClick={async () => {
+                    setPullingModel(true);
                     setBusy(`Pulling ${settings.ollama_model}… (can take minutes)`);
                     try {
                       await invoke("pull_ollama_model");
@@ -445,18 +452,22 @@ export default function App() {
                       loadOllamaModels();
                     } catch (e) {
                       setBusy(String(e));
+                    } finally {
+                      setPullingModel(false);
                     }
                   }}
                 >
-                  Pull it
+                  {pullingModel && <span className="btn-spinner" aria-hidden="true" />}
+                  {pullingModel ? "Pulling…" : "Pull it"}
                 </button>
               </li>
             )}
             {!modelReady && (
               <li>
                 <span className="setup-bad">✗</span> Speech model not downloaded yet.
-                <button className="btn-ghost" onClick={downloadModel}>
-                  Download
+                <button className="btn-ghost" onClick={downloadModel} disabled={downloadingModel}>
+                  {downloadingModel && <span className="btn-spinner" aria-hidden="true" />}
+                  {downloadingModel ? "Downloading…" : "Download"}
                 </button>
               </li>
             )}
@@ -588,24 +599,29 @@ export default function App() {
               <button
                 className="btn-primary btn-icon"
                 onClick={downloadModel}
-                title="Download the selected model"
-                aria-label="Download the selected model"
+                disabled={downloadingModel}
+                title={downloadingModel ? "Downloading — this can take a while…" : "Download the selected model"}
+                aria-label={downloadingModel ? "Downloading model" : "Download the selected model"}
               >
-                <svg
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M12 3v12" />
-                  <path d="m7 10 5 5 5-5" />
-                  <path d="M5 21h14" />
-                </svg>
+                {downloadingModel ? (
+                  <span className="btn-spinner" aria-hidden="true" />
+                ) : (
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M12 3v12" />
+                    <path d="m7 10 5 5 5-5" />
+                    <path d="M5 21h14" />
+                  </svg>
+                )}
               </button>
             )}
           </div>
@@ -826,6 +842,56 @@ export default function App() {
           </button>
         </div>
 
+        <div className="field field-col">
+          <div className="field-label">
+            <span>Snippets <Tip text="Example: cue 'firma email' → pastes your full signature. Matching ignores case and punctuation, and skips the AI cleanup entirely." /></span>
+            <small>say a cue exactly — Sussurro pastes the full text instead of transcribing</small>
+          </div>
+          {settings.snippets.map((s, i) => (
+          <div className="snippet-row" key={i}>
+            <input
+              placeholder="cue (what you say)"
+              value={s.cue}
+              onChange={(e) => {
+                const snippets = settings.snippets.slice();
+                snippets[i] = { ...s, cue: e.target.value };
+                setSettings({ ...settings, snippets });
+              }}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+            />
+            <textarea
+              placeholder="text to paste"
+              rows={2}
+              value={s.text}
+              onChange={(e) => {
+                const snippets = settings.snippets.slice();
+                snippets[i] = { ...s, text: e.target.value };
+                setSettings({ ...settings, snippets });
+              }}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+            />
+            <button
+              className="btn-ghost"
+              onClick={() =>
+                save({ ...settings, snippets: settings.snippets.filter((_, j) => j !== i) })
+              }
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+          <button
+            className="btn-ghost"
+            onClick={() =>
+              setSettings({ ...settings, snippets: [...settings.snippets, { cue: "", text: "" }] })
+            }
+          >
+            + Add snippet
+          </button>
+        </div>
+
         <div className="field">
           <div className="field-label">
             <span>Portable config <Tip text="Export your dictionary, snippets and app styles to a JSON file, or import one — to move your setup between machines (sync it with a file/Git/Syncthing, no cloud account). Import merges without duplicates; machine-specific settings like hotkeys and models folder are not included." /></span>
@@ -872,53 +938,6 @@ export default function App() {
             </button>
           </div>
         </div>
-        <p className="card-hint">
-          Say a cue exactly — Sussurro pastes the full text instead of transcribing.
-          <Tip text="Example: cue 'firma email' → pastes your full signature. Matching ignores case and punctuation, and skips the AI cleanup entirely." />
-        </p>
-        {settings.snippets.map((s, i) => (
-          <div className="snippet-row" key={i}>
-            <input
-              placeholder="cue (what you say)"
-              value={s.cue}
-              onChange={(e) => {
-                const snippets = settings.snippets.slice();
-                snippets[i] = { ...s, cue: e.target.value };
-                setSettings({ ...settings, snippets });
-              }}
-              onBlur={() => save(settings)}
-              spellCheck={false}
-            />
-            <textarea
-              placeholder="text to paste"
-              rows={2}
-              value={s.text}
-              onChange={(e) => {
-                const snippets = settings.snippets.slice();
-                snippets[i] = { ...s, text: e.target.value };
-                setSettings({ ...settings, snippets });
-              }}
-              onBlur={() => save(settings)}
-              spellCheck={false}
-            />
-            <button
-              className="btn-ghost"
-              onClick={() =>
-                save({ ...settings, snippets: settings.snippets.filter((_, j) => j !== i) })
-              }
-            >
-              Remove
-            </button>
-          </div>
-        ))}
-        <button
-          className="btn-ghost"
-          onClick={() =>
-            setSettings({ ...settings, snippets: [...settings.snippets, { cue: "", text: "" }] })
-          }
-        >
-          + Add snippet
-        </button>
       </CollapsibleCard>
 
       {busy && <p className="busy" role="alert">{busy}</p>}
@@ -1227,7 +1246,18 @@ export default function App() {
       </CollapsibleCard>
 
       <footer>
-        <span>すべてローカル — everything stays local</span>
+        <span>
+          すべてローカル — everything stays local · by{" "}
+          <a
+            href="https://darumahq.it"
+            onClick={(e) => {
+              e.preventDefault();
+              openUrl("https://darumahq.it/");
+            }}
+          >
+            DarumaHQ.it
+          </a>
+        </span>
         <button
           className="btn-ghost"
           onClick={async () => {
