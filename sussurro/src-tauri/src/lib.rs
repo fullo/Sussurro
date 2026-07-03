@@ -47,8 +47,15 @@ pub fn run() {
             let handle = app.handle();
             let paths = AppPaths::from_app(handle);
             let settings = Settings::load(&paths.settings_file);
-            hotkey::apply(handle, &settings.hotkey, &settings.command_hotkey)?;
-            tray::setup(handle)?;
+            // Neither a failed shortcut registration (e.g. GNOME Wayland
+            // policy) nor a missing tray host (headless CI, minimal WMs) is
+            // fatal: the window and the in-app Dictate button still work.
+            if let Err(e) = hotkey::apply(handle, &settings.hotkey, &settings.command_hotkey) {
+                eprintln!("global shortcut unavailable: {e:#}");
+            }
+            if let Err(e) = tray::setup(handle) {
+                eprintln!("tray unavailable: {e:#}");
+            }
             app.manage(AppState {
                 recorder: Mutex::new(Recorder::default()),
                 transcriber: Mutex::new(None),
