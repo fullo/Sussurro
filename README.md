@@ -220,8 +220,10 @@ pair and orphaned installs.)
 
 - Streaming typing is experimental and only works with Cleanup level None;
   with cleanup enabled the text lands after you release the hotkey.
-- Linux Wayland: paste injection falls back to `wtype` when enigo fails —
-  install it (`sudo apt install wtype`); untested on real Wayland yet.
+- Linux Wayland: injection goes through the XDG **RemoteDesktop portal**
+  first (zero setup on KDE/GNOME; the OS asks for consent on first use —
+  KDE may re-ask after a reboot, kde#480235). Fallbacks: `ydotool`, `wtype`,
+  enigo. See issue #40 for the full analysis.
 - Linux builds are CPU-only by default (Vulkan needs the SDK; Windows uses
   Vulkan, macOS uses Metal — see the Cargo.toml target-specific deps).
 - cpal is pinned to 0.16 (0.18 has a windows-core version conflict with the

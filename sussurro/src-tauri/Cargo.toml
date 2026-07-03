@@ -15,12 +15,16 @@ name = "sussurro_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-default = []
+default = ["wayland-portal"]
 # Opt-in GPU transcription on Linux (CPU-only by default so contributor and
 # CI builds don't need the Vulkan SDK). Build with:
 #   npm run tauri build -- --features linux-vulkan
 # Requires vulkan headers + glslc at build time; users need a Vulkan driver.
 linux-vulkan = ["whisper-rs/vulkan"]
+# Text injection via the XDG RemoteDesktop portal on Wayland (issue #40) —
+# the only zero-setup path on KDE/GNOME, where the virtual-keyboard protocol
+# is closed to external clients. Disable to drop the ashpd/zbus tree.
+wayland-portal = ["dep:ashpd", "dep:tokio"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -61,9 +65,13 @@ whisper-rs = { version = "0.16.0", features = ["vulkan"] }
 whisper-rs = { version = "0.16.0", features = ["metal"] }
 
 # Native Wayland clipboard (wlr-data-control protocol) — without this arboard
-# only reaches the XWayland clipboard on Wayland sessions.
+# only reaches the XWayland clipboard on Wayland sessions. ashpd/tokio back
+# the RemoteDesktop-portal injection (wayland-portal feature).
 [target.'cfg(target_os = "linux")'.dependencies]
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
+# remote_desktop needs screencast too: its module imports screencast::Stream.
+ashpd = { version = "0.13", features = ["remote_desktop", "screencast"], optional = true }
+tokio = { version = "1", features = ["rt"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.27.0"

@@ -61,9 +61,12 @@ project decisions here, not in per-machine memory.**
 1. Runtime smoke test on real Windows with the CI-built installer (msi/exe):
    hotkey → recording → Vulkan GPU transcription → paste injection.
 2. Runtime smoke test on real Linux (AppImage/deb on Ubuntu 24.04).
-3. **Native Wayland injection (wtype/ydotool)** — the biggest functional
-   gap: modern distros default to Wayland and injection there is fragile.
-   Recommended starting point for development work.
+3. **Native Wayland injection** — the biggest functional gap: modern distros
+   default to Wayland and injection there is fragile. Status: wtype/ydotool
+   ladder shipped; **issue #40 (KDE/GNOME reject virtual-keyboard → adopt the
+   RemoteDesktop portal via ashpd) is scheduled for 0.3.9** — portal is the
+   primary backend, tools stay as fallbacks. Needs runtime verification on a
+   real KDE/GNOME Wayland session (reporter can test).
 
 ### 0.4.0 — quality & tech debt
 

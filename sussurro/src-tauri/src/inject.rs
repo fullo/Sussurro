@@ -12,9 +12,15 @@ pub fn paste_modifier() -> Key {
 
 /// Paste `text` into the focused app: save clipboard → set text → synthesize
 /// Ctrl/Cmd+V → restore clipboard. Paste-injection works in far more apps
-/// than per-character typing. On Wayland, native tools (wtype/ydotool,
-/// wl-clipboard) are preferred over enigo — see the `wayland` module.
+/// than per-character typing. On Wayland the RemoteDesktop portal types the
+/// text directly first (the only zero-setup path on KDE/GNOME — issue #40);
+/// the native tool ladder and the clipboard flow remain as fallbacks.
 pub fn inject_text(text: &str) -> Result<()> {
+    #[cfg(all(target_os = "linux", feature = "wayland-portal"))]
+    if wayland::is_wayland() && crate::wayland_portal::type_text(text).is_ok() {
+        return Ok(()); // typed directly — clipboard untouched, terminals included
+    }
+
     let saved = read_clipboard();
 
     let written = write_clipboard(text);
@@ -94,12 +100,17 @@ fn clear_clipboard() {
 
 /* ---------- key synthesis ---------- */
 
-/// Ctrl/Cmd+<letter> in the focused app. On Wayland the native tool ladder
-/// (wtype → ydotool) runs first — enigo's Wayland support is experimental and
-/// can silently no-op; enigo remains the fallback for XWayland apps.
+/// Ctrl/Cmd+<letter> in the focused app. On Wayland the ladder is:
+/// RemoteDesktop portal → native tools (wtype → ydotool) → enigo. The portal
+/// is the only zero-setup path on KDE/GNOME (issue #40); enigo's Wayland
+/// support can silently no-op but still helps XWayland apps.
 fn synth_combo(letter: char) -> Result<()> {
     #[cfg(target_os = "linux")]
     if wayland::is_wayland() {
+        #[cfg(feature = "wayland-portal")]
+        if crate::wayland_portal::key_combo(letter).is_ok() {
+            return Ok(());
+        }
         return match wayland::synth_combo_native(letter) {
             Ok(()) => Ok(()),
             Err(native_err) => enigo_combo(letter).map_err(|_| native_err),

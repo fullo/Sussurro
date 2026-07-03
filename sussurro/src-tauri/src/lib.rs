@@ -14,6 +14,8 @@ pub mod stats;
 pub mod stt;
 pub mod voice_commands;
 pub mod tray;
+#[cfg(all(target_os = "linux", feature = "wayland-portal"))]
+pub mod wayland_portal;
 
 use crate::audio::recorder::Recorder;
 use crate::settings::Settings;
@@ -52,6 +54,10 @@ pub fn run() {
             let handle = app.handle();
             let paths = AppPaths::from_app(handle);
             let settings = Settings::load(&paths.settings_file);
+            // Wayland portal injection persists its consent token next to
+            // the settings; without this the dialog would reappear per launch.
+            #[cfg(all(target_os = "linux", feature = "wayland-portal"))]
+            wayland_portal::init(paths.settings_file.with_file_name("portal-restore-token"));
             let _ = history::prune_older_than(&paths.history_file, settings.history_retention_days);
             // Neither a failed shortcut registration (e.g. GNOME Wayland
             // policy) nor a missing tray host (headless CI, minimal WMs) is
