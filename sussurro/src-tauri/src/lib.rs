@@ -20,9 +20,19 @@ pub mod wayland_portal;
 use crate::audio::recorder::Recorder;
 use crate::settings::Settings;
 use crate::state::{AppPaths, AppState};
-use std::sync::Mutex;
-use tauri::Manager;
+use std::sync::{Mutex, OnceLock};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::ShortcutState;
+
+/// The running app handle, stashed at setup so free functions can hop onto the
+/// main thread. On macOS, paste injection needs this: enigo's keycode lookup
+/// calls Text Input Source APIs that abort if run off the main thread (#48).
+/// `None` in unit tests, which never set it.
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+pub fn app_handle() -> Option<AppHandle> {
+    APP_HANDLE.get().cloned()
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -52,6 +62,7 @@ pub fn run() {
         )
         .setup(|app| {
             let handle = app.handle();
+            let _ = APP_HANDLE.set(handle.clone());
             let paths = AppPaths::from_app(handle);
             let settings = Settings::load(&paths.settings_file);
             // Wayland portal injection persists its consent token next to
