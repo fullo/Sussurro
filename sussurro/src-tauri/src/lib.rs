@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod cleanup;
 pub mod commands;
+pub mod config_io;
 pub mod history;
 pub mod hotkey;
 pub mod inject;
@@ -24,6 +25,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--autostart"]),
@@ -90,7 +92,9 @@ pub fn run() {
             commands::trigger_dictation,
             commands::copy_text,
             commands::reclean,
-            commands::learn_correction
+            commands::learn_correction,
+            commands::export_config,
+            commands::import_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
