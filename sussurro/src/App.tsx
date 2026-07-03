@@ -40,6 +40,7 @@ interface Settings {
   whisper_mode: boolean;
   stream_injection: boolean;
   voice_commands: boolean;
+  prompt_overrides: { light: string; medium: string; high: string };
 }
 
 const LANGUAGES: [string, string][] = [
@@ -239,6 +240,7 @@ export default function App() {
   /** null = Ollama unreachable → free-text fallback */
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
   const [inputDevices, setInputDevices] = useState<string[]>([]);
+  const [defaultPrompts, setDefaultPrompts] = useState<string[]>(["", "", ""]);
   const [pillHover, setPillHover] = useState(false);
   /** timestamp of the history entry being edited, and its draft text */
   const [editing, setEditing] = useState<{ ts: string; draft: string } | null>(null);
@@ -262,6 +264,7 @@ export default function App() {
     refresh();
     loadOllamaModels();
     invoke<string[]>("list_input_devices").then(setInputDevices).catch(() => {});
+    invoke<string[]>("get_default_prompts").then(setDefaultPrompts).catch(() => {});
     const unlisten = listen<string>("pipeline-status", (e) => {
       setStatus(e.payload);
       if (e.payload === "idle") refresh();
@@ -612,6 +615,32 @@ export default function App() {
           )}
         </div>
 
+        <AdvancedGroup>
+          <div className="field field-col">
+            <div className="field-label">
+              <span>Cleanup prompts <Tip text="Rewrite the per-level instructions sent to the LLM. Leave a box empty to use the built-in default (shown as placeholder). Power-user territory: a bad prompt makes every dictation worse." /></span>
+              <small>empty = built-in default</small>
+            </div>
+            {(["light", "medium", "high"] as const).map((lvl, i) => (
+              <div key={lvl} className="prompt-override">
+                <span className="prompt-level">{lvl}</span>
+                <textarea
+                  rows={2}
+                  value={settings.prompt_overrides[lvl]}
+                  placeholder={defaultPrompts[i]}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      prompt_overrides: { ...settings.prompt_overrides, [lvl]: e.target.value },
+                    })
+                  }
+                  onBlur={() => save(settings)}
+                  spellCheck={false}
+                />
+              </div>
+            ))}
+          </div>
+        </AdvancedGroup>
       </CollapsibleCard>
 
       <CollapsibleCard

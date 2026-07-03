@@ -33,11 +33,36 @@ pub fn output_language_name(code: &str) -> Option<&'static str> {
     }
 }
 
+/// Built-in per-level instructions. Exposed so the UI can show them as
+/// placeholders for the user's own overrides.
+pub const DEFAULT_LIGHT: &str =
+    "Remove filler words (um, uh, like, you know) and false starts. Fix grammar, \
+     punctuation, and capitalization. Do not change the wording, meaning, or tone \
+     beyond that.";
+pub const DEFAULT_MEDIUM: &str =
+    "Remove filler words and false starts, fix grammar and punctuation, and lightly \
+     edit for clarity and conciseness while preserving the speaker's meaning and tone. \
+     Do not change the wording, meaning, or tone beyond that.";
+pub const DEFAULT_HIGH: &str =
+    "Rewrite the dictated text for brevity and polish: remove fillers, fix grammar, \
+     tighten phrasing, and improve flow while preserving the speaker's intent. \
+     Do not change the wording, meaning, or tone beyond what brevity requires.";
+
+/// The instruction for a level: the user's override when set, else the default.
+fn override_or<'a>(custom: &'a str, default: &'a str) -> &'a str {
+    let trimmed = custom.trim();
+    if trimmed.is_empty() {
+        default
+    } else {
+        trimmed
+    }
+}
+
 /// Builds the Ollama chat messages for a cleanup level, mirroring Wispr Flow's
 /// None/Light/Medium/High. `style` is the per-app tone instruction. Settings
-/// drive translation (output_language) and spoken-command interpretation.
-/// Returns None only when there is nothing for the LLM to do (cleanup None AND
-/// no translation).
+/// drive translation (output_language), spoken-command interpretation and
+/// per-level prompt overrides. Returns None only when there is nothing for
+/// the LLM to do (cleanup None AND no translation).
 pub fn build_messages(
     settings: &crate::settings::Settings,
     style: Option<&str>,
@@ -45,6 +70,7 @@ pub fn build_messages(
 ) -> Option<Vec<Value>> {
     let level = &settings.cleanup_level;
     let dictionary = &settings.dictionary;
+    let overrides = &settings.prompt_overrides;
     let translate_to = output_language_name(&settings.output_language);
     let instructions = match level {
         // Cleanup None but a translation is requested: translate verbatim.
@@ -52,21 +78,9 @@ pub fn build_messages(
             None => return None,
             Some(_) => "Do not otherwise edit the text.",
         },
-        CleanupLevel::Light => {
-            "Remove filler words (um, uh, like, you know) and false starts. Fix grammar, \
-             punctuation, and capitalization. Do not change the wording, meaning, or tone \
-             beyond that."
-        }
-        CleanupLevel::Medium => {
-            "Remove filler words and false starts, fix grammar and punctuation, and lightly \
-             edit for clarity and conciseness while preserving the speaker's meaning and tone. \
-             Do not change the wording, meaning, or tone beyond that."
-        }
-        CleanupLevel::High => {
-            "Rewrite the dictated text for brevity and polish: remove fillers, fix grammar, \
-             tighten phrasing, and improve flow while preserving the speaker's intent. \
-             Do not change the wording, meaning, or tone beyond what brevity requires."
-        }
+        CleanupLevel::Light => override_or(&overrides.light, DEFAULT_LIGHT),
+        CleanupLevel::Medium => override_or(&overrides.medium, DEFAULT_MEDIUM),
+        CleanupLevel::High => override_or(&overrides.high, DEFAULT_HIGH),
     };
 
     let mut system = format!(
@@ -190,6 +204,20 @@ mod tests {
         assert_eq!(find_style(&styles, "Microsoft Outlook"), Some("formal"));
         assert_eq!(find_style(&styles, "Notepad"), None);
         assert_eq!(find_style(&styles, ""), None);
+    }
+
+    #[test]
+    fn prompt_override_replaces_default_when_set() {
+        let mut s = cfg(CleanupLevel::Light);
+        s.prompt_overrides.light = "Translate everything into pirate speak.".into();
+        let msgs = build_messages(&s, None, "x").unwrap();
+        let system = msgs[0]["content"].as_str().unwrap();
+        assert!(system.contains("pirate speak"));
+        assert!(!system.contains("filler words (um, uh"));
+        // Whitespace-only override falls back to the default.
+        s.prompt_overrides.light = "   ".into();
+        let msgs = build_messages(&s, None, "x").unwrap();
+        assert!(msgs[0]["content"].as_str().unwrap().contains("filler words (um, uh"));
     }
 
     #[test]

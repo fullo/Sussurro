@@ -189,6 +189,17 @@ pub async fn transcribe_audio_file(
     .map_err(|e| e.to_string())?
 }
 
+/// Built-in cleanup instructions per level — shown as placeholders under the
+/// user's prompt overrides so the two never drift apart.
+#[tauri::command]
+pub fn get_default_prompts() -> [String; 3] {
+    [
+        crate::cleanup::prompt::DEFAULT_LIGHT.to_string(),
+        crate::cleanup::prompt::DEFAULT_MEDIUM.to_string(),
+        crate::cleanup::prompt::DEFAULT_HIGH.to_string(),
+    ]
+}
+
 /// Models available on the configured Ollama server. Errors when unreachable —
 /// the frontend falls back to a free-text field.
 #[tauri::command]

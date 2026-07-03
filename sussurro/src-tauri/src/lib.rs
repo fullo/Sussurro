@@ -97,7 +97,8 @@ pub fn run() {
             commands::learn_correction,
             commands::export_config,
             commands::import_config,
-            commands::transcribe_audio_file
+            commands::transcribe_audio_file,
+            commands::get_default_prompts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
