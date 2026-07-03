@@ -105,3 +105,39 @@ jobs:
           releaseBody: "Local voice dictation. See README for setup (Ollama + a Whisper/Parakeet model)."
           releaseDraft: true
           args: ${{ matrix.args }}
+
+  # Experimental Flatpak bundle (since 0.3.10): repack of the Linux .deb on
+  # the GNOME runtime (ships Tauri's webkit2gtk-4.1). Attached to the same
+  # draft release. Flathub submission waits for the public repo (0.5.0).
+  flatpak:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install flatpak-builder and the GNOME runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//48 org.gnome.Sdk//48
+
+      - name: Download the deb from the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download ${{ github.ref_name }} --repo ${{ github.repository }} \
+            --pattern '*_amd64.deb' --output flatpak/sussurro.deb
+
+      - name: Build the bundle
+        run: |
+          flatpak-builder --user --force-clean --repo=export build-dir flatpak/com.sussurro.app.yml
+          flatpak build-bundle export "sussurro_${GITHUB_REF_NAME#v}_x86_64.flatpak" com.sussurro.app
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ github.ref_name }} sussurro_*.flatpak --repo ${{ github.repository }} --clobber

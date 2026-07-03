@@ -1,0 +1,47 @@
+# Flatpak manifest — repack of the release .deb on the GNOME runtime (which
+# ships the webkit2gtk-4.1 Tauri needs). Built by the `flatpak` job in
+# .github/workflows/release.yml; the CI drops the deb next to this file as
+# `sussurro.deb`. To build locally on Linux:
+#
+#   flatpak install flathub org.gnome.Platform//48 org.gnome.Sdk//48
+#   cp <release>.deb flatpak/sussurro.deb
+#   flatpak-builder --user --force-clean build-dir flatpak/com.sussurro.app.yml
+#
+# Inside the sandbox the ONLY text-injection path is the RemoteDesktop portal
+# (issue #40) — the wtype/ydotool/enigo fallbacks don't exist here.
+# Flathub submission is planned with the public repo (0.5.0).
+app-id: com.sussurro.app
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+command: sussurro
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Microphone capture (PipeWire's PulseAudio shim, used by cpal).
+  - --socket=pulseaudio
+  # Ollama on localhost, model downloads, the opt-in local HTTP API.
+  - --share=network
+  # Tray icon (StatusNotifier).
+  - --talk-name=org.kde.StatusNotifierWatcher
+modules:
+  - name: sussurro
+    buildsystem: simple
+    build-commands:
+      - ar x sussurro.deb
+      - tar -xf data.tar.*
+      - install -Dm755 usr/bin/sussurro /app/bin/sussurro
+      - install -Dm644 usr/share/applications/sussurro.desktop
+        /app/share/applications/com.sussurro.app.desktop
+      - sed -i 's/^Icon=.*/Icon=com.sussurro.app/'
+        /app/share/applications/com.sussurro.app.desktop
+      - |
+        for f in usr/share/icons/hicolor/*/apps/sussurro.png; do
+          size="$(basename "$(dirname "$(dirname "$f")")")"
+          install -Dm644 "$f" "/app/share/icons/hicolor/${size}/apps/com.sussurro.app.png"
+        done
+    sources:
+      - type: file
+        path: sussurro.deb

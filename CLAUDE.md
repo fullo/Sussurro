@@ -68,6 +68,19 @@ project decisions here, not in per-machine memory.**
    primary backend, tools stay as fallbacks. Needs runtime verification on a
    real KDE/GNOME Wayland session (reporter can test).
 
+### 0.3.9 — Wayland portal injection (issue #40)
+
+Shipped: RemoteDesktop portal as primary Wayland backend (ashpd,
+`wayland-portal` default feature). Issue #40 stays open until the reporter
+verifies at runtime on KDE Plasma 6 Wayland.
+
+### 0.3.10 — Flatpak bundle (decided 2026-07-03)
+
+Experimental `.flatpak` attached to releases: repack of the .deb on the GNOME
+runtime (`flatpak/com.sussurro.app.yml` + `flatpak` job in release.yml).
+Untested at runtime until we have a Linux box. **Flathub submission waits for
+the public repo (0.5.0)** — a private repo can't be submitted.
+
 ### 0.4.0 — quality & tech debt
 
 4. Streaming typing with cleanup enabled (today only works with Cleanup None).

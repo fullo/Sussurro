@@ -181,6 +181,13 @@ the GitHub Actions release workflow: signed installers for Windows, macOS
 the updater manifest (`latest.json`). The in-app **Check for updates** button
 (footer) downloads and installs the new version.
 
+Linux formats: **deb** (Debian/Ubuntu), **rpm** (Fedora/openSUSE),
+**AppImage** (universal, and what the auto-updater uses) and — since
+0.3.10 — an **experimental Flatpak bundle** (`.flatpak`, GNOME runtime;
+install with `flatpak install ./sussurro_*.flatpak`). Inside the Flatpak
+sandbox text injection relies exclusively on the RemoteDesktop portal.
+Flathub submission is planned for v0.5.0, when the repo goes public.
+
 ### Updater signing key (one-time setup)
 
 The updater artifacts are signed with a minisign key **kept outside the
