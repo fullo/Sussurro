@@ -212,6 +212,26 @@ fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) ->
     Ok(())
 }
 
+/// Cleanup honouring the rule for the focused app: tone instruction plus the
+/// per-app output language override (the rule's language beats the global
+/// "Translate to" setting).
+fn cleanup_for_app(
+    settings: &crate::settings::Settings,
+    target_app: &str,
+    text: &str,
+) -> String {
+    let rule = crate::cleanup::prompt::find_style_rule(&settings.app_styles, target_app);
+    let style = crate::cleanup::prompt::find_style(&settings.app_styles, target_app);
+    let lang = crate::cleanup::prompt::effective_output_language(settings, rule);
+    if lang != settings.output_language {
+        let mut s = settings.clone();
+        s.output_language = lang.to_string();
+        ollama::cleanup(&s, style, text)
+    } else {
+        ollama::cleanup(settings, style, text)
+    }
+}
+
 /// Count a completed mic dictation in the persistent usage stats. Best-effort:
 /// stats must never break the pipeline. File imports and command-mode edits
 /// are not dictations and don't go through here.
@@ -327,9 +347,7 @@ fn preview_loop(app: &AppHandle) {
                     if let Some(chunk) = chunk {
                         // Ollama call happens WITHOUT holding the stream lock.
                         let target_app = state.stream.lock().unwrap().target_app.clone();
-                        let style =
-                            crate::cleanup::prompt::find_style(&settings.app_styles, &target_app);
-                        let cleaned = ollama::cleanup(&settings, style, chunk.trim());
+                        let cleaned = cleanup_for_app(&settings, &target_app, chunk.trim());
                         let cleaned = cleaned.trim().to_string();
                         if !cleaned.is_empty()
                             && inject::inject_text(&format!("{cleaned} ")).is_ok()
@@ -442,20 +460,20 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
             (stream.raw_consumed.clone(), stream.injected.clone())
         };
         if !raw_consumed.is_empty() {
+            let rule =
+                crate::cleanup::prompt::find_style_rule(&settings.app_styles, &target_app);
             let raw_streaming = settings.cleanup_level == crate::settings::CleanupLevel::None
-                && crate::cleanup::prompt::output_language_name(&settings.output_language)
-                    .is_none();
+                && crate::cleanup::prompt::output_language_name(
+                    crate::cleanup::prompt::effective_output_language(&settings, rule),
+                )
+                .is_none();
             let mut final_text = injected_so_far;
             if let Some(tail) = raw.strip_prefix(raw_consumed.as_str()) {
                 if !tail.trim().is_empty() {
                     let typed_tail = if raw_streaming {
                         tail.to_string()
                     } else {
-                        let style = crate::cleanup::prompt::find_style(
-                            &settings.app_styles,
-                            &target_app,
-                        );
-                        ollama::cleanup(&settings, style, tail.trim())
+                        cleanup_for_app(&settings, &target_app, tail.trim())
                     };
                     inject::inject_text(&typed_tail)?;
                     final_text.push_str(&typed_tail);
@@ -498,8 +516,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     } else {
         raw.clone()
     };
-    let style = crate::cleanup::prompt::find_style(&settings.app_styles, &target_app);
-    let cleaned = ollama::cleanup(&settings, style, &processed);
+    let cleaned = cleanup_for_app(&settings, &target_app, &processed);
 
     inject::inject_text(&cleaned)?;
 

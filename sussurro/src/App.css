@@ -547,6 +547,14 @@ kbd {
   border-top: 1px solid var(--border);
 }
 .snippet-row textarea { margin: 0; }
+/* Per-app output language: its own line under the rule, aligned left. */
+.style-lang {
+  grid-column: 1 / -1;
+  justify-self: start;
+  font-size: 0.85rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.6rem;
+}
 
 /* ---------- History edit ---------- */
 
