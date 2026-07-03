@@ -48,6 +48,11 @@ whisper-rs = { version = "0.16.0", features = ["vulkan"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["metal"] }
 
+# Native Wayland clipboard (wlr-data-control protocol) — without this arboard
+# only reaches the XWayland clipboard on Wayland sessions.
+[target.'cfg(target_os = "linux")'.dependencies]
+arboard = { version = "3.6.1", features = ["wayland-data-control"] }
+
 [dev-dependencies]
 tempfile = "3.27.0"
 
