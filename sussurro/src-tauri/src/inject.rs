@@ -17,15 +17,14 @@ pub fn paste_modifier() -> Key {
 pub fn inject_text(text: &str) -> Result<()> {
     let saved = read_clipboard();
 
-    if let Err(e) = write_clipboard(text) {
-        // No working clipboard (e.g. bare Wayland without wl-clipboard):
-        // last resort is typing the text directly.
-        #[cfg(target_os = "linux")]
-        if wayland::is_wayland() {
-            return wayland::type_text(text);
-        }
-        return Err(e);
+    let written = write_clipboard(text);
+    // No working clipboard (e.g. bare Wayland without wl-clipboard):
+    // last resort is typing the text directly.
+    #[cfg(target_os = "linux")]
+    if written.is_err() && wayland::is_wayland() {
+        return wayland::type_text(text);
     }
+    written?;
     // Give the OS clipboard a beat to propagate before pasting.
     std::thread::sleep(Duration::from_millis(120));
 

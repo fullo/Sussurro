@@ -86,10 +86,12 @@ mod tests {
     fn roundtrips_through_json() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cfg.json");
-        let mut s = Settings::default();
-        s.dictionary = vec!["Sussurro".into()];
-        s.snippets = vec![snip("sig")];
-        s.app_styles = vec![style("slack")];
+        let s = Settings {
+            dictionary: vec!["Sussurro".into()],
+            snippets: vec![snip("sig")],
+            app_styles: vec![style("slack")],
+            ..Default::default()
+        };
         export_to(&path, &s).unwrap();
         let bundle = load_bundle(&path).unwrap();
         assert_eq!(bundle, ConfigBundle::from_settings(&s));
@@ -97,10 +99,12 @@ mod tests {
 
     #[test]
     fn merge_unions_without_duplicates() {
-        let mut s = Settings::default();
-        s.dictionary = vec!["Tauri".into()];
-        s.snippets = vec![snip("sig")];
-        s.app_styles = vec![style("slack")];
+        let mut s = Settings {
+            dictionary: vec!["Tauri".into()],
+            snippets: vec![snip("sig")],
+            app_styles: vec![style("slack")],
+            ..Default::default()
+        };
 
         let bundle = ConfigBundle {
             dictionary: vec!["tauri".into(), "Sussurro".into()], // "tauri" dup (case)

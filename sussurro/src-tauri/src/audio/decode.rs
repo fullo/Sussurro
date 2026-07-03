@@ -57,11 +57,8 @@ fn decode_stream(mss: MediaSourceStream, ext: &str) -> Result<Vec<f32>> {
     let mut interleaved: Vec<f32> = Vec::new();
     let mut channels = 0usize;
 
-    loop {
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            Err(_) => break, // end of stream
-        };
+    // Any packet error means end of stream.
+    while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
             continue;
         }
