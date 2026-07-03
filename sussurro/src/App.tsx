@@ -1117,6 +1117,31 @@ export default function App() {
                   >
                     Re-clean
                   </button>
+                  <select
+                    className="btn-ghost translate-select"
+                    value=""
+                    title="Translate this entry into another language (adds a new entry)"
+                    onChange={async (e) => {
+                      const lang = e.target.value;
+                      e.target.value = "";
+                      if (!lang) return;
+                      setBusy("Translating…");
+                      try {
+                        await invoke("translate_entry", { text: h.cleaned, lang });
+                        setBusy("");
+                        refresh();
+                      } catch (err) {
+                        setBusy(String(err));
+                      }
+                    }}
+                  >
+                    <option value="" disabled>
+                      Translate…
+                    </option>
+                    {LANGUAGES.filter(([code]) => code !== "auto").map(([code, label]) => (
+                      <option key={code} value={code}>{label}</option>
+                    ))}
+                  </select>
                   <button
                     className="btn-ghost"
                     title="Correct the text — new words are added to your dictionary"

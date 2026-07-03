@@ -462,6 +462,17 @@ kbd {
   transition: all var(--transition);
 }
 .btn-ghost:hover { color: var(--c-dark); border-color: var(--c-dark); }
+
+/* A select disguised as a ghost button (per-row Translate…). */
+.translate-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  min-height: 30px;
+  padding: 0.25rem 0.8rem;
+  width: auto;
+  cursor: pointer;
+}
 .btn-ghost.danger {
   color: #fff;
   background: var(--brand);
