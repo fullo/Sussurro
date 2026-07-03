@@ -9,6 +9,7 @@ pub struct AppPaths {
     pub settings_file: PathBuf,
     pub models_dir: PathBuf,
     pub history_file: PathBuf,
+    pub stats_file: PathBuf,
 }
 
 impl AppPaths {
@@ -19,6 +20,7 @@ impl AppPaths {
             settings_file: config.join("settings.json"),
             models_dir: data.join("models"),
             history_file: data.join("history.jsonl"),
+            stats_file: data.join("stats.json"),
         }
     }
 }

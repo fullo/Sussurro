@@ -10,6 +10,7 @@ pub mod pipeline;
 pub mod settings;
 pub mod snippets;
 pub mod state;
+pub mod stats;
 pub mod stt;
 pub mod voice_commands;
 pub mod tray;
@@ -97,6 +98,7 @@ pub fn run() {
             commands::get_history,
             commands::search_history,
             commands::clear_history,
+            commands::usage_stats,
             commands::model_is_downloaded,
             commands::download_model,
             commands::list_ollama_models,
