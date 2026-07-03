@@ -20,6 +20,18 @@ curl -fsSL https://ollama.com/install.sh | sh
 Linux builds are CPU-only by default (the whisper.cpp Vulkan backend needs
 the Vulkan SDK; see the target-specific dependencies in `Cargo.toml`).
 
+### Optional: GPU transcription (Vulkan)
+
+```bash
+sudo apt install libvulkan-dev glslc mesa-vulkan-drivers
+npm run tauri build -- --features linux-vulkan   # or: tauri dev -- --features linux-vulkan
+```
+
+The `linux-vulkan` cargo feature enables the whisper.cpp Vulkan backend
+(same code path Windows uses). At runtime any GPU with a Vulkan driver
+works; the first transcription compiles shaders once (~10 s), then the
+driver caches them.
+
 ## Build & run
 
 ```bash
