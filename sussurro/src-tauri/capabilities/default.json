@@ -12,7 +12,7 @@
     "dialog:allow-save",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://ollama.com/*" }]
+      "allow": [{ "url": "https://ollama.com/*" }, { "url": "https://darumahq.it/*" }]
     }
   ]
 }
