@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Read;
 use tauri::{AppHandle, Manager};
 
 use crate::state::AppState;
