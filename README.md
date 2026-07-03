@@ -82,8 +82,15 @@ combination; Esc cancels).
   Linux); closing the window hides to tray.
 - All sections are collapsible and remember their state; the Cleanup card
   reads the installed model list live from your Ollama server.
-- **History actions** — hover an entry to Copy the cleaned text or Re-clean
-  the raw transcript with the current cleanup level (appends a new entry).
+- **History actions** — hover an entry to Copy the cleaned text, Re-clean
+  the raw transcript with the current cleanup level, Translate it into
+  another language, or Edit it (each appends a new entry where relevant).
+- **History search & retention** — full-text search over the whole history
+  (raw + cleaned); retention auto-deletes entries older than N days
+  (0 = keep forever).
+- **Usage statistics** — persistent counters atop the History card: total /
+  today / last-7-days dictations and words. Clearing or pruning the history
+  never resets them.
 - **Language** — pick your dictation language (or auto-detect) in Settings;
   a fixed language is more accurate on smaller multilingual models.
 - **Voice snippets** — say a cue exactly (e.g. "firma email") and Sussurro
@@ -108,6 +115,29 @@ combination; Esc cancels).
   pass completes them.
 - **Models folder** — settable in Settings (default: app data); silence is
   trimmed before inference (VAD-lite) so long pauses don't cost GPU time.
+- **Translation** — Cleanup → "Translate to": dictate in one language and
+  the cleaned text comes out in another (works even with Cleanup None —
+  translate-only). Something Wispr Flow can't do locally.
+- **Microphone selector + VU meter** — pick the capture device (falls back
+  to the system default if it's unplugged); the Test button next to it shows
+  a live input-level bar, also visible while recording.
+- **Voice commands** — say "a capo" / "new line" / "nuova riga" (or the
+  paragraph variants) for deterministic line breaks with no LLM involved;
+  contextual commands like "scratch that" ride the cleanup prompt.
+- **Editable cleanup prompts** — Cleanup → Advanced: override the built-in
+  Light/Medium/High instructions; leave empty to use the defaults (shown as
+  placeholders).
+- **Portable config** — export/import dictionary + snippets + app styles as
+  a JSON file to move your setup between machines; import merges without
+  duplicates.
+- **Audio file transcription** — feed a wav/mp3/m4a/flac/ogg recording
+  through the same STT + cleanup pipeline from the Audio file card.
+- **Setup banner** — when something needed is missing (Ollama not installed
+  / not running / configured model absent, STT model not downloaded), a
+  banner under the header lists each problem with its fix action.
+- **Copy diagnostics** — footer button that copies version, OS and
+  configuration to the clipboard for bug reports — configuration only, no
+  dictated text, dictionary words or snippets.
 
 ## Local API (scripting)
 
