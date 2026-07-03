@@ -99,6 +99,9 @@ pub struct Settings {
     pub prompt_overrides: PromptOverrides,
     /// Auto-delete history entries older than N days (0 = keep forever).
     pub history_retention_days: u32,
+    /// Local HTTP API on 127.0.0.1 for scripting (applied at startup).
+    pub api_enabled: bool,
+    pub api_port: u16,
 }
 
 impl Default for Settings {
@@ -127,6 +130,8 @@ impl Default for Settings {
             voice_commands: true,
             prompt_overrides: PromptOverrides::default(),
             history_retention_days: 0,
+            api_enabled: false,
+            api_port: 4525,
         }
     }
 }

@@ -1,3 +1,4 @@
+pub mod api;
 pub mod audio;
 pub mod cleanup;
 pub mod commands;
@@ -68,6 +69,12 @@ pub fn run() {
                 command_mode: std::sync::atomic::AtomicBool::new(false),
                 stream: Mutex::new(state::StreamState::default()),
             });
+            {
+                let s = app.state::<state::AppState>().settings.lock().unwrap().clone();
+                if s.api_enabled {
+                    api::spawn(handle.clone(), s.api_port);
+                }
+            }
             // Launched at login: live in the tray, don't pop the window.
             if std::env::args().any(|a| a == "--autostart") {
                 if let Some(w) = app.get_webview_window("main") {
