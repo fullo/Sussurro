@@ -16,10 +16,10 @@
 
 use anyhow::{Context, Result};
 use ashpd::desktop::remote_desktop::{
-    CreateSessionOptions, DeviceType, KeyState, NotifyKeyboardKeysymOptions, RemoteDesktop,
-    SelectDevicesOptions, StartOptions,
+    DeviceType, KeyState, NotifyKeyboardKeysymOptions, RemoteDesktop, SelectDevicesOptions,
+    StartOptions,
 };
-use ashpd::desktop::{PersistMode, Session};
+use ashpd::desktop::{CreateSessionOptions, PersistMode, Session};
 use ashpd::enumflags2::BitFlags;
 use std::path::PathBuf;
 use std::sync::OnceLock;
