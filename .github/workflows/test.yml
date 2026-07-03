@@ -9,9 +9,24 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-22.04
+    # 24.04: the ort (onnxruntime) prebuilt binaries need glibc >= 2.38
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      # cdn.pyke.io (ort's own prebuilt download) 403s GitHub runners, so link
+      # dynamically against Microsoft's official ONNX Runtime release instead.
+      # Keep the version in sync with what the locked ort-sys expects (see the
+      # ms@<version> URLs in its build/download/dist.txt).
+      - name: ONNX Runtime (Microsoft build)
+        run: |
+          ORT_VERSION=1.24.2
+          curl -fsSL --retry 5 --retry-delay 10 -o ort.tgz \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          tar xzf ort.tgz
+          echo "ORT_LIB_LOCATION=$PWD/onnxruntime-linux-x64-${ORT_VERSION}/lib" >> "$GITHUB_ENV"
+          echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$PWD/onnxruntime-linux-x64-${ORT_VERSION}/lib:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
 
       - name: System dependencies
         run: |
@@ -24,9 +39,9 @@ jobs:
         with:
           components: clippy
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: swatinem/rust-cache@v2
         with:
