@@ -28,8 +28,20 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
 
+    env:
+      ORT_CACHE_DIR: ${{ github.workspace }}/.ort-cache
+
     steps:
       - uses: actions/checkout@v5
+
+      # cdn.pyke.io (ort's prebuilt ONNX Runtime) intermittently 403s GitHub
+      # runners; a populated cache skips the download entirely.
+      - name: ONNX Runtime binaries cache
+        uses: actions/cache@v6
+        with:
+          path: .ort-cache
+          key: ort-bin-${{ runner.os }}-${{ hashFiles('sussurro/src-tauri/Cargo.lock') }}
+          restore-keys: ort-bin-${{ runner.os }}-
 
       # On Windows a SHORT cargo target dir is mandatory: the Vulkan shader
       # sub-build exceeds MAX_PATH otherwise (MSBuild FTK1011).
