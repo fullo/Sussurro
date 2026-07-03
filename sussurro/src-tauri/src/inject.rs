@@ -11,54 +11,31 @@ pub fn paste_modifier() -> Key {
 }
 
 /// Paste `text` into the focused app: save clipboard → set text → synthesize
-/// Ctrl/Cmd+V → restore clipboard. Paste-injection works in far more apps than
-/// per-character typing (and is what Handy ships); revisit for Wayland later.
+/// Ctrl/Cmd+V → restore clipboard. Paste-injection works in far more apps
+/// than per-character typing. On Wayland, native tools (wtype/ydotool,
+/// wl-clipboard) are preferred over enigo — see the `wayland` module.
 pub fn inject_text(text: &str) -> Result<()> {
-    let mut clipboard = arboard::Clipboard::new().context("open clipboard")?;
-    let saved = clipboard.get_text().ok();
+    let saved = read_clipboard();
 
-    clipboard
-        .set_text(text.to_string())
-        .context("set clipboard")?;
+    if let Err(e) = write_clipboard(text) {
+        // No working clipboard (e.g. bare Wayland without wl-clipboard):
+        // last resort is typing the text directly.
+        #[cfg(target_os = "linux")]
+        if wayland::is_wayland() {
+            return wayland::type_text(text);
+        }
+        return Err(e);
+    }
     // Give the OS clipboard a beat to propagate before pasting.
     std::thread::sleep(Duration::from_millis(120));
 
-    let paste_result = synth_paste();
-    #[cfg(target_os = "linux")]
-    let paste_result = paste_result.or_else(|_| wayland_type_fallback(text));
-    paste_result?;
+    synth_combo('v')?;
 
     // Let the target app read the clipboard before we restore it.
     std::thread::sleep(Duration::from_millis(200));
     if let Some(prev) = saved {
-        let _ = clipboard.set_text(prev);
+        let _ = write_clipboard(&prev);
     }
-    Ok(())
-}
-
-/// Synthesize Ctrl/Cmd+V in the focused app.
-fn synth_paste() -> Result<()> {
-    let mut enigo = Enigo::new(&EnigoSettings::default()).context("init enigo")?;
-    let modifier = paste_modifier();
-    enigo.key(modifier, Direction::Press).context("modifier down")?;
-    enigo.key(Key::Unicode('v'), Direction::Click).context("press V")?;
-    enigo.key(modifier, Direction::Release).context("modifier up")?;
-    Ok(())
-}
-
-/// Wayland blocks cross-app synthetic input; `wtype` (virtual-keyboard
-/// protocol) types the text directly when available.
-#[cfg(target_os = "linux")]
-fn wayland_type_fallback(text: &str) -> Result<()> {
-    anyhow::ensure!(
-        std::env::var("WAYLAND_DISPLAY").is_ok(),
-        "not a Wayland session"
-    );
-    let status = std::process::Command::new("wtype")
-        .arg(text)
-        .status()
-        .context("paste failed and wtype is not installed (needed on Wayland)")?;
-    anyhow::ensure!(status.success(), "wtype exited with {status}");
     Ok(())
 }
 
@@ -66,25 +43,265 @@ fn wayland_type_fallback(text: &str) -> Result<()> {
 /// is selected). The selection stays active, so pasting right after replaces
 /// it — exactly what command mode needs.
 pub fn copy_selection() -> Result<Option<String>> {
-    let mut clipboard = arboard::Clipboard::new().context("open clipboard")?;
-    let before = clipboard.get_text().ok();
-    let _ = clipboard.clear();
+    let before = read_clipboard();
+    clear_clipboard();
 
-    let mut enigo = Enigo::new(&EnigoSettings::default()).context("init enigo")?;
-    let modifier = paste_modifier();
-    enigo.key(modifier, Direction::Press).context("modifier down")?;
-    enigo.key(Key::Unicode('c'), Direction::Click).context("press C")?;
-    enigo.key(modifier, Direction::Release).context("modifier up")?;
+    synth_combo('c')?;
     std::thread::sleep(Duration::from_millis(250));
 
-    let text = clipboard.get_text().ok().filter(|t| !t.trim().is_empty());
+    let text = read_clipboard().filter(|t| !t.trim().is_empty());
     if text.is_none() {
         // Nothing selected: put the user's clipboard back.
         if let Some(prev) = before {
-            let _ = clipboard.set_text(prev);
+            let _ = write_clipboard(&prev);
         }
     }
     Ok(text)
+}
+
+/* ---------- clipboard (arboard, with wl-clipboard fallback on Wayland) ---------- */
+
+fn read_clipboard() -> Option<String> {
+    if let Ok(text) = arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
+        return Some(text);
+    }
+    #[cfg(target_os = "linux")]
+    if wayland::is_wayland() {
+        return wayland::wl_paste().ok().flatten();
+    }
+    None
+}
+
+fn write_clipboard(text: &str) -> Result<()> {
+    match arboard::Clipboard::new().and_then(|mut c| c.set_text(text.to_string())) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            #[cfg(target_os = "linux")]
+            if wayland::is_wayland() {
+                return wayland::wl_copy(text);
+            }
+            Err(anyhow::anyhow!("set clipboard: {e}"))
+        }
+    }
+}
+
+fn clear_clipboard() {
+    let _ = arboard::Clipboard::new().and_then(|mut c| c.clear());
+    #[cfg(target_os = "linux")]
+    if wayland::is_wayland() {
+        wayland::wl_clear();
+    }
+}
+
+/* ---------- key synthesis ---------- */
+
+/// Ctrl/Cmd+<letter> in the focused app. On Wayland the native tool ladder
+/// (wtype → ydotool) runs first — enigo's Wayland support is experimental and
+/// can silently no-op; enigo remains the fallback for XWayland apps.
+fn synth_combo(letter: char) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if wayland::is_wayland() {
+        return match wayland::synth_combo_native(letter) {
+            Ok(()) => Ok(()),
+            Err(native_err) => enigo_combo(letter).map_err(|_| native_err),
+        };
+    }
+    enigo_combo(letter)
+}
+
+fn enigo_combo(letter: char) -> Result<()> {
+    let mut enigo = Enigo::new(&EnigoSettings::default()).context("init enigo")?;
+    let modifier = paste_modifier();
+    enigo.key(modifier, Direction::Press).context("modifier down")?;
+    enigo
+        .key(Key::Unicode(letter), Direction::Click)
+        .context("press key")?;
+    enigo.key(modifier, Direction::Release).context("modifier up")?;
+    Ok(())
+}
+
+/* ---------- native Wayland tools ---------- */
+
+#[cfg(target_os = "linux")]
+mod wayland {
+    use anyhow::{anyhow, Context, Result};
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    pub fn is_wayland() -> bool {
+        std::env::var("WAYLAND_DISPLAY").is_ok()
+            || std::env::var("XDG_SESSION_TYPE")
+                .map(|v| v == "wayland")
+                .unwrap_or(false)
+    }
+
+    fn available(cmd: &str) -> bool {
+        Command::new("which")
+            .arg(cmd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Injection tools in preference order. wtype speaks the
+    /// virtual-keyboard protocol (wlroots compositors, KDE); ydotool works
+    /// everywhere — GNOME included — via uinput, but needs the ydotoold
+    /// daemon running.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Tool {
+        Wtype,
+        Ydotool,
+    }
+
+    /// Pure: which tools to try given what's installed.
+    pub fn plan(wtype: bool, ydotool: bool) -> Vec<Tool> {
+        let mut tools = Vec::new();
+        if wtype {
+            tools.push(Tool::Wtype);
+        }
+        if ydotool {
+            tools.push(Tool::Ydotool);
+        }
+        tools
+    }
+
+    /// Pure: the command line for Ctrl+<letter> per tool.
+    /// ydotool uses Linux input-event codes: LEFTCTRL=29, C=46, V=47.
+    pub fn combo_args(tool: Tool, letter: char) -> Option<(&'static str, Vec<String>)> {
+        match tool {
+            Tool::Wtype => Some((
+                "wtype",
+                vec![
+                    "-M".into(),
+                    "ctrl".into(),
+                    "-P".into(),
+                    letter.to_string(),
+                    "-p".into(),
+                    letter.to_string(),
+                    "-m".into(),
+                    "ctrl".into(),
+                ],
+            )),
+            Tool::Ydotool => {
+                let code = match letter {
+                    'c' => 46,
+                    'v' => 47,
+                    _ => return None,
+                };
+                Some((
+                    "ydotool",
+                    vec![
+                        "key".into(),
+                        "29:1".into(),
+                        format!("{code}:1"),
+                        format!("{code}:0"),
+                        "29:0".into(),
+                    ],
+                ))
+            }
+        }
+    }
+
+    pub fn synth_combo_native(letter: char) -> Result<()> {
+        let tools = plan(available("wtype"), available("ydotool"));
+        if tools.is_empty() {
+            anyhow::bail!(
+                "no Wayland injection tool found — install wtype (wlroots/KDE) \
+                 or ydotool + ydotoold (any compositor, GNOME included)"
+            );
+        }
+        let mut last_err = anyhow!("no tool attempted");
+        for tool in tools {
+            let Some((program, args)) = combo_args(tool, letter) else {
+                continue;
+            };
+            match Command::new(program).args(&args).status() {
+                Ok(status) if status.success() => return Ok(()),
+                Ok(status) => last_err = anyhow!("{program} exited with {status}"),
+                Err(e) => last_err = anyhow!("{program}: {e}"),
+            }
+        }
+        Err(last_err)
+    }
+
+    /// Type the text directly (no clipboard). Slower, but works when no
+    /// clipboard tool is available.
+    pub fn type_text(text: &str) -> Result<()> {
+        let status = Command::new("wtype")
+            .arg("--")
+            .arg(text)
+            .status()
+            .context("typing fallback failed: wtype not installed")?;
+        anyhow::ensure!(status.success(), "wtype exited with {status}");
+        Ok(())
+    }
+
+    pub fn wl_copy(text: &str) -> Result<()> {
+        let mut child = Command::new("wl-copy")
+            .stdin(Stdio::piped())
+            .spawn()
+            .context("wl-copy not found — install wl-clipboard")?;
+        child
+            .stdin
+            .as_mut()
+            .context("wl-copy stdin")?
+            .write_all(text.as_bytes())?;
+        let status = child.wait()?;
+        anyhow::ensure!(status.success(), "wl-copy exited with {status}");
+        Ok(())
+    }
+
+    pub fn wl_paste() -> Result<Option<String>> {
+        let out = Command::new("wl-paste")
+            .arg("--no-newline")
+            .output()
+            .context("wl-paste not found — install wl-clipboard")?;
+        if !out.status.success() {
+            return Ok(None); // empty clipboard exits non-zero
+        }
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        Ok(if text.is_empty() { None } else { Some(text) })
+    }
+
+    pub fn wl_clear() {
+        let _ = Command::new("wl-copy")
+            .arg("--clear")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn plan_prefers_wtype_then_ydotool() {
+            assert_eq!(plan(true, true), vec![Tool::Wtype, Tool::Ydotool]);
+            assert_eq!(plan(true, false), vec![Tool::Wtype]);
+            assert_eq!(plan(false, true), vec![Tool::Ydotool]);
+            assert!(plan(false, false).is_empty());
+        }
+
+        #[test]
+        fn wtype_combo_presses_and_releases_in_order() {
+            let (program, args) = combo_args(Tool::Wtype, 'v').unwrap();
+            assert_eq!(program, "wtype");
+            assert_eq!(args, vec!["-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"]);
+        }
+
+        #[test]
+        fn ydotool_combo_uses_input_event_codes() {
+            let (program, args) = combo_args(Tool::Ydotool, 'c').unwrap();
+            assert_eq!(program, "ydotool");
+            assert_eq!(args, vec!["key", "29:1", "46:1", "46:0", "29:0"]);
+            let (_, args) = combo_args(Tool::Ydotool, 'v').unwrap();
+            assert_eq!(args, vec!["key", "29:1", "47:1", "47:0", "29:0"]);
+            assert!(combo_args(Tool::Ydotool, 'x').is_none());
+        }
+    }
 }
 
 #[cfg(test)]

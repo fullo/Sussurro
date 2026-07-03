@@ -33,11 +33,23 @@ cd src-tauri && cargo test   # headless test suite
 ## Runtime notes
 
 - **X11**: everything works out of the box (hotkey + paste injection).
-- **Wayland**: paste injection relies on enigo's experimental Wayland support
-  and may not work in all compositors; global shortcuts may also be
-  restricted. Workarounds: run the app under XWayland, or switch to an X11
-  session. Native Wayland injection (wtype/ydotool) is on the roadmap.
-  When enigo fails, Sussurro falls back to `wtype` — install it with
-  `sudo apt install wtype`.
+- **Wayland**: injection is native. Sussurro tries, in order:
+  1. **wtype** (virtual-keyboard protocol — wlroots compositors: Sway,
+     Hyprland, river; and KDE Plasma): `sudo apt install wtype`
+  2. **ydotool** (uinput — works on ANY compositor, GNOME included):
+     `sudo apt install ydotool`, then enable the daemon:
+     `systemctl --user enable --now ydotool` (or run `ydotoold`; your user
+     needs access to `/dev/uinput`, usually via the `input` group or the
+     udev rule shipped with the package)
+  3. enigo (experimental) as a last resort, which still covers XWayland apps.
+
+  The clipboard uses the native `wayland-data-control` protocol, with
+  `wl-copy`/`wl-paste` as fallback: `sudo apt install wl-clipboard`.
+  Recommended install for GNOME users: `ydotool + wl-clipboard`; for
+  Sway/Hyprland/KDE: `wtype + wl-clipboard`.
+
+  **Global shortcuts** may still be restricted by the compositor on Wayland
+  (that's a compositor policy, not an injection issue) — the in-app Dictate
+  button and the tray always work.
 - Audio uses ALSA (`libasound2`); PipeWire and PulseAudio expose ALSA
   compatibility by default.
