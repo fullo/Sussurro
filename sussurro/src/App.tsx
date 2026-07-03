@@ -1323,27 +1323,45 @@ export default function App() {
             DarumaHQ.it
           </a>
         </span>
-        <button
-          className="btn-ghost"
-          onClick={async () => {
-            setBusy("Checking for updates…");
-            try {
-              const update = await check();
-              if (update) {
-                setBusy(`Updating to ${update.version}…`);
-                await update.downloadAndInstall();
-                await relaunch();
-              } else {
-                setBusy("You're on the latest version.");
+        <span className="footer-actions">
+          <button
+            className="btn-ghost"
+            title="Copy version, OS and configuration to the clipboard — paste it into a bug report (no personal content included)"
+            onClick={async () => {
+              try {
+                const report = await invoke<string>("diagnostics");
+                await invoke("copy_text", { text: report });
+                setBusy("Diagnostics copied to clipboard.");
                 setTimeout(() => setBusy(""), 3000);
+              } catch (e) {
+                setBusy(String(e));
               }
-            } catch (e) {
-              setBusy(`Update check failed: ${e}`);
-            }
-          }}
-        >
-          Check for updates
-        </button>
+            }}
+          >
+            Copy diagnostics
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={async () => {
+              setBusy("Checking for updates…");
+              try {
+                const update = await check();
+                if (update) {
+                  setBusy(`Updating to ${update.version}…`);
+                  await update.downloadAndInstall();
+                  await relaunch();
+                } else {
+                  setBusy("You're on the latest version.");
+                  setTimeout(() => setBusy(""), 3000);
+                }
+              } catch (e) {
+                setBusy(`Update check failed: ${e}`);
+              }
+            }}
+          >
+            Check for updates
+          </button>
+        </span>
       </footer>
     </main>
   );

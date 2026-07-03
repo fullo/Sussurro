@@ -306,6 +306,113 @@ pub async fn ollama_status(state: State<'_, AppState>) -> Result<OllamaStatus, S
     .map_err(|e| e.to_string())?
 }
 
+/// Human-readable environment report for bug reports — the footer's
+/// "Copy diagnostics" button puts this on the clipboard. Configuration only:
+/// no history content, no dictionary words, no snippet texts.
+#[tauri::command]
+pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
+    let (engine, stt_model, model_ready) = match settings.engine {
+        crate::settings::SttEngine::Whisper => (
+            "whisper",
+            settings.whisper_model.clone(),
+            models::model_exists(&models_dir, &settings.whisper_model),
+        ),
+        crate::settings::SttEngine::Parakeet => (
+            "parakeet",
+            "parakeet-tdt-0.6b-v3-int8".to_string(),
+            models::parakeet_exists(&models_dir),
+        ),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::fmt::Write as _;
+        let models = crate::cleanup::ollama::list_models(&settings.ollama_url).ok();
+        let ollama_running = models.is_some();
+        let ollama_has_model = models
+            .map(|ms| {
+                ms.iter().any(|m| {
+                    m == &settings.ollama_model
+                        || m.starts_with(&format!("{}:", settings.ollama_model))
+                })
+            })
+            .unwrap_or(false);
+
+        let mut r = String::new();
+        let _ = writeln!(r, "Sussurro {} — diagnostics", env!("CARGO_PKG_VERSION"));
+        let _ = writeln!(r, "OS: {} {}", std::env::consts::OS, std::env::consts::ARCH);
+        let _ = writeln!(
+            r,
+            "STT: {engine} · model {stt_model} (downloaded: {model_ready}) · language {}",
+            if settings.language.is_empty() { "auto" } else { &settings.language }
+        );
+        let _ = writeln!(
+            r,
+            "Models dir: {}",
+            if settings.models_dir.trim().is_empty() { "(default)" } else { &settings.models_dir }
+        );
+        let _ = writeln!(
+            r,
+            "Microphone: {}",
+            if settings.input_device.is_empty() { "(system default)" } else { &settings.input_device }
+        );
+        let _ = writeln!(
+            r,
+            "Hotkeys: dictation {} ({}) · command {}",
+            settings.hotkey,
+            if settings.push_to_talk { "push-to-talk" } else { "toggle" },
+            settings.command_hotkey
+        );
+        let _ = writeln!(
+            r,
+            "Cleanup: {:?} · {} @ {} (running: {ollama_running}, model present: {ollama_has_model})",
+            settings.cleanup_level, settings.ollama_model, settings.ollama_url
+        );
+        let _ = writeln!(
+            r,
+            "Translate to: {}",
+            if settings.output_language.is_empty() || settings.output_language == "same" {
+                "(off)"
+            } else {
+                &settings.output_language
+            }
+        );
+        let _ = writeln!(
+            r,
+            "Toggles: live_preview={} stream_injection={} voice_commands={} whisper_mode={} sound={} autostart={}",
+            settings.live_preview,
+            settings.stream_injection,
+            settings.voice_commands,
+            settings.whisper_mode,
+            settings.sound_feedback,
+            settings.autostart
+        );
+        let o = &settings.prompt_overrides;
+        let _ = writeln!(
+            r,
+            "Personalization: {} dictionary words · {} snippets · {} app styles · custom prompts: {}",
+            settings.dictionary.len(),
+            settings.snippets.len(),
+            settings.app_styles.len(),
+            [&o.light, &o.medium, &o.high].iter().filter(|p| !p.trim().is_empty()).count()
+        );
+        let _ = writeln!(
+            r,
+            "History retention: {} · Local API: {} (port {})",
+            if settings.history_retention_days == 0 {
+                "forever".to_string()
+            } else {
+                format!("{} days", settings.history_retention_days)
+            },
+            if settings.api_enabled { "on" } else { "off" },
+            settings.api_port
+        );
+        Ok(r)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Pull the configured cleanup model on the Ollama server (blocking, can take
 /// minutes for a ~2 GB model).
 #[tauri::command]
