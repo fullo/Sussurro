@@ -81,6 +81,21 @@ pub fn clear(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Render entries (given oldest-first) as a Markdown document for export.
+pub fn to_markdown(entries: &[HistoryEntry]) -> String {
+    let mut out = String::from("# Sussurro — dictation history\n");
+    for e in entries {
+        let when = chrono::DateTime::parse_from_rfc3339(&e.timestamp)
+            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|_| e.timestamp.clone());
+        out.push_str(&format!("\n## {when}\n\n{}\n", e.cleaned));
+        if e.raw != e.cleaned {
+            out.push_str(&format!("\n> raw: {}\n", e.raw.replace('\n', "\n> ")));
+        }
+    }
+    out
+}
+
 /// Newest first. Corrupt lines are skipped, not fatal.
 pub fn read_last(path: &Path, n: usize) -> Vec<HistoryEntry> {
     let Ok(content) = std::fs::read_to_string(path) else {
@@ -172,6 +187,24 @@ mod tests {
         assert_eq!(prune_older_than(&path, 0).unwrap(), 0);
         // missing file is fine
         assert_eq!(prune_older_than(&dir.path().join("nope.jsonl"), 30).unwrap(), 0);
+    }
+
+    #[test]
+    fn markdown_export_has_headers_and_raw_quotes() {
+        let md = to_markdown(&[
+            entry(1),
+            HistoryEntry {
+                timestamp: "2026-07-03T09:30:00Z".into(),
+                raw: "same text".into(),
+                cleaned: "same text".into(),
+            },
+        ]);
+        assert!(md.starts_with("# Sussurro"));
+        assert!(md.contains("## 2026-07-02 12:00"));
+        assert!(md.contains("clean 1"));
+        assert!(md.contains("> raw: um raw 1"));
+        // raw == cleaned: no redundant quote block
+        assert_eq!(md.matches("> raw:").count(), 1);
     }
 
     #[test]

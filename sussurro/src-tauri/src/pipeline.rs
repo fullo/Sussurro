@@ -232,6 +232,18 @@ fn cleanup_for_app(
     }
 }
 
+/// Dictate-to-file mode: append the completed dictation (plus a blank line)
+/// to the user's notes file instead of pasting into the focused app.
+fn append_to_output_file(path: &str, text: &str) -> anyhow::Result<()> {
+    use std::io::Write as _;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path.trim())?;
+    writeln!(f, "{text}\n")?;
+    Ok(())
+}
+
 /// Count a completed mic dictation in the persistent usage stats. Best-effort:
 /// stats must never break the pipeline. File imports and command-mode edits
 /// are not dictations and don't go through here.
@@ -289,7 +301,8 @@ fn preview_loop(app: &AppHandle) {
         return; // no model yet — the final pass will surface the error
     }
     let prompt = dictionary_prompt(&settings.dictionary);
-    let streaming = settings.stream_injection;
+    // Dictate-to-file writes once at the end — never type into the focused app.
+    let streaming = settings.stream_injection && settings.output_file.trim().is_empty();
     // Word-by-word raw streaming only when there's truly no LLM step: cleanup
     // None AND no translation. Otherwise stream sentence by sentence.
     let raw_streaming = settings.cleanup_level == crate::settings::CleanupLevel::None
@@ -494,9 +507,15 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
         }
     }
 
+    let to_file = !settings.output_file.trim().is_empty();
+
     // Voice shortcut: the transcript IS a snippet cue → paste its text, no LLM.
     if let Some(snippet) = crate::snippets::find(&settings.snippets, &raw) {
-        inject::inject_text(&snippet.text)?;
+        if to_file {
+            append_to_output_file(&settings.output_file, &snippet.text)?;
+        } else {
+            inject::inject_text(&snippet.text)?;
+        }
         record_stats(&state, &snippet.text);
         let _ = history::append(
             &state.paths.history_file,
@@ -518,7 +537,11 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     };
     let cleaned = cleanup_for_app(&settings, &target_app, &processed);
 
-    inject::inject_text(&cleaned)?;
+    if to_file {
+        append_to_output_file(&settings.output_file, &cleaned)?;
+    } else {
+        inject::inject_text(&cleaned)?;
+    }
 
     record_stats(&state, &cleaned);
     let _ = history::append(

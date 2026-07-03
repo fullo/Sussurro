@@ -106,6 +106,9 @@ pub struct Settings {
     /// Local HTTP API on 127.0.0.1 for scripting (applied at startup).
     pub api_enabled: bool,
     pub api_port: u16,
+    /// Dictate-to-file mode: when set, completed dictations are APPENDED to
+    /// this file (note-taking) instead of being pasted into the focused app.
+    pub output_file: String,
 }
 
 impl Default for Settings {
@@ -136,6 +139,7 @@ impl Default for Settings {
             history_retention_days: 0,
             api_enabled: false,
             api_port: 4525,
+            output_file: String::new(),
         }
     }
 }
