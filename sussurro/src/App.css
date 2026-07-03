@@ -245,9 +245,20 @@ input:hover, select:hover, textarea:hover { border-color: var(--c-dark); }
 textarea { width: 100%; resize: vertical; font-family: var(--f-mono); font-size: 0.9rem; }
 textarea::placeholder { color: var(--border-strong); }
 
-.model-row { display: flex; gap: 0.5rem; flex: 1; align-items: center; }
-.model-row select { flex: 1; }
-.fixed-model { flex: 1; color: var(--c-text-light); font-size: 0.9rem; }
+.model-row { display: flex; gap: 0.5rem; flex: 1; align-items: center; min-width: 0; }
+/* min-width: 0 lets the select shrink below its content width instead of
+   pushing the download button out of the card. */
+.model-row select { flex: 1; min-width: 0; font-size: 0.85rem; }
+.fixed-model { flex: 1; min-width: 0; color: var(--c-text-light); font-size: 0.9rem; }
+
+.btn-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+}
 
 button { cursor: pointer; }
 

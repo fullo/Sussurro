@@ -500,8 +500,27 @@ export default function App() {
               <span className="fixed-model">Parakeet TDT 0.6B v3 · int8 · 456 MB</span>
             )}
             {!modelReady && (
-              <button className="btn-primary" onClick={downloadModel}>
-                Download
+              <button
+                className="btn-primary btn-icon"
+                onClick={downloadModel}
+                title="Download the selected model"
+                aria-label="Download the selected model"
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3v12" />
+                  <path d="m7 10 5 5 5-5" />
+                  <path d="M5 21h14" />
+                </svg>
               </button>
             )}
           </div>
