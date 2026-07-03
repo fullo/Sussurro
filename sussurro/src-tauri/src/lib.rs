@@ -87,6 +87,7 @@ pub fn run() {
             commands::model_is_downloaded,
             commands::download_model,
             commands::list_ollama_models,
+            commands::list_input_devices,
             commands::trigger_dictation,
             commands::copy_text,
             commands::reclean,

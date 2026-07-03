@@ -33,6 +33,7 @@ interface Settings {
   live_preview: boolean;
   app_styles: AppStyle[];
   models_dir: string;
+  input_device: string;
   command_hotkey: string;
   whisper_mode: boolean;
   stream_injection: boolean;
@@ -217,6 +218,7 @@ export default function App() {
   const [confirmClear, setConfirmClear] = useState(false);
   /** null = Ollama unreachable → free-text fallback */
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
+  const [inputDevices, setInputDevices] = useState<string[]>([]);
   const [pillHover, setPillHover] = useState(false);
   /** timestamp of the history entry being edited, and its draft text */
   const [editing, setEditing] = useState<{ ts: string; draft: string } | null>(null);
@@ -239,6 +241,7 @@ export default function App() {
   useEffect(() => {
     refresh();
     loadOllamaModels();
+    invoke<string[]>("list_input_devices").then(setInputDevices).catch(() => {});
     const unlisten = listen<string>("pipeline-status", (e) => {
       setStatus(e.payload);
       if (e.payload === "idle") refresh();
@@ -341,6 +344,27 @@ export default function App() {
             value={settings.hotkey}
             onChange={(combo) => save({ ...settings, hotkey: combo })}
           />
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Microphone <Tip text="Which input device to record from. Default follows the system microphone; pick a specific one if you have several (headset, webcam, desk mic). If the chosen device is unplugged, Sussurro falls back to the default." /></span>
+            <small>capture device</small>
+          </div>
+          <select
+            value={settings.input_device}
+            onChange={(e) => save({ ...settings, input_device: e.target.value })}
+          >
+            <option value="">System default</option>
+            {inputDevices.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+            {settings.input_device && !inputDevices.includes(settings.input_device) && (
+              <option value={settings.input_device}>
+                {settings.input_device} (unavailable)
+              </option>
+            )}
+          </select>
         </div>
 
         <div className="field">

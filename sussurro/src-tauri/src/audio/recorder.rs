@@ -25,7 +25,8 @@ impl Recorder {
         self.stop_tx.is_some()
     }
 
-    pub fn start(&mut self) -> Result<()> {
+    /// `device_name`: empty = system default input.
+    pub fn start(&mut self, device_name: &str) -> Result<()> {
         if self.is_recording() {
             return Ok(());
         }
@@ -37,8 +38,9 @@ impl Recorder {
         let (result_tx, result_rx) = channel();
         let buffer = self.live.clone();
         let meta = self.meta.clone();
+        let device_name = device_name.to_string();
         std::thread::spawn(move || {
-            let _ = result_tx.send(record_until_stopped(stop_rx, buffer, meta));
+            let _ = result_tx.send(record_until_stopped(stop_rx, buffer, meta, &device_name));
         });
         self.stop_tx = Some(stop_tx);
         self.result_rx = Some(result_rx);
@@ -68,15 +70,33 @@ impl Recorder {
     }
 }
 
+/// Names of available input devices. The empty string always means "system
+/// default" to callers and is not included here.
+pub fn list_input_devices() -> Vec<String> {
+    let host = cpal::default_host();
+    let Ok(devices) = host.input_devices() else {
+        return Vec::new();
+    };
+    devices.filter_map(|d| d.name().ok()).collect()
+}
+
 fn record_until_stopped(
     stop_rx: Receiver<()>,
     buffer: Arc<Mutex<Vec<f32>>>,
     meta: Arc<(AtomicU32, AtomicUsize)>,
+    device_name: &str,
 ) -> Result<Vec<f32>> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| anyhow!("no input device — check microphone privacy settings"))?;
+    let device = if device_name.is_empty() {
+        host.default_input_device()
+    } else {
+        // Fall back to default if the saved device is gone (unplugged).
+        host.input_devices()
+            .ok()
+            .and_then(|mut ds| ds.find(|d| d.name().map(|n| n == device_name).unwrap_or(false)))
+            .or_else(|| host.default_input_device())
+    }
+    .ok_or_else(|| anyhow!("no input device — check microphone privacy settings"))?;
     let config = device.default_input_config()?;
     let channels = config.channels() as usize;
     let rate = config.sample_rate().0;
@@ -142,7 +162,7 @@ mod tests {
     #[ignore]
     fn record_one_second() {
         let mut r = Recorder::default();
-        r.start().unwrap();
+        r.start("").unwrap();
         assert!(r.is_recording());
         std::thread::sleep(std::time::Duration::from_millis(600));
         let snap = r.snapshot_16k();

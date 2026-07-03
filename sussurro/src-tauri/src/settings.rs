@@ -68,6 +68,8 @@ pub struct Settings {
     /// Where STT models are stored. Empty = the app data dir default.
     /// Point it at a roomier disk (e.g. F:\claude\models) if C: is tight.
     pub models_dir: String,
+    /// Input device name for capture. Empty = system default microphone.
+    pub input_device: String,
     /// Command mode shortcut: the spoken instruction is applied to the
     /// currently selected text via the LLM (Wispr's command mode).
     pub command_hotkey: String,
@@ -97,6 +99,7 @@ impl Default for Settings {
             live_preview: true,
             app_styles: Vec::new(),
             models_dir: String::new(),
+            input_device: String::new(),
             command_hotkey: "CommandOrControl+Alt+Space".into(),
             whisper_mode: false,
             stream_injection: false,

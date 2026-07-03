@@ -99,6 +99,11 @@ pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn list_input_devices() -> Vec<String> {
+    crate::audio::recorder::list_input_devices()
+}
+
+#[tauri::command]
 pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     let settings = state.settings.lock().unwrap();
     let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
