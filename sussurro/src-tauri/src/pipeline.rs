@@ -76,7 +76,7 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool, command: bool) {
             state
                 .command_mode
                 .store(command, std::sync::atomic::Ordering::Relaxed);
-            state.stream_injected.lock().unwrap().clear();
+            state.stream.lock().unwrap().reset(focused_app_name());
             let settings = state.settings.lock().unwrap().clone();
             if settings.sound_feedback {
                 crate::audio::beep::record_start();
@@ -110,6 +110,30 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool, command: bool) {
             });
         }
     }
+}
+
+/// End byte index (exclusive) of the last COMPLETE sentence in `text`,
+/// ignoring the trailing `hold_back` bytes (whisper may still revise them).
+/// A boundary is `.` `!` `?` followed by whitespace — "3.5" is not one.
+pub fn sentence_chunk_end(text: &str, hold_back: usize) -> Option<usize> {
+    let safe_len = text.len().saturating_sub(hold_back);
+    let mut end = None;
+    for (i, c) in text.char_indices() {
+        if i >= safe_len {
+            break;
+        }
+        if matches!(c, '.' | '!' | '?') {
+            let followed_by_space = text[i + c.len_utf8()..]
+                .chars()
+                .next()
+                .map(|n| n.is_whitespace())
+                .unwrap_or(false);
+            if followed_by_space {
+                end = Some(i + c.len_utf8());
+            }
+        }
+    }
+    end
 }
 
 /// Streaming injection: the safe-to-type NEW portion of `partial`, holding
@@ -193,8 +217,8 @@ fn preview_loop(app: &AppHandle) {
         return; // no model yet — the final pass will surface the error
     }
     let prompt = dictionary_prompt(&settings.dictionary);
-    let streaming = settings.stream_injection
-        && settings.cleanup_level == crate::settings::CleanupLevel::None;
+    let streaming = settings.stream_injection;
+    let raw_streaming = settings.cleanup_level == crate::settings::CleanupLevel::None;
     let mut last_len = 0usize;
 
     loop {
@@ -226,13 +250,46 @@ fn preview_loop(app: &AppHandle) {
         {
             if !text.is_empty() {
                 let _ = app.emit("partial-transcript", text.clone());
-                if streaming {
-                    // Type the stable new words into the target app as we go.
-                    let mut injected = state.stream_injected.lock().unwrap();
-                    if let Some(delta) = stream_delta(&injected, &text, 2) {
+                if streaming && raw_streaming {
+                    // Cleanup None: type the stable new words as-is.
+                    let mut stream = state.stream.lock().unwrap();
+                    if let Some(delta) = stream_delta(&stream.raw_consumed, &text, 2) {
                         if inject::inject_text(delta).is_ok() {
                             let delta = delta.to_string();
-                            injected.push_str(&delta);
+                            stream.raw_consumed.push_str(&delta);
+                            stream.injected.push_str(&delta);
+                        }
+                    }
+                } else if streaming {
+                    // Cleanup on: clean and type sentence by sentence.
+                    let chunk = {
+                        let stream = state.stream.lock().unwrap();
+                        text.strip_prefix(stream.raw_consumed.as_str())
+                            .and_then(|rem| {
+                                sentence_chunk_end(rem, 12).map(|end| rem[..end].to_string())
+                            })
+                    };
+                    if let Some(chunk) = chunk {
+                        // Ollama call happens WITHOUT holding the stream lock.
+                        let target_app = state.stream.lock().unwrap().target_app.clone();
+                        let style =
+                            crate::cleanup::prompt::find_style(&settings.app_styles, &target_app);
+                        let cleaned = ollama::cleanup(
+                            &settings.ollama_url,
+                            &settings.ollama_model,
+                            &settings.cleanup_level,
+                            &settings.dictionary,
+                            style,
+                            chunk.trim(),
+                        );
+                        let cleaned = cleaned.trim().to_string();
+                        if !cleaned.is_empty()
+                            && inject::inject_text(&format!("{cleaned} ")).is_ok()
+                        {
+                            let mut stream = state.stream.lock().unwrap();
+                            stream.raw_consumed.push_str(&chunk);
+                            stream.injected.push_str(&cleaned);
+                            stream.injected.push(' ');
                         }
                     }
                 }
@@ -330,26 +387,46 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Streaming injection already typed most of the text: only the tail is
-    // missing. Applies only with cleanup None (streamed text is raw).
-    if settings.stream_injection
-        && settings.cleanup_level == crate::settings::CleanupLevel::None
-    {
-        let injected = state.stream_injected.lock().unwrap().clone();
-        if !injected.is_empty() {
-            if let Some(rest) = raw.strip_prefix(injected.as_str()) {
-                if !rest.trim().is_empty() {
-                    inject::inject_text(rest)?;
+    // Streaming injection already typed most of the text: finish the tail.
+    if settings.stream_injection {
+        let (raw_consumed, injected_so_far) = {
+            let stream = state.stream.lock().unwrap();
+            (stream.raw_consumed.clone(), stream.injected.clone())
+        };
+        if !raw_consumed.is_empty() {
+            let raw_streaming =
+                settings.cleanup_level == crate::settings::CleanupLevel::None;
+            let mut final_text = injected_so_far;
+            if let Some(tail) = raw.strip_prefix(raw_consumed.as_str()) {
+                if !tail.trim().is_empty() {
+                    let typed_tail = if raw_streaming {
+                        tail.to_string()
+                    } else {
+                        let style = crate::cleanup::prompt::find_style(
+                            &settings.app_styles,
+                            &target_app,
+                        );
+                        ollama::cleanup(
+                            &settings.ollama_url,
+                            &settings.ollama_model,
+                            &settings.cleanup_level,
+                            &settings.dictionary,
+                            style,
+                            tail.trim(),
+                        )
+                    };
+                    inject::inject_text(&typed_tail)?;
+                    final_text.push_str(&typed_tail);
                 }
             }
             // Prefix mismatch: whisper revised already-typed words — nothing
-            // safe to add; the typed text stands.
+            // safe to add; what was typed stands.
             let _ = history::append(
                 &state.paths.history_file,
                 &HistoryEntry {
                     timestamp: chrono::Utc::now().to_rfc3339(),
-                    raw: raw.clone(),
-                    cleaned: raw,
+                    raw,
+                    cleaned: final_text,
                 },
             );
             return Ok(());
@@ -412,6 +489,20 @@ mod tests {
         assert_eq!(trigger_action(false, true, true), TriggerAction::Finish);
         assert_eq!(trigger_action(false, false, true), TriggerAction::Ignore);
         assert_eq!(trigger_action(false, false, false), TriggerAction::Ignore);
+    }
+
+    #[test]
+    fn sentence_chunk_end_finds_last_safe_boundary() {
+        // Boundary must be followed by whitespace and outside the hold-back tail.
+        let text = "First sentence. Second one! Still being spoken";
+        let end = sentence_chunk_end(text, 12).unwrap();
+        assert_eq!(&text[..end], "First sentence. Second one!");
+        // No boundary at all.
+        assert_eq!(sentence_chunk_end("no punctuation here", 12), None);
+        // Decimal points are not sentence boundaries.
+        assert_eq!(sentence_chunk_end("pi is 3.14159 roughly speaking", 5), None);
+        // A boundary inside the hold-back window is not safe yet.
+        assert_eq!(sentence_chunk_end("Short. tail", 12), None);
     }
 
     #[test]

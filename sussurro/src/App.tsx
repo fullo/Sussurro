@@ -371,8 +371,8 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
-            <span>Streaming typing <Tip text="EXPERIMENTAL: types the text into the app WHILE you speak (holding back the last 2 words, completed when you release). Only active with Cleanup level None — streamed text is the raw transcript." /></span>
-            <small>experimental · needs Cleanup: None</small>
+            <span>Streaming typing <Tip text="EXPERIMENTAL: types the text into the app WHILE you speak. With Cleanup None it streams word by word (holding back the last 2); with cleanup on it streams sentence by sentence, each one LLM-cleaned before being typed. The final pass completes the tail when you release." /></span>
+            <small>experimental · word or sentence streaming</small>
           </div>
           <label className="switch">
             <input
