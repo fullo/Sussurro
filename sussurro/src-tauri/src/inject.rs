@@ -119,7 +119,31 @@ fn synth_combo(letter: char) -> Result<()> {
     enigo_combo(letter)
 }
 
+/// macOS: enigo's Unicode→keycode lookup calls Text Input Source (TSM) APIs
+/// that assert they run on the main thread; off-thread they abort the process
+/// with SIGTRAP (#48). Injection runs on a background pipeline thread, so hop
+/// the synthesis onto the main thread and block until it reports back — the
+/// clipboard save/paste/restore sequence must stay ordered.
+#[cfg(target_os = "macos")]
 fn enigo_combo(letter: char) -> Result<()> {
+    let Some(app) = crate::app_handle() else {
+        return enigo_combo_inner(letter); // no app (unit tests) — best effort
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(enigo_combo_inner(letter));
+    })
+    .context("dispatch key synthesis to the main thread")?;
+    rx.recv()
+        .context("main-thread key synthesis did not report back")?
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enigo_combo(letter: char) -> Result<()> {
+    enigo_combo_inner(letter)
+}
+
+fn enigo_combo_inner(letter: char) -> Result<()> {
     let mut enigo = Enigo::new(&EnigoSettings::default()).context("init enigo")?;
     let modifier = paste_modifier();
     enigo.key(modifier, Direction::Press).context("modifier down")?;
