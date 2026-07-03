@@ -45,16 +45,17 @@ winget install Rustlang.Rustup OpenJS.NodeJS.LTS Kitware.CMake LLVM.LLVM Ollama.
 winget install Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools;includeRecommended"
 winget install KhronosGroup.VulkanSDK   # GPU acceleration (whisper.cpp Vulkan backend)
 setx LIBCLANG_PATH "C:\Program Files\LLVM\bin"
+setx CARGO_TARGET_DIR "C:\sbuild"       # SHORT path — see note below
 ```
 
 GPU notes:
 - Transcription runs on the GPU via **Vulkan** (NVIDIA/AMD/Intel alike). The
   Vulkan SDK is needed at *build* time only; end users just need a Vulkan
   driver (any modern GPU driver ships one).
-- `src-tauri/.cargo/config.toml` pins the cargo target dir to a short path
-  (`F:/sbuild`): whisper.cpp's Vulkan shader sub-build otherwise exceeds
-  Windows' 260-char MAX_PATH and MSBuild fails with FTK1011. Adjust the path
-  to your drive, or delete the file on macOS/Linux.
+- `CARGO_TARGET_DIR` **must point to a short path** (e.g. `C:\sbuild`):
+  whisper.cpp's Vulkan shader sub-build otherwise exceeds Windows' 260-char
+  MAX_PATH and MSBuild fails with FTK1011. Windows only — macOS/Linux don't
+  need it (and a drive-letter path would actually break `cargo test` there).
 - The very first transcription on a machine compiles GPU shaders (~10 s,
   one-time); the driver caches them afterwards.
 
@@ -66,7 +67,12 @@ Runtime notes:
 - WebView2 is preinstalled on Windows 11; on older Windows 10 install the
   [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 
-### macOS 13+
+### macOS 11+ (Apple Silicon only)
+
+Intel Macs are not supported: the Parakeet engine's ONNX runtime (`ort`)
+ships no prebuilt binaries for `x86_64-apple-darwin`. The bundle targets
+macOS 11.0+ (whisper.cpp needs ≥ 10.15 for `std::filesystem`; arm64 raises
+that to 11.0).
 
 Build prerequisites:
 
@@ -84,6 +90,11 @@ required:
   re-check this permission for Sussurro (or your terminal, in dev mode).
 
 ### Linux (X11 recommended)
+
+Requires **glibc ≥ 2.38** (Ubuntu 24.04+, Debian 13+, Fedora 39+): the
+Parakeet engine links `ort`'s prebuilt ONNX Runtime, which is compiled
+against it. Older distros fail at link time with
+`undefined symbol: __isoc23_strtoll`.
 
 Build prerequisites (Debian/Ubuntu — adapt package names for your distro):
 
@@ -107,6 +118,8 @@ Runtime notes:
   compatibility by default.
 
 ## Build & run (all platforms)
+
+Toolchain: **Node.js ≥ 24** and **Rust stable** (via rustup, installed above).
 
 ```bash
 git clone https://github.com/fullo/Sussurro && cd Sussurro/sussurro
@@ -172,9 +185,9 @@ combination; Esc cancels).
 
 ## Releases & auto-update
 
-Pushing a `v*` tag (e.g. `git tag v0.2.0 && git push origin v0.2.0`) triggers
+Pushing a `v*` tag (e.g. `git tag v0.2.1 && git push origin v0.2.1`) triggers
 the GitHub Actions release workflow: signed installers for Windows, macOS
-(Intel + Apple Silicon) and Linux, published as a draft release together with
+(Apple Silicon) and Linux, published as a draft release together with
 the updater manifest (`latest.json`). The in-app **Check for updates** button
 (footer) downloads and installs the new version.
 

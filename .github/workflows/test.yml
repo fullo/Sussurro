@@ -14,12 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Override the repo's .cargo/config.toml target-dir (F:/claude/builds/…
-      # exists only on the Windows dev machine; on Linux the drive-letter path
-      # is relative and its ':' breaks cargo's LD_LIBRARY_PATH joining).
-      - name: Cargo target dir
-        run: echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/cargo-target" >> "$GITHUB_ENV"
-
       - name: System dependencies
         run: |
           sudo apt-get update
