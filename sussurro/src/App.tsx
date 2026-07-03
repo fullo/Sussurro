@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import "./App.css";
 
 type CleanupLevel = "none" | "light" | "medium" | "high";
@@ -715,6 +716,53 @@ export default function App() {
             spellCheck={false}
             placeholder="Sussurro&#10;Tauri"
           />
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Portable config <Tip text="Export your dictionary, snippets and app styles to a JSON file, or import one — to move your setup between machines (sync it with a file/Git/Syncthing, no cloud account). Import merges without duplicates; machine-specific settings like hotkeys and models folder are not included." /></span>
+            <small>dictionary + snippets + styles</small>
+          </div>
+          <div className="model-row">
+            <button
+              className="btn-ghost"
+              onClick={async () => {
+                const path = await saveDialog({
+                  defaultPath: "sussurro-config.json",
+                  filters: [{ name: "JSON", extensions: ["json"] }],
+                });
+                if (!path) return;
+                try {
+                  await invoke("export_config", { path });
+                  setBusy("Config exported.");
+                  setTimeout(() => setBusy(""), 3000);
+                } catch (e) {
+                  setBusy(String(e));
+                }
+              }}
+            >
+              Export
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={async () => {
+                const path = await openDialog({
+                  multiple: false,
+                  filters: [{ name: "JSON", extensions: ["json"] }],
+                });
+                if (!path || typeof path !== "string") return;
+                try {
+                  const msg = await invoke<string>("import_config", { path });
+                  setBusy(msg);
+                  refresh();
+                } catch (e) {
+                  setBusy(String(e));
+                }
+              }}
+            >
+              Import
+            </button>
+          </div>
         </div>
       </CollapsibleCard>
 

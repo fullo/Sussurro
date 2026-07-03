@@ -149,6 +149,30 @@ pub fn learn_correction(
     Ok(learned)
 }
 
+/// Write the portable config (dictionary, snippets, app styles) to `path`.
+#[tauri::command]
+pub fn export_config(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let settings = state.settings.lock().unwrap().clone();
+    crate::config_io::export_to(std::path::Path::new(&path), &settings)
+        .map_err(|e| e.to_string())
+}
+
+/// Merge a config bundle from `path` into settings. Returns a summary string.
+#[tauri::command]
+pub fn import_config(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let bundle = crate::config_io::load_bundle(std::path::Path::new(&path))
+        .map_err(|e| format!("could not read config: {e:#}"))?;
+    let (w, sn, st) = {
+        let mut settings = state.settings.lock().unwrap();
+        let counts = bundle.merge_into(&mut settings);
+        settings
+            .save(&state.paths.settings_file)
+            .map_err(|e| e.to_string())?;
+        counts
+    };
+    Ok(format!("Imported {w} words, {sn} snippets, {st} app styles"))
+}
+
 /// Models available on the configured Ollama server. Errors when unreachable —
 /// the frontend falls back to a free-text field.
 #[tauri::command]
