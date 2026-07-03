@@ -63,6 +63,10 @@ whisper-rs = { version = "0.16.0", features = ["vulkan"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["metal"] }
+# Microphone (AVFoundation) + Accessibility (AXIsProcessTrusted) permission
+# checks. objc2 versions match the ones already in the tree (via tauri).
+objc2 = "0.6"
+objc2-foundation = "0.3"
 
 # Native Wayland clipboard (wlr-data-control protocol) — without this arboard
 # only reaches the XWayland clipboard on Wayland sessions. ashpd/tokio back

@@ -14,6 +14,12 @@ interface OllamaStatus {
   has_model: boolean;
 }
 
+type PermState = "granted" | "denied" | "unknown" | "not_applicable";
+interface Permissions {
+  microphone: PermState;
+  accessibility: PermState;
+}
+
 type CleanupLevel = "none" | "light" | "medium" | "high";
 
 interface Snippet {
@@ -466,6 +472,7 @@ export default function App() {
   const [historyQuery, setHistoryQuery] = useState("");
   const [searchResults, setSearchResults] = useState<HistoryEntry[] | null>(null);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [permissions, setPermissions] = useState<Permissions | null>(null);
   const [setupDismissed, setSetupDismissed] = useState(false);
   const [micTest, setMicTest] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
@@ -482,6 +489,14 @@ export default function App() {
       setOllamaStatus(await invoke<OllamaStatus>("ollama_status"));
     } catch {
       setOllamaStatus(null);
+    }
+  };
+
+  const checkPermissions = async () => {
+    try {
+      setPermissions(await invoke<Permissions>("check_permissions"));
+    } catch {
+      setPermissions(null);
     }
   };
 
@@ -520,6 +535,7 @@ export default function App() {
     invoke<string[]>("list_input_devices").then(setInputDevices).catch(() => {});
     invoke<string[]>("get_default_prompts").then(setDefaultPrompts).catch(() => {});
     checkOllama();
+    checkPermissions();
     const unlisten = listen<string>("pipeline-status", (e) => {
       setStatus(e.payload);
       if (e.payload === "idle") refresh();
@@ -657,13 +673,23 @@ export default function App() {
       </header>
 
       {!setupDismissed &&
-        (ollamaStatus !== null &&
-          (!ollamaStatus.running || !ollamaStatus.has_model || !modelReady)) && (
+        ((ollamaStatus !== null &&
+          (!ollamaStatus.running || !ollamaStatus.has_model || !modelReady)) ||
+          permissions?.microphone === "denied" ||
+          permissions?.accessibility === "denied") && (
         <div className="setup-banner" role="alert">
           <div className="setup-head">
             <strong>Setup</strong>
             <span className="summary-right">
-              <button className="btn-ghost" onClick={checkOllama}>Re-check</button>
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  checkOllama();
+                  checkPermissions();
+                }}
+              >
+                Re-check
+              </button>
               <button
                 className="btn-ghost"
                 onClick={() => setSetupDismissed(true)}
@@ -674,7 +700,31 @@ export default function App() {
             </span>
           </div>
           <ul>
-            {!ollamaStatus.installed && (
+            {permissions?.accessibility === "denied" && (
+              <li>
+                <span className="setup-bad">✗</span> Accessibility permission not
+                granted — Sussurro needs it to paste dictated text into other apps.
+                <button
+                  className="btn-ghost"
+                  onClick={() => invoke("open_settings", { target: "accessibility" })}
+                >
+                  Open Settings
+                </button>
+              </li>
+            )}
+            {permissions?.microphone === "denied" && (
+              <li>
+                <span className="setup-bad">✗</span> Microphone access denied —
+                dictation can't record until you allow it.
+                <button
+                  className="btn-ghost"
+                  onClick={() => invoke("open_settings", { target: "microphone" })}
+                >
+                  Open Settings
+                </button>
+              </li>
+            )}
+            {ollamaStatus && !ollamaStatus.installed && (
               <li>
                 <span className="setup-bad">✗</span> Ollama is not installed — cleanup
                 and translation need it (dictation still works, raw only).
@@ -686,14 +736,14 @@ export default function App() {
                 </button>
               </li>
             )}
-            {ollamaStatus.installed && !ollamaStatus.running && (
+            {ollamaStatus?.installed && !ollamaStatus.running && (
               <li>
                 <span className="setup-bad">✗</span> Ollama is installed but not
                 running — start the Ollama app (or run <code>ollama serve</code>),
                 then Re-check.
               </li>
             )}
-            {ollamaStatus.running && !ollamaStatus.has_model && (
+            {ollamaStatus?.running && !ollamaStatus.has_model && (
               <li>
                 <span className="setup-bad">✗</span> Model “{settings.ollama_model}”
                 is not on your Ollama server.

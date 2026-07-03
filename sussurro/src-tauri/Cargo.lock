@@ -4797,6 +4797,8 @@ dependencies = [
  "cpal",
  "enigo",
  "flate2",
+ "objc2",
+ "objc2-foundation",
  "regex",
  "reqwest",
  "serde",

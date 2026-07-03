@@ -6,6 +6,7 @@ pub mod config_io;
 pub mod history;
 pub mod hotkey;
 pub mod inject;
+pub mod permissions;
 pub mod pipeline;
 pub mod settings;
 pub mod snippets;
@@ -135,7 +136,9 @@ pub fn run() {
             commands::ollama_status,
             commands::diagnostics,
             commands::pull_ollama_model,
-            commands::translate_entry
+            commands::translate_entry,
+            commands::check_permissions,
+            commands::open_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
