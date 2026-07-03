@@ -1,7 +1,8 @@
 # Windows: whisper.cpp's Vulkan shader sub-build nests paths past the 260-char
 # MAX_PATH limit and MSBuild's FileTracker chokes (FTK1011) even with NTFS long
 # paths enabled. A short target dir keeps every generated path under the limit.
-# On macOS/Linux this just creates an odd-named local folder — harmless — but
-# feel free to delete this file there.
+# On macOS/Linux the drive-letter path is treated as relative and its ':'
+# breaks cargo's LD_LIBRARY_PATH joining (cargo test fails). CI overrides it
+# via CARGO_TARGET_DIR; do the same locally, or delete this file there.
 [build]
 target-dir = "F:/claude/builds/sussurro"
