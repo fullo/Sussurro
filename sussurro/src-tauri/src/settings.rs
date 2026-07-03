@@ -97,6 +97,8 @@ pub struct Settings {
     pub voice_commands: bool,
     /// Advanced: custom per-level cleanup instructions (empty = default).
     pub prompt_overrides: PromptOverrides,
+    /// Auto-delete history entries older than N days (0 = keep forever).
+    pub history_retention_days: u32,
 }
 
 impl Default for Settings {
@@ -124,6 +126,7 @@ impl Default for Settings {
             stream_injection: false,
             voice_commands: true,
             prompt_overrides: PromptOverrides::default(),
+            history_retention_days: 0,
         }
     }
 }

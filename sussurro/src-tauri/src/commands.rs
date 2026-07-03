@@ -83,7 +83,16 @@ pub async fn reclean(state: State<'_, AppState>, raw: String) -> Result<HistoryE
 
 #[tauri::command]
 pub fn get_history(state: State<'_, AppState>, n: usize) -> Vec<HistoryEntry> {
+    // Retention rides the refresh: cheap no-op unless something expired.
+    let days = state.settings.lock().unwrap().history_retention_days;
+    let _ = history::prune_older_than(&state.paths.history_file, days);
     history::read_last(&state.paths.history_file, n)
+}
+
+/// Full-text search over the whole history (raw + cleaned), newest first.
+#[tauri::command]
+pub fn search_history(state: State<'_, AppState>, query: String, n: usize) -> Vec<HistoryEntry> {
+    history::search(&state.paths.history_file, &query, n)
 }
 
 #[tauri::command]
