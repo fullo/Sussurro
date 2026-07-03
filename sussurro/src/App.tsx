@@ -92,15 +92,22 @@ function CollapsibleCard({
   title,
   className = "card",
   headerExtra,
+  defaultOpen = false,
   children,
 }: {
   storageKey: string;
   title: ReactNode;
   className?: string;
   headerExtra?: ReactNode;
+  defaultOpen?: boolean;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(() => localStorage.getItem(storageKey) !== "0");
+  // First run: only the cards marked defaultOpen are expanded. Afterwards the
+  // user's own open/closed choice (localStorage) always wins.
+  const [open, setOpen] = useState(() => {
+    const stored = localStorage.getItem(storageKey);
+    return stored === null ? defaultOpen : stored === "1";
+  });
   return (
     <details
       className={`collapsible ${className}`}
@@ -120,6 +127,16 @@ function CollapsibleCard({
       </summary>
       {children}
     </details>
+  );
+}
+
+/** Visually de-emphasized group for rarely-touched settings. */
+function AdvancedGroup({ children }: { children: ReactNode }) {
+  return (
+    <div className="advanced-group">
+      <span className="advanced-label">Advanced</span>
+      {children}
+    </div>
   );
 }
 
@@ -336,7 +353,7 @@ export default function App() {
         </button>
       </header>
 
-      <CollapsibleCard storageKey="dictationOpen" title="Dictation">
+      <CollapsibleCard storageKey="dictationOpen" title="Dictation" defaultOpen>
         <div className="field">
           <div className="field-label">
             <span>Shortcut <Tip text="The system-wide key combination that triggers dictation in any app. Click the field, then press the keys you want (Esc cancels)." /></span>
@@ -382,36 +399,6 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
-            <span>Whisper mode <Tip text="For dictating quietly (open office, late night): boosts microphone gain 3x and lowers the silence gate so soft speech still registers." /></span>
-            <small>for quiet speech</small>
-          </div>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={settings.whisper_mode}
-              onChange={(e) => save({ ...settings, whisper_mode: e.target.checked })}
-            />
-            <span className="slider" />
-          </label>
-        </div>
-
-        <div className="field">
-          <div className="field-label">
-            <span>Streaming typing <Tip text="EXPERIMENTAL: types the text into the app WHILE you speak. With Cleanup None it streams word by word (holding back the last 2); with cleanup on it streams sentence by sentence, each one LLM-cleaned before being typed. The final pass completes the tail when you release." /></span>
-            <small>experimental · word or sentence streaming</small>
-          </div>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={settings.stream_injection}
-              onChange={(e) => save({ ...settings, stream_injection: e.target.checked })}
-            />
-            <span className="slider" />
-          </label>
-        </div>
-
-        <div className="field">
-          <div className="field-label">
             <span>Push-to-talk <Tip text="On: recording lasts while you hold the shortcut or the Dictate button, like a walkie-talkie. Off: one tap/click starts recording, a second one stops it. Applies to both the keyboard shortcut and the Dictate button in the header." /></span>
             <small>off = toggle mode</small>
           </div>
@@ -424,51 +411,12 @@ export default function App() {
             <span className="slider" />
           </label>
         </div>
+      </CollapsibleCard>
 
-        <div className="field">
-          <div className="field-label">
-            <span>Live preview <Tip text="While you speak, the overlay shows a rolling partial transcript (re-transcribed every ~1.2s). Costs extra GPU/CPU during recording; the pasted text always comes from the final, full-quality pass." /></span>
-            <small>partial transcript in the overlay</small>
-          </div>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={settings.live_preview}
-              onChange={(e) => save({ ...settings, live_preview: e.target.checked })}
-            />
-            <span className="slider" />
-          </label>
-        </div>
-
-        <div className="field">
-          <div className="field-label">
-            <span>Sound feedback <Tip text="A short rising tick when recording starts and a falling one when it stops — so you know the trigger worked without looking at this window." /></span>
-            <small>tick on start / stop</small>
-          </div>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={settings.sound_feedback}
-              onChange={(e) => save({ ...settings, sound_feedback: e.target.checked })}
-            />
-            <span className="slider" />
-          </label>
-        </div>
-
-        <div className="field">
-          <div className="field-label">
-            <span>Launch at login <Tip text="Start Sussurro automatically when you log in. It starts hidden in the tray — click the tray icon or press your shortcut to use it." /></span>
-            <small>starts hidden in the tray</small>
-          </div>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={settings.autostart}
-              onChange={(e) => save({ ...settings, autostart: e.target.checked })}
-            />
-            <span className="slider" />
-          </label>
-        </div>
+      <CollapsibleCard
+        storageKey="speechOpen"
+        title={<>Speech recognition <span className="via">engine & models</span></>}
+      >
 
         <div className="field">
           <div className="field-label">
@@ -552,19 +500,36 @@ export default function App() {
           </div>
         </div>
 
-        <div className="field">
-          <div className="field-label">
-            <span>Models folder <Tip text="Where downloaded STT models are stored (up to a few GB). Leave empty for the default app-data folder, or point it at a roomier disk. Already-downloaded models must be moved there manually." /></span>
-            <small>empty = app data default</small>
+        <AdvancedGroup>
+          <div className="field">
+            <div className="field-label">
+              <span>Models folder <Tip text="Where downloaded STT models are stored (up to a few GB). Leave empty for the default app-data folder, or point it at a roomier disk. Already-downloaded models must be moved there manually." /></span>
+              <small>empty = app data default</small>
+            </div>
+            <input
+              value={settings.models_dir}
+              placeholder="F:\claude\models"
+              onChange={(e) => setSettings({ ...settings, models_dir: e.target.value })}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+            />
           </div>
-          <input
-            value={settings.models_dir}
-            placeholder="F:\claude\models"
-            onChange={(e) => setSettings({ ...settings, models_dir: e.target.value })}
-            onBlur={() => save(settings)}
-            spellCheck={false}
-          />
-        </div>
+
+          <div className="field">
+            <div className="field-label">
+              <span>Whisper mode <Tip text="For dictating quietly (open office, late night): boosts microphone gain 3x and lowers the silence gate so soft speech still registers." /></span>
+              <small>for quiet speech</small>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={settings.whisper_mode}
+                onChange={(e) => save({ ...settings, whisper_mode: e.target.checked })}
+              />
+              <span className="slider" />
+            </label>
+          </div>
+        </AdvancedGroup>
       </CollapsibleCard>
 
       <CollapsibleCard
@@ -646,6 +611,32 @@ export default function App() {
           )}
         </div>
 
+      </CollapsibleCard>
+
+      <CollapsibleCard
+        storageKey="snippetsOpen"
+        title={<>Personalization <span className="via">dictionary · styles · snippets</span></>}
+      >
+        <div className="field field-col">
+          <div className="field-label">
+            <span>Personal dictionary <Tip text="Names, brands and jargon the models tend to misspell (e.g. Sussurro, Tauri). One per line. They are fed to Whisper as recognition hints and to the LLM as preferred spellings." /></span>
+            <small>names & jargon, one per line — biases both Whisper and the LLM</small>
+          </div>
+          <textarea
+            rows={3}
+            value={settings.dictionary.join("\n")}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                dictionary: e.target.value.split("\n").map((w) => w.trim()).filter(Boolean),
+              })
+            }
+            onBlur={() => save(settings)}
+            spellCheck={false}
+            placeholder="Sussurro&#10;Tauri"
+          />
+        </div>
+
         <div className="field field-col">
           <div className="field-label">
             <span>App styles <Tip text="Tone matching per application: when you dictate into an app whose name contains the match (e.g. 'slack'), the style instruction is added to the cleanup prompt. Example: slack → 'Casual and friendly, emojis welcome'; outlook → 'Professional business tone'." /></span>
@@ -698,26 +689,6 @@ export default function App() {
           </button>
         </div>
 
-        <div className="field field-col">
-          <div className="field-label">
-            <span>Personal dictionary <Tip text="Names, brands and jargon the models tend to misspell (e.g. Sussurro, Tauri). One per line. They are fed to Whisper as recognition hints and to the LLM as preferred spellings." /></span>
-            <small>names & jargon, one per line — biases both Whisper and the LLM</small>
-          </div>
-          <textarea
-            rows={3}
-            value={settings.dictionary.join("\n")}
-            onChange={(e) =>
-              setSettings({
-                ...settings,
-                dictionary: e.target.value.split("\n").map((w) => w.trim()).filter(Boolean),
-              })
-            }
-            onBlur={() => save(settings)}
-            spellCheck={false}
-            placeholder="Sussurro&#10;Tauri"
-          />
-        </div>
-
         <div className="field">
           <div className="field-label">
             <span>Portable config <Tip text="Export your dictionary, snippets and app styles to a JSON file, or import one — to move your setup between machines (sync it with a file/Git/Syncthing, no cloud account). Import merges without duplicates; machine-specific settings like hotkeys and models folder are not included." /></span>
@@ -764,12 +735,6 @@ export default function App() {
             </button>
           </div>
         </div>
-      </CollapsibleCard>
-
-      <CollapsibleCard
-        storageKey="snippetsOpen"
-        title={<>Snippets <span className="via">voice shortcuts</span></>}
-      >
         <p className="card-hint">
           Say a cue exactly — Sussurro pastes the full text instead of transcribing.
           <Tip text="Example: cue 'firma email' → pastes your full signature. Matching ignores case and punctuation, and skips the AI cleanup entirely." />
@@ -820,6 +785,72 @@ export default function App() {
       </CollapsibleCard>
 
       {busy && <p className="busy" role="alert">{busy}</p>}
+
+      <CollapsibleCard
+        storageKey="behaviorOpen"
+        title={<>Behavior <span className="via">feedback & extras</span></>}
+      >
+        <div className="field">
+          <div className="field-label">
+            <span>Live preview <Tip text="While you speak, the overlay shows a rolling partial transcript (re-transcribed every ~1.2s). Costs extra GPU/CPU during recording; the pasted text always comes from the final, full-quality pass." /></span>
+            <small>partial transcript in the overlay</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.live_preview}
+              onChange={(e) => save({ ...settings, live_preview: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Sound feedback <Tip text="A short rising tick when recording starts and a falling one when it stops — so you know the trigger worked without looking at this window." /></span>
+            <small>tick on start / stop</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.sound_feedback}
+              onChange={(e) => save({ ...settings, sound_feedback: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Streaming typing <Tip text="EXPERIMENTAL: types the text into the app WHILE you speak. With Cleanup None it streams word by word (holding back the last 2); with cleanup on it streams sentence by sentence, each one LLM-cleaned before being typed. The final pass completes the tail when you release." /></span>
+            <small>experimental · word or sentence streaming</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.stream_injection}
+              onChange={(e) => save({ ...settings, stream_injection: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Launch at login <Tip text="Start Sussurro automatically when you log in. It starts hidden in the tray — click the tray icon or press your shortcut to use it." /></span>
+            <small>starts hidden in the tray</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.autostart}
+              onChange={(e) => save({ ...settings, autostart: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+      </CollapsibleCard>
+
 
       <CollapsibleCard
         storageKey="historyOpen"
