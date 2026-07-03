@@ -67,6 +67,7 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 paths,
                 command_mode: std::sync::atomic::AtomicBool::new(false),
+                mic_test: std::sync::atomic::AtomicBool::new(false),
                 stream: Mutex::new(state::StreamState::default()),
             });
             {
@@ -100,6 +101,9 @@ pub fn run() {
             commands::download_model,
             commands::list_ollama_models,
             commands::list_input_devices,
+            commands::start_mic_test,
+            commands::stop_mic_test,
+            commands::mic_level,
             commands::trigger_dictation,
             commands::copy_text,
             commands::reclean,

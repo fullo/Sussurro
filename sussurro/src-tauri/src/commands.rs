@@ -105,6 +105,34 @@ pub fn list_input_devices() -> Vec<String> {
     crate::audio::recorder::list_input_devices()
 }
 
+/// Start the recorder purely to feed the mic-test VU meter (no transcription).
+#[tauri::command]
+pub fn start_mic_test(state: State<'_, AppState>) -> Result<(), String> {
+    let mut recorder = state.recorder.lock().unwrap();
+    if recorder.is_recording() {
+        return Err("already recording".to_string());
+    }
+    let device = state.settings.lock().unwrap().input_device.clone();
+    recorder.start(&device).map_err(|e| e.to_string())?;
+    state.mic_test.store(true, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_mic_test(state: State<'_, AppState>) -> Result<(), String> {
+    if !state.mic_test.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        return Ok(()); // dictation took over (or never started) — nothing to stop
+    }
+    let _ = state.recorder.lock().unwrap().stop(); // samples discarded
+    Ok(())
+}
+
+/// Live input level (RMS of the last ~100 ms), 0.0 when not recording.
+#[tauri::command]
+pub fn mic_level(state: State<'_, AppState>) -> f32 {
+    state.recorder.lock().unwrap().level().unwrap_or(0.0)
+}
+
 #[tauri::command]
 pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     let settings = state.settings.lock().unwrap();
