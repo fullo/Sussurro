@@ -113,6 +113,7 @@ pub fn run() {
             commands::transcribe_audio_file,
             commands::get_default_prompts,
             commands::ollama_status,
+            commands::diagnostics,
             commands::pull_ollama_model,
             commands::translate_entry
         ])
