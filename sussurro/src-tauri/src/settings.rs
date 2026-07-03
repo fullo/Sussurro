@@ -38,6 +38,10 @@ pub struct AppStyle {
     pub app_match: String,
     /// Style instruction appended to the cleanup prompt.
     pub style: String,
+    /// Per-app output language (ISO code). Empty = follow the global
+    /// "Translate to" setting. E.g. slack → "en", whatsapp → "it".
+    #[serde(default)]
+    pub language: String,
 }
 
 /// A voice shortcut: say the cue, get the full text pasted.

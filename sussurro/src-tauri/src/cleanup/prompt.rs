@@ -2,17 +2,41 @@ use crate::settings::{AppStyle, CleanupLevel};
 use serde_json::{json, Value};
 
 /// The style rule matching the focused application, if any. Case-insensitive
-/// substring match on the app name; empty rules never match.
-pub fn find_style<'a>(styles: &'a [AppStyle], app_name: &str) -> Option<&'a str> {
+/// substring match on the app name; a rule must carry a style and/or a
+/// language to match — an app_match with neither is dead config.
+pub fn find_style_rule<'a>(styles: &'a [AppStyle], app_name: &str) -> Option<&'a AppStyle> {
     let app = app_name.to_lowercase();
     if app.is_empty() {
         return None;
     }
     styles
         .iter()
-        .filter(|s| !s.app_match.trim().is_empty() && !s.style.trim().is_empty())
+        .filter(|s| {
+            !s.app_match.trim().is_empty()
+                && (!s.style.trim().is_empty() || !s.language.trim().is_empty())
+        })
         .find(|s| app.contains(&s.app_match.trim().to_lowercase()))
-        .map(|s| s.style.as_str())
+}
+
+/// The matched rule's tone instruction; None when the rule only sets a
+/// language (or nothing matches).
+pub fn find_style<'a>(styles: &'a [AppStyle], app_name: &str) -> Option<&'a str> {
+    match find_style_rule(styles, app_name) {
+        Some(rule) if !rule.style.trim().is_empty() => Some(rule.style.as_str()),
+        _ => None,
+    }
+}
+
+/// The output language for this dictation: a matched app rule's language
+/// wins over the global "Translate to" setting.
+pub fn effective_output_language<'a>(
+    settings: &'a crate::settings::Settings,
+    rule: Option<&'a AppStyle>,
+) -> &'a str {
+    match rule.map(|r| r.language.trim()).filter(|l| !l.is_empty()) {
+        Some(lang) => lang,
+        None => &settings.output_language,
+    }
 }
 
 /// Human-readable name for an ISO-639-1 code used in translation prompts.
@@ -196,14 +220,65 @@ mod tests {
     #[test]
     fn find_style_matches_substring_case_insensitive() {
         let styles = vec![
-            crate::settings::AppStyle { app_match: "slack".into(), style: "casual".into() },
-            crate::settings::AppStyle { app_match: "outlook".into(), style: "formal".into() },
-            crate::settings::AppStyle { app_match: "  ".into(), style: "junk".into() },
+            crate::settings::AppStyle {
+                app_match: "slack".into(),
+                style: "casual".into(),
+                ..Default::default()
+            },
+            crate::settings::AppStyle {
+                app_match: "outlook".into(),
+                style: "formal".into(),
+                ..Default::default()
+            },
+            crate::settings::AppStyle {
+                app_match: "  ".into(),
+                style: "junk".into(),
+                ..Default::default()
+            },
         ];
         assert_eq!(find_style(&styles, "Slack"), Some("casual"));
         assert_eq!(find_style(&styles, "Microsoft Outlook"), Some("formal"));
         assert_eq!(find_style(&styles, "Notepad"), None);
         assert_eq!(find_style(&styles, ""), None);
+    }
+
+    #[test]
+    fn app_rule_language_beats_the_global_setting() {
+        let mut s = cfg(CleanupLevel::Light);
+        s.output_language = "es".into();
+        let rule = crate::settings::AppStyle {
+            app_match: "slack".into(),
+            style: "casual".into(),
+            language: "en".into(),
+        };
+        assert_eq!(effective_output_language(&s, Some(&rule)), "en");
+        // No rule, or a rule without language: the global setting stands.
+        assert_eq!(effective_output_language(&s, None), "es");
+        let no_lang = crate::settings::AppStyle {
+            app_match: "slack".into(),
+            style: "casual".into(),
+            ..Default::default()
+        };
+        assert_eq!(effective_output_language(&s, Some(&no_lang)), "es");
+    }
+
+    #[test]
+    fn language_only_rule_matches_and_style_stays_none() {
+        let styles = vec![crate::settings::AppStyle {
+            app_match: "slack".into(),
+            style: "".into(),
+            language: "en".into(),
+        }];
+        // The rule is found (so its language can apply)…
+        assert_eq!(find_style_rule(&styles, "Slack").unwrap().language, "en");
+        // …but there is no tone instruction for the prompt.
+        assert_eq!(find_style(&styles, "Slack"), None);
+        // A rule with neither style nor language is dead config.
+        let dead = vec![crate::settings::AppStyle {
+            app_match: "slack".into(),
+            ..Default::default()
+        }];
+        assert!(find_style_rule(&dead, "Slack").is_none());
     }
 
     #[test]

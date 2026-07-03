@@ -79,7 +79,7 @@ mod tests {
         Snippet { cue: cue.into(), text: format!("{cue}-text") }
     }
     fn style(m: &str) -> AppStyle {
-        AppStyle { app_match: m.into(), style: format!("{m}-style") }
+        AppStyle { app_match: m.into(), style: format!("{m}-style"), ..Default::default() }
     }
 
     #[test]

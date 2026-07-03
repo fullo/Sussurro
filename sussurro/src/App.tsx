@@ -23,6 +23,8 @@ interface Snippet {
 interface AppStyle {
   app_match: string;
   style: string;
+  /** Per-app output language (ISO code); "" = follow the global setting. */
+  language: string;
 }
 
 interface Settings {
@@ -874,8 +876,8 @@ export default function App() {
 
         <div className="field field-col">
           <div className="field-label">
-            <span>App styles <Tip text="Tone matching per application: when you dictate into an app whose name contains the match (e.g. 'slack'), the style instruction is added to the cleanup prompt. Example: slack → 'Casual and friendly, emojis welcome'; outlook → 'Professional business tone'." /></span>
-            <small>adapt the tone to the app you dictate into</small>
+            <span>App styles <Tip text="Per-application rules: when you dictate into an app whose name contains the match (e.g. 'slack'), the tone instruction is added to the cleanup prompt, and the rule's output language (if set) overrides the global 'Translate to'. Example: slack → casual + English; whatsapp → informal + Italiano." /></span>
+            <small>tone and output language per app</small>
           </div>
           {settings.app_styles.map((s, i) => (
             <div className="snippet-row" key={i}>
@@ -909,6 +911,21 @@ export default function App() {
               >
                 Remove
               </button>
+              <select
+                className="style-lang"
+                title="Output language when dictating into this app — overrides the global 'Translate to'"
+                value={s.language ?? ""}
+                onChange={(e) => {
+                  const app_styles = settings.app_styles.slice();
+                  app_styles[i] = { ...s, language: e.target.value };
+                  save({ ...settings, app_styles });
+                }}
+              >
+                <option value="">Output: global language</option>
+                {LANGUAGES.filter(([code]) => code !== "auto").map(([code, label]) => (
+                  <option key={code} value={code}>Output: {label}</option>
+                ))}
+              </select>
             </div>
           ))}
           <button
@@ -916,7 +933,7 @@ export default function App() {
             onClick={() =>
               setSettings({
                 ...settings,
-                app_styles: [...settings.app_styles, { app_match: "", style: "" }],
+                app_styles: [...settings.app_styles, { app_match: "", style: "", language: "" }],
               })
             }
           >
