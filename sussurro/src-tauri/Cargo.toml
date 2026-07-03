@@ -46,7 +46,11 @@ sha2 = "0.10"
 active-win-pos-rs = "0.11.0"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
+<<<<<<< HEAD
 tauri-plugin-dialog = "2.7.1"
+=======
+symphonia = { version = "0.5.4", features = ["mp3", "isomp4", "aac"] }
+>>>>>>> 1a616e6 (feat: transcribe audio files (wav/mp3/m4a/aac) via symphonia decode)
 
 # GPU acceleration per platform: Vulkan on Windows (needs the Vulkan SDK at
 # build time), Metal on macOS (ships with Xcode). Linux stays CPU-only by

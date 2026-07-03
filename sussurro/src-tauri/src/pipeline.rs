@@ -208,6 +208,44 @@ fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) ->
     Ok(())
 }
 
+/// Transcribe a batch of 16 kHz mono samples and clean the result, using the
+/// current settings. Appends a history entry. Used for audio-file import (no
+/// injection, no per-app style). Returns (raw, cleaned).
+pub fn transcribe_batch(state: &AppState, samples: &[f32]) -> anyhow::Result<(String, String)> {
+    let settings = state.settings.lock().unwrap().clone();
+    ensure_transcriber(state, &settings)?;
+
+    let prompt = dictionary_prompt(&settings.dictionary);
+    let raw = {
+        let mut guard = state.transcriber.lock().unwrap();
+        guard
+            .as_mut()
+            .expect("transcriber loaded above")
+            .transcribe(samples, prompt.as_deref(), &settings.language)?
+    };
+    if raw.trim().is_empty() {
+        anyhow::bail!("no speech found in the audio");
+    }
+    let cleaned = ollama::cleanup(
+        &settings.ollama_url,
+        &settings.ollama_model,
+        &settings.cleanup_level,
+        &settings.dictionary,
+        None,
+        &settings.output_language,
+        &raw,
+    );
+    let _ = history::append(
+        &state.paths.history_file,
+        &HistoryEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            raw: raw.clone(),
+            cleaned: cleaned.clone(),
+        },
+    );
+    Ok((raw, cleaned))
+}
+
 /// Live preview: while the recording lasts, periodically re-transcribe the
 /// accumulated buffer and emit the partial text to the overlay. Best-effort —
 /// any failure just means no preview.

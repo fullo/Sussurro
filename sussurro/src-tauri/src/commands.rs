@@ -3,7 +3,7 @@ use crate::hotkey;
 use crate::settings::Settings;
 use crate::state::AppState;
 use crate::stt::models;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 #[tauri::command]
@@ -171,6 +171,30 @@ pub fn import_config(state: State<'_, AppState>, path: String) -> Result<String,
         counts
     };
     Ok(format!("Imported {w} words, {sn} snippets, {st} app styles"))
+}
+
+/// Transcribe an audio file's bytes (from a file input) and clean the result
+/// with the current settings. Appends a history entry; returns (raw, cleaned).
+#[tauri::command]
+pub async fn transcribe_audio_file(
+    app: AppHandle,
+    bytes: Vec<u8>,
+    ext: String,
+) -> Result<HistoryEntry, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let samples = crate::audio::decode::decode_bytes_16k_mono(bytes, &ext)
+            .map_err(|e| format!("{e:#}"))?;
+        let state = app.state::<AppState>();
+        let (raw, cleaned) =
+            crate::pipeline::transcribe_batch(&state, &samples).map_err(|e| format!("{e:#}"))?;
+        Ok(HistoryEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            raw,
+            cleaned,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Models available on the configured Ollama server. Errors when unreachable —
