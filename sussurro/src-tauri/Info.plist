@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the generated macOS Info.plist by the Tauri bundler.
+     NSMicrophoneUsageDescription is mandatory: without it macOS never grants
+     microphone access, so dictation capture is silently denied. -->
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Sussurro needs the microphone to capture your dictation, which is transcribed locally on this Mac.</string>
+</dict>
+</plist>
