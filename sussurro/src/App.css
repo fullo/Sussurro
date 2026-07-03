@@ -468,6 +468,24 @@ kbd {
   border-color: var(--brand-darker);
 }
 
+/* ---------- Advanced sub-group ---------- */
+
+.advanced-group {
+  margin-top: 0.75rem;
+  padding-top: 0.25rem;
+  border-top: 1px dashed var(--border-strong);
+}
+.advanced-label {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--c-text-light);
+}
+.advanced-group .field:first-of-type { border-top: none; }
+
 /* ---------- Snippets ---------- */
 
 .card-hint {
