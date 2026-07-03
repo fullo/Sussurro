@@ -668,16 +668,36 @@ footer {
   padding: 1rem 0 0.5rem;
   border-top: 1px solid var(--border);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  flex-direction: column;
+  gap: 0.75rem;
   font-size: 0.78rem;
   color: var(--c-text-light);
   letter-spacing: 0.05em;
 }
 footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 footer a:hover { color: var(--c-dark); }
+.footer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
 .footer-actions { display: flex; gap: 0.5rem; flex: none; }
+/* The credit line: a tiny painted daruma next to the wordmark. */
+.footer-credit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+.daruma-mini {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--c-dark);
+  background: var(--brand);
+  flex: none;
+}
 
 /* Inline spinner for buttons with a long-running action. */
 .btn-spinner {

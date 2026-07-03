@@ -1341,18 +1341,8 @@ export default function App() {
       </CollapsibleCard>
 
       <footer>
-        <span>
-          すべてローカル — everything stays local · by{" "}
-          <a
-            href="https://darumahq.it"
-            onClick={(e) => {
-              e.preventDefault();
-              openUrl("https://darumahq.it/");
-            }}
-          >
-            DarumaHQ.it
-          </a>
-        </span>
+        <div className="footer-top">
+        <span>すべてローカル — everything stays local</span>
         <span className="footer-actions">
           <button
             className="btn-ghost"
@@ -1392,6 +1382,20 @@ export default function App() {
             Check for updates
           </button>
         </span>
+        </div>
+        <div className="footer-credit">
+          <span className="daruma-mini" aria-hidden="true" />
+          by{" "}
+          <a
+            href="https://darumahq.it"
+            onClick={(e) => {
+              e.preventDefault();
+              openUrl("https://darumahq.it/");
+            }}
+          >
+            DarumaHQ.it
+          </a>
+        </div>
       </footer>
     </main>
   );
