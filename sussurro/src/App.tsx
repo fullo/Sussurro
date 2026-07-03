@@ -457,6 +457,7 @@ export default function App() {
         >
           {pillLabel}
         </button>
+        {busy && <p className="busy" role="alert">{busy}</p>}
       </header>
 
       {!setupDismissed &&
@@ -1038,8 +1039,6 @@ export default function App() {
           </div>
         </div>
       </CollapsibleCard>
-
-      {busy && <p className="busy" role="alert">{busy}</p>}
 
       <CollapsibleCard
         storageKey="behaviorOpen"

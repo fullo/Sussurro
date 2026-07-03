@@ -602,13 +602,27 @@ kbd {
 
 /* ---------- Busy / errors ---------- */
 
+/* System feedback lives in a fixed box top-right, beside the masthead: it
+   never shifts the layout and stays visible wherever the action started. */
 .busy {
+  position: fixed;
+  top: 1rem;
+  right: 1.25rem;
+  max-width: min(46vw, 300px);
+  z-index: 40;
+  margin: 0;
   font-size: 0.9rem;
   color: var(--brand-text);
   background: var(--brand-soft);
   border: 1px solid var(--brand);
   border-radius: var(--radius);
   padding: 0.6rem 0.9rem;
+  box-shadow: var(--shadow-md);
+  animation: busy-in 0.2s ease;
+}
+@keyframes busy-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ---------- History: the editorial page ---------- */
