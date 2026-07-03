@@ -42,6 +42,8 @@ interface Settings {
   voice_commands: boolean;
   prompt_overrides: { light: string; medium: string; high: string };
   history_retention_days: number;
+  api_enabled: boolean;
+  api_port: number;
 }
 
 const LANGUAGES: [string, string][] = [
@@ -910,6 +912,36 @@ export default function App() {
             <span className="slider" />
           </label>
         </div>
+
+        <AdvancedGroup>
+          <div className="field">
+            <div className="field-label">
+              <span>Local API <Tip text="HTTP API on 127.0.0.1 for scripting: POST /clean (text → cleaned), POST /transcribe?ext=wav (audio file → transcript), GET /history?q=. Loopback only — but any local process can call it. Applied at app restart. curl examples in the README." /></span>
+              <small>for scripts & automation · restart required</small>
+            </div>
+            <div className="model-row">
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={settings.api_enabled}
+                  onChange={(e) => save({ ...settings, api_enabled: e.target.checked })}
+                />
+                <span className="slider" />
+              </label>
+              <input
+                className="port-input"
+                type="number"
+                min={1024}
+                max={65535}
+                value={settings.api_port}
+                onChange={(e) => setSettings({ ...settings, api_port: Number(e.target.value) })}
+                onBlur={() => save(settings)}
+                disabled={!settings.api_enabled}
+                title="Port"
+              />
+            </div>
+          </div>
+        </AdvancedGroup>
       </CollapsibleCard>
 
 

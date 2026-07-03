@@ -109,6 +109,25 @@ combination; Esc cancels).
 - **Models folder** — settable in Settings (default: app data); silence is
   trimmed before inference (VAD-lite) so long pauses don't cost GPU time.
 
+## Local API (scripting)
+
+Enable it in Behavior → Advanced (off by default; loopback only; applied at
+restart). Then, from any script:
+
+```bash
+# clean up / translate a text with your current settings
+curl -X POST --data "um so this is uh a test" http://127.0.0.1:4525/clean
+
+# transcribe an audio file (wav/mp3/m4a/flac/ogg)
+curl -X POST --data-binary @meeting.mp3 "http://127.0.0.1:4525/transcribe?ext=mp3"
+
+# search your dictation history
+curl "http://127.0.0.1:4525/history?n=10&q=sussurro"
+```
+
+Note: loopback-only means no network exposure, but any process on your
+machine can call it — that's why it ships disabled.
+
 ## Releases & auto-update
 
 > **⚠️ Auto-update is frozen until v0.5.0.** The repo is private while the
