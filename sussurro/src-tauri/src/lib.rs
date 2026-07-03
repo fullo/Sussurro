@@ -107,7 +107,9 @@ pub fn run() {
             commands::export_config,
             commands::import_config,
             commands::transcribe_audio_file,
-            commands::get_default_prompts
+            commands::get_default_prompts,
+            commands::ollama_status,
+            commands::pull_ollama_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

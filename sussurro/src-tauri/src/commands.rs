@@ -198,6 +198,79 @@ pub async fn transcribe_audio_file(
     .map_err(|e| e.to_string())?
 }
 
+/// Ollama environment status for the setup banner.
+#[derive(serde::Serialize)]
+pub struct OllamaStatus {
+    /// Binary found on PATH (or the server answered — installed for sure).
+    pub installed: bool,
+    /// The HTTP server answered /api/tags.
+    pub running: bool,
+    /// The configured cleanup model is present on the server.
+    pub has_model: bool,
+}
+
+fn ollama_binary_on_path() -> bool {
+    let finder = if cfg!(windows) { "where" } else { "which" };
+    std::process::Command::new(finder)
+        .arg("ollama")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+pub async fn ollama_status(state: State<'_, AppState>) -> Result<OllamaStatus, String> {
+    let (url, model) = {
+        let s = state.settings.lock().unwrap();
+        (s.ollama_url.clone(), s.ollama_model.clone())
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let models = crate::cleanup::ollama::list_models(&url).ok();
+        let running = models.is_some();
+        let has_model = models
+            .map(|ms| {
+                ms.iter()
+                    .any(|m| m == &model || m.starts_with(&format!("{model}:")))
+            })
+            .unwrap_or(false);
+        Ok(OllamaStatus {
+            installed: running || ollama_binary_on_path(),
+            running,
+            has_model,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Pull the configured cleanup model on the Ollama server (blocking, can take
+/// minutes for a ~2 GB model).
+#[tauri::command]
+pub async fn pull_ollama_model(state: State<'_, AppState>) -> Result<(), String> {
+    let (url, model) = {
+        let s = state.settings.lock().unwrap();
+        (s.ollama_url.clone(), s.ollama_model.clone())
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(None)
+            .build()
+            .map_err(|e| e.to_string())?;
+        client
+            .post(format!("{}/api/pull", url.trim_end_matches('/')))
+            .json(&serde_json::json!({"name": model, "stream": false}))
+            .send()
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Built-in cleanup instructions per level — shown as placeholders under the
 /// user's prompt overrides so the two never drift apart.
 #[tauri::command]

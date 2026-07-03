@@ -4,7 +4,14 @@ import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
+
+interface OllamaStatus {
+  installed: boolean;
+  running: boolean;
+  has_model: boolean;
+}
 
 type CleanupLevel = "none" | "light" | "medium" | "high";
 
@@ -249,6 +256,16 @@ export default function App() {
   const [editing, setEditing] = useState<{ ts: string; draft: string } | null>(null);
   const [historyQuery, setHistoryQuery] = useState("");
   const [searchResults, setSearchResults] = useState<HistoryEntry[] | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [setupDismissed, setSetupDismissed] = useState(false);
+
+  const checkOllama = async () => {
+    try {
+      setOllamaStatus(await invoke<OllamaStatus>("ollama_status"));
+    } catch {
+      setOllamaStatus(null);
+    }
+  };
 
   const runHistorySearch = async (query: string) => {
     setHistoryQuery(query);
@@ -283,6 +300,7 @@ export default function App() {
     loadOllamaModels();
     invoke<string[]>("list_input_devices").then(setInputDevices).catch(() => {});
     invoke<string[]>("get_default_prompts").then(setDefaultPrompts).catch(() => {});
+    checkOllama();
     const unlisten = listen<string>("pipeline-status", (e) => {
       setStatus(e.payload);
       if (e.payload === "idle") refresh();
@@ -374,6 +392,77 @@ export default function App() {
           {pillLabel}
         </button>
       </header>
+
+      {!setupDismissed &&
+        (ollamaStatus !== null &&
+          (!ollamaStatus.running || !ollamaStatus.has_model || !modelReady)) && (
+        <div className="setup-banner" role="alert">
+          <div className="setup-head">
+            <strong>Setup</strong>
+            <span className="summary-right">
+              <button className="btn-ghost" onClick={checkOllama}>Re-check</button>
+              <button
+                className="btn-ghost"
+                onClick={() => setSetupDismissed(true)}
+                aria-label="Dismiss setup banner"
+              >
+                ×
+              </button>
+            </span>
+          </div>
+          <ul>
+            {!ollamaStatus.installed && (
+              <li>
+                <span className="setup-bad">✗</span> Ollama is not installed — cleanup
+                and translation need it (dictation still works, raw only).
+                <button
+                  className="btn-ghost"
+                  onClick={() => openUrl("https://ollama.com/download")}
+                >
+                  Get Ollama
+                </button>
+              </li>
+            )}
+            {ollamaStatus.installed && !ollamaStatus.running && (
+              <li>
+                <span className="setup-bad">✗</span> Ollama is installed but not
+                running — start the Ollama app (or run <code>ollama serve</code>),
+                then Re-check.
+              </li>
+            )}
+            {ollamaStatus.running && !ollamaStatus.has_model && (
+              <li>
+                <span className="setup-bad">✗</span> Model “{settings.ollama_model}”
+                is not on your Ollama server.
+                <button
+                  className="btn-ghost"
+                  onClick={async () => {
+                    setBusy(`Pulling ${settings.ollama_model}… (can take minutes)`);
+                    try {
+                      await invoke("pull_ollama_model");
+                      setBusy("");
+                      checkOllama();
+                      loadOllamaModels();
+                    } catch (e) {
+                      setBusy(String(e));
+                    }
+                  }}
+                >
+                  Pull it
+                </button>
+              </li>
+            )}
+            {!modelReady && (
+              <li>
+                <span className="setup-bad">✗</span> Speech model not downloaded yet.
+                <button className="btn-ghost" onClick={downloadModel}>
+                  Download
+                </button>
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
 
       <CollapsibleCard storageKey="dictationOpen" title="Dictation" defaultOpen>
         <div className="field">
