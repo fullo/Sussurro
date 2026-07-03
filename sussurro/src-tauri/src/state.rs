@@ -41,6 +41,25 @@ pub struct AppState {
     pub paths: AppPaths,
     /// True while the current recording was started by the command hotkey.
     pub command_mode: std::sync::atomic::AtomicBool,
-    /// Text already typed into the target app by streaming injection.
-    pub stream_injected: Mutex<String>,
+    /// Streaming-injection progress for the recording in flight.
+    pub stream: Mutex<StreamState>,
+}
+
+/// What streaming injection has already done for the current recording.
+#[derive(Default)]
+pub struct StreamState {
+    /// Prefix of the RAW transcript already consumed (matched against new partials).
+    pub raw_consumed: String,
+    /// Text actually typed into the target app (cleaned when cleanup is on).
+    pub injected: String,
+    /// App focused when recording started — used for per-app styles mid-stream.
+    pub target_app: String,
+}
+
+impl StreamState {
+    pub fn reset(&mut self, target_app: String) {
+        self.raw_consumed.clear();
+        self.injected.clear();
+        self.target_app = target_app;
+    }
 }

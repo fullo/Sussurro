@@ -55,7 +55,7 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 paths,
                 command_mode: std::sync::atomic::AtomicBool::new(false),
-                stream_injected: Mutex::new(String::new()),
+                stream: Mutex::new(state::StreamState::default()),
             });
             // Launched at login: live in the tray, don't pop the window.
             if std::env::args().any(|a| a == "--autostart") {

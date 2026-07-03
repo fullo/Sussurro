@@ -73,8 +73,9 @@ pub struct Settings {
     pub command_hotkey: String,
     /// Quiet-speech mode: boosts mic gain and lowers the silence gate.
     pub whisper_mode: bool,
-    /// EXPERIMENTAL: type text into the app while speaking (requires
-    /// cleanup level None; the final pass completes the tail).
+    /// EXPERIMENTAL: type text into the app while speaking. With cleanup
+    /// None it streams word by word; with cleanup on, sentence by sentence
+    /// (each completed sentence is LLM-cleaned before being typed).
     pub stream_injection: bool,
 }
 
