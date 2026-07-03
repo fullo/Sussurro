@@ -18,12 +18,50 @@ build (see below).
 - Transcription runs on the GPU via **Vulkan** (NVIDIA/AMD/Intel alike). The
   Vulkan SDK is needed at *build* time only; end users just need a Vulkan
   driver (any modern GPU driver ships one).
-- `CARGO_TARGET_DIR` **must point to a short path** (e.g. `C:\sbuild`):
-  whisper.cpp's Vulkan shader sub-build otherwise exceeds Windows' 260-char
-  MAX_PATH and MSBuild fails with FTK1011. Windows only — macOS/Linux don't
-  need it (and a drive-letter path would actually break `cargo test` there).
 - The very first transcription on a machine compiles GPU shaders (~10 s,
   one-time); the driver caches them afterwards.
+
+## CARGO_TARGET_DIR — required, and why
+
+On Windows the cargo target directory **must be a short path** (e.g.
+`C:\sbuild`). whisper.cpp's Vulkan shader sub-build nests CMake/MSBuild
+output dozens of directories deep inside cargo's `target/`; from a normal
+clone location the generated paths exceed Windows' 260-char MAX_PATH and
+the build dies with MSBuild **FileTracker error FTK1011** ("could not create
+the new file tracking log file"). Enabling NTFS long paths
+(`LongPathsEnabled`) does **not** help — FileTracker chokes regardless.
+
+Set it once, globally (then open a new terminal):
+
+```powershell
+setx CARGO_TARGET_DIR "C:\sbuild"
+```
+
+or per session only:
+
+```powershell
+$env:CARGO_TARGET_DIR = "C:\sbuild"
+```
+
+Practical consequences:
+
+- **All cargo output moves there** — the dev build, `cargo test` artifacts,
+  and the release bundles: after `npm run tauri build` the installers are in
+  `C:\sbuild\release\bundle\` (`nsis\` and `msi\`), not in
+  `src-tauri\target\`. `cargo clean` cleans `C:\sbuild` too.
+- The variable applies to *every* Rust project in that shell/user profile.
+  If you don't want that, scope it per session (second form above), or give
+  each project its own dir (e.g. `C:\sbuild\sussurro`) — any short prefix
+  works.
+- **Do not commit** a `.cargo/config.toml` with `target-dir` instead: the
+  repo used to ship one pinned to `F:/claude/builds/sussurro` and on
+  Linux/macOS the drive-letter path is treated as *relative*, its `:` breaks
+  cargo's `LD_LIBRARY_PATH` joining and `cargo test` fails on every clone
+  (`error: failed to join paths from $LD_LIBRARY_PATH together`). That's why
+  it was removed in favour of the environment variable. If you prefer a
+  file, keep it out of git (`.git/info/exclude`).
+- CI does the same: the release workflow sets `CARGO_TARGET_DIR=C:\st` for
+  the Windows job (see `.github/workflows/release.yml`).
 
 ## Build & run
 
