@@ -11,20 +11,22 @@ jobs:
   test:
     # 24.04: the ort (onnxruntime) prebuilt binaries need glibc >= 2.38
     runs-on: ubuntu-24.04
-    env:
-      ORT_CACHE_DIR: ${{ github.workspace }}/.ort-cache
     steps:
       - uses: actions/checkout@v5
 
-      # cdn.pyke.io (ort's prebuilt ONNX Runtime) intermittently 403s GitHub
-      # runners. ort-sys skips the download when its cache dir is already
-      # populated, so persist it across runs.
-      - name: ONNX Runtime binaries cache
-        uses: actions/cache@v6
-        with:
-          path: .ort-cache
-          key: ort-bin-${{ runner.os }}-${{ hashFiles('sussurro/src-tauri/Cargo.lock') }}
-          restore-keys: ort-bin-${{ runner.os }}-
+      # cdn.pyke.io (ort's own prebuilt download) 403s GitHub runners, so link
+      # dynamically against Microsoft's official ONNX Runtime release instead.
+      # Keep the version in sync with what the locked ort-sys expects (see the
+      # ms@<version> URLs in its build/download/dist.txt).
+      - name: ONNX Runtime (Microsoft build)
+        run: |
+          ORT_VERSION=1.24.2
+          curl -fsSL --retry 5 --retry-delay 10 -o ort.tgz \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          tar xzf ort.tgz
+          echo "ORT_LIB_LOCATION=$PWD/onnxruntime-linux-x64-${ORT_VERSION}/lib" >> "$GITHUB_ENV"
+          echo "ORT_PREFER_DYNAMIC_LINK=1" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$PWD/onnxruntime-linux-x64-${ORT_VERSION}/lib:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
 
       - name: System dependencies
         run: |
@@ -53,18 +55,7 @@ jobs:
 
       - name: Rust tests
         working-directory: sussurro/src-tauri
-        # Retry the build: on a cold ORT cache the ort-sys download can hit
-        # the CDN's 403 rate limit. Tests themselves run once.
-        run: |
-          for i in 1 2 3 4 5; do
-            if cargo test --no-run; then
-              break
-            fi
-            if [ "$i" = 5 ]; then exit 1; fi
-            echo "::warning::build attempt $i failed (flaky ort CDN?) — retrying in 90s"
-            sleep 90
-          done
-          cargo test
+        run: cargo test
 
       - name: Clippy
         working-directory: sussurro/src-tauri
