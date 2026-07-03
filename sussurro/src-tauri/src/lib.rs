@@ -10,6 +10,7 @@ pub mod settings;
 pub mod snippets;
 pub mod state;
 pub mod stt;
+pub mod voice_commands;
 pub mod tray;
 
 use crate::audio::recorder::Recorder;

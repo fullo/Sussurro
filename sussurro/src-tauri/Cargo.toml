@@ -48,6 +48,7 @@ tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-dialog = "2.7.1"
 symphonia = { version = "0.5.4", features = ["mp3", "isomp4", "aac"] }
+regex = "1.12.4"
 
 # GPU acceleration per platform: Vulkan on Windows (needs the Vulkan SDK at
 # build time), Metal on macOS (ships with Xcode). Linux stays CPU-only by

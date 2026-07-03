@@ -226,15 +226,12 @@ pub fn transcribe_batch(state: &AppState, samples: &[f32]) -> anyhow::Result<(St
     if raw.trim().is_empty() {
         anyhow::bail!("no speech found in the audio");
     }
-    let cleaned = ollama::cleanup(
-        &settings.ollama_url,
-        &settings.ollama_model,
-        &settings.cleanup_level,
-        &settings.dictionary,
-        None,
-        &settings.output_language,
-        &raw,
-    );
+    let processed = if settings.voice_commands {
+        crate::voice_commands::apply_basic_commands(&raw)
+    } else {
+        raw.clone()
+    };
+    let cleaned = ollama::cleanup(&settings, None, &processed);
     let _ = history::append(
         &state.paths.history_file,
         &HistoryEntry {
@@ -316,15 +313,7 @@ fn preview_loop(app: &AppHandle) {
                         let target_app = state.stream.lock().unwrap().target_app.clone();
                         let style =
                             crate::cleanup::prompt::find_style(&settings.app_styles, &target_app);
-                        let cleaned = ollama::cleanup(
-                            &settings.ollama_url,
-                            &settings.ollama_model,
-                            &settings.cleanup_level,
-                            &settings.dictionary,
-                            style,
-                            &settings.output_language,
-                            chunk.trim(),
-                        );
+                        let cleaned = ollama::cleanup(&settings, style, chunk.trim());
                         let cleaned = cleaned.trim().to_string();
                         if !cleaned.is_empty()
                             && inject::inject_text(&format!("{cleaned} ")).is_ok()
@@ -450,15 +439,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
                             &settings.app_styles,
                             &target_app,
                         );
-                        ollama::cleanup(
-                            &settings.ollama_url,
-                            &settings.ollama_model,
-                            &settings.cleanup_level,
-                            &settings.dictionary,
-                            style,
-                            &settings.output_language,
-                            tail.trim(),
-                        )
+                        ollama::cleanup(&settings, style, tail.trim())
                     };
                     inject::inject_text(&typed_tail)?;
                     final_text.push_str(&typed_tail);
@@ -492,16 +473,15 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Deterministic spoken commands (a capo / new line) work even without
+    // the LLM; contextual ones (scratch that) ride the cleanup prompt.
+    let processed = if settings.voice_commands {
+        crate::voice_commands::apply_basic_commands(&raw)
+    } else {
+        raw.clone()
+    };
     let style = crate::cleanup::prompt::find_style(&settings.app_styles, &target_app);
-    let cleaned = ollama::cleanup(
-        &settings.ollama_url,
-        &settings.ollama_model,
-        &settings.cleanup_level,
-        &settings.dictionary,
-        style,
-        &settings.output_language,
-        &raw,
-    );
+    let cleaned = ollama::cleanup(&settings, style, &processed);
 
     inject::inject_text(&cleaned)?;
 

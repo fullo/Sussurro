@@ -39,6 +39,7 @@ interface Settings {
   command_hotkey: string;
   whisper_mode: boolean;
   stream_injection: boolean;
+  voice_commands: boolean;
 }
 
 const LANGUAGES: [string, string][] = [
@@ -815,6 +816,21 @@ export default function App() {
               type="checkbox"
               checked={settings.sound_feedback}
               onChange={(e) => save({ ...settings, sound_feedback: e.target.checked })}
+            />
+            <span className="slider" />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">
+            <span>Voice commands <Tip text="Interpret spoken editing commands instead of transcribing them: 'a capo'/'new line' and 'nuovo paragrafo'/'new paragraph' always work; with cleanup on, also 'scratch that'/'cancella quello' (deletes the previous phrase) and 'quote … end quote'." /></span>
+            <small>a capo, scratch that, quote…</small>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.voice_commands}
+              onChange={(e) => save({ ...settings, voice_commands: e.target.checked })}
             />
             <span className="slider" />
           </label>
