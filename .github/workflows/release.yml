@@ -18,10 +18,10 @@ jobs:
         include:
           - platform: windows-latest
             args: ""
+          # arm64 only: ort (onnxruntime) has no prebuilt binaries for
+          # x86_64-apple-darwin, so Intel macOS is not supported.
           - platform: macos-latest # arm64 (Apple Silicon)
             args: "--target aarch64-apple-darwin"
-          - platform: macos-latest # x86_64 (Intel)
-            args: "--target x86_64-apple-darwin"
           # 24.04: the ort (onnxruntime) prebuilt binaries need glibc >= 2.38
           - platform: ubuntu-24.04
             args: ""
@@ -46,7 +46,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
 
       - uses: actions/setup-node@v4
         with:
