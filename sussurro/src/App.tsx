@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -171,6 +172,184 @@ function AdvancedGroup({ children }: { children: ReactNode }) {
   );
 }
 
+/* ---------- About dialog ---------- */
+
+interface LicensePackage {
+  name: string;
+  version: string;
+  license: string;
+  repository: string;
+  ecosystem: "rust" | "npm";
+  textId: number;
+}
+interface LicensesData {
+  packages: LicensePackage[];
+  texts: string[];
+}
+
+function AboutDialog({
+  version,
+  onClose,
+}: {
+  version: string;
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<LicensesData | null>(null);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  // Load the (large) license list lazily — it's a static asset, not bundled.
+  useEffect(() => {
+    fetch("/licenses.json")
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(setData)
+      .catch((e) => setError(`Couldn't load licenses (${e})`));
+  }, []);
+
+  // Close on Escape.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const q = query.trim().toLowerCase();
+  const packages = (data?.packages ?? []).filter(
+    (p) =>
+      !q ||
+      p.name.toLowerCase().includes(q) ||
+      p.license.toLowerCase().includes(q),
+  );
+  const rustCount = data?.packages.filter((p) => p.ecosystem === "rust").length ?? 0;
+  const npmCount = (data?.packages.length ?? 0) - rustCount;
+
+  return (
+    <div
+      className="modal-backdrop"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="modal about-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="About Sussurro"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="modal-head">
+          <div className="brand">
+            <span className="daruma idle" aria-hidden="true" />
+            <h2>Sussurro {version}</h2>
+          </div>
+          <button
+            type="button"
+            className="btn-ghost modal-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <p className="about-tagline">
+          Fully-local voice dictation. Your voice never leaves this machine.
+        </p>
+        <p className="about-credit">
+          Made with a daruma's patience by{" "}
+          <a
+            href="https://darumahq.it"
+            onClick={(e) => {
+              e.preventDefault();
+              openUrl("https://darumahq.it/");
+            }}
+          >
+            DarumaHQ.it
+          </a>
+          {" · "}
+          <a
+            href="https://github.com/fullo/Sussurro"
+            onClick={(e) => {
+              e.preventDefault();
+              openUrl("https://github.com/fullo/Sussurro");
+            }}
+          >
+            Source on GitHub
+          </a>
+        </p>
+
+        <div className="about-licenses">
+          <div className="about-licenses-head">
+            <h3>Third-party licenses</h3>
+            {data && (
+              <span className="license-count">
+                {rustCount} Rust · {npmCount} npm
+              </span>
+            )}
+          </div>
+
+          {error && <p className="busy" role="alert">{error}</p>}
+          {!data && !error && <p className="muted">Loading licenses…</p>}
+
+          {data && (
+            <>
+              <input
+                type="search"
+                className="license-search"
+                placeholder="Filter by name or license…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <ul className="license-list">
+                {packages.map((p) => {
+                  const key = `${p.ecosystem}:${p.name}@${p.version}`;
+                  const isOpen = expanded === key;
+                  const text = p.textId >= 0 ? data.texts[p.textId] : "";
+                  return (
+                    <li key={key} className="license-item">
+                      <button
+                        type="button"
+                        className="license-row"
+                        aria-expanded={isOpen}
+                        onClick={() => setExpanded(isOpen ? null : key)}
+                      >
+                        <span className="license-name">
+                          {p.name}
+                          <span className="license-ver"> {p.version}</span>
+                        </span>
+                        <span className="license-id">{p.license}</span>
+                      </button>
+                      {isOpen && (
+                        <div className="license-detail">
+                          {p.repository && (
+                            <a
+                              href={p.repository}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                openUrl(p.repository);
+                              }}
+                            >
+                              {p.repository}
+                            </a>
+                          )}
+                          <pre>{text || "No license text bundled — see the SPDX identifier above."}</pre>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+                {packages.length === 0 && (
+                  <li className="muted">No packages match “{query}”.</li>
+                )}
+              </ul>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- Hotkey recorder widget ---------- */
 
 /** Map a KeyboardEvent to the tauri-plugin-global-shortcut string, or null if incomplete. */
@@ -282,6 +461,12 @@ export default function App() {
   const [micTest, setMicTest] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [stats, setStats] = useState<UsageStats | null>(null);
+  const [version, setVersion] = useState("");
+  const [aboutOpen, setAboutOpen] = useState(false);
+
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => setVersion(""));
+  }, []);
 
   const checkOllama = async () => {
     try {
@@ -1468,7 +1653,7 @@ export default function App() {
         </div>
         <div className="footer-credit">
           <span className="daruma-mini" aria-hidden="true" />
-          by{" "}
+          Sussurro {version && `${version} `}by{" "}
           <a
             href="https://darumahq.it"
             onClick={(e) => {
@@ -1478,8 +1663,20 @@ export default function App() {
           >
             DarumaHQ.it
           </a>
+          {" · "}
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => setAboutOpen(true)}
+          >
+            About
+          </button>
         </div>
       </footer>
+
+      {aboutOpen && (
+        <AboutDialog version={version} onClose={() => setAboutOpen(false)} />
+      )}
     </main>
   );
 }

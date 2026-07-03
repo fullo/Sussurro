@@ -748,3 +748,124 @@ footer a:hover { color: var(--c-dark); }
   animation: daruma-spin 0.8s linear infinite;
 }
 .btn-icon .btn-spinner { margin-right: 0; width: 16px; height: 16px; vertical-align: middle; }
+
+/* A text button that reads like an inline link (footer "About", etc.). */
+.link-btn {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.link-btn:hover { color: var(--c-dark); }
+.muted { color: var(--c-text-light); font-size: 0.85rem; }
+
+/* ---------- About modal ---------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 26, 26, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 100;
+  animation: fade-in 0.15s ease;
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.modal {
+  background: var(--c-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  width: min(640px, 100%);
+  max-height: min(85vh, 900px);
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+}
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.modal-head .brand { display: flex; align-items: center; gap: 0.6rem; }
+.modal-head h2 { margin: 0; }
+.modal-close { min-height: 30px; line-height: 1; font-size: 1.1rem; padding: 0.1rem 0.6rem; }
+.about-tagline { margin: 0.75rem 0 0.25rem; color: var(--c-text); }
+.about-credit { margin: 0 0 1rem; font-size: 0.85rem; color: var(--c-text-light); }
+
+.about-licenses {
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* let the list scroll inside the flex column */
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.about-licenses-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.about-licenses-head h3 { margin: 0; }
+.license-count { font-size: 0.78rem; color: var(--c-text-light); letter-spacing: 0.03em; }
+.license-search {
+  margin: 0.75rem 0;
+  width: 100%;
+  font: inherit;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--c-surface);
+}
+.license-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.license-item { border-bottom: 1px solid var(--border); }
+.license-item:last-child { border-bottom: none; }
+.license-row {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+}
+.license-row:hover { background: var(--c-surface-alt); }
+.license-name { font-weight: 600; color: var(--c-text); }
+.license-ver { font-weight: 400; color: var(--c-text-light); }
+.license-id {
+  flex: none;
+  font-size: 0.75rem;
+  font-family: var(--f-mono);
+  color: var(--c-text-light);
+}
+.license-detail { padding: 0 0.75rem 0.75rem; }
+.license-detail a { font-size: 0.78rem; word-break: break-all; }
+.license-detail pre {
+  margin: 0.5rem 0 0;
+  padding: 0.6rem;
+  background: var(--c-surface-alt);
+  border-radius: var(--radius);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}

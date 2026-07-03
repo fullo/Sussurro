@@ -10,6 +10,10 @@ project decisions here, not in per-machine memory.**
   in `sussurro/src-tauri/`). The repo root only holds docs and CI.
 - Build instructions per OS live in `docs/compile/{windows,macos,linux}.md`
   — keep them updated when build requirements change.
+- The About dialog's third-party license list is `sussurro/public/licenses.json`,
+  generated from the resolved deps (cargo + npm). **Regenerate after changing
+  dependencies:** `cd sussurro && npm run licenses` (needs the Rust toolchain;
+  not run in CI to keep the pipeline simple — the file is committed).
 
 ## Standing decisions
 
