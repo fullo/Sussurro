@@ -1241,7 +1241,7 @@ export default function App() {
                       if (!lang) return;
                       setBusy("Translating…");
                       try {
-                        await invoke("translate_entry", { text: h.cleaned, lang });
+                        await invoke("translate_entry", { raw: h.raw, lang });
                         setBusy("");
                         refresh();
                       } catch (err) {
