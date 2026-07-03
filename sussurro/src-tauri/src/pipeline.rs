@@ -212,6 +212,18 @@ fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) ->
     Ok(())
 }
 
+/// Count a completed mic dictation in the persistent usage stats. Best-effort:
+/// stats must never break the pipeline. File imports and command-mode edits
+/// are not dictations and don't go through here.
+fn record_stats(state: &AppState, cleaned: &str) {
+    let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let _ = crate::stats::record(
+        &state.paths.stats_file,
+        &day,
+        crate::stats::word_count(cleaned),
+    );
+}
+
 /// Transcribe a batch of 16 kHz mono samples and clean the result, using the
 /// current settings. Appends a history entry. Used for audio-file import (no
 /// injection, no per-app style). Returns (raw, cleaned).
@@ -451,6 +463,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
             }
             // Prefix mismatch: whisper revised already-typed words — nothing
             // safe to add; what was typed stands.
+            record_stats(&state, &final_text);
             let _ = history::append(
                 &state.paths.history_file,
                 &HistoryEntry {
@@ -466,6 +479,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     // Voice shortcut: the transcript IS a snippet cue → paste its text, no LLM.
     if let Some(snippet) = crate::snippets::find(&settings.snippets, &raw) {
         inject::inject_text(&snippet.text)?;
+        record_stats(&state, &snippet.text);
         let _ = history::append(
             &state.paths.history_file,
             &HistoryEntry {
@@ -489,6 +503,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
 
     inject::inject_text(&cleaned)?;
 
+    record_stats(&state, &cleaned);
     let _ = history::append(
         &state.paths.history_file,
         &HistoryEntry {

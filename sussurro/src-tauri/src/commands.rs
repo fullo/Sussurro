@@ -100,6 +100,38 @@ pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
     history::clear(&state.paths.history_file).map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+pub struct UsageStats {
+    pub total_dictations: u64,
+    pub total_words: u64,
+    pub today_dictations: u64,
+    pub today_words: u64,
+    pub week_dictations: u64,
+    pub week_words: u64,
+}
+
+/// Persistent dictation counters — unaffected by history retention/clearing.
+#[tauri::command]
+pub fn usage_stats(state: State<'_, AppState>) -> UsageStats {
+    let stats = crate::stats::load(&state.paths.stats_file);
+    let now = chrono::Local::now();
+    let today = now.format("%Y-%m-%d").to_string();
+    let week_start = (now - chrono::Duration::days(6)).format("%Y-%m-%d").to_string();
+    let t = stats.days.get(&today).cloned().unwrap_or_default();
+    let (week_dictations, week_words) = stats
+        .days
+        .range(week_start..)
+        .fold((0, 0), |(d, w), (_, v)| (d + v.dictations, w + v.words));
+    UsageStats {
+        total_dictations: stats.total_dictations,
+        total_words: stats.total_words,
+        today_dictations: t.dictations,
+        today_words: t.words,
+        week_dictations,
+        week_words,
+    }
+}
+
 #[tauri::command]
 pub fn list_input_devices() -> Vec<String> {
     crate::audio::recorder::list_input_devices()

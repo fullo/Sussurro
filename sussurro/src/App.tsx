@@ -72,6 +72,21 @@ interface HistoryEntry {
   cleaned: string;
 }
 
+interface UsageStats {
+  total_dictations: number;
+  total_words: number;
+  today_dictations: number;
+  today_words: number;
+  week_dictations: number;
+  week_words: number;
+}
+
+/** 12 → "12", 1234 → "1,234", 15200 → "15.2k" */
+function fmtCount(n: number): string {
+  if (n >= 10_000) return `${(n / 1000).toFixed(1)}k`;
+  return n.toLocaleString("en-US");
+}
+
 const MODELS = [
   { file: "ggml-base.en.bin", label: "Base · English · 148 MB · fastest" },
   { file: "ggml-small.bin", label: "Small · multilingual · 488 MB" },
@@ -262,6 +277,7 @@ export default function App() {
   const [setupDismissed, setSetupDismissed] = useState(false);
   const [micTest, setMicTest] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
+  const [stats, setStats] = useState<UsageStats | null>(null);
 
   const checkOllama = async () => {
     try {
@@ -297,6 +313,7 @@ export default function App() {
     setSettings(await invoke<Settings>("get_settings"));
     setHistory(await invoke<HistoryEntry[]>("get_history", { n: 20 }));
     setModelReady(await invoke<boolean>("model_is_downloaded"));
+    invoke<UsageStats>("usage_stats").then(setStats).catch(() => {});
   };
 
   useEffect(() => {
@@ -1138,6 +1155,19 @@ export default function App() {
           ) : undefined
         }
       >
+        {stats && stats.total_dictations > 0 && (
+          <p
+            className="stats-row"
+            title="Counted since install — pruning or clearing the history doesn't reset these numbers"
+          >
+            <strong>{fmtCount(stats.total_dictations)}</strong> dictations ·{" "}
+            <strong>{fmtCount(stats.total_words)}</strong> words
+            {" — today "}
+            <strong>{fmtCount(stats.today_words)}</strong>
+            {" · last 7 days "}
+            <strong>{fmtCount(stats.week_words)}</strong>
+          </p>
+        )}
         <div className="field">
           <div className="field-label">
             <span>Search & retention <Tip text="Search the WHOLE history (raw and cleaned text, case-insensitive). Retention auto-deletes entries older than the chosen window — a privacy tool: what you dictated last month doesn't need to live on disk forever." /></span>

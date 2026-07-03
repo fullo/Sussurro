@@ -651,6 +651,14 @@ kbd {
 }
 .history .raw::before { content: "raw · "; color: var(--border-strong); }
 
+/* Usage stats strip at the top of the History card. */
+.stats-row {
+  margin: 0 0 0.6rem;
+  font-size: 0.82rem;
+  color: var(--c-text-light);
+}
+.stats-row strong { color: var(--c-dark); font-weight: 600; }
+
 .empty { font-family: var(--f-serif); font-style: italic; color: var(--c-text-light); }
 
 /* ---------- Footer ---------- */
