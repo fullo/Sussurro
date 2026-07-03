@@ -82,6 +82,9 @@ pub struct Settings {
     /// None it streams word by word; with cleanup on, sentence by sentence
     /// (each completed sentence is LLM-cleaned before being typed).
     pub stream_injection: bool,
+    /// Interpret spoken editing commands ("a capo"/"new line", and with
+    /// cleanup on also "scratch that"/"cancella quello").
+    pub voice_commands: bool,
 }
 
 impl Default for Settings {
@@ -107,6 +110,7 @@ impl Default for Settings {
             command_hotkey: "CommandOrControl+Alt+Space".into(),
             whisper_mode: false,
             stream_injection: false,
+            voice_commands: true,
         }
     }
 }

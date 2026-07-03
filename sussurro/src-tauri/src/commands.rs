@@ -68,15 +68,7 @@ pub async fn reclean(state: State<'_, AppState>, raw: String) -> Result<HistoryE
     };
     tauri::async_runtime::spawn_blocking(move || {
         // Re-clean has no target app: no per-app style.
-        let cleaned = crate::cleanup::ollama::cleanup(
-            &settings.ollama_url,
-            &settings.ollama_model,
-            &settings.cleanup_level,
-            &settings.dictionary,
-            None,
-            &settings.output_language,
-            &raw,
-        );
+        let cleaned = crate::cleanup::ollama::cleanup(&settings, None, &raw);
         let entry = HistoryEntry {
             timestamp: chrono::Utc::now().to_rfc3339(),
             raw,

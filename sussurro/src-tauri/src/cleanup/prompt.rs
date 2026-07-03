@@ -34,18 +34,18 @@ pub fn output_language_name(code: &str) -> Option<&'static str> {
 }
 
 /// Builds the Ollama chat messages for a cleanup level, mirroring Wispr Flow's
-/// None/Light/Medium/High. `style` is the per-app tone instruction; `out_lang`
-/// (an ISO-639-1 code, empty/"same" = keep source) triggers translation.
+/// None/Light/Medium/High. `style` is the per-app tone instruction. Settings
+/// drive translation (output_language) and spoken-command interpretation.
 /// Returns None only when there is nothing for the LLM to do (cleanup None AND
 /// no translation).
 pub fn build_messages(
-    level: &CleanupLevel,
-    dictionary: &[String],
+    settings: &crate::settings::Settings,
     style: Option<&str>,
-    out_lang: &str,
     transcript: &str,
 ) -> Option<Vec<Value>> {
-    let translate_to = output_language_name(out_lang);
+    let level = &settings.cleanup_level;
+    let dictionary = &settings.dictionary;
+    let translate_to = output_language_name(&settings.output_language);
     let instructions = match level {
         // Cleanup None but a translation is requested: translate verbatim.
         CleanupLevel::None => match translate_to {
@@ -91,6 +91,14 @@ pub fn build_messages(
             " Adapt the tone for the application the text goes into: {style}"
         ));
     }
+    if settings.voice_commands {
+        system.push_str(
+            " The speaker may use spoken editing commands - apply them instead of \
+             transcribing them: 'scratch that'/'cancella quello' deletes the phrase \
+             said just before it; 'quote ... end quote'/'apri virgolette ... chiudi \
+             virgolette' wraps that span in quotation marks.",
+        );
+    }
 
     Some(vec![
         json!({"role": "system", "content": system}),
@@ -101,16 +109,21 @@ pub fn build_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::CleanupLevel;
+    use crate::settings::{CleanupLevel, Settings};
+
+    /// Settings with voice_commands off so the base assertions stay focused.
+    fn cfg(level: CleanupLevel) -> Settings {
+        Settings { cleanup_level: level, voice_commands: false, ..Default::default() }
+    }
 
     #[test]
     fn level_none_produces_no_messages() {
-        assert!(build_messages(&CleanupLevel::None, &[], None, "", "hello um world").is_none());
+        assert!(build_messages(&cfg(CleanupLevel::None), None, "hello um world").is_none());
     }
 
     #[test]
     fn light_mentions_fillers_and_forbids_rewriting() {
-        let msgs = build_messages(&CleanupLevel::Light, &[], None, "", "so um hello").unwrap();
+        let msgs = build_messages(&cfg(CleanupLevel::Light), None, "so um hello").unwrap();
         let system = msgs[0]["content"].as_str().unwrap();
         assert!(system.to_lowercase().contains("filler"));
         assert!(system.to_lowercase().contains("do not change the wording"));
@@ -118,26 +131,24 @@ mod tests {
 
     #[test]
     fn transcript_is_the_user_message() {
-        let msgs =
-            build_messages(&CleanupLevel::Medium, &[], None, "", "raw transcript here").unwrap();
+        let msgs = build_messages(&cfg(CleanupLevel::Medium), None, "raw transcript here").unwrap();
         assert_eq!(msgs[1]["role"], "user");
         assert_eq!(msgs[1]["content"], "raw transcript here");
     }
 
     #[test]
     fn dictionary_words_are_included() {
-        let msgs =
-            build_messages(&CleanupLevel::High, &["Sussurro".into()], None, "", "text").unwrap();
+        let mut s = cfg(CleanupLevel::High);
+        s.dictionary = vec!["Sussurro".into()];
+        let msgs = build_messages(&s, None, "text").unwrap();
         assert!(msgs[0]["content"].as_str().unwrap().contains("Sussurro"));
     }
 
     #[test]
     fn style_is_appended_when_present() {
         let msgs = build_messages(
-            &CleanupLevel::Light,
-            &[],
+            &cfg(CleanupLevel::Light),
             Some("Casual and friendly, emojis welcome."),
-            "",
             "hello",
         )
         .unwrap();
@@ -146,12 +157,26 @@ mod tests {
 
     #[test]
     fn translation_requested_even_with_cleanup_none() {
-        // Cleanup None + target language must still call the LLM.
-        let msgs = build_messages(&CleanupLevel::None, &[], None, "en", "ciao mondo").unwrap();
+        let mut s = cfg(CleanupLevel::None);
+        s.output_language = "en".into();
+        let msgs = build_messages(&s, None, "ciao mondo").unwrap();
         assert!(msgs[0]["content"].as_str().unwrap().contains("English"));
-        // No translation and cleanup None → skip the LLM.
-        assert!(build_messages(&CleanupLevel::None, &[], None, "same", "x").is_none());
-        assert!(build_messages(&CleanupLevel::None, &[], None, "", "x").is_none());
+        // No translation and cleanup None: skip the LLM.
+        assert!(build_messages(&cfg(CleanupLevel::None), None, "x").is_none());
+    }
+
+    #[test]
+    fn voice_commands_instruction_follows_the_toggle() {
+        let mut s = cfg(CleanupLevel::Light);
+        assert!(!build_messages(&s, None, "x").unwrap()[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("scratch that"));
+        s.voice_commands = true;
+        assert!(build_messages(&s, None, "x").unwrap()[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("scratch that"));
     }
 
     #[test]
@@ -170,9 +195,9 @@ mod tests {
     #[test]
     fn all_levels_demand_output_only_the_text() {
         for level in [CleanupLevel::Light, CleanupLevel::Medium, CleanupLevel::High] {
-            let msgs = build_messages(&level, &[], None, "", "x").unwrap();
+            let msgs = build_messages(&cfg(level), None, "x").unwrap();
             let system = msgs[0]["content"].as_str().unwrap().to_lowercase();
-            assert!(system.contains("output only"), "level {level:?}");
+            assert!(system.contains("output only"));
         }
     }
 }
