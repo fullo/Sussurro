@@ -87,7 +87,8 @@ combination; Esc cancels).
   another language, or Edit it (each appends a new entry where relevant).
 - **History search & retention** — full-text search over the whole history
   (raw + cleaned); retention auto-deletes entries older than N days
-  (0 = keep forever).
+  (0 = keep forever). Export the whole history to Markdown or JSON from
+  the card header.
 - **Usage statistics** — persistent counters atop the History card: total /
   today / last-7-days dictations and words. Clearing or pruning the history
   never resets them.
@@ -102,9 +103,11 @@ combination; Esc cancels).
 - **Two STT engines** — Whisper (GPU, any language, multiple sizes) or
   NVIDIA Parakeet TDT v3 (single 456 MB int8 model, CPU-optimized,
   auto-detects 25 European languages). Switch in Settings → Engine.
-- **Per-app tone styles** — Wispr-style tone matching: rules like
+- **Per-app tone styles & language** — Wispr-style tone matching: rules like
   slack → "casual, emojis welcome" adapt the cleanup prompt to whatever app
-  you dictate into (detected at the moment you release the trigger).
+  you dictate into (detected at the moment you release the trigger). Each
+  rule can also force its own output language (slack → English,
+  whatsapp → Italiano), overriding the global "Translate to".
 - **Command mode** — select text anywhere, hold the command shortcut
   (default `Ctrl+Alt+Space`) and speak an instruction ("make it shorter",
   "translate to English"): the LLM applies it and the result replaces the
@@ -123,7 +126,12 @@ combination; Esc cancels).
   a live input-level bar, also visible while recording.
 - **Voice commands** — say "a capo" / "new line" / "nuova riga" (or the
   paragraph variants) for deterministic line breaks with no LLM involved;
-  contextual commands like "scratch that" ride the cleanup prompt.
+  "punto e a capo" / "period new line" closes the sentence and breaks the
+  line; "punto elenco" / "new bullet" starts a bulleted item. Contextual
+  commands like "scratch that" ride the cleanup prompt.
+- **Dictate to file** — note-taking mode (Behavior card): pick a .md/.txt
+  file and every dictation is appended there (e.g. an Obsidian note)
+  instead of being pasted into the focused app.
 - **Editable cleanup prompts** — Cleanup → Advanced: override the built-in
   Light/Medium/High instructions; leave empty to use the defaults (shown as
   placeholders).
