@@ -111,23 +111,53 @@ combination; Esc cancels).
 
 ## Releases & auto-update
 
+> **⚠️ Auto-update is frozen until v0.5.0.** The repo is private while the
+> per-platform builds stabilize, so installed apps cannot reach `latest.json`
+> anonymously anyway (the endpoint 404s). The in-app **Check for updates**
+> button and the signing pipeline below keep working — releases are simply
+> not reachable by the updater until the repo (or at least its releases)
+> goes public, planned for v0.5.0.
+
 Pushing a `v*` tag (e.g. `git tag v0.2.1 && git push origin v0.2.1`) triggers
 the GitHub Actions release workflow: signed installers for Windows, macOS
 (Apple Silicon) and Linux, published as a draft release together with
 the updater manifest (`latest.json`). The in-app **Check for updates** button
 (footer) downloads and installs the new version.
 
-One-time setup — the updater signing key lives outside the repo
-(`F:\claude\keys\sussurro-updater.key`); upload it to the repo secrets:
+### Updater signing key (one-time setup)
 
-```powershell
-gh secret set TAURI_SIGNING_PRIVATE_KEY --body (Get-Content F:\claude\keys\sussurro-updater.key -Raw)
+The updater artifacts are signed with a minisign key **kept outside the
+repo**. If you don't have the key yet, generate one (any OS):
+
+```bash
+cd sussurro
+npm run tauri signer generate -- -w ~/.tauri/sussurro-updater.key
+```
+
+This prints the public key — it must match `plugins.updater.pubkey` in
+`sussurro/src-tauri/tauri.conf.json` (changing the key pair orphans every
+previously installed app, which would no longer trust new releases).
+
+Then upload the **private** key to the repo secrets, from the directory
+where the key lives.
+
+macOS / Linux:
+
+```bash
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/sussurro-updater.key
 gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --body '""'
 ```
 
-Note: the updater endpoint points at this repo's GitHub releases. While the
-repo is **private**, installed apps cannot reach `latest.json` anonymously —
-make the repo (or at least its releases) public to activate auto-updates.
+Windows (PowerShell):
+
+```powershell
+gh secret set TAURI_SIGNING_PRIVATE_KEY --body (Get-Content $HOME\.tauri\sussurro-updater.key -Raw)
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --body '""'
+```
+
+(The password secret is the passphrase chosen at key generation; `'""'`
+means "empty passphrase". Back the key file up — losing it means a new key
+pair and orphaned installs.)
 
 ## Known limits
 
