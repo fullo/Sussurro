@@ -1060,8 +1060,8 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
-            <span>Voice commands <Tip text="Interpret spoken editing commands instead of transcribing them: 'a capo'/'new line' and 'nuovo paragrafo'/'new paragraph' always work; with cleanup on, also 'scratch that'/'cancella quello' (deletes the previous phrase) and 'quote … end quote'." /></span>
-            <small>a capo, scratch that, quote…</small>
+            <span>Voice commands <Tip text="Interpret spoken editing commands instead of transcribing them. Always work: 'a capo'/'new line', 'nuovo paragrafo'/'new paragraph', 'punto e a capo'/'period new line', 'punto elenco'/'new bullet' (bulleted list). With cleanup on, also 'scratch that'/'cancella quello' (deletes the previous phrase) and 'quote … end quote'." /></span>
+            <small>a capo, punto elenco, scratch that…</small>
           </div>
           <label className="switch">
             <input
