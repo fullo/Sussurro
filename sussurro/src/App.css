@@ -523,6 +523,44 @@ kbd {
 .edit-actions { display: flex; gap: 0.5rem; margin-top: 0.4rem; }
 .edit-actions .btn-primary { min-height: 34px; padding: 0.3rem 0.9rem; }
 
+/* ---------- Setup banner ---------- */
+
+.setup-banner {
+  background: var(--brand-soft);
+  border: 1px solid var(--brand);
+  border-radius: var(--radius-lg);
+  padding: 0.85rem 1.25rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.9rem;
+}
+.setup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.setup-head strong {
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--brand-text);
+}
+.setup-banner ul { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+.setup-banner li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  flex-wrap: wrap;
+}
+.setup-bad { color: var(--brand-text); font-weight: 700; }
+.setup-banner code {
+  font-family: var(--f-mono);
+  font-size: 0.82em;
+  background: var(--c-surface);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+}
+
 /* ---------- Busy / errors ---------- */
 
 .busy {
