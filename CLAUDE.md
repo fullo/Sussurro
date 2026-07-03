@@ -69,6 +69,10 @@ project decisions here, not in per-machine memory.**
 
 4. Streaming typing with cleanup enabled (today only works with Cleanup None).
 5. Unpin cpal 0.16 → 0.18 (retest the windows-core conflict with Tauri).
+   *Retested 2026-07-03 with cpal 0.18.1: still broken — cpal's WASAPI code
+   compiles against a different `windows_core` than the Tauri stack
+   (`IActivateAudioInterfaceCompletionHandler: Interface not satisfied`).
+   Re-try when cpal releases a version on windows-core ≥ 0.62.*
 6. Move `ort` from 2.0.0-rc.12 to stable when released (coordinate with the
    pinned ONNX Runtime version in test.yml — see CI gotchas).
 7. Optional Vulkan GPU build on Linux (feature flag; CPU-only today).
