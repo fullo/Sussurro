@@ -34,99 +34,25 @@ Research behind the design: `docs/whisperflow-clone-research.md`.
    (Base English 148 MB → Large v3 Turbo 574 MB).
 3. **A microphone.**
 
-## Setup per platform
+## Building from source
 
-### Windows 10/11
+Toolchain (all platforms): **Node.js ≥ 24** and **Rust stable**. Follow the
+guide for your OS — prerequisites, GPU notes and platform-specific caveats:
 
-Build prerequisites (one-time, elevated PowerShell):
+- **[Windows 10/11](docs/compile/windows.md)** — Vulkan GPU build,
+  MAX_PATH workaround, WebView2
+- **[macOS 11+](docs/compile/macos.md)** — Apple Silicon only, Metal GPU,
+  required permissions
+- **[Linux](docs/compile/linux.md)** — glibc ≥ 2.38, apt dependencies,
+  X11/Wayland notes
 
-```powershell
-winget install Rustlang.Rustup OpenJS.NodeJS.LTS Kitware.CMake LLVM.LLVM Ollama.Ollama
-winget install Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools;includeRecommended"
-winget install KhronosGroup.VulkanSDK   # GPU acceleration (whisper.cpp Vulkan backend)
-setx LIBCLANG_PATH "C:\Program Files\LLVM\bin"
-setx CARGO_TARGET_DIR "C:\sbuild"       # SHORT path — see note below
-```
-
-GPU notes:
-- Transcription runs on the GPU via **Vulkan** (NVIDIA/AMD/Intel alike). The
-  Vulkan SDK is needed at *build* time only; end users just need a Vulkan
-  driver (any modern GPU driver ships one).
-- `CARGO_TARGET_DIR` **must point to a short path** (e.g. `C:\sbuild`):
-  whisper.cpp's Vulkan shader sub-build otherwise exceeds Windows' 260-char
-  MAX_PATH and MSBuild fails with FTK1011. Windows only — macOS/Linux don't
-  need it (and a drive-letter path would actually break `cargo test` there).
-- The very first transcription on a machine compiles GPU shaders (~10 s,
-  one-time); the driver caches them afterwards.
-
-Then open a **new** terminal and build (see *Build & run* below).
-
-Runtime notes:
-- Settings → Privacy & security → Microphone → enable **"Let desktop apps
-  access your microphone"**.
-- WebView2 is preinstalled on Windows 11; on older Windows 10 install the
-  [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
-
-### macOS 11+ (Apple Silicon only)
-
-Intel Macs are not supported: the Parakeet engine's ONNX runtime (`ort`)
-ships no prebuilt binaries for `x86_64-apple-darwin`. The bundle targets
-macOS 11.0+ (whisper.cpp needs ≥ 10.15 for `std::filesystem`; arm64 raises
-that to 11.0).
-
-Build prerequisites:
-
-```bash
-xcode-select --install                 # Xcode Command Line Tools (clang, git)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-brew install node cmake ollama
-```
-
-Runtime notes — macOS will prompt for two permissions on first use; both are
-required:
-- **Microphone** (System Settings → Privacy & Security → Microphone)
-- **Accessibility** (System Settings → Privacy & Security → Accessibility) —
-  needed to synthesize the ⌘V paste into other apps. If text never appears,
-  re-check this permission for Sussurro (or your terminal, in dev mode).
-
-### Linux (X11 recommended)
-
-Requires **glibc ≥ 2.38** (Ubuntu 24.04+, Debian 13+, Fedora 39+): the
-Parakeet engine links `ort`'s prebuilt ONNX Runtime, which is compiled
-against it. Older distros fail at link time with
-`undefined symbol: __isoc23_strtoll`.
-
-Build prerequisites (Debian/Ubuntu — adapt package names for your distro):
-
-```bash
-sudo apt update
-sudo apt install build-essential curl cmake clang pkg-config \
-  libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-  librsvg2-dev libasound2-dev libxdo-dev libxkbcommon-dev
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# Node LTS: use your distro package or https://github.com/nvm-sh/nvm
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-Runtime notes:
-- **X11**: everything works out of the box (hotkey + paste injection).
-- **Wayland**: paste injection relies on enigo's experimental Wayland support
-  and may not work in all compositors; global shortcuts may also be
-  restricted. Workarounds: run the app under XWayland, or switch to an X11
-  session. Native Wayland injection (wtype/ydotool) is on the roadmap.
-- Audio uses ALSA (`libasound2`); PipeWire and PulseAudio expose ALSA
-  compatibility by default.
-
-## Build & run (all platforms)
-
-Toolchain: **Node.js ≥ 24** and **Rust stable** (via rustup, installed above).
+The short version, once the prerequisites are in place:
 
 ```bash
 git clone https://github.com/fullo/Sussurro && cd Sussurro/sussurro
 npm install
 npm run tauri dev      # development, hot-reload
 npm run tauri build    # production bundle (installer per platform)
-cd src-tauri && cargo test   # headless test suite (27 tests)
 ```
 
 First run: the window opens on Settings — pick a Whisper model, click
