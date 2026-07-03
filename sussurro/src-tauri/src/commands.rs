@@ -258,30 +258,31 @@ pub async fn transcribe_audio_file(
     .map_err(|e| e.to_string())?
 }
 
-/// One-off translation of a past history entry: translate `text` into `lang`
-/// via the translate-only LLM path (cleanup None + target language), append
-/// the result as a new history entry and return it.
+/// One-off translation of a past history entry. Starts from the RAW
+/// transcript — not from text a model already rewrote (double LLM passes
+/// compound errors) — and runs the everyday dictation prompt: current
+/// cleanup level with the target language forced. Like Re-clean, but into
+/// another language. Appends the result as a new history entry.
 #[tauri::command]
 pub async fn translate_entry(
     state: State<'_, AppState>,
-    text: String,
+    raw: String,
     lang: String,
 ) -> Result<HistoryEntry, String> {
     let (mut settings, history_file) = {
         let s = state.settings.lock().unwrap().clone();
         (s, state.paths.history_file.clone())
     };
-    settings.cleanup_level = crate::settings::CleanupLevel::None;
     settings.output_language = lang;
     tauri::async_runtime::spawn_blocking(move || {
-        let translated = crate::cleanup::ollama::cleanup(&settings, None, &text);
-        if translated == text {
+        let translated = crate::cleanup::ollama::cleanup(&settings, None, &raw);
+        if translated == raw {
             // cleanup() falls back to the input on any Ollama error.
             return Err("translation failed — is Ollama running?".to_string());
         }
         let entry = HistoryEntry {
             timestamp: chrono::Utc::now().to_rfc3339(),
-            raw: text,
+            raw,
             cleaned: translated,
         };
         let _ = history::append(&history_file, &entry);
