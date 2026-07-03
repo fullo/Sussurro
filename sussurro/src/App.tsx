@@ -929,6 +929,35 @@ export default function App() {
         </ol>
       </CollapsibleCard>
 
+      <CollapsibleCard
+        storageKey="fileOpen"
+        title={<>Audio file <span className="via">transcribe a recording</span></>}
+      >
+        <p className="card-hint">
+          Transcribe a .wav / .mp3 / .m4a file with the current engine and cleanup — no dictation needed.
+          <Tip text="Something Wispr Flow doesn't do: it's dictation-only. The result is cleaned with your current settings and added to History (not injected anywhere)." />
+        </p>
+        <input
+          type="file"
+          accept="audio/*,.wav,.mp3,.m4a,.aac,.flac,.ogg"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            setBusy(`Transcribing ${file.name}…`);
+            try {
+              const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+              const ext = file.name.split(".").pop() ?? "";
+              await invoke<HistoryEntry>("transcribe_audio_file", { bytes, ext });
+              setBusy("");
+              refresh();
+            } catch (err) {
+              setBusy(String(err));
+            }
+          }}
+        />
+      </CollapsibleCard>
+
       <footer>
         <span>すべてローカル — everything stays local</span>
         <button

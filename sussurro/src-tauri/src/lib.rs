@@ -95,7 +95,8 @@ pub fn run() {
             commands::reclean,
             commands::learn_correction,
             commands::export_config,
-            commands::import_config
+            commands::import_config,
+            commands::transcribe_audio_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
