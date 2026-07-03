@@ -177,7 +177,10 @@ function AdvancedGroup({ children }: { children: ReactNode }) {
 interface LicensePackage {
   name: string;
   version: string;
+  /** The single license we use it under (dual "A OR B" resolved to one). */
   license: string;
+  /** Original SPDX expression, only when it differed from `license`. */
+  spdx: string;
   repository: string;
   ecosystem: "rust" | "npm";
   textId: number;
@@ -321,6 +324,12 @@ function AboutDialog({
                       </button>
                       {isOpen && (
                         <div className="license-detail">
+                          {p.spdx && (
+                            <p className="license-spdx">
+                              Offered under <code>{p.spdx}</code> — used here
+                              under <code>{p.license}</code>.
+                            </p>
+                          )}
                           {p.repository && (
                             <a
                               href={p.repository}

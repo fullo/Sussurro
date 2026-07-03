@@ -857,6 +857,14 @@ footer a:hover { color: var(--c-dark); }
 }
 .license-detail { padding: 0 0.75rem 0.75rem; }
 .license-detail a { font-size: 0.78rem; word-break: break-all; }
+.license-spdx { margin: 0 0 0.4rem; font-size: 0.75rem; color: var(--c-text-light); }
+.license-spdx code {
+  font-family: var(--f-mono);
+  font-size: 0.72rem;
+  background: var(--c-surface-alt);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+}
 .license-detail pre {
   margin: 0.5rem 0 0;
   padding: 0.6rem;
