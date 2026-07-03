@@ -53,6 +53,8 @@ interface Settings {
   history_retention_days: number;
   api_enabled: boolean;
   api_port: number;
+  /** Dictate-to-file: append dictations to this file instead of pasting. */
+  output_file: string;
 }
 
 const LANGUAGES: [string, string][] = [
@@ -1120,6 +1122,44 @@ export default function App() {
           </label>
         </div>
 
+        <div className="field">
+          <div className="field-label">
+            <span>Dictate to file <Tip text="Note-taking mode: every dictation is APPENDED to this file (e.g. an Obsidian note) instead of being pasted into the focused app. Clear the path to go back to normal pasting. Streaming typing is suspended while this is active." /></span>
+            <small>{settings.output_file.trim() ? "active — nothing is pasted" : "off — text is pasted normally"}</small>
+          </div>
+          <div className="model-row">
+            {settings.output_file.trim() ? (
+              <>
+                <span className="output-file-path" title={settings.output_file}>
+                  {settings.output_file}
+                </span>
+                <button
+                  className="btn-ghost"
+                  onClick={() => save({ ...settings, output_file: "" })}
+                >
+                  Stop
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn-ghost"
+                onClick={async () => {
+                  const path = await saveDialog({
+                    defaultPath: "sussurro-notes.md",
+                    filters: [
+                      { name: "Markdown", extensions: ["md"] },
+                      { name: "Text", extensions: ["txt"] },
+                    ],
+                  });
+                  if (path) save({ ...settings, output_file: path });
+                }}
+              >
+                Choose file…
+              </button>
+            )}
+          </div>
+        </div>
+
         <AdvancedGroup>
           <div className="field">
             <div className="field-label">
@@ -1158,17 +1198,44 @@ export default function App() {
         title="History"
         headerExtra={
           history.length > 0 ? (
-            <button
-              className={`btn-ghost${confirmClear ? " danger" : ""}`}
-              onClick={(e) => {
-                // Inside <summary>: don't let the click toggle the accordion.
-                e.preventDefault();
-                e.stopPropagation();
-                clearHistory();
-              }}
-            >
-              {confirmClear ? "Click again to delete" : "Clear"}
-            </button>
+            <>
+              <button
+                className="btn-ghost"
+                title="Export the whole history to Markdown or JSON"
+                onClick={async (e) => {
+                  // Inside <summary>: don't let the click toggle the accordion.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const path = await saveDialog({
+                    defaultPath: "sussurro-history.md",
+                    filters: [
+                      { name: "Markdown", extensions: ["md"] },
+                      { name: "JSON", extensions: ["json"] },
+                    ],
+                  });
+                  if (!path) return;
+                  try {
+                    const msg = await invoke<string>("export_history", { path });
+                    setBusy(msg);
+                    setTimeout(() => setBusy(""), 3000);
+                  } catch (err) {
+                    setBusy(String(err));
+                  }
+                }}
+              >
+                Export
+              </button>
+              <button
+                className={`btn-ghost${confirmClear ? " danger" : ""}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  clearHistory();
+                }}
+              >
+                {confirmClear ? "Click again to delete" : "Clear"}
+              </button>
+            </>
           ) : undefined
         }
       >

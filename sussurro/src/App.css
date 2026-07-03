@@ -659,6 +659,20 @@ kbd {
 }
 .history .raw::before { content: "raw · "; color: var(--border-strong); }
 
+/* Dictate-to-file: the chosen path, truncated from the left. */
+.output-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--f-mono);
+  font-size: 0.8rem;
+  color: var(--c-text-light);
+}
+
 /* Usage stats strip at the top of the History card. */
 .stats-row {
   margin: 0 0 0.6rem;

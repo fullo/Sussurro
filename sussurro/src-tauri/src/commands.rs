@@ -100,6 +100,24 @@ pub fn clear_history(state: State<'_, AppState>) -> Result<(), String> {
     history::clear(&state.paths.history_file).map_err(|e| e.to_string())
 }
 
+/// Export the whole history to a file: Markdown when the path ends in .md,
+/// pretty JSON otherwise. Entries are written oldest-first (chronological).
+#[tauri::command]
+pub fn export_history(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let mut entries = history::read_last(&state.paths.history_file, usize::MAX);
+    entries.reverse(); // read_last is newest-first
+    if entries.is_empty() {
+        return Err("history is empty — nothing to export".to_string());
+    }
+    let body = if path.to_lowercase().ends_with(".md") {
+        history::to_markdown(&entries)
+    } else {
+        serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?
+    };
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    Ok(format!("{} entries exported.", entries.len()))
+}
+
 #[derive(serde::Serialize)]
 pub struct UsageStats {
     pub total_dictations: u64,

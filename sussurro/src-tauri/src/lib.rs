@@ -99,6 +99,7 @@ pub fn run() {
             commands::search_history,
             commands::clear_history,
             commands::usage_stats,
+            commands::export_history,
             commands::model_is_downloaded,
             commands::download_model,
             commands::list_ollama_models,
