@@ -58,6 +58,18 @@ pub fn copy_text(text: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// OS permission status (microphone, and accessibility for paste injection).
+#[tauri::command]
+pub fn check_permissions() -> crate::permissions::Permissions {
+    crate::permissions::check()
+}
+
+/// Open the OS privacy pane for a permission ("microphone" / "accessibility").
+#[tauri::command]
+pub fn open_settings(target: String) -> Result<(), String> {
+    crate::permissions::open_settings(&target).map_err(|e| e.to_string())
+}
+
 /// Re-run cleanup on a past raw transcript with the CURRENT settings
 /// (level/model/dictionary). Appends the result as a new history entry.
 #[tauri::command]

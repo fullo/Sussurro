@@ -4787,7 +4787,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sussurro"
-version = "0.3.9-1"
+version = "0.3.9-2"
 dependencies = [
  "active-win-pos-rs",
  "anyhow",
@@ -4797,6 +4797,8 @@ dependencies = [
  "cpal",
  "enigo",
  "flate2",
+ "objc2",
+ "objc2-foundation",
  "regex",
  "reqwest",
  "serde",
