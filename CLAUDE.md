@@ -40,6 +40,22 @@ project decisions here, not in per-machine memory.**
 - Updater signing key: outside the repo, uploaded as
   `TAURI_SIGNING_PRIVATE_KEY` secret (see README → Releases & auto-update).
   Changing the key pair orphans existing installs.
+- **Manual release while Actions is down** (billing outage, ~until 2026-08):
+  Windows is built/signed on the dev box, Linux in WSL, then
+  `gh release create` with the assets + a hand-written `latest.json`.
+  macOS assets are added from a Mac afterwards:
+  ```bash
+  git clone <repo> && cd Sussurro/sussurro && git checkout vX.Y.Z
+  npm ci && npm run tauri build          # Apple Silicon
+  node_modules/.bin/tauri signer sign \
+    --private-key-path <sussurro-updater.key> --password "" \
+    src-tauri/target/release/bundle/macos/sussurro.app.tar.gz
+  gh release upload vX.Y.Z src-tauri/target/release/bundle/macos/sussurro.app.tar.gz* \
+    src-tauri/target/release/bundle/dmg/*.dmg
+  ```
+  then add the `darwin-aarch64` entry (URL + signature) to the release's
+  `latest.json`. Beware: PowerShell drops empty `""` args and unsets
+  empty env vars — sign via `cmd /c` on Windows (see scripts/ for helpers).
 
 ## CI gotchas (learned the hard way)
 
