@@ -94,10 +94,13 @@ project decisions here, not in per-machine memory.**
    *Rechecked 2026-07-05: still no stable (max = 2.0.0-rc.12);
    transcribe-rs 0.3.11 is also the latest.*
 7. Optional Vulkan GPU build on Linux (feature flag; CPU-only today).
-   *In progress 2026-07-05: WSL2 Ubuntu 24.04 now has glslc + libvulkan-dev;
-   only the llvmpipe (software) Vulkan device is available there — good for
-   build + init + correctness validation and for the no-device fallback test,
-   not for performance numbers.*
+   *Validated in WSL 2026-07-05: `--features linux-vulkan` compiles, all 86
+   tests pass, and with no usable Vulkan device ggml falls back to CPU
+   cleanly (no crash) — ggml ignores CPU-type devices like llvmpipe, so WSL
+   can't exercise the GPU-on path. Remaining before shipping it in releases:
+   one run on real Linux hardware with a proper Vulkan driver (correctness +
+   perf), then decide whether it becomes a separate release artifact or the
+   default. Build recipe documented in docs/compile/linux.md.*
 8. Minimal E2E smoke test in CI — **done** (test.yml runs the app under Xvfb
    and asserts the window exists; mirrored in scripts/ci-local.sh).
 
