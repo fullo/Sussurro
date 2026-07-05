@@ -32,6 +32,13 @@ The `linux-vulkan` cargo feature enables the whisper.cpp Vulkan backend
 works; the first transcription compiles shaders once (~10 s), then the
 driver caches them.
 
+Validated 2026-07-05 (WSL2 Ubuntu 24.04): the feature compiles, the full
+test suite passes, and **without a usable Vulkan device the app falls back
+to CPU cleanly** — `ggml_vulkan: No devices found` → CPU transcription, no
+crash. Note that ggml deliberately ignores CPU-type Vulkan devices
+(llvmpipe), so software Vulkan is never picked up. The GPU-accelerated
+path itself still needs a run on real Linux hardware with proper drivers.
+
 ## Build & run
 
 ```bash
