@@ -18,7 +18,10 @@ export DEBIAN_FRONTEND=noninteractive
 
 echo "== [1/7] System dependencies"
 apt-get update -qq
+# clang/libclang-dev: preinstalled on GitHub runners, needed by bindgen
+# (whisper-rs-sys). The rest mirrors test.yml's apt list.
 apt-get install -y -qq build-essential cmake pkg-config curl git file \
+  clang libclang-dev \
   libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
   librsvg2-dev libasound2-dev libxdo-dev libxkbcommon-dev libssl-dev \
   xvfb xdotool >/dev/null
