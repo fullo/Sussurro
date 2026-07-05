@@ -67,13 +67,22 @@ npm ci --no-audit --no-fund >/dev/null
 npm run build
 
 echo "== [7/7] Rust tests + clippy + E2E smoke"
+# Persistent target dir: the checkout is wiped every run, the build cache
+# must not go with it.
+export CARGO_TARGET_DIR="$HOME/ci/target"
 cd src-tauri
 cargo test
 cargo clippy --all-targets
 cd ..
-WEBKIT_DISABLE_DMABUF_RENDERER=1 npm run tauri build -- --debug --no-bundle
+# WSL has no GPU for WebKit: force software rendering everywhere (harmless
+# on real hardware, required under Xvfb-in-WSL where Mesa/ZINK finds no pdev).
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+export LIBGL_ALWAYS_SOFTWARE=1
+export GDK_BACKEND=x11
+npm run tauri build -- --debug --no-bundle
 xvfb-run -a bash -c '
-  ./src-tauri/target/debug/sussurro &
+  "$CARGO_TARGET_DIR/debug/sussurro" &
   APP_PID=$!
   for i in $(seq 1 30); do
     if xdotool search --name "Sussurro" >/dev/null 2>&1; then
