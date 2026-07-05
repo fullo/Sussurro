@@ -82,10 +82,10 @@ project decisions here, not in per-machine memory.**
 
 ### 0.4.0 — quality & tech debt
 
-4. Streaming typing with cleanup enabled — **already shipped** (sentence-by-
+4. Streaming typing with cleanup enabled — **done & verified** (sentence-by-
    sentence streaming with per-chunk LLM cleanup landed with the Wispr-parity
-   batch; this roadmap line was stale). Still labelled experimental pending a
-   manual dictation test; README wording fixed 2026-07-05.
+   batch; manually verified by dictation on Windows 0.3.9-3 on 2026-07-05,
+   "experimental" label removed).
 5. Unpin cpal 0.16 → 0.18 (retest the windows-core conflict with Tauri).
    *Rechecked 2026-07-05: crates.io max is still 0.18.1, the broken one.
    Re-try when cpal releases a version on windows-core ≥ 0.62.*
