@@ -384,6 +384,35 @@ mod tests {
     }
 
     #[test]
+    fn empty_overrides_use_the_builtin_default_for_every_level() {
+        // The Cleanup → Advanced textareas ship empty (the defaults are only
+        // placeholders in the UI): every level must fall back to its full
+        // built-in instruction, for empty AND whitespace-only overrides.
+        for (level, default) in [
+            (CleanupLevel::Light, DEFAULT_LIGHT),
+            (CleanupLevel::Medium, DEFAULT_MEDIUM),
+            (CleanupLevel::High, DEFAULT_HIGH),
+        ] {
+            for blank in ["", "   ", "\n\t"] {
+                let mut s = cfg(level.clone());
+                s.prompt_overrides.light = blank.into();
+                s.prompt_overrides.medium = blank.into();
+                s.prompt_overrides.high = blank.into();
+                let msgs = build_messages(&s, None, "x").unwrap();
+                let system = msgs[0]["content"].as_str().unwrap();
+                assert!(
+                    system.contains(default),
+                    "{level:?} with override {blank:?} must contain its full default"
+                );
+            }
+        }
+        // And the defaults themselves must never be empty.
+        for d in [DEFAULT_LIGHT, DEFAULT_MEDIUM, DEFAULT_HIGH] {
+            assert!(!d.trim().is_empty());
+        }
+    }
+
+    #[test]
     fn prompt_override_replaces_default_when_set() {
         let mut s = cfg(CleanupLevel::Light);
         s.prompt_overrides.light = "Translate everything into pirate speak.".into();
