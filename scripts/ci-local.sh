@@ -51,7 +51,10 @@ export ORT_PREFER_DYNAMIC_LINK=1
 export LD_LIBRARY_PATH="$ORT_LIB_LOCATION:${LD_LIBRARY_PATH:-}"
 
 echo "== [5/7] Checkout ${BRANCH} from the Windows working copy"
-git config --global --add safe.directory /mnt/f/GitHub/Sussurro 2>/dev/null || true
+# The Windows repo is owned by a different uid than the WSL user: git refuses
+# it ("dubious ownership") for the repo AND its .git dir. This is a throwaway
+# root-only CI environment, so trust everything.
+git config --global --add safe.directory '*' 2>/dev/null || true
 rm -rf "$HOME/ci/sussurro"
 git clone -q --branch "$BRANCH" /mnt/f/GitHub/Sussurro "$HOME/ci/sussurro"
 cd "$HOME/ci/sussurro/sussurro"
