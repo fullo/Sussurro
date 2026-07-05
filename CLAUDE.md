@@ -82,18 +82,24 @@ project decisions here, not in per-machine memory.**
 
 ### 0.4.0 — quality & tech debt
 
-4. Streaming typing with cleanup enabled (today only works with Cleanup None).
+4. Streaming typing with cleanup enabled — **already shipped** (sentence-by-
+   sentence streaming with per-chunk LLM cleanup landed with the Wispr-parity
+   batch; this roadmap line was stale). Still labelled experimental pending a
+   manual dictation test; README wording fixed 2026-07-05.
 5. Unpin cpal 0.16 → 0.18 (retest the windows-core conflict with Tauri).
-   *Retested 2026-07-03 with cpal 0.18.1: still broken — cpal's WASAPI code
-   compiles against a different `windows_core` than the Tauri stack
-   (`IActivateAudioInterfaceCompletionHandler: Interface not satisfied`).
+   *Rechecked 2026-07-05: crates.io max is still 0.18.1, the broken one.
    Re-try when cpal releases a version on windows-core ≥ 0.62.*
 6. Move `ort` from 2.0.0-rc.12 to stable when released (coordinate with the
    pinned ONNX Runtime version in test.yml — see CI gotchas).
-   *Checked 2026-07-03: still no stable on crates.io (max = 2.0.0-rc.12);
+   *Rechecked 2026-07-05: still no stable (max = 2.0.0-rc.12);
    transcribe-rs 0.3.11 is also the latest.*
 7. Optional Vulkan GPU build on Linux (feature flag; CPU-only today).
-8. Minimal E2E smoke test in CI (app launches, window exists).
+   *In progress 2026-07-05: WSL2 Ubuntu 24.04 now has glslc + libvulkan-dev;
+   only the llvmpipe (software) Vulkan device is available there — good for
+   build + init + correctness validation and for the no-device fallback test,
+   not for performance numbers.*
+8. Minimal E2E smoke test in CI — **done** (test.yml runs the app under Xvfb
+   and asserts the window exists; mirrored in scripts/ci-local.sh).
 
 ### 0.5.0 — go public
 

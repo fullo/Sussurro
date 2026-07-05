@@ -113,9 +113,10 @@ combination; Esc cancels).
   "translate to English"): the LLM applies it and the result replaces the
   selection.
 - **Whisper mode** — dictate quietly: 3x mic gain and a lower silence gate.
-- **Streaming typing** (experimental) — with Cleanup None, text is typed into
-  the app while you speak, holding back the last two words until the final
-  pass completes them.
+- **Streaming typing** (experimental) — text is typed into the app while you
+  speak: word by word with Cleanup None (holding back the last two words), or
+  sentence by sentence with cleanup on — each completed sentence is
+  LLM-cleaned before being typed; the final pass finishes the tail.
 - **Models folder** — settable in Settings (default: app data); silence is
   trimmed before inference (VAD-lite) so long pauses don't cost GPU time.
 - **Translation** — Cleanup → "Translate to": dictate in one language and
