@@ -16,7 +16,24 @@ pub fn cleanup(
         return transcript.to_string();
     };
     match chat(&settings.ollama_url, &settings.ollama_model, &messages) {
-        Ok(text) if !text.trim().is_empty() => text.trim().to_string(),
+        Ok(text) if !text.trim().is_empty() => {
+            let cleaned = text.trim().to_string();
+            // Small models sometimes ANSWER short dictations instead of
+            // cleaning them; keep the raw transcript when the output doesn't
+            // derive from the input. Translation changes every word, so the
+            // guard only runs when no translation is requested.
+            if crate::cleanup::prompt::output_language_name(&settings.output_language).is_none()
+                && crate::cleanup::prompt::looks_hallucinated(
+                    &settings.cleanup_level,
+                    transcript,
+                    &cleaned,
+                )
+            {
+                eprintln!("cleanup output unrelated to transcript — keeping raw");
+                return transcript.to_string();
+            }
+            cleaned
+        }
         Ok(_) => transcript.to_string(),
         Err(e) => {
             eprintln!("ollama cleanup failed, using raw transcript: {e:#}");
@@ -132,6 +149,25 @@ mod tests {
         let models = list_models("http://localhost:11434").unwrap();
         println!("models: {models:?}");
         assert!(models.iter().any(|m| m.starts_with("llama3.2")));
+    }
+
+    /// The reported regression: a short Italian dictation must never come
+    /// back as a conversational REPLY ("Va bene, stiamo per iniziare.").
+    /// Faithful cleanup or guarded fallback to raw are both acceptable.
+    /// Needs a running Ollama. Run manually:
+    /// cargo test live_short_italian -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_short_italian_is_not_answered() {
+        for _ in 0..5 {
+            let out = cleanup(
+                &cfg(CleanupLevel::Light, "http://localhost:11434"),
+                None,
+                "Proviamo l'audio. Va.",
+            );
+            println!("cleaned: {out}");
+            assert!(out.to_lowercase().contains("audio"), "reply-like output: {out}");
+        }
     }
 
     /// Needs a running Ollama with the model pulled. Run manually:

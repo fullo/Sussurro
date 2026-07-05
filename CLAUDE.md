@@ -57,6 +57,14 @@ project decisions here, not in per-machine memory.**
 - macOS needs `minimumSystemVersion` ≥ 10.15 (whisper.cpp uses
   `std::filesystem`); it is set to 11.0 (arm64 baseline) in
   `tauri.conf.json`.
+- **Actions minutes can run out** (private repo; macOS jobs bill 10x, Windows
+  2x — one 3-OS release run burns ~200 min-equivalents). Symptom: every job
+  fails in ~3 s with no steps and the annotation "job was not started …
+  spending limit". Fix: Billing & plans on the owner account. Meanwhile
+  `scripts/ci-local.sh` mirrors test.yml inside WSL2 Ubuntu 24.04
+  (`wsl -d Ubuntu -u root -- bash /mnt/f/GitHub/Sussurro/scripts/ci-local.sh
+  <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
+  Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
 ## Roadmap (agreed 2026-07-03, current version 0.2.1)
 
