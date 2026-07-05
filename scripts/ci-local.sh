@@ -3,9 +3,10 @@
 # unavailable (e.g. private-repo minutes exhausted, runner outages).
 #
 # Runs inside WSL2 Ubuntu 24.04 (same glibc >= 2.38 baseline as the CI
-# runner). From Windows:
+# runner). From Windows (the distro is "Ubuntu-dev", living on F: —
+# the original C:-hosted "Ubuntu" filled the system drive and was migrated):
 #
-#   wsl -d Ubuntu -u root -- bash /mnt/f/GitHub/Sussurro/scripts/ci-local.sh <branch>
+#   wsl -d Ubuntu-dev -u root -- bash /mnt/f/GitHub/Sussurro/scripts/ci-local.sh <branch>
 #
 # The branch is cloned from the Windows working copy (committed state only:
 # uncommitted changes are NOT tested, exactly like real CI). Toolchains and
