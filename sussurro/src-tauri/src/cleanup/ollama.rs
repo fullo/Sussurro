@@ -170,6 +170,29 @@ mod tests {
         }
     }
 
+    /// Regression: a single Italian few-shot example made the 3B model
+    /// TRANSLATE English dictations into Italian (the guard then reverted to
+    /// raw, silently disabling cleanup for English). With the bilingual
+    /// examples the output must stay English AND be cleaned.
+    /// Needs a running Ollama. Run manually:
+    /// cargo test live_english_stays_english -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_english_stays_english() {
+        for _ in 0..3 {
+            let out = cleanup(
+                &cfg(CleanupLevel::Light, "http://localhost:11434"),
+                None,
+                "um so this is uh another test right after",
+            );
+            println!("cleaned: {out}");
+            assert!(out.to_lowercase().contains("test"), "unrelated output: {out}");
+            assert!(!out.to_lowercase().contains("questo"), "translated to Italian: {out}");
+            // The guard falling back to raw would leave the fillers in.
+            assert!(!out.to_lowercase().contains("um"), "cleanup did not run: {out}");
+        }
+    }
+
     /// Needs a running Ollama with the model pulled. Run manually:
     /// cargo test live_ollama_cleans_text -- --ignored --nocapture
     #[test]
