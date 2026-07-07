@@ -8,7 +8,7 @@ into any app.
 > **Hold `Ctrl+Shift+Space` (⌘⇧Space on Mac), speak, release.**
 > The cleaned-up text appears wherever your cursor is.
 
-🌐 Project site: [`site/`](site/index.html) · 🛠️ Building & contributing:
+🌐 Project site: [`docs/index.html`](docs/index.html) · 🛠️ Building & contributing:
 [`docs/development.md`](docs/development.md)
 
 ## Why Sussurro
@@ -180,7 +180,7 @@ Current version **0.4.1**. Full detail (and standing decisions) in
 - [`docs/compile/`](docs/compile/) — per-OS build guides (Windows/macOS/Linux).
 - [`docs/releases.md`](docs/releases.md) — release process, auto-update,
   code-signing.
-- [`site/`](site/index.html) — the project landing page.
+- [`docs/index.html`](docs/index.html) — the project landing page (+ `docs/blog/`).
 
 ---
 

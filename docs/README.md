@@ -4,6 +4,11 @@ The project's English marketing site: a static landing page
 ([`index.html`](index.html)) plus a [`blog/`](blog/) of 29 articles. No build
 step, no dependencies to install.
 
+> This site lives in `docs/` because GitHub Pages' "Deploy from a branch" mode
+> only serves the repo root or `/docs`. The developer docs (`development.md`,
+> `releases.md`, `compile/`, …) live alongside it in the same folder; a
+> `.nojekyll` marker keeps Pages from running them through Jekyll.
+
 - **Design**: the app's Daruma system (warm paper, ink, daruma-red). The
   daruma's second eye paints red as you reach the download section — the same
   "recording moment" motif as the app. Blog articles share
@@ -36,16 +41,17 @@ on robots.txt discovery. (A custom domain / apex would remove this caveat.)
 Just open the file, or serve the folder:
 
 ```bash
-cd site
+cd docs
 python -m http.server 8080     # → http://localhost:8080
 ```
 
 ## Deploy
 
-It's a static file — host it anywhere (GitHub Pages, Netlify, Cloudflare
-Pages, any bucket). For GitHub Pages, point the Pages source at `/site` (or
-copy `index.html` to the Pages branch). Requires the repo/Pages to be public
-(planned for v0.5.0 — see [`../CLAUDE.md`](../CLAUDE.md)).
+It's static — host it anywhere (GitHub Pages, Netlify, Cloudflare Pages, any
+bucket). For GitHub Pages: **Settings → Pages → Deploy from a branch → `main`
+/ `/docs`**. That serves this folder at `https://fullo.github.io/Sussurro/`,
+matching the canonical URLs in the SEO tags. Requires the repo/Pages to be
+public (planned for v0.5.0 — see [`../CLAUDE.md`](../CLAUDE.md)).
 
 ## Keep in sync
 

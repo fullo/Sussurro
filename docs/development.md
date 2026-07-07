@@ -11,7 +11,9 @@ How to build Sussurro from source and work on it. For using the app, see the
   notes and platform caveats. Keep them updated when build requirements change.
 - `docs/releases.md` — the release + auto-update + code-signing process.
 - `docs/whisperflow-clone-research.md` — the research behind the design.
-- `site/` — the project's English landing page (static, deployable to any host).
+- `docs/index.html` + `docs/blog/` — the project's English marketing site
+  (static; served by GitHub Pages from the `/docs` folder). Dev docs (this
+  file, `releases.md`, `compile/`) live alongside it in `docs/`.
 
 ## Toolchain
 
