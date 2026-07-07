@@ -25,14 +25,19 @@ for updates*, confirm it fetches and installs the newer version.
 
 ## OS code signing (status)
 
-Separate from the updater's own signing:
+Separate from the updater's own signing. **Decision (2026-07-06): no external
+OS signing for now** — the installers ship unsigned and users click through the
+OS warnings. The updater still works (its minisign signature is independent).
+The options below are documented for when the maintainer revisits.
 
 - **macOS** — **ad-hoc signed** today (no Apple Developer ID / notarization),
   so Gatekeeper blocks first launch; users right-click → *Open*. See
   [`docs/blog/macos-signing-gatekeeper.html`](blog/macos-signing-gatekeeper.html).
-  Developer ID + notarization is deferred (needs an Apple Developer account).
-- **Windows** — **unsigned** today (SmartScreen prompt). Planned via **SignPath**
-  (free for OSS); setup guide: [`windows-signing-signpath.md`](windows-signing-signpath.md).
+  Developer ID + notarization would need an Apple Developer account ($99/yr).
+- **Windows** — **unsigned** today (SmartScreen prompt). Future option:
+  **SignPath** (free for OSS); setup guide kept in
+  [`windows-signing-signpath.md`](windows-signing-signpath.md). Not being
+  pursued right now.
 - **Linux** — AppImage/deb/rpm are unsigned by OS convention; the updater
   artifacts are minisign-signed like the others.
 
