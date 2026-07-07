@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How cleanup avoids hallucinations — Sussurro Blog</title>
+<meta name="description" content="Small local models sometimes answer a dictation instead of cleaning it — here's the word-overlap guard and bilingual prompt that catch it." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-concept">Concept</span>
+    <h1>How cleanup avoids hallucinations</h1>
+    <p class="dek">Small local models sometimes answer a dictation instead of cleaning it — here's the word-overlap guard and bilingual prompt that catch it.</p>
+    <div class="meta">5 min read · Concept</div>
+  </header>
+
+  <div class="prose">
+<p>Cleanup runs a small local model — often a 2-3B model like <code>llama3.2:3b</code> — over every dictation to strip filler words and fix grammar. Small models are fast enough to run on a laptop CPU, but they have a specific failure mode: instead of cleaning a short transcript, they sometimes <em>answer</em> it. A dictation like "Proviamo l'audio. Va." (Italian for "Let's try the audio. Go.") has come back from the model as "Va bene, stiamo per iniziare." — "Okay, we're about to start." That's a reply to the text, not a cleaned version of it.</p>
+
+<p>Sussurro treats this as an expected risk of small local models, not an edge case to hope around. Two mechanisms in <code>cleanup/prompt.rs</code> and <code>cleanup/ollama.rs</code> exist specifically to catch it.</p>
+
+<h2>The hallucination guard</h2>
+
+<p><code>looks_hallucinated()</code> is a deterministic, non-LLM check that runs after cleanup for the <strong>Light</strong> and <strong>Medium</strong> levels. Its logic is simple: those two levels only remove fillers and fix grammar, so almost every word in the output should already exist in the input. The function lowercases and tokenizes both transcript and cleaned text, then measures what fraction of the output's words were actually present in the input:</p>
+
+<ul>
+<li>Light requires at least 50% word overlap.</li>
+<li>Medium, which tolerates lighter rewording, requires at least 30%.</li>
+<li>An empty or punctuation-only output (like "…") is flagged outright.</li>
+<li><strong>High</strong> is never guarded, because it's designed to rewrite for brevity — every word can legitimately change.</li>
+</ul>
+
+<p>When the guard trips, <code>cleanup()</code> in <code>ollama.rs</code> discards the model's output and keeps the raw transcript instead, logging <code>cleanup output unrelated to transcript — keeping raw</code>. The same fallback-to-raw path also covers Ollama being unreachable, a request timing out, or the model returning an empty string — cleanup is built to <strong>never fail the pipeline</strong>. Worst case, you get your unedited words back, not an error or someone else's sentence.</p>
+
+<div class="callout"><span class="k">BY DESIGN</span><p>The guard is skipped whenever translation is requested, since translating legitimately replaces every word — comparing translated output against the original-language input would flag every honest translation as a hallucination.</p></div>
+
+<h2>Why the few-shot examples are bilingual</h2>
+
+<p>To stop small models from answering short, conversational-sounding dictations, <code>build_messages()</code> in <code>prompt.rs</code> appends two worked examples to the prompt before the real transcript: one English pair ("so um, we should review the uh quarterly numbers, right." → "So, we should review the quarterly numbers, right.") and one Italian pair, in that order, deliberately worded so they don't resemble typical dictations the model might pattern-match against.</p>
+
+<p>Both languages are required, not one. An earlier version shipped only the Italian example, and it taught the 3B model to <em>translate</em> English dictations into Italian — the hallucination guard would then correctly catch that Italian output as unrelated to an English input and fall back to raw, silently disabling cleanup for every English dictation. Pairing an English example with the Italian one keeps the model anchored to the instruction that actually matters: clean in whatever language the speaker used. The examples are skipped entirely when a translation is requested, since same-language examples would fight the translation instruction.</p>
+
+<p>The result is a cleanup step that fails safe twice over: a code-level guard that reverts to your actual words when the model drifts, and a prompt built from a bug report to stop that drift from being systematic.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="ai-cleanup-levels.html">AI cleanup levels explained</a></li>
+        <li><a href="choosing-ollama-model.html">Choosing an Ollama model</a></li>
+        <li><a href="command-mode.html">Command mode: editing text by voice</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

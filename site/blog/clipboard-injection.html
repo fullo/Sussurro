@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Clipboard-paste injection, explained — Sussurro Blog</title>
+<meta name="description" content="Sussurro doesn't integrate with any app's API — it puts text on the clipboard, pastes it, and restores what was there before." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-concept">Concept</span>
+    <h1>Clipboard-paste injection, explained</h1>
+    <p class="dek">Sussurro doesn't integrate with any app's API — it puts text on the clipboard, pastes it, and restores what was there before.</p>
+    <div class="meta">5 min read · Concept</div>
+  </header>
+
+  <div class="prose">
+<p>Sussurro has to type into whatever application happens to have focus — a browser's compose box, a terminal, a native editor, a chat client, a form field buried three dialogs deep. There's no universal "insert text here" API that works across all of them. So Sussurro doesn't try to integrate with each app. Instead it uses the one interface every app already understands: the clipboard.</p>
+
+<h2>The sequence</h2>
+<p>When it's time to deliver text — a finished dictation, a streamed sentence, an edited command-mode selection — Sussurro runs the same four-step sequence, implemented in <code>inject.rs</code>:</p>
+<ol class="figure-steps">
+<li>Read and hold whatever is currently on the clipboard.</li>
+<li>Write the new text to the clipboard.</li>
+<li>Synthesize a paste keystroke (<code>Ctrl+V</code>, or <code>Cmd+V</code> on macOS) into the focused window.</li>
+<li>Restore the original clipboard contents.</li>
+</ol>
+<p>A short pause is built into the middle of that sequence: after writing the clipboard, Sussurro waits briefly for the OS to propagate the change before sending the paste keystroke, and after pasting it waits again before restoring — giving the target app time to actually read the clipboard before its old contents come back.</p>
+
+<h2>Why paste instead of typing</h2>
+<p>The alternative — synthesizing a keystroke for every character — works almost everywhere too, but it's slower for longer passages and more likely to trip up apps with custom text-input handling (rich editors, some Electron apps, certain terminal emulators) that don't process synthetic per-key events cleanly. Pasting a whole block of text in one keystroke sidesteps that class of problem, which is why Sussurro treats it as the default delivery path rather than a fallback. The trade-off is the one honest cost of this approach: your clipboard is touched, even if only for a couple hundred milliseconds.</p>
+
+<div class="callout"><span class="k">YOUR CLIPBOARD IS SAFE</span><p>The swap is save → write → paste → restore, always in that order. If you had something copied before triggering dictation, it's back on your clipboard by the time the paste completes — you don't need to re-copy it.</p></div>
+
+<h2>Where it shows up in the pipeline</h2>
+<p>This isn't only a one-shot operation at the end of a dictation. <a href="streaming-typing.html">Streaming typing</a> calls the same <code>inject_text</code> routine once per delta or per cleaned sentence as you speak, so a single dictation can trigger several quick clipboard swaps in a row rather than one big one at the end. <a href="command-mode.html">Command mode</a> uses the same machinery in reverse: it copies your current selection (via a synthesized <code>Ctrl+C</code>) before rewriting it, then pastes the edited result back over the selection.</p>
+
+<h2>Edge cases</h2>
+<ul>
+<li><strong>Apps that block or intercept paste.</strong> A small number of hardened or sandboxed apps disable programmatic paste, or don't expose a focused text field the way the OS expects. When that happens the keystroke lands but nothing appears — there's no per-app fallback beyond the clipboard-and-paste flow itself.</li>
+<li><strong>No clipboard manager conflicts.</strong> Because Sussurro restores your previous clipboard content immediately after pasting, clipboard-history tools that watch for changes may briefly see Sussurro's text appear and disappear. This is expected, not a bug.</li>
+<li><strong>Nothing selected in command mode.</strong> If you invoke command mode with no text selected, Sussurro finds nothing to copy and puts your original clipboard back untouched rather than pasting over random content.</li>
+</ul>
+
+<h2>The Linux Wayland wrinkle</h2>
+<p>On Wayland, the clipboard-paste flow is treated as a fallback rather than the primary path. Wayland compositors like KWin and Mutter deliberately restrict low-level input injection, so Sussurro first tries the XDG RemoteDesktop portal to type text directly — no clipboard involved at all. Only when that portal (or the native-tool ladder behind it) isn't available does Sussurro fall back to the same clipboard-and-paste sequence used on Windows and macOS, using <code>wl-clipboard</code> for the clipboard read/write. The full story, including the one-time consent dialog and its fallbacks, is in <a href="linux-injection.html">Wayland injection, explained</a>.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="linux-injection.html">Wayland injection, explained</a></li>
+        <li><a href="streaming-typing.html">Streaming typing</a></li>
+        <li><a href="command-mode.html">Command mode</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Text injection on Linux: X11 and Wayland — Sussurro Blog</title>
+<meta name="description" content="How Sussurro types your dictation into whatever app has focus on Linux — the RemoteDesktop portal, the native tool fallbacks, and what to do when a paste silently fails." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-setup">Setup</span>
+    <h1>Text injection on Linux: X11 and Wayland</h1>
+    <p class="dek">How Sussurro types your dictation into whatever app has focus on Linux — the RemoteDesktop portal, the native tool fallbacks, and what to do when a paste silently fails.</p>
+    <div class="meta">5 min read · Setup guide</div>
+  </header>
+
+  <div class="prose">
+<h2>Two very different sessions, one API</h2>
+<p>Sussurro's usual way of injecting text is clipboard-based: save the clipboard, write the transcript, synthesize <code>Ctrl+V</code> (or <code>Cmd+V</code> on macOS), then restore the clipboard. On Linux, though, how the text actually reaches the app depends on whether the desktop runs X11 or Wayland — and on Wayland the <em>primary</em> path skips the clipboard entirely, typing the transcript directly through the RemoteDesktop portal. The two protocols have opposite security models, which is the whole reason Linux needs special handling.</p>
+
+<h3>X11</h3>
+<p>X11 has no permission model for input synthesis, so paste-injection works out of the box: no daemon, no consent dialog, no extra packages beyond what <code>docs/compile/linux.md</code> already lists for building the app.</p>
+
+<h3>Wayland</h3>
+<p>Wayland compositors deliberately block apps from injecting input into other windows — that's a feature, not a bug, and it's exactly why KWin and Mutter don't expose the older <code>virtual-keyboard</code> protocol to arbitrary clients. Sussurro's primary path on Wayland is therefore the XDG <strong>RemoteDesktop portal</strong>: it asks the compositor's permission once, then types through a sanctioned channel that needs no daemon and no <code>uinput</code> access. This is the only zero-setup option on stock KDE and GNOME.</p>
+<p>The first time Sussurro tries to inject, the OS shows a consent dialog for keyboard access. Approve it once and Sussurro keeps a restore token so later runs stay silent — one portal session is opened lazily and reused for the app's whole lifetime, so you're not re-prompted on every paste.</p>
+
+<div class="callout"><span class="k">KDE QUIRK</span><p>KDE currently forgets RemoteDesktop grants across a reboot (<a href="https://bugs.kde.org/show_bug.cgi?id=480235">kde#480235</a>), so Plasma Wayland users may see the consent dialog again after restarting the session even though nothing changed on Sussurro's side. Approving it again is enough — the grant holds for the rest of that session.</p></div>
+
+<h3>The fallback ladder</h3>
+<p>If the portal isn't available — no <code>xdg-desktop-portal</code> running, or the compositor doesn't implement RemoteDesktop — Sussurro falls back to native tools, in order:</p>
+<ul>
+<li><strong>wtype</strong>, which speaks the virtual-keyboard protocol and covers wlroots compositors (Sway, Hyprland, river) as well as KDE Plasma.</li>
+<li><strong>ydotool</strong>, which works on any compositor including GNOME because it goes through <code>uinput</code> instead of a Wayland protocol — but it needs its daemon running.</li>
+<li><strong>enigo</strong> as a last resort, which can silently no-op on pure Wayland but still helps with XWayland apps.</li>
+</ul>
+<p>The clipboard side has its own fallback: Sussurro normally uses the system clipboard crate, and drops to the native <code>wayland-data-control</code> protocol (via <code>wl-copy</code>/<code>wl-paste</code>) if that fails.</p>
+
+<h2>If paste doesn't work</h2>
+<ol class="figure-steps">
+<li>Dictate once and watch for the OS consent dialog — on Wayland it appears the first time Sussurro requests keyboard access. If you dismissed it by accident, dictate again to re-trigger it.</li>
+<li>On KDE, if injection suddenly stops working after a reboot, that's the known grant-reset above — approve the dialog again.</li>
+<li>Install the native fallback tools so there's something to fall back to if the portal is ever unavailable: <code>sudo apt install wtype</code> for wlroots/KDE, or <code>sudo apt install ydotool</code> plus <code>systemctl --user enable --now ydotool</code> for GNOME (your user needs access to <code>/dev/uinput</code>, typically via the <code>input</code> group).</li>
+<li>For clipboard-only symptoms (paste works but the clipboard looks wrong afterward), install <code>wl-clipboard</code>: <code>sudo apt install wl-clipboard</code>.</li>
+<li>Check you're actually where you think you are: <code>echo $XDG_SESSION_TYPE</code> tells you X11 vs Wayland, which changes which of the above applies.</li>
+</ol>
+
+<p>All of this — the portal integration, the tool ladder, and the clipboard fallbacks — is tracked in <a href="https://github.com/fullo/Sussurro/issues/40">issue #40</a>, which is the place to report a compositor or distro combination that still doesn't inject cleanly.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="clipboard-injection.html">How clipboard injection works</a></li>
+        <li><a href="building-from-source.html">Building from source</a></li>
+        <li><a href="shortcuts-and-triggers.html">Shortcuts and triggers</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

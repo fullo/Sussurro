@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Why local-first: privacy and latency vs the cloud — Sussurro Blog</title>
+<meta name="description" content="Cloud dictation sends your voice to a server and back; Sussurro keeps every step on your machine — here's the trade that makes, honestly." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-concept">Concept</span>
+    <h1>Why local-first: privacy and latency vs the cloud</h1>
+    <p class="dek">Cloud dictation sends your voice to a server and back; Sussurro keeps every step on your machine — here's the trade that makes, honestly.</p>
+    <div class="meta">5 min read · Concept</div>
+  </header>
+
+  <div class="prose">
+<p>Most voice dictation tools work the same way: your microphone audio streams to a server, gets transcribed there, and the result streams back. That round-trip is invisible when it works, but it means every word you say leaves your machine first. Sussurro skips that step entirely — capture, transcription, and AI cleanup all happen on the device you're sitting at.</p>
+
+<p>This isn't a minor implementation detail. It's the decision that shapes everything else about the app.</p>
+
+<h2>What runs where</h2>
+
+<p>The full pipeline — global hotkey, microphone capture, speech-to-text with whisper.cpp or NVIDIA Parakeet, LLM cleanup through a local Ollama model, then paste-injection into whatever app has focus — never opens a network socket to send your voice or your text anywhere. There's no account to create, because there's no server-side identity to attach one to. There's no telemetry, because there's no backend collecting it.</p>
+
+<div class="callout"><span class="k">CONCRETELY</span><p>No login screen, no API key, nothing to "sign in" to before you can dictate. The diagnostics button in the footer copies version, OS, and configuration for a bug report — never your dictated text or dictionary.</p></div>
+
+<p>One practical consequence: Sussurro works with no internet connection at all. On a plane, on a train through a tunnel, on a network that's just having a bad day — dictation, cleanup, and paste-injection all keep working, because none of them were waiting on a response from somewhere else. See <a href="how-the-pipeline-works.html">how the pipeline works</a> for the full request path.</p>
+
+<h2>The honest trade-off</h2>
+
+<p>Local-first isn't free. A cloud service can put a much larger model behind your request than most laptops can run comfortably, and it can update that model overnight without you doing anything. Running <a href="whisper-vs-parakeet.html">Whisper or Parakeet</a> locally means the model size you pick is bounded by your hardware, and updating it is a deliberate action — download a new one in Settings — not something that happens to you.</p>
+
+<p>The cleanup step has the same shape. Sussurro's AI cleanup runs against a small instruct model through <a href="centralized-ollama.html">Ollama</a>, not a frontier model with a huge context window. That's a real ceiling on how ambitious the cleanup instructions can be. It's also why Sussurro is built to degrade honestly rather than pretend the ceiling isn't there: if cleanup would time out or Ollama isn't running, the app falls back to the raw transcript instead of hanging or failing silently.</p>
+
+<div class="callout"><span class="k">WHAT YOU'RE TRADING</span><p>Cloud dictation buys you a bigger model and zero setup. Sussurro buys you audio that never leaves the device, no account, no subscription, offline operation, and the ability to swap the underlying model yourself — see <a href="choosing-ollama-model.html">choosing a cleanup model</a>. Neither is strictly better; they're different bets.</p></div>
+
+<h2>Why this is the default, not an option</h2>
+
+<p>A lot of "privacy-focused" software really means "privacy-focused, with a cloud fallback for the features that matter." Sussurro doesn't have that fallback to fall back to — there's no server component at all. The <a href="local-api.html">local scripting API</a> is loopback-only by default for the same reason: even a feature meant for your own scripts doesn't listen on the network unless you turn it on.</p>
+
+<p>The result is closer to owning a tool than renting one. Your dictation history lives in a local JSONL file you can inspect, export, or delete (see <a href="where-data-lives.html">where data lives</a>); the model you dictate against is one you chose and can replace. Latency is also just physics working in your favor — there's no request queue, no server load, no "cloud is busy" — the only delay is however fast the model runs on the hardware in front of you.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="how-the-pipeline-works.html">How the pipeline works</a></li>
+        <li><a href="where-data-lives.html">Where data lives</a></li>
+        <li><a href="whisper-vs-parakeet.html">Whisper vs. Parakeet</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>
