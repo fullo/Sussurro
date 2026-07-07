@@ -33,7 +33,7 @@
     <p>Speech-to-text (STT) is the step that turns your voice into raw text, before any AI cleanup. Sussurro lets you pick the engine in <strong>Settings → Engine</strong>, and the right choice depends mostly on one thing: <strong>do you have a usable GPU?</strong></p>
 
     <h2>Whisper (whisper.cpp)</h2>
-    <p>OpenAI's Whisper, running locally through <code>whisper.cpp</code> with GPU acceleration — Vulkan on Windows/Linux, Metal on macOS.</p>
+    <p>OpenAI's Whisper, running locally through <code>whisper.cpp</code> with GPU acceleration — Vulkan on Windows, Metal on macOS. (Linux ships CPU-only by default; a Vulkan build is available as an opt-in.)</p>
     <ul>
       <li><strong>Languages:</strong> ~99, with strong accuracy across most.</li>
       <li><strong>Sizes:</strong> from Base English (148 MB) up to Large v3 Turbo (574 MB, quantized) — trade size/speed for accuracy.</li>

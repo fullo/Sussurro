@@ -59,7 +59,7 @@ npm run tauri build    # production bundle (installer per platform)</code></pre>
       <li><strong>Apple Silicon only.</strong> ONNX Runtime has no prebuilt binaries for Intel Macs, so the Parakeet engine can't ship there.</li>
       <li><strong>Metal</strong> provides GPU acceleration out of the box.</li>
       <li><strong>Permissions:</strong> macOS will ask for microphone and accessibility access on first run (the latter for paste injection).</li>
-      <li><strong>Minimum 11.0</strong> — whisper.cpp uses <code>std::filesystem</code>.</li>
+      <li><strong>Minimum 11.0</strong> — whisper.cpp itself only needs macOS 10.15 (for <code>std::filesystem</code>); the 11.0 floor is the Apple Silicon (arm64) baseline.</li>
     </ul>
     <p>Full details: <a href="https://github.com/fullo/Sussurro/blob/main/docs/compile/macos.md">docs/compile/macos.md</a>.</p>
 
