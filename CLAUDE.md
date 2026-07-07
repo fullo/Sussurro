@@ -24,6 +24,16 @@ project decisions here, not in per-machine memory.**
   — and the updater becomes functional — only with 0.5.0. Don't propose
   making the repo public before that.
 - **The v0.2.0 draft release is kept intentionally** — do not delete it.
+- **License: AGPL-3.0-or-later** (chosen 2026-07-06). Copyleft that also covers
+  network use (Sussurro exposes a local HTTP API), so no one can build a
+  closed/proprietary product on it. Verified compatible with the whole dep tree
+  (all permissive + MPL-2.0 + two GPL-3.0-or-later crates; no GPL-2.0-only or
+  proprietary). `LICENSE` holds the verbatim text; SPDX `AGPL-3.0-or-later` is
+  set in `package.json` + `Cargo.toml`. Copyright is retained by the author
+  (Francesco Fullone / DarumaHQ) so a **commercial/dual license** can be sold
+  later — don't relicense or add a CLA-less outside contribution that would
+  fragment that. A permissive license (MIT) is NOT an option here: the
+  GPL-3.0-or-later deps require a copyleft-compatible license.
 - **macOS is Apple Silicon only (min 11.0)**: `ort` (ONNX Runtime) has no
   prebuilt binaries for `x86_64-apple-darwin`. Don't re-add the Intel
   target to the release matrix.

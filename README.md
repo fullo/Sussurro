@@ -182,6 +182,24 @@ Current version **0.4.1**. Full detail (and standing decisions) in
   code-signing.
 - [`docs/index.html`](docs/index.html) — the project landing page (+ `docs/blog/`).
 
+## License
+
+Copyright © 2026 Francesco Fullone (DarumaHQ).
+
+Sussurro is free software licensed under the **GNU Affero General Public
+License v3.0 or later** ([AGPL-3.0-or-later](LICENSE)). You may use, study,
+share and modify it — but any distributed derivative, **and any network
+service built on it**, must make its complete corresponding source available
+under the same license. This keeps Sussurro open and prevents it from being
+turned into a closed, proprietary product.
+
+The copyright is held by the author, so a separate **commercial license** can
+be granted on request for anyone who needs to use Sussurro outside the AGPL's
+terms — contact [DarumaHQ.it](https://darumahq.it).
+
+Bundled third-party components keep their own (permissive/compatible) licenses;
+see the in-app About dialog or [`sussurro/public/licenses.json`](sussurro/public/licenses.json).
+
 ---
 
 Made by [DarumaHQ.it](https://darumahq.it).
