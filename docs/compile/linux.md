@@ -51,7 +51,15 @@ cd src-tauri && cargo test   # headless test suite
 
 ## Runtime notes
 
-- **X11**: everything works out of the box (hotkey + paste injection).
+- **Clipboard (required on both X11 and Wayland).** Sussurro's Copy buttons and
+  paste-injection put text on the system clipboard, and on Linux a clipboard set
+  only persists if a helper holds the selection. Install one for your session:
+  - **X11**: `sudo apt install xclip` (or `xsel`).
+  - **Wayland**: `sudo apt install wl-clipboard` (`wl-copy`/`wl-paste`).
+
+  Without it, Copy silently does nothing and nothing pastes (the in-process
+  clipboard set reports success but the selection empties immediately).
+- **X11**: hotkey + paste injection work once `xclip`/`xsel` is installed.
 - **Wayland**: injection is native. Sussurro tries, in order:
   1. **wtype** (virtual-keyboard protocol — wlroots compositors: Sway,
      Hyprland, river; and KDE Plasma): `sudo apt install wtype`
@@ -62,8 +70,8 @@ cd src-tauri && cargo test   # headless test suite
      udev rule shipped with the package)
   3. enigo (experimental) as a last resort, which still covers XWayland apps.
 
-  The clipboard uses the native `wayland-data-control` protocol, with
-  `wl-copy`/`wl-paste` as fallback: `sudo apt install wl-clipboard`.
+  The clipboard on Wayland is driven by `wl-copy`/`wl-paste`
+  (`sudo apt install wl-clipboard`) — see the Clipboard note above.
   Recommended install for GNOME users: `ydotool + wl-clipboard`; for
   Sway/Hyprland/KDE: `wtype + wl-clipboard`.
 

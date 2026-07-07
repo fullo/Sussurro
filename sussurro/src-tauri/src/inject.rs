@@ -77,25 +77,45 @@ fn read_clipboard() -> Option<String> {
     None
 }
 
+/// Set the system clipboard. Public so the in-app "Copy" commands share the
+/// same robust path as paste-injection.
+///
+/// On Linux a transient `arboard` set does NOT persist: the clipboard is
+/// served on request by the selection *owner*, and arboard's owner connection
+/// closes when the `Clipboard` value drops — leaving the clipboard empty while
+/// still returning `Ok`. (That's the "Copy says it worked but nothing pasted"
+/// bug.) So on Linux we shell out to a tool that forks a daemon and holds the
+/// selection: `wl-copy` (Wayland) or `xclip`/`xsel` (X11). On Windows/macOS the
+/// OS takes ownership of the data, so a transient arboard set is fine.
+pub fn set_clipboard(text: &str) -> Result<()> {
+    write_clipboard(text)
+}
+
+#[cfg(target_os = "linux")]
 fn write_clipboard(text: &str) -> Result<()> {
-    match arboard::Clipboard::new().and_then(|mut c| c.set_text(text.to_string())) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            #[cfg(target_os = "linux")]
-            if wayland::is_wayland() {
-                return wayland::wl_copy(text);
-            }
-            Err(anyhow::anyhow!("set clipboard: {e}"))
-        }
+    if wayland::is_wayland() {
+        wayland::wl_copy(text)
+    } else {
+        wayland::x11_copy(text)
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+fn write_clipboard(text: &str) -> Result<()> {
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.set_text(text.to_string()))
+        .map_err(|e| anyhow::anyhow!("set clipboard: {e}"))
+}
+
 fn clear_clipboard() {
-    let _ = arboard::Clipboard::new().and_then(|mut c| c.clear());
     #[cfg(target_os = "linux")]
     if wayland::is_wayland() {
         wayland::wl_clear();
+    } else {
+        let _ = wayland::x11_copy(""); // empty selection = cleared
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = arboard::Clipboard::new().and_then(|mut c| c.clear());
 }
 
 /* ---------- key synthesis ---------- */
@@ -305,6 +325,38 @@ mod wayland {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+    }
+
+    /// X11 clipboard set via a tool that forks a daemon to hold the CLIPBOARD
+    /// selection (a transient arboard owner would drop it, emptying the
+    /// clipboard). Tries xclip, then xsel. Like wl-copy, the tool reads stdin
+    /// then forks; `wait()` closes stdin and reaps the parent, leaving the
+    /// daemon serving the selection.
+    pub fn x11_copy(text: &str) -> Result<()> {
+        for (cmd, args) in [
+            ("xclip", ["-selection", "clipboard"]),
+            ("xsel", ["--clipboard", "--input"]),
+        ] {
+            if !available(cmd) {
+                continue;
+            }
+            let mut child = Command::new(cmd)
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .with_context(|| format!("spawning {cmd}"))?;
+            child
+                .stdin
+                .as_mut()
+                .context("clipboard tool stdin")?
+                .write_all(text.as_bytes())?;
+            let status = child.wait()?;
+            anyhow::ensure!(status.success(), "{cmd} exited with {status}");
+            return Ok(());
+        }
+        anyhow::bail!("no X11 clipboard tool found — install xclip or xsel")
     }
 
     #[cfg(test)]
