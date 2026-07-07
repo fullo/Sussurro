@@ -29,6 +29,12 @@ body {
 a { color: inherit; }
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
 
+/* skip link — first focusable element, offscreen until focused */
+.skip-link { position: absolute; left: -9999px; top: 0; z-index: 100;
+  background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 0 0 10px 0;
+  font-weight: 600; font-size: 15px; text-decoration: none; }
+.skip-link:focus { left: 0; }
+
 /* daruma mark — same SVG as the landing page (idle: right eye hollow) */
 .dmark { width: 26px; height: 29px; flex: none; }
 .brand[style] .dmark { width: 22px; height: 25px; }
@@ -62,7 +68,9 @@ nav .links a:hover { color: var(--ink); }
 .filters button:hover { border-color: var(--ink); color: var(--ink); }
 .filters button.active { background: var(--ink); border-color: var(--ink); color: #fff; }
 
-.posts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; padding: 40px 0 80px; }
+.posts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; padding: 40px 0 80px; list-style: none; margin: 0; }
+.posts > li { display: flex; }
+.posts > li > .card { flex: 1; }
 @media (max-width: 880px){ .posts { grid-template-columns: repeat(2,1fr); } }
 @media (max-width: 560px){ .posts { grid-template-columns: 1fr; } }
 .card { display: flex; flex-direction: column; background: var(--paper); border: 1px solid var(--border);
@@ -84,7 +92,7 @@ nav .links a:hover { color: var(--ink); }
 .post { max-width: var(--readw); margin: 0 auto; padding: 52px 24px 40px; }
 .back { display: inline-block; font-size: 14px; font-weight: 600; color: var(--text-light);
   text-decoration: none; margin-bottom: 26px; transition: color .2s; }
-.back:hover { color: var(--red); }
+.back:hover { color: var(--red-deep); }
 .post-head h1 { font-family: var(--display); font-size: clamp(32px, 5vw, 48px); color: var(--ink);
   font-weight: 600; line-height: 1.08; letter-spacing: -.015em; margin: 14px 0 0; }
 .post-head .dek { font-size: 20px; color: var(--text-light); margin-top: 18px; line-height: 1.5; }
@@ -100,7 +108,7 @@ nav .links a:hover { color: var(--ink); }
 .prose ul, .prose ol { padding-left: 24px; }
 .prose li + li { margin-top: 8px; }
 .prose a { color: var(--red-deep); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
-.prose a:hover { color: var(--red); }
+.prose a:hover { color: var(--red-deep); }
 .prose strong { color: var(--ink); font-weight: 600; }
 .prose code { font-family: var(--mono); font-size: .88em; background: var(--paper-alt);
   padding: 2px 6px; border-radius: 5px; color: var(--ink); }
@@ -123,7 +131,7 @@ nav .links a:hover { color: var(--ink); }
   letter-spacing: .05em; color: var(--text-light); font-weight: 600; margin-bottom: 14px; }
 .seealso ul { list-style: none; display: grid; gap: 10px; }
 .seealso a { color: var(--ink); text-decoration: none; font-weight: 500; }
-.seealso a:hover { color: var(--red); }
+.seealso a:hover { color: var(--red-deep); }
 .seealso a::before { content: "→ "; color: var(--red); }
 
 /* site footer */
@@ -131,4 +139,13 @@ nav .links a:hover { color: var(--ink); }
 .site-foot .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; }
 .site-foot a { color: var(--text-light); text-decoration: underline; text-underline-offset: 3px; }
 .site-foot a:hover { color: var(--ink); }
-.foot-links { display: flex; gap: 20px; flex-wrap: wrap; }
+.foot-links { display: flex; gap: 20px; flex-wrap: wrap; list-style: none; margin: 0; }
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
