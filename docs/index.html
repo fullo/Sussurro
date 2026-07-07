@@ -101,6 +101,8 @@
   .btn.ghost { background: transparent; color: var(--ink); }
   .btn.ghost:hover { background: var(--paper-alt); box-shadow: none; }
   nav .btn { padding: 9px 18px; }
+  /* keep the nav Download button's label white — nav link color would otherwise win on specificity */
+  nav .links a.btn.red, nav .links a.btn.red:hover { color: #fff; }
   @media (max-width: 760px){ nav .links a.hideable { display:none; } }
 
   /* ---------- hero ---------- */
