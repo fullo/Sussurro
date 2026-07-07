@@ -1,6 +1,6 @@
 [package]
 name = "sussurro"
-version = "0.4.1"
+version = "0.5.0"
 description = "Fully-local voice dictation for Windows, macOS and Linux"
 authors = ["Francesco Fullone (DarumaHQ)"]
 license = "AGPL-3.0-or-later"
