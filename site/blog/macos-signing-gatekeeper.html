@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Opening Sussurro on macOS (Gatekeeper &amp; signing) — Sussurro Blog</title>
+<meta name="description" content="Why macOS blocks the first launch, and the safe ways to get past it." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-setup">Setup</span>
+    <h1>Opening Sussurro on macOS (Gatekeeper &amp; signing)</h1>
+    <p class="dek">Why macOS blocks the first launch, and the safe ways to get past it.</p>
+    <div class="meta">4 min read · Setup guide</div>
+  </header>
+
+  <div class="prose">
+<p>If you download Sussurro on macOS and try to open it, you'll likely see a dialog saying the app "cannot be opened because it is from an unidentified developer," or that it's "damaged and can't be opened." Neither means anything is actually wrong with the build. It's Gatekeeper reacting to how the app is currently signed.</p>
+
+<h2>Why this happens</h2>
+<p>macOS builds of Sussurro are <strong>ad-hoc signed</strong> today, not signed with an Apple Developer ID and notarized by Apple. Ad-hoc signing satisfies macOS's requirement that a binary be signed at all, but it carries no verified identity, so Gatekeeper treats the app as untrusted on first launch. Combined with the quarantine attribute macOS attaches to anything downloaded from a browser or unpacked from a release archive, this is what triggers the "unidentified developer" or "damaged" message.</p>
+<div class="callout"><span class="k">PLANNED</span><p>Developer ID signing and full notarization are planned for the v0.5.0 release, alongside making the repo public. Until then, ad-hoc signing is the expected, temporary state for macOS builds — this isn't a bug report waiting to happen.</p></div>
+
+<h2>Opening it anyway</h2>
+<p>These are the safe, per-app ways to tell macOS you trust this specific application. None of them touch Gatekeeper's global settings, so every other app on your Mac stays fully protected.</p>
+<ol class="figure-steps">
+<li>Right-click (or Control-click) <code>sussurro.app</code> in Finder and choose <strong>Open</strong>. This shows the same warning, but with an <strong>Open</strong> button that a plain double-click doesn't offer.</li>
+<li>If that doesn't appear, go to <strong>System Settings → Privacy & Security</strong>, scroll to the Security section, and click <strong>Open Anyway</strong> next to the mention of Sussurro. You'll need to confirm once more (and may be asked for your password or Touch ID).</li>
+<li>Launch Sussurro normally from then on — this approval is remembered for that specific app bundle.</li>
+</ol>
+
+<h3>If macOS says the app is "damaged"</h3>
+<p>This message usually shows up for builds downloaded outright (for example a CI artifact or a manually distributed build) rather than through a signed installer flow, and it's the quarantine flag talking, not real corruption. Clear it from Terminal:</p>
+<pre><code>xattr -cr /Applications/sussurro.app</code></pre>
+<p>Then try opening the app again with right-click → Open as above.</p>
+
+<div class="callout"><span class="k">DON'T</span><p>Don't disable Gatekeeper system-wide (for example via <code>spctl --master-disable</code>) just to get Sussurro running. That removes a protection for every app on your Mac, not just this one — the per-app steps above are the safer path and take about the same effort.</p></div>
+
+<h2>What this doesn't affect</h2>
+<p>Gatekeeper approval is separate from the two runtime permissions macOS will still prompt for on first use: <strong>Microphone</strong> access, and <strong>Accessibility</strong> access (needed to synthesize the paste that types your transcribed text into other apps). Both live under <strong>System Settings → Privacy & Security</strong>, and both need to be granted for dictation to actually work end to end — getting past Gatekeeper just gets the app to launch in the first place.</p>
+
+<p>Also worth knowing: macOS builds are Apple Silicon only. There's no Intel build to fall back to, since the ONNX Runtime dependency used for the Parakeet engine has no prebuilt binary for Intel Macs.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="building-from-source.html">Building Sussurro from source</a></li>
+        <li><a href="first-run.html">First run: permissions and setup</a></li>
+        <li><a href="where-data-lives.html">Where Sussurro stores your data</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

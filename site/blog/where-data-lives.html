@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Where your data lives (and moving the models folder) — Sussurro Blog</title>
+<meta name="description" content="A map of every local file Sussurro writes — models, history, settings, dictionary — and how to move the models folder to a bigger disk." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-setup">Setup</span>
+    <h1>Where your data lives (and moving the models folder)</h1>
+    <p class="dek">A map of every local file Sussurro writes — models, history, settings, dictionary — and how to move the models folder to a bigger disk.</p>
+    <div class="meta">5 min read · Setup guide</div>
+  </header>
+
+  <div class="prose">
+<p>Sussurro is a local-first dictation app: no account, no cloud sync, no telemetry server holding your transcripts. Everything it produces — models, history, settings, dictionary — is a plain file on your own disk, in a location the operating system already gives every desktop app. This is a map of what lives where, and how to move the one folder that can get large: the models directory.</p>
+
+<h2>What gets stored, and as what</h2>
+<ul>
+<li><strong>Settings</strong> — hotkeys, cleanup level, engine choice, per-app styles, and every other toggle in the Settings panel are saved as <code>settings.json</code> in the app's config directory. It's written automatically whenever you change a setting.</li>
+<li><strong>Dictation history</strong> — every completed dictation (raw transcript and cleaned text, with a timestamp) is appended as one JSON object per line to a <code>history.jsonl</code> file in the app's data directory. Being JSONL rather than a database means you can <code>grep</code> it, tail it, or parse it with any scripting language.</li>
+<li><strong>Usage statistics</strong> — total/today/last-7-days counts live in a small <code>stats.json</code> alongside the history file, tracked separately so clearing history never resets them.</li>
+<li><strong>STT models</strong> — the Whisper <code>.bin</code> file or the Parakeet model bundle live in a <code>models</code> subfolder, which is the one directory large enough to matter (multi-GB depending on model size).</li>
+<li><strong>Dictionary, snippets, app styles</strong> — these live inside <code>settings.json</code> too, but they're also the pieces you can export separately (see below) since they're the part of your setup worth carrying to another machine.</li>
+</ul>
+
+<p>Sussurro asks the OS (via Tauri) for its standard per-user config and data directories rather than hardcoding a path, so the exact location follows your platform's convention — the point is that it's always a normal folder under your own user account, never anything remote.</p>
+
+<div class="callout"><span class="k">NOTHING LEAVES YOUR MACHINE</span><p>Transcription runs through whisper.cpp or Parakeet locally, cleanup goes to your own <a href="local-api.html">local Ollama instance</a> (or a LAN one, see <a href="centralized-ollama.html">centralized Ollama</a>), and injection pastes straight into the focused app. None of the files described here are ever uploaded anywhere by Sussurro itself.</p></div>
+
+<h2>Moving the models folder</h2>
+<p>Whisper and Parakeet models are the only thing here that can genuinely strain a small system drive. Settings has a <strong>Models folder</strong> field, under the advanced group, that overrides where Sussurro looks for and downloads models:</p>
+
+<ol class="figure-steps">
+<li>Open Settings and find <strong>Models folder</strong> (it shows <code>empty = app data default</code> underneath).</li>
+<li>Type the path to a folder on a roomier disk, for example a dedicated <code>models</code> directory on a secondary drive.</li>
+<li>If you already have models downloaded under the old (default) location, move the files there yourself first — Sussurro does not migrate them automatically, it only starts looking in the new folder from then on.</li>
+<li>Leave the field empty to go back to the default app-data location at any time.</li>
+</ol>
+
+<div class="callout"><span class="k">MANUAL MOVE</span><p>Changing the setting does not copy or delete anything — it only changes where Sussurro looks next. If the model file isn't present at the new path, Sussurro will treat it as missing and offer to download it again.</p></div>
+
+<h2>Portable config: taking your setup with you</h2>
+<p>Your personal dictionary, voice snippets, and per-app tone styles are the parts of a setup that are genuinely worth reusing on a second machine — unlike the hotkey or the models folder path, which are tied to that machine. Settings has an export/import pair for exactly this: exporting writes those three things to a JSON file you choose, and importing merges them into the current settings without creating duplicates. Because it's just a file, you can sync it yourself with Git, Syncthing, or a shared drive — no account required, same as everything else Sussurro touches.</p>
+
+<h2>Cleaning up</h2>
+<p>History has its own retention setting — auto-delete entries older than N days, or keep everything forever with the default of 0 — plus a manual clear and Markdown/JSON export from the History panel. Because history and settings are separate files, clearing your dictation history never touches your dictionary, snippets, or usage totals.</p>
+
+<p>The short version: nothing about where your data lives is a mystery or a black box. It's a handful of ordinary files under your own user account, one setting to relocate the big one, and one export button if you ever want to carry the rest somewhere else.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="portable-config.html">Portable config: syncing your setup between machines</a></li>
+        <li><a href="searchable-history.html">Searchable history</a></li>
+        <li><a href="why-local-first.html">Why local-first</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>
