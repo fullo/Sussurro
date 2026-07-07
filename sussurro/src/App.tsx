@@ -41,6 +41,8 @@ interface Settings {
   engine: "whisper" | "parakeet";
   ollama_url: string;
   ollama_model: string;
+  cleanup_api: "ollama" | "openai";
+  api_key: string;
   cleanup_level: CleanupLevel;
   output_language: string;
   dictionary: string[];
@@ -588,7 +590,10 @@ export default function App() {
     : 0;
 
   const save = async (next: Settings) => {
-    const serverChanged = next.ollama_url !== settings.ollama_url;
+    const serverChanged =
+      next.ollama_url !== settings.ollama_url ||
+      next.cleanup_api !== settings.cleanup_api ||
+      next.api_key !== settings.api_key;
     setSettings(next);
     try {
       await invoke("set_settings", { settings: next });
@@ -724,7 +729,7 @@ export default function App() {
                 </button>
               </li>
             )}
-            {ollamaStatus && !ollamaStatus.installed && (
+            {settings.cleanup_api === "ollama" && ollamaStatus && !ollamaStatus.installed && (
               <li>
                 <span className="setup-bad">✗</span> Ollama is not installed — cleanup
                 and translation need it (dictation still works, raw only).
@@ -736,14 +741,14 @@ export default function App() {
                 </button>
               </li>
             )}
-            {ollamaStatus?.installed && !ollamaStatus.running && (
+            {settings.cleanup_api === "ollama" && ollamaStatus?.installed && !ollamaStatus.running && (
               <li>
                 <span className="setup-bad">✗</span> Ollama is installed but not
                 running — start the Ollama app (or run <code>ollama serve</code>),
                 then Re-check.
               </li>
             )}
-            {ollamaStatus?.running && !ollamaStatus.has_model && (
+            {settings.cleanup_api === "ollama" && ollamaStatus?.running && !ollamaStatus.has_model && (
               <li>
                 <span className="setup-bad">✗</span> Model “{settings.ollama_model}”
                 is not on your Ollama server.
@@ -1031,7 +1036,18 @@ export default function App() {
         </div>
 
         <div className="field">
-          <div className="field-label"><span>Server <Tip text="Address of your Ollama server — the local service that runs the cleanup LLM. The default http://localhost:11434 is correct if Ollama runs on this machine; change it only if Ollama runs elsewhere (e.g. another PC on your network)." /></span></div>
+          <div className="field-label"><span>Cleanup backend <Tip text="Which chat API drives cleanup and command mode. Ollama (native) is the default. OpenAI-compatible works with any /v1 server — llama.cpp-server, LM Studio, or antirez's DS4 — reusing the Server and model fields below." /></span></div>
+          <select
+            value={settings.cleanup_api}
+            onChange={(e) => save({ ...settings, cleanup_api: e.target.value as "ollama" | "openai" })}
+          >
+            <option value="ollama">Ollama (native)</option>
+            <option value="openai">OpenAI-compatible</option>
+          </select>
+        </div>
+
+        <div className="field">
+          <div className="field-label"><span>Server <Tip text="Address of the cleanup server. Ollama: http://localhost:11434 (default). OpenAI-compatible: the server base URL, e.g. http://localhost:8080 — with or without a trailing /v1." /></span></div>
           <input
             value={settings.ollama_url}
             onChange={(e) => setSettings({ ...settings, ollama_url: e.target.value })}
@@ -1039,6 +1055,20 @@ export default function App() {
             spellCheck={false}
           />
         </div>
+
+        {settings.cleanup_api === "openai" && (
+          <div className="field">
+            <div className="field-label"><span>API key <Tip text="Optional bearer token for the OpenAI-compatible server. Most local servers (llama.cpp, LM Studio, DS4) ignore it — leave empty unless yours requires one." /></span></div>
+            <input
+              type="password"
+              value={settings.api_key}
+              onChange={(e) => setSettings({ ...settings, api_key: e.target.value })}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </div>
+        )}
 
         <div className="field">
           <div className="field-label">

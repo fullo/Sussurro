@@ -346,12 +346,12 @@ fn ollama_binary_on_path() -> bool {
 
 #[tauri::command]
 pub async fn ollama_status(state: State<'_, AppState>) -> Result<OllamaStatus, String> {
-    let (url, model) = {
+    let (settings, model) = {
         let s = state.settings.lock().unwrap();
-        (s.ollama_url.clone(), s.ollama_model.clone())
+        (s.clone(), s.ollama_model.clone())
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let models = crate::cleanup::ollama::list_models(&url).ok();
+        let models = crate::cleanup::ollama::list_models(&settings).ok();
         let running = models.is_some();
         let has_model = models
             .map(|ms| {
@@ -390,7 +390,7 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     };
     tauri::async_runtime::spawn_blocking(move || {
         use std::fmt::Write as _;
-        let models = crate::cleanup::ollama::list_models(&settings.ollama_url).ok();
+        let models = crate::cleanup::ollama::list_models(&settings).ok();
         let ollama_running = models.is_some();
         let ollama_has_model = models
             .map(|ms| {
@@ -517,9 +517,9 @@ pub fn get_default_prompts() -> [String; 3] {
 /// the frontend falls back to a free-text field.
 #[tauri::command]
 pub async fn list_ollama_models(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let url = { state.settings.lock().unwrap().ollama_url.clone() };
+    let settings = { state.settings.lock().unwrap().clone() };
     tauri::async_runtime::spawn_blocking(move || {
-        crate::cleanup::ollama::list_models(&url).map_err(|e| format!("{e:#}"))
+        crate::cleanup::ollama::list_models(&settings).map_err(|e| format!("{e:#}"))
     })
     .await
     .map_err(|e| e.to_string())?
