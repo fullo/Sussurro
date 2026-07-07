@@ -17,12 +17,17 @@ project decisions here, not in per-machine memory.**
 
 ## Standing decisions
 
-- **Repo stays private until every platform builds and works.** Because of
-  this, the Tauri auto-updater gets 404 on `latest.json` (anonymous access).
-- **Auto-update is frozen until v0.5.0** (decided 2026-07-03): the signing
-  pipeline keeps running on every release, but the repo/releases go public
-  — and the updater becomes functional — only with 0.5.0. Don't propose
-  making the repo public before that.
+- **Going public at v0.5.0** (decided 2026-07-06): the repo becomes public and
+  the auto-updater unfreezes (the endpoint 404'd anonymously while private).
+  Sequence chosen: **publish immediately**, accepting unsigned-installer OS
+  warnings until code signing lands. No code change needed to unfreeze — it's
+  the GitHub visibility toggle + a published (non-draft) release.
+- **OS code signing (0.5.0+):** macOS stays **ad-hoc** for now (Developer ID +
+  notarization deferred — no Apple Developer account); users right-click →
+  Open. Windows signing goes through **SignPath** (free OSS program) — see
+  `docs/windows-signing-signpath.md`; needs the maintainer to enroll the
+  project and add the SignPath secrets before the release workflow can sign.
+  The updater's own minisign signing is independent and already active.
 - **The v0.2.0 draft release is kept intentionally** — do not delete it.
 - **macOS is Apple Silicon only (min 11.0)**: `ort` (ONNX Runtime) has no
   prebuilt binaries for `x86_64-apple-darwin`. Don't re-add the Intel

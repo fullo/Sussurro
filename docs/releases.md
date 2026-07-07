@@ -3,12 +3,38 @@
 Maintainer-facing. How Sussurro is built, signed and shipped, and how the
 in-app updater works.
 
-> **⚠️ Auto-update is frozen until v0.5.0.** The repo is private while the
-> per-platform builds stabilize, so installed apps cannot reach `latest.json`
-> anonymously (the endpoint 404s). The in-app **Check for updates** button and
-> the signing pipeline below keep working — releases are simply not reachable
-> by the updater until the repo (or at least its releases) goes public, planned
-> for v0.5.0.
+## Auto-update (live once the repo is public)
+
+The updater is fully wired and needs **no code**: the app's **Check for
+updates** button calls `check()` → `downloadAndInstall()` → `relaunch()`
+([App.tsx](../sussurro/src/App.tsx)), reading the signed `latest.json` from
+
+    https://github.com/fullo/Sussurro/releases/latest/download/latest.json
+
+`latest` resolves to the newest **published** (non-draft) release. Every
+release's updater artifacts are signed with the project's minisign key
+(`TAURI_SIGNING_PRIVATE_KEY`), verified against `plugins.updater.pubkey` in
+`tauri.conf.json`. The only thing that gates it is repository visibility: while
+the repo was **private** the endpoint 404'd for anonymous clients. **Once the
+repo is public (v0.5.0), the updater works immediately** — no further change.
+
+**Go-live steps:** (1) GitHub → *Settings → General → Danger Zone → Change
+visibility → Public*. (2) Confirm the latest release (currently v0.4.1) is
+**published, not draft**. (3) Smoke-test: install an older build, click *Check
+for updates*, confirm it fetches and installs the newer version.
+
+## OS code signing (status)
+
+Separate from the updater's own signing:
+
+- **macOS** — **ad-hoc signed** today (no Apple Developer ID / notarization),
+  so Gatekeeper blocks first launch; users right-click → *Open*. See
+  [`docs/blog/macos-signing-gatekeeper.html`](blog/macos-signing-gatekeeper.html).
+  Developer ID + notarization is deferred (needs an Apple Developer account).
+- **Windows** — **unsigned** today (SmartScreen prompt). Planned via **SignPath**
+  (free for OSS); setup guide: [`windows-signing-signpath.md`](windows-signing-signpath.md).
+- **Linux** — AppImage/deb/rpm are unsigned by OS convention; the updater
+  artifacts are minisign-signed like the others.
 
 ## Cutting a release
 

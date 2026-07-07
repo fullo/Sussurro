@@ -171,8 +171,12 @@ Current version **0.4.1**. Full detail (and standing decisions) in
   [`docs/compile/linux.md`](docs/compile/linux.md).
 - **macOS is Apple Silicon only** (min 11.0) — ONNX Runtime has no prebuilt
   binaries for Intel Macs.
-- **Auto-update is frozen until v0.5.0** while the repo is private — see
-  [`docs/releases.md`](docs/releases.md).
+- **Installers aren't OS-code-signed yet.** macOS builds are ad-hoc signed, so
+  Gatekeeper needs a one-time right-click → *Open* (see
+  [the blog](docs/blog/macos-signing-gatekeeper.html)); Windows shows a
+  SmartScreen prompt (*More info → Run anyway*). Signing is on the roadmap
+  (Windows via SignPath; macOS Developer ID later). The **updater** artifacts
+  are always signed with the project's own key, independent of OS signing.
 
 ## Documentation
 
