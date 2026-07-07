@@ -1,152 +1,134 @@
 # Sussurro
 
-Fully-local voice dictation for Windows, macOS and Linux — a Wispr Flow clone
-with no cloud: whisper.cpp for speech-to-text, Ollama for AI cleanup,
-paste-injection into any app.
+**Fully-local voice dictation for Windows, macOS and Linux.** A Wispr Flow
+alternative with no cloud: your voice never leaves your machine. whisper.cpp
+for speech-to-text, a local LLM (via Ollama) for AI cleanup, paste-injection
+into any app.
 
-**Hold `Ctrl+Shift+Space` (⌘⇧Space on Mac), speak, release.** The cleaned-up
-text appears wherever your cursor is.
+> **Hold `Ctrl+Shift+Space` (⌘⇧Space on Mac), speak, release.**
+> The cleaned-up text appears wherever your cursor is.
+
+🌐 Project site: [`site/`](site/index.html) · 🛠️ Building & contributing:
+[`docs/development.md`](docs/development.md)
+
+## Why Sussurro
+
+- **100% local, private by design.** Audio is captured, transcribed and cleaned
+  entirely on your device. No account, no telemetry, no network round-trip —
+  it works on a plane.
+- **AI cleanup, not just transcription.** A small local model removes fillers,
+  fixes punctuation and adapts tone — with graceful fallback to the raw
+  transcript if the model isn't running.
+- **Works in every app.** The result is pasted into whatever has focus (your
+  clipboard is restored), so there's nothing to integrate.
+- **Free and open.** No subscription.
 
 ## How it works
 
 ```
-global hotkey (press/release)
+global hotkey (press / release)
   → microphone capture (cpal, resampled to 16 kHz mono)
   → local STT: whisper.cpp (GPU: Vulkan/Metal) or NVIDIA Parakeet TDT v3
     (ONNX, CPU-optimized ~10x faster than Whisper without a GPU)
-  → Ollama /api/chat cleanup — None / Light / Medium / High,
-    falls back to the raw transcript if Ollama is unreachable
+  → local LLM cleanup — None / Light / Medium / High,
+    falls back to the raw transcript if the model is unreachable
   → clipboard-paste injection into the focused app (clipboard restored)
   → local JSONL history
 ```
 
-Research behind the design: `docs/whisperflow-clone-research.md`.
+The research behind the design:
+[`docs/whisperflow-clone-research.md`](docs/whisperflow-clone-research.md).
 
-## Runtime requirements (all platforms)
+## Getting started
 
-1. **[Ollama](https://ollama.com)** running locally, with a small instruct model:
+Download the installer for your OS from the
+[releases](https://github.com/fullo/Sussurro/releases), then:
+
+1. **[Ollama](https://ollama.com)** running locally, with a small instruct
+   model — this powers the AI cleanup:
    ```
    ollama pull llama3.2:3b
    ```
-   Sussurro still works without Ollama — you just get the raw transcript
-   (set Cleanup to "None", or let the automatic fallback handle it).
+   Sussurro still works without it — you just get the raw transcript (set
+   Cleanup to "None", or let the automatic fallback handle it).
 2. **A Whisper model** — pick one in Settings and click *Download*
-   (Base English 148 MB → Large v3 Turbo 574 MB).
+   (Base English 148 MB → Large v3 Turbo 574 MB). Or switch to the Parakeet
+   engine for a single CPU-optimized model.
 3. **A microphone.**
 
-## Building from source
+First run opens on Settings: pick a model, click *Download*, set your shortcut
+with the click-to-record hotkey widget, and dictate.
 
-Toolchain (all platforms): **Node.js ≥ 24** and **Rust stable**. Follow the
-guide for your OS — prerequisites, GPU notes and platform-specific caveats:
+Building from source instead? See
+[`docs/development.md`](docs/development.md).
 
-- **[Windows 10/11](docs/compile/windows.md)** — Vulkan GPU build,
-  MAX_PATH workaround, WebView2
-- **[macOS 11+](docs/compile/macos.md)** — Apple Silicon only, Metal GPU,
-  required permissions
-- **[Linux](docs/compile/linux.md)** — glibc ≥ 2.38, apt dependencies,
-  X11/Wayland notes
+## Features
 
-The short version, once the prerequisites are in place:
+### Dictation
+- **Two STT engines** — Whisper (GPU, any language, multiple sizes) or NVIDIA
+  Parakeet TDT v3 (single 456 MB int8 model, CPU-optimized, auto-detects 25
+  European languages). Switch in Settings → Engine.
+- **Language** — pick your dictation language or auto-detect; a fixed language
+  is more accurate on smaller multilingual models.
+- **Streaming typing** — text is typed while you speak: word by word with
+  Cleanup None, or sentence by sentence with cleanup on (each completed
+  sentence is LLM-cleaned before it's typed; the final pass finishes the tail).
+- **Live preview** — the overlay shows a rolling partial transcript while you
+  speak; the pasted text always comes from the final full-quality pass.
+- **Whisper mode** — dictate quietly: 3× mic gain and a lower silence gate.
+- **Command mode** — select text anywhere, hold the command shortcut (default
+  `Ctrl+Alt+Space`) and speak an instruction ("make it shorter", "translate to
+  English"): the LLM applies it and the result replaces the selection.
 
-```bash
-git clone https://github.com/fullo/Sussurro && cd Sussurro/sussurro
-npm install
-npm run tauri dev      # development, hot-reload
-npm run tauri build    # production bundle (installer per platform)
-```
+### Cleanup & tone
+- **Cleanup levels** — None / Light / Medium / High, editable in Cleanup →
+  Advanced (override the built-in instructions; empty = defaults).
+- **Translation** — dictate in one language, get the cleaned text in another
+  (works even with Cleanup None — translate-only). Something Wispr Flow can't
+  do locally.
+- **Per-app tone styles & language** — rules like `slack → "casual, emojis
+  welcome"` adapt the cleanup prompt to whatever app you dictate into; each
+  rule can force its own output language, overriding the global "Translate to".
+- **Voice snippets** — say a cue exactly (e.g. "firma email") and Sussurro
+  pastes the snippet's full text instead of transcribing.
+- **Voice commands** — say "a capo" / "new line" (and paragraph/bullet
+  variants) for deterministic line breaks with no LLM involved; contextual
+  commands like "scratch that" ride the cleanup prompt.
+- **Self-learning dictionary** — correct a history entry and the words you fix
+  are added to your personal dictionary automatically, Wispr-style.
 
-First run: the window opens on Settings — pick a Whisper model, click
-*Download*, set your shortcut with the hotkey recorder, and dictate.
+### History & workflow
+- **History** — hover an entry to Copy, Re-clean, Translate or Edit it;
+  full-text search over raw + cleaned text; retention auto-deletes entries
+  older than N days (0 = keep forever); export to Markdown or JSON.
+- **Usage statistics** — persistent total / today / last-7-days dictation and
+  word counts; clearing history never resets them.
+- **Dictate to file** — note-taking mode: append every dictation to a
+  `.md`/`.txt` file (e.g. an Obsidian note) instead of pasting into the app.
+- **Audio file transcription** — feed a wav/mp3/m4a/flac/ogg recording through
+  the same STT + cleanup pipeline.
+- **Portable config** — export/import dictionary + snippets + app styles as a
+  JSON file to move your setup between machines (import merges, no duplicates).
 
-## UI
+### Interface
+The UI follows the **Daruma design system**: warm paper surfaces, ink text,
+and daruma-red reserved for the moment that matters — the daruma "eye" next to
+the wordmark is hollow when idle and painted red while recording.
 
-The interface follows the **Daruma design system**: warm paper surfaces, ink
-text, and daruma-red reserved for the moment that matters — the daruma "eye"
-next to the wordmark is hollow when idle and painted red while recording.
-The shortcut is set via a click-to-record hotkey widget (press the actual
-combination; Esc cancels).
-
-- **Dictate button** — the status pill in the header is a live button: hold it
-  (push-to-talk) or click it (toggle mode) to dictate without touching the
-  keyboard. It follows the same Push-to-talk setting as the shortcut.
-- **Sound feedback** — a rising tick when recording starts and a falling one
-  when it stops, so the trigger is audible even with the window hidden
-  (toggle in Settings).
+- **Dictate button** — the header status pill is a live button: hold it
+  (push-to-talk) or click it (toggle) to dictate without the keyboard.
 - **Recording overlay** — a small floating pill near the bottom of the screen
   while recording (red, pulsing) and transcribing (spinner). Always on top,
-  never steals focus, disappears when idle.
-- **Live preview** — while you speak, the overlay shows a rolling partial
-  transcript, re-transcribed every ~1.2 s from the growing buffer. The pasted
-  text always comes from the final full-quality pass (toggle in Settings).
-- **Tray** — left-click the tray icon to show/hide the window (menu on
-  Linux); closing the window hides to tray.
-- All sections are collapsible and remember their state; the Cleanup card
-  reads the installed model list live from your Ollama server.
-- **History actions** — hover an entry to Copy the cleaned text, Re-clean
-  the raw transcript with the current cleanup level, Translate it into
-  another language, or Edit it (each appends a new entry where relevant).
-- **History search & retention** — full-text search over the whole history
-  (raw + cleaned); retention auto-deletes entries older than N days
-  (0 = keep forever). Export the whole history to Markdown or JSON from
-  the card header.
-- **Usage statistics** — persistent counters atop the History card: total /
-  today / last-7-days dictations and words. Clearing or pruning the history
-  never resets them.
-- **Language** — pick your dictation language (or auto-detect) in Settings;
-  a fixed language is more accurate on smaller multilingual models.
-- **Voice snippets** — say a cue exactly (e.g. "firma email") and Sussurro
-  pastes the snippet's full text instead of transcribing. Matching ignores
-  case and punctuation; the AI cleanup is skipped.
-- **Self-learning dictionary** — Edit a history entry to correct it: words
-  you introduce (real misspelling fixes, not case-only changes) are added to
-  your personal dictionary automatically, Wispr-style.
-- **Two STT engines** — Whisper (GPU, any language, multiple sizes) or
-  NVIDIA Parakeet TDT v3 (single 456 MB int8 model, CPU-optimized,
-  auto-detects 25 European languages). Switch in Settings → Engine.
-- **Per-app tone styles & language** — Wispr-style tone matching: rules like
-  slack → "casual, emojis welcome" adapt the cleanup prompt to whatever app
-  you dictate into (detected at the moment you release the trigger). Each
-  rule can also force its own output language (slack → English,
-  whatsapp → Italiano), overriding the global "Translate to".
-- **Command mode** — select text anywhere, hold the command shortcut
-  (default `Ctrl+Alt+Space`) and speak an instruction ("make it shorter",
-  "translate to English"): the LLM applies it and the result replaces the
-  selection.
-- **Whisper mode** — dictate quietly: 3x mic gain and a lower silence gate.
-- **Streaming typing** — text is typed into the app while you speak: word by
-  word with Cleanup None (holding back the last two words), or sentence by
-  sentence with cleanup on — each completed sentence is LLM-cleaned before
-  being typed; the final pass finishes the tail.
-- **Models folder** — settable in Settings (default: app data); silence is
-  trimmed before inference (VAD-lite) so long pauses don't cost GPU time.
-- **Translation** — Cleanup → "Translate to": dictate in one language and
-  the cleaned text comes out in another (works even with Cleanup None —
-  translate-only). Something Wispr Flow can't do locally.
-- **Microphone selector + VU meter** — pick the capture device (falls back
-  to the system default if it's unplugged); the Test button next to it shows
-  a live input-level bar, also visible while recording.
-- **Voice commands** — say "a capo" / "new line" / "nuova riga" (or the
-  paragraph variants) for deterministic line breaks with no LLM involved;
-  "punto e a capo" / "period new line" closes the sentence and breaks the
-  line; "punto elenco" / "new bullet" starts a bulleted item. Contextual
-  commands like "scratch that" ride the cleanup prompt.
-- **Dictate to file** — note-taking mode (Behavior card): pick a .md/.txt
-  file and every dictation is appended there (e.g. an Obsidian note)
-  instead of being pasted into the focused app.
-- **Editable cleanup prompts** — Cleanup → Advanced: override the built-in
-  Light/Medium/High instructions; leave empty to use the defaults (shown as
-  placeholders).
-- **Portable config** — export/import dictionary + snippets + app styles as
-  a JSON file to move your setup between machines; import merges without
-  duplicates.
-- **Audio file transcription** — feed a wav/mp3/m4a/flac/ogg recording
-  through the same STT + cleanup pipeline from the Audio file card.
-- **Setup banner** — when something needed is missing (Ollama not installed
-  / not running / configured model absent, STT model not downloaded), a
-  banner under the header lists each problem with its fix action.
-- **Copy diagnostics** — footer button that copies version, OS and
-  configuration to the clipboard for bug reports — configuration only, no
-  dictated text, dictionary words or snippets.
+  never steals focus.
+- **Sound feedback** — a rising tick when recording starts, a falling one when
+  it stops (toggle in Settings).
+- **Microphone selector + VU meter** — pick the capture device (falls back to
+  the system default if unplugged); a live input-level bar helps you test it.
+- **Tray** — left-click to show/hide; closing the window hides to tray.
+- **Setup banner** — lists anything missing (Ollama not running, model not
+  downloaded) with a one-click fix.
+- **Copy diagnostics** — a footer button copies version + OS + configuration
+  for bug reports (configuration only — never dictated text or dictionary).
 
 ## Local API (scripting)
 
@@ -164,68 +146,42 @@ curl -X POST --data-binary @meeting.mp3 "http://127.0.0.1:4525/transcribe?ext=mp
 curl "http://127.0.0.1:4525/history?n=10&q=sussurro"
 ```
 
-Note: loopback-only means no network exposure, but any process on your
-machine can call it — that's why it ships disabled.
+Loopback-only means no network exposure, but any process on your machine can
+call it — that's why it ships disabled.
 
-## Releases & auto-update
+## Roadmap
 
-> **⚠️ Auto-update is frozen until v0.5.0.** The repo is private while the
-> per-platform builds stabilize, so installed apps cannot reach `latest.json`
-> anonymously anyway (the endpoint 404s). The in-app **Check for updates**
-> button and the signing pipeline below keep working — releases are simply
-> not reachable by the updater until the repo (or at least its releases)
-> goes public, planned for v0.5.0.
+Current version **0.4.1**. Full detail (and standing decisions) in
+[`CLAUDE.md`](CLAUDE.md).
 
-Pushing a `v*` tag (e.g. `git tag v0.2.1 && git push origin v0.2.1`) triggers
-the GitHub Actions release workflow: signed installers for Windows, macOS
-(Apple Silicon) and Linux, published as a draft release together with
-the updater manifest (`latest.json`). The in-app **Check for updates** button
-(footer) downloads and installs the new version.
-
-### Updater signing key (one-time setup)
-
-The updater artifacts are signed with a minisign key **kept outside the
-repo**. If you don't have the key yet, generate one (any OS):
-
-```bash
-cd sussurro
-npm run tauri signer generate -- -w ~/.tauri/sussurro-updater.key
-```
-
-This prints the public key — it must match `plugins.updater.pubkey` in
-`sussurro/src-tauri/tauri.conf.json` (changing the key pair orphans every
-previously installed app, which would no longer trust new releases).
-
-Then upload the **private** key to the repo secrets, from the directory
-where the key lives.
-
-macOS / Linux:
-
-```bash
-gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/sussurro-updater.key
-gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --body '""'
-```
-
-Windows (PowerShell):
-
-```powershell
-gh secret set TAURI_SIGNING_PRIVATE_KEY --body (Get-Content $HOME\.tauri\sussurro-updater.key -Raw)
-gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --body '""'
-```
-
-(The password secret is the passphrase chosen at key generation; `'""'`
-means "empty passphrase". Back the key file up — losing it means a new key
-pair and orphaned installs.)
+- **0.5.0 — go public**: macOS Developer ID signing + notarization, the repo
+  goes public (which unfreezes auto-update), Flatpak + Flathub distribution.
+- **0.6.0 (candidate)**: backend-agnostic cleanup via the OpenAI-compatible
+  `/v1/chat/completions` API — drive cleanup with any local runtime (Ollama,
+  llama.cpp-server, LM Studio, …) instead of only Ollama's native schema.
 
 ## Known limits
 
-- Streaming typing is experimental and only works with Cleanup level None;
-  with cleanup enabled the text lands after you release the hotkey.
-- Linux Wayland: injection goes through the XDG **RemoteDesktop portal**
-  first (zero setup on KDE/GNOME; the OS asks for consent on first use —
-  KDE may re-ask after a reboot, kde#480235). Fallbacks: `ydotool`, `wtype`,
-  enigo. See issue #40 for the full analysis.
-- Linux builds are CPU-only by default (Vulkan needs the SDK; Windows uses
-  Vulkan, macOS uses Metal — see the Cargo.toml target-specific deps).
-- cpal is pinned to 0.16 (0.18 has a windows-core version conflict with the
-  Tauri stack on Windows).
+- **Linux Wayland injection** goes through the XDG **RemoteDesktop portal**
+  first (zero setup on KDE/GNOME; the OS asks for consent on first use — KDE
+  may re-ask after a reboot, kde#480235). Fallbacks: `ydotool`, `wtype`,
+  enigo. See [issue #40](https://github.com/fullo/Sussurro/issues/40).
+- **Linux builds are CPU-only by default** (Vulkan needs the SDK; Windows uses
+  Vulkan, macOS uses Metal). An opt-in Vulkan build is documented in
+  [`docs/compile/linux.md`](docs/compile/linux.md).
+- **macOS is Apple Silicon only** (min 11.0) — ONNX Runtime has no prebuilt
+  binaries for Intel Macs.
+- **Auto-update is frozen until v0.5.0** while the repo is private — see
+  [`docs/releases.md`](docs/releases.md).
+
+## Documentation
+
+- [`docs/development.md`](docs/development.md) — build from source, tests, CI.
+- [`docs/compile/`](docs/compile/) — per-OS build guides (Windows/macOS/Linux).
+- [`docs/releases.md`](docs/releases.md) — release process, auto-update,
+  code-signing.
+- [`site/`](site/index.html) — the project landing page.
+
+---
+
+Made by [DarumaHQ.it](https://darumahq.it).
