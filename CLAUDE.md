@@ -131,6 +131,22 @@ project decisions here, not in per-machine memory.**
     Flathub (needs the public repo). AppImage already ships in every release
     (it's the updater's Linux format) — nothing to add there.
 
+### 0.6.0 — candidate (not committed)
+
+12. **Backend-agnostic cleanup client via the OpenAI-compatible API**
+    (noted 2026-07-06). Today `cleanup/ollama.rs` talks Ollama's native
+    schema (`/api/chat`, `/api/tags`). Switching to the de-facto standard
+    `/v1/chat/completions` (+ a configurable base URL/model) would let any
+    local runtime drive cleanup — Ollama (it also exposes `/v1`),
+    llama.cpp-server, LM Studio, and frontier engines like antirez's **DS4**
+    (DeepSeek V4, OpenAI/Anthropic-compatible) — with no per-backend code.
+    Prompted by evaluating DS4 as an Ollama replacement: rejected as a
+    *replacement* (single 284B model, 96–128 GB RAM, no Windows — wrong tool
+    for a 2–3B cleanup job on consumer hardware), but it flagged that our
+    Ollama-specific coupling is the real limitation. Keep Ollama the default;
+    this is additive. `/api/tags` model discovery has no `/v1` equivalent, so
+    the model picker would fall back to manual entry for non-Ollama backends.
+
 ## Per-machine setup
 
 - **Windows dev machines must set a short `CARGO_TARGET_DIR`**
