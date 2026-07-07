@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Building Sussurro on Windows, macOS &amp; Linux — Sussurro Blog</title>
+<meta name="description" content="The toolchain, the GPU flags and the per-OS gotchas, in one place." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-setup">Setup</span>
+    <h1>Building Sussurro on Windows, macOS &amp; Linux</h1>
+    <p class="dek">Sussurro is a Tauri 2 app — a Rust backend with a React front-end. The build is the same everywhere; only the prerequisites and a few GPU details differ per platform.</p>
+    <div class="meta">7 min read · Setup guide</div>
+  </header>
+
+  <div class="prose">
+    <p>Most people should just grab an installer from the <a href="https://github.com/fullo/Sussurro/releases">releases page</a>. But if you want to build it yourself — to hack on it, or to compile the optional Linux GPU variant — here's the map. The authoritative, always-current guides live in the repo under <code>docs/compile/</code>; this is the overview.</p>
+
+    <h2>Common toolchain</h2>
+    <p>Every platform needs the same two things:</p>
+    <ul>
+      <li><strong>Node.js ≥ 24</strong></li>
+      <li><strong>Rust stable</strong> (via <a href="https://rustup.rs">rustup</a>)</li>
+    </ul>
+    <p>Then the universal build steps:</p>
+    <pre><code>git clone https://github.com/fullo/Sussurro
+cd Sussurro/sussurro
+npm install
+npm run tauri dev      # development, hot-reload
+npm run tauri build    # production bundle (installer per platform)</code></pre>
+
+    <h2>Windows 10/11</h2>
+    <ul>
+      <li><strong>Vulkan SDK</strong> — for GPU-accelerated Whisper.</li>
+      <li><strong>LLVM</strong> — <code>libclang</code> is needed by the Rust bindings; set <code>LIBCLANG_PATH</code>.</li>
+      <li><strong>WebView2</strong> — usually already present on Windows 11.</li>
+      <li><strong>The MAX_PATH gotcha:</strong> whisper.cpp's Vulkan shader sub-build produces very long paths. Set a <em>short</em> <code>CARGO_TARGET_DIR</code> (e.g. <code>C:\sbuild</code>) or the build fails with MSBuild FTK1011.</li>
+    </ul>
+    <p>Full details: <a href="https://github.com/fullo/Sussurro/blob/main/docs/compile/windows.md">docs/compile/windows.md</a>.</p>
+
+    <h2>macOS 11+</h2>
+    <ul>
+      <li><strong>Apple Silicon only.</strong> ONNX Runtime has no prebuilt binaries for Intel Macs, so the Parakeet engine can't ship there.</li>
+      <li><strong>Metal</strong> provides GPU acceleration out of the box.</li>
+      <li><strong>Permissions:</strong> macOS will ask for microphone and accessibility access on first run (the latter for paste injection).</li>
+      <li><strong>Minimum 11.0</strong> — whisper.cpp uses <code>std::filesystem</code>.</li>
+    </ul>
+    <p>Full details: <a href="https://github.com/fullo/Sussurro/blob/main/docs/compile/macos.md">docs/compile/macos.md</a>.</p>
+
+    <h2>Linux</h2>
+    <ul>
+      <li><strong>glibc ≥ 2.38</strong> (Ubuntu 24.04 or newer) — older glibc fails linking.</li>
+      <li><strong>apt dependencies</strong> — WebKitGTK and friends; the guide lists the exact packages.</li>
+      <li><strong>X11 &amp; Wayland:</strong> injection uses the XDG RemoteDesktop portal first on Wayland, with <code>ydotool</code>/<code>wtype</code> fallbacks.</li>
+      <li><strong>CPU-only by default.</strong> An opt-in Vulkan build exists — compile with <code>--features linux-vulkan</code> if you have a Vulkan driver.</li>
+    </ul>
+    <p>Full details: <a href="https://github.com/fullo/Sussurro/blob/main/docs/compile/linux.md">docs/compile/linux.md</a>.</p>
+
+    <div class="callout">
+      <span class="k">Tests &amp; CI</span>
+      <p>From <code>sussurro/src-tauri</code>: <code>cargo test</code> and <code>cargo clippy --all-targets -- -D warnings</code>. See <a href="https://github.com/fullo/Sussurro/blob/main/docs/development.md">docs/development.md</a> for the CI setup and the local-CI script.</p>
+    </div>
+
+    <h2>Contributing</h2>
+    <p>The workflow is <strong>branch → PR → merge</strong>, no direct pushes to <code>main</code>. Project decisions and the roadmap live in <code>CLAUDE.md</code> at the repo root. Pull requests welcome.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="whisper-vs-parakeet.html">Whisper vs Parakeet</a></li>
+        <li><a href="centralized-ollama.html">Run Ollama on a separate machine</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

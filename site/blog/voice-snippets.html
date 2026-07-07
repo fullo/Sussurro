@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Voice snippets — Sussurro Blog</title>
+<meta name="description" content="Say a short cue, paste a long block of boilerplate. No typing, no LLM." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Voice snippets</h1>
+    <p class="dek">Some things you type over and over — an email signature, an address, a disclaimer. Say a short cue and Sussurro pastes the whole block, verbatim.</p>
+    <div class="meta">4 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+    <p>Voice snippets are text expansion, triggered by voice. You define a cue phrase and the full text it stands for; when you say the cue exactly, Sussurro pastes the snippet instead of transcribing what you said.</p>
+
+    <h2>Example</h2>
+    <p>Define a snippet with the cue <em>“firma email”</em> and the text:</p>
+    <pre><code>Best regards,
+Francesco Fullone
+DarumaHQ — https://darumahq.it</code></pre>
+    <p>Now saying “firma email” drops your whole signature in, exactly as written — line breaks and all.</p>
+
+    <h2>How matching works</h2>
+    <ul>
+      <li>Matching <strong>ignores case and punctuation</strong>, so you don't have to enunciate perfectly.</li>
+      <li>When a snippet matches, <strong>AI cleanup is skipped</strong> — the text is pasted verbatim, so your boilerplate is never “improved” by the model.</li>
+    </ul>
+
+    <div class="callout">
+      <span class="k">Deterministic by design</span>
+      <p>Snippets are exact text, not model output. That makes them perfect for anything that must be precise — legal disclaimers, addresses, code stubs, canned replies.</p>
+    </div>
+
+    <h2>Set them up</h2>
+    <p>Add snippets in the <strong>Personalization</strong> section: a cue and its text. They travel with your <a href="portable-config.html">portable config</a>, so your whole library moves between machines in one file.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="voice-commands.html">Voice &amp; formatting commands</a></li>
+        <li><a href="portable-config.html">Portable config</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

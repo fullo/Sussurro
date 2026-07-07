@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Voice &amp; formatting commands — Sussurro Blog</title>
+<meta name="description" content="Say 'new line' or 'new bullet' for deterministic structure — no model in the loop." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Voice &amp; formatting commands</h1>
+    <p class="dek">Structure shouldn't depend on a language model guessing. Say the word and Sussurro inserts the exact line break or bullet — deterministically.</p>
+    <div class="meta">4 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+    <p>When you want a new line or a bullet point, you want it <em>every time</em> — not most of the time, subject to a model's mood. Sussurro handles formatting commands deterministically, before any LLM is involved, so structure is reliable.</p>
+
+    <h2>Formatting commands</h2>
+    <p>These are recognized in English and Italian:</p>
+    <ul>
+      <li><strong>“new line” / “a capo” / “nuova riga”</strong> — a line break.</li>
+      <li><strong>Paragraph variants</strong> — a blank-line paragraph break.</li>
+      <li><strong>“period new line” / “punto e a capo”</strong> — ends the sentence and breaks the line.</li>
+      <li><strong>“new bullet” / “punto elenco”</strong> — starts a bulleted item.</li>
+    </ul>
+    <p>These never reach the model — they're applied literally, so a stray “um” in a sentence can't turn your bullet into prose.</p>
+
+    <h2>Contextual commands</h2>
+    <p>Some spoken edits are best handled by the cleanup model because they depend on meaning — like <strong>“scratch that”</strong>, which deletes the phrase you just said. These ride the cleanup prompt rather than being applied literally, so they understand context.</p>
+
+    <div class="callout">
+      <span class="k">Two kinds, on purpose</span>
+      <p>Deterministic commands (line breaks, bullets) run without the LLM for reliability. Contextual commands (“scratch that”, quote wrapping) go through cleanup, because they need to understand what you meant.</p>
+    </div>
+
+    <p>Combine these with <a href="voice-snippets.html">voice snippets</a> and you can dictate structured text — lists, multi-paragraph notes — without touching the keyboard.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="voice-snippets.html">Voice snippets</a></li>
+        <li><a href="command-mode.html">Command mode</a></li>
+        <li><a href="dictate-to-file.html">Dictate straight to a file</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

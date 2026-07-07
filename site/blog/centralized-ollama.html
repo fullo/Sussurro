@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Run Ollama on a separate machine — Sussurro Blog</title>
+<meta name="description" content="Point every device at one shared Ollama so you install and update the cleanup model in a single place." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-setup">Setup</span>
+    <h1>Run Ollama on a separate machine</h1>
+    <p class="dek">Sussurro's AI cleanup runs on Ollama over HTTP — and that server doesn't have to be the same computer you dictate on. Run it once on a capable box and let every laptop share it.</p>
+    <div class="meta">6 min read · Setup guide</div>
+  </header>
+
+  <div class="prose">
+    <p>Every Sussurro install can run its own local Ollama, but you don't <em>have</em> to. Because the cleanup step is just an HTTP call, you can host Ollama on one machine — a desktop with a GPU, a home server, a spare Mac — and point all your other devices at it. One place to install the model, one place to update it, one place doing the heavy lifting.</p>
+
+    <h2>Why centralize</h2>
+    <ul>
+      <li><strong>Install the model once.</strong> Pull <code>llama3.2:3b</code> on the server and every device uses it — no per-laptop downloads.</li>
+      <li><strong>Put the compute where the hardware is.</strong> A desktop GPU cleans faster than a thin laptop; the laptop just records and pastes.</li>
+      <li><strong>Update in one place.</strong> Swap the model or upgrade Ollama on the server; clients need no changes.</li>
+    </ul>
+
+    <h2>Step 1 — Make Ollama listen on the network</h2>
+    <p>By default Ollama binds to <code>localhost</code>, so it only accepts calls from the same machine. Tell it to listen on all interfaces by setting <code>OLLAMA_HOST</code>:</p>
+    <pre><code># quick test (foreground)
+OLLAMA_HOST=0.0.0.0:11434 ollama serve</code></pre>
+    <p>To make it permanent, set the environment variable for the Ollama service:</p>
+    <ul>
+      <li><strong>Linux (systemd):</strong> <code>systemctl edit ollama</code> and add <code>Environment="OLLAMA_HOST=0.0.0.0:11434"</code>, then <code>systemctl restart ollama</code>.</li>
+      <li><strong>macOS:</strong> <code>launchctl setenv OLLAMA_HOST "0.0.0.0:11434"</code> and restart the Ollama app.</li>
+      <li><strong>Windows:</strong> set a user environment variable <code>OLLAMA_HOST = 0.0.0.0:11434</code> and restart Ollama.</li>
+    </ul>
+
+    <h2>Step 2 — Pull the model on the server</h2>
+    <pre><code>ollama pull llama3.2:3b</code></pre>
+    <p>Not sure which model? See <a href="choosing-ollama-model.html">Choosing the right Ollama model</a>.</p>
+
+    <h2>Step 3 — Point Sussurro at it</h2>
+    <ol class="figure-steps">
+      <li>Open <strong>Settings → Cleanup</strong>.</li>
+      <li>Set <strong>Ollama URL</strong> to <code>http://SERVER-IP:11434</code> (e.g. <code>http://192.168.1.20:11434</code>).</li>
+      <li>The model dropdown loads live from the server's <code>/api/tags</code> — pick your model.</li>
+    </ol>
+    <p>That's it. Dictate as usual; the transcript is sent to the server for cleanup and the cleaned text comes back to be pasted locally. If the server is unreachable, Sussurro falls back to the raw transcript — you're never blocked.</p>
+
+    <div class="callout">
+      <span class="k">Security first</span>
+      <p>Ollama's API has <strong>no authentication</strong>. Anyone who can reach <code>SERVER-IP:11434</code> can use your model. Keep it on a trusted LAN, or better, a private network like Tailscale/WireGuard. <strong>Never</strong> forward port 11434 to the public internet.</p>
+    </div>
+
+    <h2>What about latency?</h2>
+    <p>On a LAN, the round-trip to a small model is negligible — a 2–3B model on a decent machine cleans a sentence in well under a second. With streaming typing and cleanup enabled, Sussurro makes one call per finished sentence; over Wi-Fi or Ethernet this stays smooth. Over a slower link (a remote server across the internet via VPN), prefer batch cleanup (paste on release) rather than per-sentence streaming.</p>
+
+    <h2>Privacy note</h2>
+    <p>Centralizing Ollama keeps everything on <em>your</em> hardware — the audio is still transcribed locally on each device, and only the text transcript travels to your own server for cleanup. Nothing leaves the machines you control.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="choosing-ollama-model.html">Choosing the right Ollama model</a></li>
+        <li><a href="ai-cleanup-levels.html">AI cleanup: the four levels</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

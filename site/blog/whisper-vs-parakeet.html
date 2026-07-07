@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Whisper vs Parakeet — Sussurro Blog</title>
+<meta name="description" content="Two transcription engines, two philosophies. When each one wins." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-concept">Concept</span>
+    <h1>Whisper vs Parakeet: choosing your STT engine</h1>
+    <p class="dek">Sussurro ships two speech-to-text engines. One is built for GPUs and every language on earth; the other is built to fly on a CPU. Here's how to choose.</p>
+    <div class="meta">6 min read · Concept</div>
+  </header>
+
+  <div class="prose">
+    <p>Speech-to-text (STT) is the step that turns your voice into raw text, before any AI cleanup. Sussurro lets you pick the engine in <strong>Settings → Engine</strong>, and the right choice depends mostly on one thing: <strong>do you have a usable GPU?</strong></p>
+
+    <h2>Whisper (whisper.cpp)</h2>
+    <p>OpenAI's Whisper, running locally through <code>whisper.cpp</code> with GPU acceleration — Vulkan on Windows/Linux, Metal on macOS.</p>
+    <ul>
+      <li><strong>Languages:</strong> ~99, with strong accuracy across most.</li>
+      <li><strong>Sizes:</strong> from Base English (148 MB) up to Large v3 Turbo (574 MB, quantized) — trade size/speed for accuracy.</li>
+      <li><strong>Spelling hints:</strong> it accepts an initial prompt, so your <a href="self-learning-dictionary.html">personal dictionary</a> can bias tricky names and jargon.</li>
+      <li><strong>Best when:</strong> you have a GPU, need a specific or non-European language, or want maximum accuracy.</li>
+    </ul>
+
+    <h2>Parakeet (NVIDIA Parakeet TDT v3)</h2>
+    <p>NVIDIA's Parakeet model running via ONNX Runtime — a single, CPU-optimized engine.</p>
+    <ul>
+      <li><strong>One model, 456 MB (int8):</strong> no size to choose.</li>
+      <li><strong>CPU-optimized:</strong> roughly <strong>10× faster than Whisper on a CPU</strong> with no GPU involved.</li>
+      <li><strong>Auto-detects 25 European languages</strong> — no language picker needed for them.</li>
+      <li><strong>Best when:</strong> you don't have a GPU (or don't want to use it), you dictate in European languages, and you want the lowest latency on a laptop.</li>
+    </ul>
+
+    <h2>Side by side</h2>
+    <ul>
+      <li><strong>Hardware:</strong> Whisper loves a GPU; Parakeet is happiest on CPU.</li>
+      <li><strong>Language reach:</strong> Whisper ~99 languages; Parakeet 25 European, auto-detected.</li>
+      <li><strong>Speed without a GPU:</strong> Parakeet wins clearly.</li>
+      <li><strong>Peak accuracy with a GPU:</strong> Whisper Large v3 Turbo is hard to beat.</li>
+      <li><strong>Model management:</strong> Whisper = pick a size and download; Parakeet = one fixed model.</li>
+    </ul>
+
+    <div class="callout">
+      <span class="k">Rule of thumb</span>
+      <p>Have a GPU, or need a language outside Europe? <strong>Whisper.</strong> On a laptop with no GPU, dictating in a European language? <strong>Parakeet</strong> — it'll feel instant.</p>
+    </div>
+
+    <h2>You can switch anytime</h2>
+    <p>The engine is a single setting. Try both on your own hardware with a paragraph of real dictation and see which feels right — accuracy and latency both depend on your machine. Whichever you pick, the transcript flows into the same cleanup, history and injection pipeline.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="language-selection.html">Language selection &amp; auto-detect</a></li>
+        <li><a href="building-from-source.html">Building Sussurro on Windows, macOS &amp; Linux</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

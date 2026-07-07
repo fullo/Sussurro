@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Translate as you speak — Sussurro Blog</title>
+<meta name="description" content="Dictate in one language, paste in another — entirely offline." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Translate as you speak</h1>
+    <p class="dek">Speak Italian, paste English. Speak English, paste German. The cleanup step can translate on the way out — locally, with no cloud translation service.</p>
+    <div class="meta">4 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+    <p>This is one of the things a fully-local tool can do that cloud dictation often can't: turn your spoken language into written text in a <em>different</em> language, in the same keystroke. Because the same local model that cleans your text can also translate it, there's no extra service and nothing leaves your machine.</p>
+
+    <h2>How to use it</h2>
+    <ol class="figure-steps">
+      <li>Open <strong>Settings → Cleanup</strong>.</li>
+      <li>Set <strong>Translate to</strong> to your target language.</li>
+      <li>Dictate in whatever language you like — the pasted text comes out translated and cleaned.</li>
+    </ol>
+
+    <h2>It even works with cleanup off</h2>
+    <p>Translation isn't tied to a cleanup level. Set cleanup to <strong>None</strong> and a target language, and Sussurro does a translate-only pass — a straight rendering of what you said into the other language, without the LLM editing your style.</p>
+
+    <div class="callout">
+      <span class="k">Per-app override</span>
+      <p>With <a href="per-app-tone.html">per-app tone styles</a>, each app can force its own output language — Slack in English, WhatsApp in Italian — overriding the global “Translate to”. Dictate once, land in the right language for wherever your cursor is.</p>
+    </div>
+
+    <h2>Getting good results</h2>
+    <p>Translation leans harder on the model than plain cleanup does, so a capable multilingual model helps. A 3B model handles common language pairs well; for tougher pairs or long passages, a larger model is noticeably better. See <a href="choosing-ollama-model.html">Choosing the right Ollama model</a>.</p>
+
+    <p>Want the transcript in the original language too? Your <a href="searchable-history.html">history</a> keeps the raw transcript alongside the translated output, and you can re-translate any entry to another language later.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="per-app-tone.html">Per-app tone styles</a></li>
+        <li><a href="ai-cleanup-levels.html">AI cleanup: the four levels</a></li>
+        <li><a href="language-selection.html">Language selection &amp; auto-detect</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

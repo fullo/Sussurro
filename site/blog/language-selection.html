@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Language selection &amp; auto-detect — Sussurro Blog</title>
+<meta name="description" content="Fix a language for accuracy, or let Sussurro detect it." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Language selection &amp; auto-detect</h1>
+    <p class="dek">Telling the engine what language you're speaking makes it more accurate — especially on smaller models. Or let it figure the language out for you.</p>
+    <div class="meta">4 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+    <p>Multilingual speech models can detect the language on the fly, but detection isn't free — it can misfire on short utterances or accented speech. If you know what you'll be speaking, telling Sussurro up front pays off in accuracy.</p>
+
+    <h2>Fix it, or auto-detect</h2>
+    <p>In Settings, pick your dictation language or leave it on auto-detect. A fixed language removes the guesswork, which matters most on smaller multilingual Whisper models, where auto-detection is the shakiest.</p>
+
+    <div class="callout">
+      <span class="k">Engine differences</span>
+      <p>With <a href="whisper-vs-parakeet.html">Parakeet</a>, language auto-detection across 25 European languages is built in and reliable, so you rarely need to set anything. With Whisper, a fixed language is the safer bet when accuracy counts.</p>
+    </div>
+
+    <h2>Language ≠ output language</h2>
+    <p>This setting is about the language you <em>speak</em>. If you want the text to come out in a <em>different</em> language, that's <a href="translate-as-you-speak.html">translation</a> — a separate control in Cleanup. You can, for instance, set your dictation language to Italian and your output to English.</p>
+
+    <p>When in doubt: fix the language you speak most, and switch to auto only when you genuinely mix languages session to session.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="whisper-vs-parakeet.html">Whisper vs Parakeet</a></li>
+        <li><a href="translate-as-you-speak.html">Translate as you speak</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

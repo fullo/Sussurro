@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Choosing the right Ollama model — Sussurro Blog</title>
+<meta name="description" content="Speed, quality and RAM: how to pick the cleanup model that fits your machine." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-setup">Setup</span>
+    <h1>Choosing the right Ollama model</h1>
+    <p class="dek">Sussurro's cleanup is a small job — removing fillers, fixing punctuation, matching tone. You don't need a giant model. Here's how to pick one that's fast, accurate enough, and fits your RAM.</p>
+    <div class="meta">5 min read · Setup guide</div>
+  </header>
+
+  <div class="prose">
+    <p>The model doesn't transcribe your speech — Whisper or Parakeet does that. The model only <em>cleans up</em> the transcript: strip “um” and “uh”, fix grammar and punctuation, and optionally translate or adjust tone. That's a light task, and a small instruct model handles it well while keeping latency low.</p>
+
+    <h2>The short answer</h2>
+    <ul>
+      <li><strong>Start with <code>llama3.2:3b</code></strong> — a great balance of quality, speed and multilingual ability. It's the default recommendation.</li>
+      <li><strong>Low on RAM or want it snappier? <code>gemma2:2b</code></strong> — lighter and faster, still solid for Light/Medium cleanup.</li>
+      <li><strong>Want better tone-matching and translation? A 7–8B model</strong> like <code>qwen2.5:7b</code> or <code>llama3.1:8b</code> — noticeably better instruction-following, at the cost of latency and memory.</li>
+    </ul>
+
+    <h2>Rough sizing</h2>
+    <ul>
+      <li><strong>2–3B (q4):</strong> ~2–3 GB RAM, sub-second responses. Ideal for per-sentence streaming cleanup.</li>
+      <li><strong>7–8B (q4):</strong> ~5–6 GB RAM, a beat slower. Better at nuanced tone rules and translation.</li>
+      <li><strong>Bigger:</strong> diminishing returns for cleanup, rising latency. Rarely worth it here.</li>
+    </ul>
+
+    <h2>What actually matters</h2>
+    <h3>Use an instruct model</h3>
+    <p>Pick an <em>instruct</em>/chat-tuned model (the default tags on Ollama are), not a base model. Cleanup is driven by a system prompt, and base models won't follow it.</p>
+
+    <h3>Multilingual, if you dictate beyond English</h3>
+    <p>If you speak Italian, German, Spanish and so on, choose a model that's genuinely multilingual — <code>llama3.2</code>, <code>qwen2.5</code> and <code>gemma2</code> all qualify. It matters most for translation and for keeping the output in your language.</p>
+
+    <h3>Latency vs. streaming</h3>
+    <p>With <a href="streaming-typing.html">streaming typing</a> and cleanup on, Sussurro cleans each sentence as you finish it — several quick calls rather than one big one. Small, fast models feel best here. If you only use batch cleanup (text pasted on release), you can afford a larger model.</p>
+
+    <div class="callout">
+      <span class="k">The tiny-model gotcha</span>
+      <p>Very small models (2–3B) sometimes <em>answer</em> a short dictation instead of cleaning it (“is this thing on?” → “Yes, it's working!”). Sussurro guards against this: if the output doesn't derive from your words, it keeps the raw transcript. If you see it often, try a different or slightly larger model.</p>
+    </div>
+
+    <h2>Try one in seconds</h2>
+    <pre><code>ollama pull llama3.2:3b
+# then: Settings → Cleanup → Model (the list loads live)</code></pre>
+    <p>Switching models is instant in Settings — the dropdown reads whatever you've pulled. Dictate a couple of sentences at each cleanup level and keep the one that reads best on your hardware.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="ai-cleanup-levels.html">AI cleanup: the four levels</a></li>
+        <li><a href="centralized-ollama.html">Run Ollama on a separate machine</a></li>
+        <li><a href="translate-as-you-speak.html">Translate as you speak</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>
