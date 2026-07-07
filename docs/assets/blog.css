@@ -53,6 +53,8 @@ nav .links a:hover { color: var(--ink); }
   background: var(--ink); color: #fff; transition: transform .15s, box-shadow .2s; }
 .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(26,26,26,.18); }
 .btn.red { background: var(--red); border-color: var(--red); }
+/* keep the nav Download button's label white — nav link color would otherwise win on specificity */
+nav .links a.btn.red, nav .links a.btn.red:hover { color: #fff; }
 @media (max-width: 720px){ nav .links a.hideable { display: none; } }
 
 /* ---------- blog index ---------- */
