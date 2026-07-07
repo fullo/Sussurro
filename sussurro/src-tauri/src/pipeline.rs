@@ -407,12 +407,7 @@ fn process_command(app: &AppHandle) -> anyhow::Result<()> {
     let Some(selection) = inject::copy_selection()? else {
         anyhow::bail!("command mode: select some text first — the instruction is applied to the selection");
     };
-    let edited = ollama::command_edit(
-        &settings.ollama_url,
-        &settings.ollama_model,
-        &instruction,
-        &selection,
-    )?;
+    let edited = ollama::command_edit(&settings, &instruction, &selection)?;
     inject::inject_text(&edited)?;
 
     let _ = history::append(

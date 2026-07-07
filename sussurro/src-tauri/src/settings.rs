@@ -21,6 +21,19 @@ pub enum SttEngine {
     Parakeet,
 }
 
+/// Which chat API the cleanup / command-mode LLM is driven through.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupApi {
+    /// Ollama's native schema (`/api/chat`, `/api/tags`). The default.
+    #[default]
+    Ollama,
+    /// OpenAI-compatible (`/v1/chat/completions`, `/v1/models`) — drives any
+    /// local runtime that speaks it: llama.cpp-server, LM Studio, DS4, and
+    /// Ollama's own `/v1` endpoint.
+    Openai,
+}
+
 /// Optional user overrides for the per-level cleanup instructions sent to the
 /// LLM. Empty string = use the built-in default for that level.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -64,6 +77,13 @@ pub struct Settings {
     pub engine: SttEngine,
     pub ollama_url: String,
     pub ollama_model: String,
+    /// Which chat API drives cleanup / command mode. Ollama native by default;
+    /// OpenAI-compatible reinterprets `ollama_url` as the server base and
+    /// `ollama_model` as the model id, talking `/v1/chat/completions`.
+    pub cleanup_api: CleanupApi,
+    /// Bearer token for the OpenAI-compatible API. Optional — most local
+    /// servers ignore it. Never sent to the Ollama native API.
+    pub api_key: String,
     pub cleanup_level: CleanupLevel,
     /// Personal dictionary: names/jargon fed to both Whisper and the LLM.
     pub dictionary: Vec<String>,
@@ -120,6 +140,8 @@ impl Default for Settings {
             engine: SttEngine::Whisper,
             ollama_url: "http://localhost:11434".into(),
             ollama_model: "llama3.2:3b".into(),
+            cleanup_api: CleanupApi::Ollama,
+            api_key: String::new(),
             cleanup_level: CleanupLevel::Light,
             dictionary: Vec::new(),
             autostart: false,
