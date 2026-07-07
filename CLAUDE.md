@@ -22,12 +22,14 @@ project decisions here, not in per-machine memory.**
   Sequence chosen: **publish immediately**, accepting unsigned-installer OS
   warnings until code signing lands. No code change needed to unfreeze — it's
   the GitHub visibility toggle + a published (non-draft) release.
-- **OS code signing (0.5.0+):** macOS stays **ad-hoc** for now (Developer ID +
-  notarization deferred — no Apple Developer account); users right-click →
-  Open. Windows signing goes through **SignPath** (free OSS program) — see
-  `docs/windows-signing-signpath.md`; needs the maintainer to enroll the
-  project and add the SignPath secrets before the release workflow can sign.
-  The updater's own minisign signing is independent and already active.
+- **No external OS code signing for now** (decided 2026-07-06). Both macOS
+  (ad-hoc → right-click Open) and Windows (unsigned → SmartScreen "Run anyway")
+  ship without OS signing; users click through, and this is documented in the
+  README + the macOS blog post. Don't set up SignPath / Apple Developer ID /
+  Azure Trusted Signing until the maintainer explicitly revisits — the options
+  are written up in `docs/windows-signing-signpath.md` + `docs/releases.md` for
+  when that happens. The updater's own minisign signing is independent and
+  already active, so **auto-update works regardless of OS signing**.
 - **The v0.2.0 draft release is kept intentionally** — do not delete it.
 - **License: AGPL-3.0-or-later** (chosen 2026-07-06). Copyleft that also covers
   network use (Sussurro exposes a local HTTP API), so no one can build a
