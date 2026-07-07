@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sussurro — Local voice dictation. Nothing leaves your machine.</title>
+<meta name="description" content="Fully-local voice dictation for Windows, macOS and Linux. Hold a key, speak, release — cleaned-up text appears wherever your cursor is. No cloud, no account, no telemetry." />
+<meta property="og:title" content="Sussurro — Local voice dictation" />
+<meta property="og:description" content="Speak, and it writes — entirely on your device. A private, open Wispr Flow alternative." />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Daruma design system */
+    --bg: #fafaf8;
+    --paper: #ffffff;
+    --paper-alt: #f3f2ee;
+    --ink: #1a1a1a;
+    --text: #2d2d2d;
+    --text-light: #595959;
+    --red: #e52520;
+    --red-deep: #b01a16;
+    --red-soft: #fce8e7;
+    --border: #e5e5e0;
+    --border-strong: #d8d7d0;
+
+    --display: 'Fraunces', Georgia, 'Times New Roman', serif;
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+
+    --maxw: 1080px;
+    --radius: 14px;
+    --radius-lg: 24px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  ::selection { background: var(--red-soft); color: var(--ink); }
+
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    /* warm paper grain */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  }
+
+  h1, h2, h3 { font-family: var(--display); color: var(--ink); line-height: 1.08; letter-spacing: -0.01em; font-weight: 600; }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+  .accent { color: var(--red); }
+  .serif-it { font-family: var(--display); font-style: italic; font-weight: 400; }
+
+  /* ---------- reveal ---------- */
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1); }
+  .reveal.in { opacity: 1; transform: none; }
+
+  /* ---------- daruma mark ---------- */
+  .daruma { width: 30px; height: 34px; flex: none; }
+  .daruma .eye-r { fill: var(--paper); stroke: var(--ink); stroke-width: 6; transition: fill .5s ease; }
+  .daruma.awake .eye-r { fill: var(--red); }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(250,250,248,.82);
+    backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  nav .wrap { display: flex; align-items: center; gap: 28px; height: 66px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 600; font-size: 21px; color: var(--ink); letter-spacing: -.01em; }
+  nav .links { margin-left: auto; display: flex; align-items: center; gap: 26px; }
+  nav .links a { font-size: 15px; color: var(--text-light); font-weight: 500; transition: color .2s; }
+  nav .links a:hover { color: var(--ink); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--sans); font-weight: 600; font-size: 15px;
+    padding: 11px 20px; border-radius: 100px; cursor: pointer;
+    border: 1.5px solid var(--ink); background: var(--ink); color: #fff;
+    transition: transform .15s ease, box-shadow .2s ease, background .2s;
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(26,26,26,.18); }
+  .btn.red { background: var(--red); border-color: var(--red); }
+  .btn.red:hover { box-shadow: 0 8px 24px rgba(229,37,32,.32); }
+  .btn.ghost { background: transparent; color: var(--ink); }
+  .btn.ghost:hover { background: var(--paper-alt); box-shadow: none; }
+  nav .btn { padding: 9px 18px; }
+  @media (max-width: 760px){ nav .links a.hideable { display:none; } }
+
+  /* ---------- hero ---------- */
+  header.hero { padding: 88px 0 64px; position: relative; overflow: hidden; }
+  .hero-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 56px; align-items: center; }
+  @media (max-width: 880px){ .hero-grid { grid-template-columns: 1fr; gap: 40px; } }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--red-deep); background: var(--red-soft);
+    padding: 6px 14px; border-radius: 100px; margin-bottom: 26px;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 0 rgba(229,37,32,.5); animation: pulse 2.2s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(229,37,32,.5)} 70%{box-shadow:0 0 0 9px rgba(229,37,32,0)} 100%{box-shadow:0 0 0 0 rgba(229,37,32,0)} }
+  h1.title { font-size: clamp(42px, 6vw, 74px); font-weight: 600; }
+  h1.title .em { font-style: italic; font-weight: 400; color: var(--red); }
+  .lede { font-size: 20px; color: var(--text-light); margin: 24px 0 34px; max-width: 30ch; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .cta-note { font-size: 14px; color: var(--text-light); margin-top: 16px; }
+  .cta-note b { color: var(--text); font-weight: 600; }
+
+  /* keycap */
+  .keys { display: inline-flex; gap: 6px; align-items: center; }
+  kbd {
+    font-family: var(--mono); font-size: 13px; color: var(--ink);
+    background: var(--paper); border: 1px solid var(--border-strong);
+    border-bottom-width: 3px; border-radius: 7px; padding: 5px 9px; font-weight: 600;
+  }
+
+  /* demo card */
+  .demo {
+    background: var(--paper); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); box-shadow: 0 20px 60px rgba(26,26,26,.10), 0 4px 14px rgba(26,26,26,.05);
+    overflow: hidden;
+  }
+  .demo-bar { display: flex; align-items: center; gap: 7px; padding: 13px 16px; border-bottom: 1px solid var(--border); background: var(--paper-alt); }
+  .demo-bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--border-strong); display: inline-block; }
+  .demo-bar i:first-child { background: var(--red); }
+  .demo-bar .lbl { margin-left: 8px; font-size: 13px; color: var(--text-light); font-family: var(--mono); }
+  .demo-body { padding: 22px; }
+  .demo-row { font-size: 15px; }
+  .demo-row .tag { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-light); display: block; margin-bottom: 6px; }
+  .demo-raw { color: var(--text-light); font-family: var(--mono); font-size: 14px; background: var(--paper-alt); border-radius: 10px; padding: 12px 14px; }
+  .demo-arrow { text-align: center; color: var(--red); font-size: 20px; margin: 12px 0; }
+  .demo-clean { color: var(--ink); font-weight: 500; font-size: 17px; padding: 4px 2px; }
+  .demo-clean .cursor { display:inline-block; width:2px; height:1.05em; background: var(--red); margin-left:2px; vertical-align:-2px; animation: blink 1.1s step-end infinite; }
+  @keyframes blink { 50%{opacity:0} }
+
+  /* ---------- privacy band ---------- */
+  .band { background: var(--ink); color: #f3f2ee; padding: 76px 0; margin: 8px 0; }
+  .band h2 { color: #fff; font-size: clamp(30px, 4.4vw, 50px); max-width: 20ch; }
+  .band h2 .accent { color: #ff6b5e; }
+  .band p { color: #bdbcb6; font-size: 19px; max-width: 54ch; margin-top: 22px; }
+  .band-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; margin-top: 50px; }
+  @media (max-width: 720px){ .band-stats { grid-template-columns: 1fr; } }
+  .band-stats .s { border-top: 2px solid rgba(255,107,94,.4); padding-top: 16px; }
+  .band-stats .s b { font-family: var(--display); font-size: 34px; color: #fff; font-weight: 600; display: block; }
+  .band-stats .s span { color: #a9a8a2; font-size: 15px; }
+
+  /* ---------- sections ---------- */
+  section { padding: 84px 0; }
+  .sec-head { max-width: 40ch; margin-bottom: 52px; }
+  .sec-head .kicker { font-size: 14px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--red-deep); margin-bottom: 14px; }
+  .sec-head h2 { font-size: clamp(30px, 4.2vw, 46px); }
+  .sec-head p { color: var(--text-light); font-size: 18px; margin-top: 16px; }
+
+  /* steps */
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; counter-reset: step; }
+  @media (max-width: 860px){ .steps { grid-template-columns: repeat(2,1fr); } }
+  @media (max-width: 480px){ .steps { grid-template-columns: 1fr; } }
+  .step { position: relative; padding-top: 20px; border-top: 2px solid var(--border-strong); }
+  .step::before { counter-increment: step; content: "0" counter(step); font-family: var(--display); font-size: 15px; color: var(--red); font-weight: 600; }
+  .step h3 { font-size: 20px; margin: 8px 0 8px; }
+  .step p { font-size: 15px; color: var(--text-light); }
+
+  /* feature grid */
+  .features { display: grid; grid-template-columns: repeat(3,1fr); gap: 2px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  @media (max-width: 840px){ .features { grid-template-columns: repeat(2,1fr); } }
+  @media (max-width: 540px){ .features { grid-template-columns: 1fr; } }
+  .feat { background: var(--paper); padding: 30px 26px; transition: background .25s; }
+  .feat:hover { background: var(--paper-alt); }
+  .feat .ico { width: 26px; height: 26px; color: var(--red); margin-bottom: 16px; }
+  .feat h3 { font-size: 18px; margin-bottom: 8px; }
+  .feat p { font-size: 14.5px; color: var(--text-light); }
+
+  /* comparison */
+  .cmp { background: var(--paper); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  .cmp table { width: 100%; border-collapse: collapse; }
+  .cmp th, .cmp td { text-align: left; padding: 17px 22px; font-size: 15.5px; border-bottom: 1px solid var(--border); }
+  .cmp thead th { font-family: var(--display); font-size: 17px; font-weight: 600; color: var(--ink); background: var(--paper-alt); }
+  .cmp thead th.us { color: var(--red-deep); }
+  .cmp td.q { color: var(--text-light); }
+  .cmp td.us { font-weight: 600; color: var(--ink); }
+  .cmp tr:last-child td { border-bottom: none; }
+  .cmp .yes { color: var(--red); font-weight: 700; }
+  .cmp .no { color: var(--border-strong); }
+
+  /* closer */
+  .closer { text-align: center; padding: 96px 0; }
+  .closer h2 { font-size: clamp(34px, 5vw, 58px); max-width: 18ch; margin: 0 auto 12px; }
+  .closer p { color: var(--text-light); font-size: 19px; margin-bottom: 34px; }
+  .closer .cta-row { justify-content: center; }
+
+  /* footer */
+  footer { border-top: 1px solid var(--border); padding: 48px 0; color: var(--text-light); font-size: 14.5px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: space-between; }
+  footer a { color: var(--text-light); text-decoration: underline; text-underline-offset: 3px; }
+  footer a:hover { color: var(--ink); }
+  .foot-links { display: flex; gap: 22px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<!-- reusable daruma mark -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="daruma-sym" viewBox="0 0 60 68">
+    <path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520"/>
+    <path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="none" stroke="#1a1a1a" stroke-width="3"/>
+    <ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/>
+    <circle class="eye-l" cx="22" cy="26" r="6" fill="#1a1a1a"/>
+    <circle class="eye-r" cx="38" cy="26" r="6"/>
+  </symbol>
+</svg>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <svg class="daruma" id="navDaruma"><use href="#daruma-sym"/></svg>
+      Sussurro
+    </a>
+    <div class="links">
+      <a class="hideable" href="#how">How it works</a>
+      <a class="hideable" href="#features">Features</a>
+      <a class="hideable" href="#privacy">Privacy</a>
+      <a class="btn red" href="#download">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow reveal"><span class="dot"></span> 100% on-device · no cloud</span>
+      <h1 class="title reveal">Speak, and it <span class="em">writes.</span><br>Nothing leaves<br>your machine.</h1>
+      <p class="lede reveal">Fully-local voice dictation for Windows, macOS and Linux. Hold a key, talk, release — clean text lands wherever your cursor is.</p>
+      <div class="cta-row reveal">
+        <a class="btn red" href="#download">Download free</a>
+        <a class="btn ghost" href="https://github.com/fullo/Sussurro" target="_blank" rel="noopener">View on GitHub →</a>
+      </div>
+      <p class="cta-note reveal">Hold <span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd></span> &nbsp;·&nbsp; <b>⌘⇧Space</b> on Mac &nbsp;·&nbsp; free &amp; open source</p>
+    </div>
+
+    <div class="demo reveal" aria-hidden="true">
+      <div class="demo-bar"><i></i><i></i><i></i><span class="lbl">any app · your cursor</span></div>
+      <div class="demo-body">
+        <div class="demo-row">
+          <span class="tag">You say</span>
+          <div class="demo-raw">um so like, can you uh send me the report by uh friday i think</div>
+        </div>
+        <div class="demo-arrow">↓</div>
+        <div class="demo-row">
+          <span class="tag">Sussurro types</span>
+          <div class="demo-clean" id="typed"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="band" id="privacy">
+  <div class="wrap">
+    <h2 class="reveal">Your voice is <span class="accent">yours.</span> It never touches a server.</h2>
+    <p class="reveal">Cloud dictation tools stream your microphone to someone else's computer. Sussurro captures, transcribes and cleans up your speech entirely on your device — with a local Whisper model and a local LLM. No account. No telemetry. It works on a plane.</p>
+    <div class="band-stats">
+      <div class="s reveal"><b>0</b><span>bytes of audio sent anywhere</span></div>
+      <div class="s reveal"><b>3</b><span>platforms — Windows, macOS, Linux</span></div>
+      <div class="s reveal"><b>∞</b><span>dictations, no subscription</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker">How it works</div>
+      <h2>Press. Speak. Release. Done.</h2>
+      <p>A local pipeline runs the moment you let go of the key — no round-trip, no waiting on a server.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal"><h3>Capture</h3><p>Your microphone is recorded and resampled to 16&nbsp;kHz — locally, only while the key is held.</p></div>
+      <div class="step reveal"><h3>Transcribe</h3><p>whisper.cpp on your GPU (Vulkan / Metal), or NVIDIA Parakeet on CPU — ~10× faster without a GPU.</p></div>
+      <div class="step reveal"><h3>Clean up</h3><p>A small local LLM removes fillers, fixes punctuation and matches the tone of the app you're in.</p></div>
+      <div class="step reveal"><h3>Inject</h3><p>The result is pasted where your cursor is — in any app — and your clipboard is restored.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="features" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker">Features</div>
+      <h2>More than transcription.</h2>
+      <p>Everything Wispr Flow does — plus a few things it can't, because Sussurro runs the model itself.</p>
+    </div>
+    <div class="features">
+      <div class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
+        <h3>AI cleanup, 4 levels</h3><p>None to High. Removes “um”, fixes grammar and punctuation — with graceful fallback to the raw transcript if the model is off.</p>
+      </div>
+      <div class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+        <h3>Translate as you speak</h3><p>Dictate in one language, get clean text in another — even with cleanup off. A local trick the cloud tools can't match.</p>
+      </div>
+      <div class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+        <h3>Per-app tone</h3><p>Casual with emoji in Slack, formal in email. Rules adapt the cleanup — and the output language — to the app in focus.</p>
+      </div>
+      <div class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6M12 4v16"/></svg>
+        <h3>Streaming typing</h3><p>Words appear while you talk — live, or sentence-by-sentence with each one cleaned before it's typed.</p>
+      </div>
+      <div class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M5 8l7-5 7 5M5 8v8l7 5 7-5V8"/></svg>
+        <h3>Two STT engines</h3><p>Whisper for any language on the GPU, or NVIDIA Parakeet — one CPU-optimized model that auto-detects 25 European languages.</p>
+      </div>
+      <div class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H5.2L4 17.5V4Z"/><path d="M8 9h8M8 12h5"/></svg>
+        <h3>Command mode</h3><p>Select any text, hold a key, and speak an instruction — “make it shorter”, “fix the grammar”. The LLM rewrites it in place.</p>
+      </div>
+      <div class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+        <h3>Searchable history</h3><p>Every dictation, stored locally as JSONL. Search, re-clean, translate, edit, export to Markdown or JSON. Retention is yours to set.</p>
+      </div>
+      <div class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20a8 8 0 1 0-8-8"/><path d="M4 12H2m2 0 3-3m-3 3 3 3M16 8l2-2m0 0-2-2m2 2h-5"/></svg>
+        <h3>Self-learning dictionary</h3><p>Fix a word once in your history and Sussurro remembers it — your names and jargon spelled right, automatically.</p>
+      </div>
+      <div class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m0 8v3a2 2 0 0 0 2 2h3m8-18h3a2 2 0 0 1 2 2v3m0 8v3a2 2 0 0 1-2 2h-3"/><path d="M9 12h6"/></svg>
+        <h3>Local API</h3><p>An opt-in loopback endpoint: clean text, transcribe files or query your history from any script. Off by default.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="compare" style="padding-top:0">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker">Sussurro vs. the cloud</div>
+      <h2>The private one is also the capable one.</h2>
+    </div>
+    <div class="cmp reveal">
+      <table>
+        <thead>
+          <tr><th>&nbsp;</th><th class="us">Sussurro</th><th>Typical cloud dictation</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="q">Where your audio goes</td><td class="us">Nowhere — stays on device</td><td>Uploaded to a server</td></tr>
+          <tr><td class="q">Works offline</td><td class="us"><span class="yes">Yes</span></td><td><span class="no">No</span></td></tr>
+          <tr><td class="q">Account required</td><td class="us"><span class="yes">None</span></td><td>Sign-up</td></tr>
+          <tr><td class="q">Price</td><td class="us"><span class="yes">Free &amp; open source</span></td><td>Subscription</td></tr>
+          <tr><td class="q">Translate while dictating</td><td class="us"><span class="yes">Yes, locally</span></td><td>Varies</td></tr>
+          <tr><td class="q">Runs in any app</td><td class="us"><span class="yes">Yes — paste injection</span></td><td>Yes</td></tr>
+          <tr><td class="q">You control the model</td><td class="us"><span class="yes">Yes — swap it out</span></td><td><span class="no">No</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="closer" id="download">
+  <div class="wrap">
+    <svg class="daruma reveal" id="closerDaruma" style="width:56px;height:64px;margin:0 auto 22px;display:block"><use href="#daruma-sym"/></svg>
+    <h2 class="reveal">Paint the eye. Start dictating.</h2>
+    <p class="reveal">Free, open source, and entirely yours. Download for your platform.</p>
+    <div class="cta-row reveal">
+      <a class="btn red" href="https://github.com/fullo/Sussurro/releases" target="_blank" rel="noopener">Windows</a>
+      <a class="btn" href="https://github.com/fullo/Sussurro/releases" target="_blank" rel="noopener">macOS (Apple Silicon)</a>
+      <a class="btn" href="https://github.com/fullo/Sussurro/releases" target="_blank" rel="noopener">Linux</a>
+    </div>
+    <p class="cta-note reveal" style="margin-top:22px">Needs a local <a href="https://ollama.com" target="_blank" rel="noopener" style="text-decoration:underline;text-underline-offset:3px">Ollama</a> for AI cleanup — or run it transcription-only.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="brand" style="font-size:18px">
+      <svg class="daruma" style="width:22px;height:25px"><use href="#daruma-sym"/></svg>
+      Sussurro
+    </div>
+    <div class="foot-links">
+      <a href="https://github.com/fullo/Sussurro">GitHub</a>
+      <a href="https://github.com/fullo/Sussurro/releases">Releases</a>
+      <a href="https://github.com/fullo/Sussurro/blob/main/README.md">Docs</a>
+      <a href="https://ollama.com">Ollama</a>
+    </div>
+    <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+  </div>
+</footer>
+
+<script>
+  // Scroll reveal
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e, i) => {
+      if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach((el, i) => {
+    el.style.transitionDelay = (Math.min(i % 6, 5) * 60) + 'ms';
+    io.observe(el);
+  });
+
+  // Daruma "wakes up" (paints the second eye) when the closer scrolls in
+  const closerEye = document.getElementById('closerDaruma');
+  const navEye = document.getElementById('navDaruma');
+  new IntersectionObserver((es) => {
+    es.forEach(e => { if (e.isIntersecting) { closerEye.classList.add('awake'); navEye.classList.add('awake'); } });
+  }, { threshold: 0.6 }).observe(document.getElementById('download'));
+
+  // Typewriter demo (respects reduced motion)
+  const target = document.getElementById('typed');
+  const text = "Could you send me the report by Friday?";
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    target.innerHTML = text + '<span class="cursor"></span>';
+  } else {
+    let i = 0;
+    const type = () => {
+      target.innerHTML = text.slice(0, i) + '<span class="cursor"></span>';
+      if (i++ < text.length) setTimeout(type, 42 + Math.random() * 55);
+    };
+    setTimeout(type, 700);
+  }
+</script>
+</body>
+</html>
