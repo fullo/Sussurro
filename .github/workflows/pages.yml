@@ -1,0 +1,40 @@
+# Publishes the static marketing site (site/) to GitHub Pages so it is served
+# with site/ as the site root — i.e. https://fullo.github.io/Sussurro/ ,
+# /blog/, /sitemap.xml — matching the canonical URLs baked into the SEO tags.
+#
+# Requires: repo public (or GitHub Pro) AND Pages enabled with "GitHub Actions"
+# as the source (Settings → Pages). Until then this is inert. Per the roadmap,
+# the repo goes public at v0.5.0 — enable Pages then and this deploys on every
+# push that touches site/.
+name: Deploy site to Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel an in-progress deploy; queue the next one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
