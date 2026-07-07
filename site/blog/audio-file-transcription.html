@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Transcribe audio files — Sussurro Blog</title>
+<meta name="description" content="Run a recording through the same STT + cleanup pipeline as live dictation." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Transcribe audio files</h1>
+    <p class="dek">Not everything is live. Drop in a recording and Sussurro runs it through the exact same speech-to-text and cleanup as your dictation.</p>
+    <div class="meta">3 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+    <p>Voice memos, an interview, a meeting recording — Sussurro can transcribe files, not just your microphone. It's the same pipeline, so the output matches the quality and style you already get from live dictation.</p>
+
+    <h2>Supported formats</h2>
+    <p><code>wav</code>, <code>mp3</code>, <code>m4a</code>, <code>flac</code>, <code>ogg</code>.</p>
+
+    <h2>How to use it</h2>
+    <ol class="figure-steps">
+      <li>Open the <strong>Audio file</strong> card.</li>
+      <li>Choose a recording.</li>
+      <li>Sussurro transcribes it with your chosen engine and applies your cleanup settings.</li>
+    </ol>
+
+    <div class="callout">
+      <span class="k">Same engines, same privacy</span>
+      <p>File transcription uses <a href="whisper-vs-parakeet.html">Whisper or Parakeet</a> exactly like live dictation — and stays entirely on your machine. Your recordings are never uploaded.</p>
+    </div>
+
+    <h2>Prefer scripting?</h2>
+    <p>The <a href="local-api.html">local API</a> exposes the same capability at <code>/transcribe</code>, so you can batch-process a whole folder of recordings from a script.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="local-api.html">The local API</a></li>
+        <li><a href="whisper-vs-parakeet.html">Whisper vs Parakeet</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

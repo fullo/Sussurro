@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI cleanup: the four levels — Sussurro Blog</title>
+<meta name="description" content="None, Light, Medium, High — what each does to your words, and when to use it." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>AI cleanup: the four levels</h1>
+    <p class="dek">Raw speech is messy — fillers, false starts, no punctuation. Sussurro's cleanup fixes that with a local LLM, at whatever intensity you choose.</p>
+    <div class="meta">5 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+    <p>After your words are transcribed, Sussurro can pass them through a local language model to tidy them up before they're pasted. You control how much it does with a single setting in <strong>Settings → Cleanup</strong>.</p>
+
+    <h2>The four levels</h2>
+    <h3>None</h3>
+    <p>No LLM at all. You get the raw transcript exactly as the speech engine heard it. Fastest, fully deterministic, and the right choice when you want a verbatim record — or when you're not running a model.</p>
+
+    <h3>Light</h3>
+    <p>The gentle touch: remove filler words (“um”, “uh”, “like”), fix obvious false starts, add punctuation and capitalization. Your wording and tone are left alone. This is the everyday default — it makes speech read like writing without rewriting it.</p>
+
+    <h3>Medium</h3>
+    <p>Everything Light does, plus light editing for flow: smoothing clumsy phrasing and tightening run-on sentences, while keeping your meaning and voice.</p>
+
+    <h3>High</h3>
+    <p>The most assertive: clean, well-structured prose. Good for turning a rambling thought into a crisp paragraph — as long as you're comfortable with the model reshaping sentences.</p>
+
+    <div class="callout">
+      <span class="k">Always safe</span>
+      <p>Cleanup <strong>never blocks you</strong>. If the model is offline, times out, or returns something unrelated to what you said, Sussurro falls back to the raw transcript automatically. You never lose a dictation to a flaky model.</p>
+    </div>
+
+    <h2>Make it yours</h2>
+    <p>Under <strong>Cleanup → Advanced</strong> you can override the built-in instructions for each level — write your own prompt for Light/Medium/High. Leave a field empty to use the default (shown as a placeholder). This is how you enforce house style, keep certain words, or ban em-dashes forever.</p>
+
+    <h2>Tone on top</h2>
+    <p>Cleanup is also where <a href="per-app-tone.html">per-app tone styles</a> and <a href="translate-as-you-speak.html">translation</a> plug in — the same step can make your Slack casual and your email formal, or output a different language entirely.</p>
+
+    <p>Not sure which model powers all this? See <a href="choosing-ollama-model.html">Choosing the right Ollama model</a>.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="choosing-ollama-model.html">Choosing the right Ollama model</a></li>
+        <li><a href="per-app-tone.html">Per-app tone styles</a></li>
+        <li><a href="translate-as-you-speak.html">Translate as you speak</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

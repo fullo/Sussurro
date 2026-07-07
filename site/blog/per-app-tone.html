@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Per-app tone styles — Sussurro Blog</title>
+<meta name="description" content="Casual in Slack, formal in email: rules that adapt cleanup to the app in focus." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Per-app tone styles</h1>
+    <p class="dek">The same sentence should sound different in a Slack thread and a client email. Sussurro notices which app you're dictating into and adapts the cleanup to match.</p>
+    <div class="meta">5 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+    <p>You don't write the same way everywhere. Chat is loose and quick; email is measured; a commit message is terse. Per-app tone styles let you encode that once and forget it — Sussurro detects the focused app the moment you release the trigger and folds a tone instruction into the cleanup prompt.</p>
+
+    <h2>How rules work</h2>
+    <p>A rule maps an app to a tone. For example:</p>
+    <ul>
+      <li><code>slack</code> → “casual, emojis welcome, keep it short”</li>
+      <li><code>mail</code> → “polite and professional, full sentences”</li>
+      <li><code>code</code> → “terse, no fluff”</li>
+    </ul>
+    <p>When you dictate into a matching app, that instruction shapes how the LLM cleans your words. Everywhere else, your normal cleanup applies.</p>
+
+    <h2>Force a language per app</h2>
+    <p>Each rule can also set its own output language, overriding the global <a href="translate-as-you-speak.html">Translate to</a>. Dictate in Italian and have Slack come out in English while WhatsApp stays Italian — no toggling settings between messages.</p>
+
+    <div class="callout">
+      <span class="k">Detected at release</span>
+      <p>The app in focus is read at the instant you finish speaking — so if you trigger dictation, switch windows, then release, the tone matches where the text will actually land.</p>
+    </div>
+
+    <h2>Setting them up</h2>
+    <ol class="figure-steps">
+      <li>Go to the <strong>Personalization</strong> section.</li>
+      <li>Add a rule: the app identifier plus a short tone description (and optionally a forced language).</li>
+      <li>Dictate into that app and watch the cleanup adapt.</li>
+    </ol>
+
+    <p>Tone rules travel with your <a href="portable-config.html">portable config</a>, so your whole set moves to a new machine in one JSON file.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="ai-cleanup-levels.html">AI cleanup: the four levels</a></li>
+        <li><a href="translate-as-you-speak.html">Translate as you speak</a></li>
+        <li><a href="portable-config.html">Portable config</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

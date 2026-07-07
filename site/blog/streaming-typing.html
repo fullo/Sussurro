@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Streaming typing — Sussurro Blog</title>
+<meta name="description" content="Watch words land as you talk — live, or sentence-by-sentence with cleanup." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><span class="mark"></span> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Streaming typing</h1>
+    <p class="dek">Instead of waiting for you to finish, Sussurro can type into the app while you're still speaking — so the text appears to flow from your mouth.</p>
+    <div class="meta">5 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+    <p>By default, dictation pastes its result when you release the key. Streaming typing changes that: words are typed into the focused app <em>as you speak</em>, which feels dramatically more immediate. It comes in two flavours, depending on whether cleanup is on.</p>
+
+    <h2>Word by word (Cleanup: None)</h2>
+    <p>With cleanup off, Sussurro types the transcript almost as fast as it hears it, holding back only the last couple of words (which the speech engine may still revise). It's the lowest-latency mode — great for capturing raw notes quickly.</p>
+
+    <h2>Sentence by sentence (cleanup on)</h2>
+    <p>With cleanup enabled, typing waits for a natural boundary: each time you complete a sentence, that sentence is cleaned by the LLM and then typed. You get polished text appearing in near-real-time, one sentence behind your voice. A final pass tidies the tail when you release.</p>
+
+    <div class="callout">
+      <span class="k">Now stable</span>
+      <p>Streaming with cleanup was experimental in early builds; since v0.4.0 it's a stable, everyday feature. Toggle it in Settings.</p>
+    </div>
+
+    <h2>When to use which</h2>
+    <ul>
+      <li><strong>Fast capture, edit later:</strong> streaming + Cleanup None.</li>
+      <li><strong>Polished text live:</strong> streaming + Light/Medium cleanup.</li>
+      <li><strong>Maximum accuracy, don't care about live:</strong> turn streaming off — the text lands in one clean block on release, from the full-quality final pass.</li>
+    </ul>
+
+    <p>Streaming pairs naturally with the <a href="../index.html#how">on-screen overlay</a>, which shows a rolling preview of what's being recognized. Note that the final pasted text always comes from the full-quality pass, so streaming never costs you accuracy on the finished result.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="ai-cleanup-levels.html">AI cleanup: the four levels</a></li>
+        <li><a href="choosing-ollama-model.html">Choosing the right Ollama model</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><span class="mark"></span> Sussurro</a>
+  <div class="foot-links">
+    <a href="https://github.com/fullo/Sussurro">GitHub</a>
+    <a href="index.html">Blog</a>
+    <a href="https://github.com/fullo/Sussurro/releases">Download</a>
+  </div>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>
