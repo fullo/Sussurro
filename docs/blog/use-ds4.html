@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Use DS4 (or any OpenAI-compatible server) with Sussurro — Sussurro Blog</title>
+<meta name="description" content="Sussurro 0.6.0 can drive cleanup through the OpenAI-compatible API, so DS4, llama.cpp-server, LM Studio — or Ollama's own /v1 — can run it." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+<!-- seo:start -->
+<link rel="canonical" href="https://fullo.github.io/Sussurro/blog/use-ds4.html" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#fafaf8" />
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+<meta property="og:site_name" content="Sussurro" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Use DS4 (or any OpenAI-compatible server) with Sussurro — Sussurro Blog" />
+<meta property="og:description" content="Sussurro 0.6.0 can drive cleanup through the OpenAI-compatible API, so DS4, llama.cpp-server, LM Studio — or Ollama's own /v1 — can run it." />
+<meta property="og:url" content="https://fullo.github.io/Sussurro/blog/use-ds4.html" />
+<meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:published_time" content="2026-07-07" />
+<meta property="article:author" content="DarumaHQ" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Use DS4 (or any OpenAI-compatible server) with Sussurro — Sussurro Blog" />
+<meta name="twitter:description" content="Sussurro 0.6.0 can drive cleanup through the OpenAI-compatible API, so DS4, llama.cpp-server, LM Studio — or Ollama's own /v1 — can run it." />
+<meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Use DS4 (or any OpenAI-compatible server) with Sussurro","description":"Sussurro 0.6.0 can drive cleanup through the OpenAI-compatible API, so DS4, llama.cpp-server, LM Studio — or Ollama's own /v1 — can run it.","url":"https://fullo.github.io/Sussurro/blog/use-ds4.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-07-07","dateModified":"2026-07-07","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/use-ds4.html"}</script>
+<!-- seo:end -->
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<main id="main">
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-setup">Setup</span>
+    <h1>Use DS4 — or any OpenAI-compatible server — with Sussurro</h1>
+    <p class="dek">Since 0.6.0, Sussurro's cleanup can talk the OpenAI-compatible API, not just Ollama's native one. That opens the door to any local runtime that speaks <code>/v1/chat/completions</code> — including antirez's DS4.</p>
+    <div class="meta">5 min read · Setup guide</div>
+  </header>
+
+  <div class="prose">
+    <p>Sussurro cleans up your dictation with a local LLM. Until 0.6.0 that model had to be served by <a href="centralized-ollama.html">Ollama</a>, through Ollama's own API. Now there's a second option: the <strong>OpenAI-compatible</strong> API — the de-facto standard <code>/v1/chat/completions</code> that most local runtimes expose. Point Sussurro at any of them and it drives cleanup and <a href="command-mode.html">command mode</a> exactly the same way.</p>
+
+    <h2>What is DS4?</h2>
+    <p><strong>DS4</strong> (DwarfStar 4) is Salvatore Sanfilippo's (antirez) local inference engine, written in C to run <strong>DeepSeek V4</strong> — a frontier-class model — on your own machine, with an OpenAI/Anthropic-compatible server built in. It's a remarkable piece of engineering.</p>
+    <div class="callout">
+      <span class="k">Reality check</span>
+      <p>DS4 runs a single 284B-parameter model and wants <strong>96–128 GB of RAM</strong> (an M-series Mac with 128 GB, or a big CUDA/ROCm box). It is <em>not</em> a laptop model, and it's massive overkill for the small "remove the ums, fix the punctuation" job cleanup actually needs. The point of 0.6.0 isn't "use DS4 for everything" — it's that Sussurro no longer cares <em>which</em> server runs the model, so you can point it at whatever you already run.</p>
+    </div>
+
+    <h2>Point Sussurro at it</h2>
+    <ol class="figure-steps">
+      <li>Start your OpenAI-compatible server (DS4 in server mode, or another — see below).</li>
+      <li>In Sussurro, open <strong>Settings → Cleanup</strong> and set <strong>Cleanup backend</strong> to <strong>OpenAI-compatible</strong>.</li>
+      <li>Set <strong>Server</strong> to the server's base URL — e.g. <code>http://localhost:8080</code>. A trailing <code>/v1</code> is optional; Sussurro normalizes it.</li>
+      <li>Pick the <strong>model</strong> (the list loads from the server's <code>/v1/models</code>; type it by hand if the server doesn't expose one).</li>
+      <li>If your server requires a token, fill in <strong>API key</strong> — most local servers ignore it, so leave it empty otherwise.</li>
+    </ol>
+    <p>That's it. Dictate as usual; the transcript is cleaned by whatever server you pointed at, with the same graceful fallback to the raw transcript if it's unreachable.</p>
+
+    <h2>Not just DS4</h2>
+    <p>The same OpenAI-compatible setting works with any server that speaks <code>/v1</code>:</p>
+    <ul>
+      <li><strong>llama.cpp-server</strong> — the reference lightweight server; run any GGUF model.</li>
+      <li><strong>LM Studio</strong> — its local server exposes an OpenAI-compatible endpoint.</li>
+      <li><strong>vLLM</strong> and other inference servers.</li>
+      <li><strong>Ollama itself</strong> — it also serves <code>/v1</code>, so the easiest way to try the new backend is to keep Server at <code>http://localhost:11434</code> and just switch the backend to OpenAI-compatible. It should clean identically to native mode.</li>
+    </ul>
+
+    <div class="callout">
+      <span class="k">Requires 0.6.0+</span>
+      <p>The OpenAI-compatible backend arrived in Sussurro 0.6.0. Ollama's native API remains the default — nothing changes unless you switch it. Grab the latest from the <a href="../index.html#download">download page</a> or the in-app updater.</p>
+    </div>
+
+    <p>Which model should you actually pick for cleanup? A small instruct model is plenty — see <a href="choosing-ollama-model.html">choosing the right model</a>.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="choosing-ollama-model.html">Choosing the right model</a></li>
+        <li><a href="centralized-ollama.html">Run the cleanup server on another machine</a></li>
+        <li><a href="cleanup-hallucination-guard.html">How cleanup avoids hallucinations</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+</main>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <ul class="foot-links">
+    <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
+    <li><a href="index.html">Blog</a></li>
+    <li><a href="https://github.com/fullo/Sussurro/releases">Download</a></li>
+  </ul>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>
