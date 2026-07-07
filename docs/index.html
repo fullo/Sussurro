@@ -53,9 +53,23 @@
   .accent { color: var(--red); }
   .serif-it { font-family: var(--display); font-style: italic; font-weight: 400; }
 
+  /* ---------- skip link ---------- */
+  .skip-link {
+    position: absolute; left: -9999px; top: 0; z-index: 100;
+    background: var(--ink); color: #fff; padding: 10px 18px;
+    border-radius: 0 0 10px 0; font-weight: 600; font-size: 15px; text-decoration: none;
+  }
+  .skip-link:focus { left: 0; }
+
+  /* anchor targets clear the 66px sticky nav */
+  #top, #how, #features, #privacy, #download { scroll-margin-top: 76px; }
+
   /* ---------- reveal ---------- */
-  .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1); }
-  .reveal.in { opacity: 1; transform: none; }
+  /* Visible by default; only hidden-then-revealed when JS is present, so the
+     hero never stays invisible if the IntersectionObserver never fires. */
+  .reveal { transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1); }
+  html.js .reveal { opacity: 0; transform: translateY(18px); }
+  html.js .reveal.in { opacity: 1; transform: none; }
 
   /* ---------- daruma mark ---------- */
   .daruma { width: 30px; height: 34px; flex: none; }
@@ -154,16 +168,16 @@
   .sec-head p { color: var(--text-light); font-size: 18px; margin-top: 16px; }
 
   /* steps */
-  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; counter-reset: step; }
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; counter-reset: step; list-style: none; }
   @media (max-width: 860px){ .steps { grid-template-columns: repeat(2,1fr); } }
   @media (max-width: 480px){ .steps { grid-template-columns: 1fr; } }
   .step { position: relative; padding-top: 20px; border-top: 2px solid var(--border-strong); }
-  .step::before { counter-increment: step; content: "0" counter(step); font-family: var(--display); font-size: 15px; color: var(--red); font-weight: 600; }
+  .step::before { counter-increment: step; content: "0" counter(step); font-family: var(--display); font-size: 15px; color: var(--red-deep); font-weight: 600; }
   .step h3 { font-size: 20px; margin: 8px 0 8px; }
   .step p { font-size: 15px; color: var(--text-light); }
 
   /* feature grid */
-  .features { display: grid; grid-template-columns: repeat(3,1fr); gap: 2px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  .features { display: grid; grid-template-columns: repeat(3,1fr); gap: 2px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; list-style: none; }
   @media (max-width: 840px){ .features { grid-template-columns: repeat(2,1fr); } }
   @media (max-width: 540px){ .features { grid-template-columns: 1fr; } }
   .feat { background: var(--paper); padding: 30px 26px; transition: background .25s; }
@@ -178,10 +192,11 @@
   .cmp th, .cmp td { text-align: left; padding: 17px 22px; font-size: 15.5px; border-bottom: 1px solid var(--border); }
   .cmp thead th { font-family: var(--display); font-size: 17px; font-weight: 600; color: var(--ink); background: var(--paper-alt); }
   .cmp thead th.us { color: var(--red-deep); }
-  .cmp td.q { color: var(--text-light); }
+  .cmp .q { color: var(--text-light); }
+  .cmp th.q { font-weight: normal; text-align: left; }
   .cmp td.us { font-weight: 600; color: var(--ink); }
   .cmp tr:last-child td { border-bottom: none; }
-  .cmp .yes { color: var(--red); font-weight: 700; }
+  .cmp .yes { color: var(--red-deep); font-weight: 700; }
   .cmp .no { color: var(--border-strong); }
 
   /* closer */
@@ -195,7 +210,14 @@
   footer .wrap { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: space-between; }
   footer a { color: var(--text-light); text-decoration: underline; text-underline-offset: 3px; }
   footer a:hover { color: var(--ink); }
-  .foot-links { display: flex; gap: 22px; flex-wrap: wrap; }
+  .foot-links { display: flex; gap: 22px; flex-wrap: wrap; list-style: none; margin: 0; }
+
+  /* ---------- reduced motion ---------- */
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+    .eyebrow .dot, .demo-clean .cursor { animation: none !important; }
+  }
 </style>
 <!-- seo:start -->
 <link rel="canonical" href="https://fullo.github.io/Sussurro/" />
@@ -216,8 +238,10 @@
 <meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Sussurro","operatingSystem":"Windows, macOS, Linux","applicationCategory":"UtilitiesApplication","description":"Fully-local voice dictation for Windows, macOS and Linux. Hold a key, speak, release — cleaned-up text appears wherever your cursor is. No cloud, no account, no telemetry.","url":"https://fullo.github.io/Sussurro/","image":"https://fullo.github.io/Sussurro/assets/og.png","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"inLanguage":"en"}</script>
 <!-- seo:end -->
+<script>document.documentElement.classList.add('js');</script>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 
 <!-- reusable daruma mark -->
 <svg width="0" height="0" style="position:absolute">
@@ -246,6 +270,7 @@
   </div>
 </nav>
 
+<main id="main">
 <header class="hero" id="top">
   <div class="wrap hero-grid">
     <div>
@@ -295,12 +320,12 @@
       <h2>Press. Speak. Release. Done.</h2>
       <p>A local pipeline runs the moment you let go of the key — no round-trip, no waiting on a server.</p>
     </div>
-    <div class="steps">
-      <div class="step reveal"><h3>Capture</h3><p>Your microphone is recorded and resampled to 16&nbsp;kHz — locally, only while the key is held.</p></div>
-      <div class="step reveal"><h3>Transcribe</h3><p>whisper.cpp on your GPU (Vulkan / Metal), or NVIDIA Parakeet on CPU — ~10× faster without a GPU.</p></div>
-      <div class="step reveal"><h3>Clean up</h3><p>A small local LLM removes fillers, fixes punctuation and matches the tone of the app you're in.</p></div>
-      <div class="step reveal"><h3>Inject</h3><p>The result is pasted where your cursor is — in any app — and your clipboard is restored.</p></div>
-    </div>
+    <ol class="steps">
+      <li class="step reveal"><h3>Capture</h3><p>Your microphone is recorded and resampled to 16&nbsp;kHz — locally, only while the key is held.</p></li>
+      <li class="step reveal"><h3>Transcribe</h3><p>whisper.cpp on your GPU (Vulkan / Metal), or NVIDIA Parakeet on CPU — ~10× faster without a GPU.</p></li>
+      <li class="step reveal"><h3>Clean up</h3><p>A small local LLM removes fillers, fixes punctuation and matches the tone of the app you're in.</p></li>
+      <li class="step reveal"><h3>Inject</h3><p>The result is pasted where your cursor is — in any app — and your clipboard is restored.</p></li>
+    </ol>
   </div>
 </section>
 
@@ -311,44 +336,44 @@
       <h2>More than transcription.</h2>
       <p>Everything Wispr Flow does — plus a few things it can't, because Sussurro runs the model itself.</p>
     </div>
-    <div class="features">
-      <div class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
+    <ul class="features">
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
         <h3>AI cleanup, 4 levels</h3><p>None to High. Removes “um”, fixes grammar and punctuation — with graceful fallback to the raw transcript if the model is off.</p>
-      </div>
-      <div class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
         <h3>Translate as you speak</h3><p>Dictate in one language, get clean text in another — even with cleanup off. A local trick the cloud tools can't match.</p>
-      </div>
-      <div class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
         <h3>Per-app tone</h3><p>Casual with emoji in Slack, formal in email. Rules adapt the cleanup — and the output language — to the app in focus.</p>
-      </div>
-      <div class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6M12 4v16"/></svg>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6M12 4v16"/></svg>
         <h3>Streaming typing</h3><p>Words appear while you talk — live, or sentence-by-sentence with each one cleaned before it's typed.</p>
-      </div>
-      <div class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M5 8l7-5 7 5M5 8v8l7 5 7-5V8"/></svg>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v18M5 8l7-5 7 5M5 8v8l7 5 7-5V8"/></svg>
         <h3>Two STT engines</h3><p>Whisper for any language on the GPU, or NVIDIA Parakeet — one CPU-optimized model that auto-detects 25 European languages.</p>
-      </div>
-      <div class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H5.2L4 17.5V4Z"/><path d="M8 9h8M8 12h5"/></svg>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h16v12H5.2L4 17.5V4Z"/><path d="M8 9h8M8 12h5"/></svg>
         <h3>Command mode</h3><p>Select any text, hold a key, and speak an instruction — “make it shorter”, “fix the grammar”. The LLM rewrites it in place.</p>
-      </div>
-      <div class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
         <h3>Searchable history</h3><p>Every dictation, stored locally as JSONL. Search, re-clean, translate, edit, export to Markdown or JSON. Retention is yours to set.</p>
-      </div>
-      <div class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20a8 8 0 1 0-8-8"/><path d="M4 12H2m2 0 3-3m-3 3 3 3M16 8l2-2m0 0-2-2m2 2h-5"/></svg>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20a8 8 0 1 0-8-8"/><path d="M4 12H2m2 0 3-3m-3 3 3 3M16 8l2-2m0 0-2-2m2 2h-5"/></svg>
         <h3>Self-learning dictionary</h3><p>Fix a word once in your history and Sussurro remembers it — your names and jargon spelled right, automatically.</p>
-      </div>
-      <div class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m0 8v3a2 2 0 0 0 2 2h3m8-18h3a2 2 0 0 1 2 2v3m0 8v3a2 2 0 0 1-2 2h-3"/><path d="M9 12h6"/></svg>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m0 8v3a2 2 0 0 0 2 2h3m8-18h3a2 2 0 0 1 2 2v3m0 8v3a2 2 0 0 1-2 2h-3"/><path d="M9 12h6"/></svg>
         <h3>Local API</h3><p>An opt-in loopback endpoint: clean text, transcribe files or query your history from any script. Off by default.</p>
-      </div>
-    </div>
+      </li>
+    </ul>
   </div>
 </section>
 
@@ -364,13 +389,13 @@
           <tr><th>&nbsp;</th><th class="us">Sussurro</th><th>Typical cloud dictation</th></tr>
         </thead>
         <tbody>
-          <tr><td class="q">Where your audio goes</td><td class="us">Nowhere — stays on device</td><td>Uploaded to a server</td></tr>
-          <tr><td class="q">Works offline</td><td class="us"><span class="yes">Yes</span></td><td><span class="no">No</span></td></tr>
-          <tr><td class="q">Account required</td><td class="us"><span class="yes">None</span></td><td>Sign-up</td></tr>
-          <tr><td class="q">Price</td><td class="us"><span class="yes">Free &amp; open source</span></td><td>Subscription</td></tr>
-          <tr><td class="q">Translate while dictating</td><td class="us"><span class="yes">Yes, locally</span></td><td>Varies</td></tr>
-          <tr><td class="q">Runs in any app</td><td class="us"><span class="yes">Yes — paste injection</span></td><td>Yes</td></tr>
-          <tr><td class="q">You control the model</td><td class="us"><span class="yes">Yes — swap it out</span></td><td><span class="no">No</span></td></tr>
+          <tr><th scope="row" class="q">Where your audio goes</th><td class="us">Nowhere — stays on device</td><td>Uploaded to a server</td></tr>
+          <tr><th scope="row" class="q">Works offline</th><td class="us"><span class="yes">Yes</span></td><td><span class="no">No</span></td></tr>
+          <tr><th scope="row" class="q">Account required</th><td class="us"><span class="yes">None</span></td><td>Sign-up</td></tr>
+          <tr><th scope="row" class="q">Price</th><td class="us"><span class="yes">Free &amp; open source</span></td><td>Subscription</td></tr>
+          <tr><th scope="row" class="q">Translate while dictating</th><td class="us"><span class="yes">Yes, locally</span></td><td>Varies</td></tr>
+          <tr><th scope="row" class="q">Runs in any app</th><td class="us"><span class="yes">Yes — paste injection</span></td><td>Yes</td></tr>
+          <tr><th scope="row" class="q">You control the model</th><td class="us"><span class="yes">Yes — swap it out</span></td><td><span class="no">No</span></td></tr>
         </tbody>
       </table>
     </div>
@@ -390,6 +415,7 @@
     <p class="cta-note reveal" style="margin-top:22px">Needs a local <a href="https://ollama.com" target="_blank" rel="noopener" style="text-decoration:underline;text-underline-offset:3px">Ollama</a> for AI cleanup — or run it transcription-only.</p>
   </div>
 </section>
+</main>
 
 <footer>
   <div class="wrap">
@@ -397,12 +423,12 @@
       <svg class="daruma" style="width:22px;height:25px"><use href="#daruma-sym"/></svg>
       Sussurro
     </div>
-    <div class="foot-links">
-      <a href="https://github.com/fullo/Sussurro">GitHub</a>
-      <a href="https://github.com/fullo/Sussurro/releases">Releases</a>
-      <a href="https://github.com/fullo/Sussurro/blob/main/README.md">Docs</a>
-      <a href="https://ollama.com">Ollama</a>
-    </div>
+    <ul class="foot-links">
+      <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
+      <li><a href="https://github.com/fullo/Sussurro/releases">Releases</a></li>
+      <li><a href="https://github.com/fullo/Sussurro/blob/main/README.md">Docs</a></li>
+      <li><a href="https://ollama.com">Ollama</a></li>
+    </ul>
     <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
   </div>
 </footer>

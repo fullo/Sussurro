@@ -30,6 +30,7 @@
 <!-- seo:end -->
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
 
 <nav>
   <div class="wrap">
@@ -47,7 +48,7 @@
   <div class="wrap">
     <h1>The Sussurro blog</h1>
     <p>Setup guides, model advice and a deep-dive on every feature — how to get the most out of fully-local voice dictation.</p>
-    <div class="filters" id="filters">
+    <div class="filters" id="filters" role="group" aria-label="Filter posts by category">
       <button class="active" data-cat="all">All</button>
       <button data-cat="setup">Setup</button>
       <button data-cat="concept">Concepts</button>
@@ -56,223 +57,223 @@
   </div>
 </header>
 
-<main class="wrap">
-  <div class="posts" id="posts">
+<main class="wrap" id="main">
+  <ul class="posts" id="posts">
 
-    <a class="card" data-cat="setup" href="centralized-ollama.html">
+    <li><a class="card" data-cat="setup" href="centralized-ollama.html">
       <span class="chip cat-setup">Setup</span>
       <h2>Run Ollama on a separate machine</h2>
       <p>Point every device at one shared Ollama so you install and update the cleanup model in a single place.</p>
       <span class="meta">6 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="setup" href="choosing-ollama-model.html">
+    <li><a class="card" data-cat="setup" href="choosing-ollama-model.html">
       <span class="chip cat-setup">Setup</span>
       <h2>Choosing the right Ollama model</h2>
       <p>Speed, quality and RAM: how to pick the cleanup model that fits your machine.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="concept" href="whisper-vs-parakeet.html">
+    <li><a class="card" data-cat="concept" href="whisper-vs-parakeet.html">
       <span class="chip cat-concept">Concept</span>
       <h2>Whisper vs Parakeet: choosing your STT engine</h2>
       <p>Two transcription engines, two philosophies. When each one wins.</p>
       <span class="meta">6 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="setup" href="building-from-source.html">
+    <li><a class="card" data-cat="setup" href="building-from-source.html">
       <span class="chip cat-setup">Setup</span>
       <h2>Building Sussurro on Windows, macOS &amp; Linux</h2>
       <p>The toolchain, the GPU flags and the per-OS gotchas, in one place.</p>
       <span class="meta">7 min read</span>
-    </a>
+    </a></li>
 
 
-    <a class="card" data-cat="setup" href="macos-signing-gatekeeper.html">
+    <li><a class="card" data-cat="setup" href="macos-signing-gatekeeper.html">
       <span class="chip cat-setup">Setup</span>
       <h2>Opening Sussurro on macOS (Gatekeeper &amp; signing)</h2>
       <p>Why macOS blocks the first launch, and the safe ways to get past it.</p>
       <span class="meta">4 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="setup" href="first-run.html">
+    <li><a class="card" data-cat="setup" href="first-run.html">
       <span class="chip cat-setup">Setup</span>
       <h2>First run: from install to your first dictation</h2>
       <p>Install, clear the Setup banner, pick a speech model, set your shortcut, and make your first dictation — with or without Ollama running.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="setup" href="shortcuts-and-triggers.html">
+    <li><a class="card" data-cat="setup" href="shortcuts-and-triggers.html">
       <span class="chip cat-setup">Setup</span>
       <h2>Shortcuts &amp; trigger modes: push-to-talk vs toggle</h2>
       <p>Push-to-talk or toggle, one shortcut for dictation and a separate one for command mode — how the click-to-record widget and the header Dictate button fit together.</p>
       <span class="meta">4 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="setup" href="where-data-lives.html">
+    <li><a class="card" data-cat="setup" href="where-data-lives.html">
       <span class="chip cat-setup">Setup</span>
       <h2>Where your data lives (and moving the models folder)</h2>
       <p>A map of every local file Sussurro writes — models, history, settings, dictionary — and how to move the models folder to a bigger disk.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="setup" href="linux-injection.html">
+    <li><a class="card" data-cat="setup" href="linux-injection.html">
       <span class="chip cat-setup">Setup</span>
       <h2>Text injection on Linux: X11 and Wayland</h2>
       <p>How Sussurro types your dictation into whatever app has focus on Linux — the RemoteDesktop portal, the native tool fallbacks, and what to do when a paste silently fails.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="concept" href="how-the-pipeline-works.html">
+    <li><a class="card" data-cat="concept" href="how-the-pipeline-works.html">
       <span class="chip cat-concept">Concept</span>
       <h2>How the pipeline works: from keypress to pasted text</h2>
       <p>A tour of the six on-device stages between holding a hotkey and text landing in your cursor.</p>
       <span class="meta">6 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="concept" href="why-local-first.html">
+    <li><a class="card" data-cat="concept" href="why-local-first.html">
       <span class="chip cat-concept">Concept</span>
       <h2>Why local-first: privacy and latency vs the cloud</h2>
       <p>Cloud dictation sends your voice to a server and back; Sussurro keeps every step on your machine — here's the trade that makes, honestly.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="concept" href="cleanup-hallucination-guard.html">
+    <li><a class="card" data-cat="concept" href="cleanup-hallucination-guard.html">
       <span class="chip cat-concept">Concept</span>
       <h2>How cleanup avoids hallucinations</h2>
       <p>Small local models sometimes answer a dictation instead of cleaning it — here's the word-overlap guard and bilingual prompt that catch it.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="concept" href="clipboard-injection.html">
+    <li><a class="card" data-cat="concept" href="clipboard-injection.html">
       <span class="chip cat-concept">Concept</span>
       <h2>Clipboard-paste injection, explained</h2>
       <p>Sussurro doesn't integrate with any app's API — it puts text on the clipboard, pastes it, and restores what was there before.</p>
       <span class="meta">5 min read</span>
-    </a>
-    <a class="card" data-cat="feature" href="ai-cleanup-levels.html">
+    </a></li>
+    <li><a class="card" data-cat="feature" href="ai-cleanup-levels.html">
       <span class="chip cat-feature">Feature</span>
       <h2>AI cleanup: the four levels</h2>
       <p>None, Light, Medium, High — what each does to your words, and when to use it.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="translate-as-you-speak.html">
+    <li><a class="card" data-cat="feature" href="translate-as-you-speak.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Translate as you speak</h2>
       <p>Dictate in one language, paste in another — entirely offline.</p>
       <span class="meta">4 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="per-app-tone.html">
+    <li><a class="card" data-cat="feature" href="per-app-tone.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Per-app tone styles</h2>
       <p>Casual in Slack, formal in email: rules that adapt cleanup to the app in focus.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="streaming-typing.html">
+    <li><a class="card" data-cat="feature" href="streaming-typing.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Streaming typing</h2>
       <p>Watch words land as you talk — live, or sentence-by-sentence with cleanup.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="command-mode.html">
+    <li><a class="card" data-cat="feature" href="command-mode.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Command mode: edit text with your voice</h2>
       <p>Select text, speak an instruction, and let the LLM rewrite it in place.</p>
       <span class="meta">4 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="voice-snippets.html">
+    <li><a class="card" data-cat="feature" href="voice-snippets.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Voice snippets</h2>
       <p>Say a short cue, paste a long block of boilerplate. No typing, no LLM.</p>
       <span class="meta">4 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="self-learning-dictionary.html">
+    <li><a class="card" data-cat="feature" href="self-learning-dictionary.html">
       <span class="chip cat-feature">Feature</span>
       <h2>The self-learning dictionary</h2>
       <p>Fix a word once; Sussurro spells it right forever.</p>
       <span class="meta">4 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="searchable-history.html">
+    <li><a class="card" data-cat="feature" href="searchable-history.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Searchable history &amp; retention</h2>
       <p>Every dictation, local and searchable — re-clean, translate, export, or auto-prune.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="local-api.html">
+    <li><a class="card" data-cat="feature" href="local-api.html">
       <span class="chip cat-feature">Feature</span>
       <h2>The local API</h2>
       <p>Script Sussurro: clean text, transcribe files and query history over loopback.</p>
       <span class="meta">5 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="voice-commands.html">
+    <li><a class="card" data-cat="feature" href="voice-commands.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Voice &amp; formatting commands</h2>
       <p>Say “new line” or “new bullet” for deterministic structure — no model in the loop.</p>
       <span class="meta">4 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="dictate-to-file.html">
+    <li><a class="card" data-cat="feature" href="dictate-to-file.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Dictate straight to a file</h2>
       <p>Append every dictation to a Markdown note instead of the focused app.</p>
       <span class="meta">3 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="audio-file-transcription.html">
+    <li><a class="card" data-cat="feature" href="audio-file-transcription.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Transcribe audio files</h2>
       <p>Run a recording through the same STT + cleanup pipeline as live dictation.</p>
       <span class="meta">3 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="mic-selector-vu.html">
+    <li><a class="card" data-cat="feature" href="mic-selector-vu.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Microphone selector &amp; VU meter</h2>
       <p>Pick your input device and see it working before you speak.</p>
       <span class="meta">3 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="language-selection.html">
+    <li><a class="card" data-cat="feature" href="language-selection.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Language selection &amp; auto-detect</h2>
       <p>Fix a language for accuracy, or let Sussurro detect it.</p>
       <span class="meta">4 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="whisper-mode.html">
+    <li><a class="card" data-cat="feature" href="whisper-mode.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Whisper mode: dictate quietly</h2>
       <p>Boost the mic and drop the silence gate for near-silent dictation.</p>
       <span class="meta">3 min read</span>
-    </a>
+    </a></li>
 
-    <a class="card" data-cat="feature" href="portable-config.html">
+    <li><a class="card" data-cat="feature" href="portable-config.html">
       <span class="chip cat-feature">Feature</span>
       <h2>Portable config</h2>
       <p>Move your dictionary, snippets and app styles between machines as one JSON file.</p>
       <span class="meta">3 min read</span>
-    </a>
+    </a></li>
 
-  </div>
+  </ul>
 </main>
 
 <footer class="site-foot">
   <div class="wrap">
     <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
-    <div class="foot-links">
-      <a href="https://github.com/fullo/Sussurro">GitHub</a>
-      <a href="https://github.com/fullo/Sussurro/releases">Releases</a>
-      <a href="index.html">Blog</a>
-    </div>
+    <ul class="foot-links">
+      <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
+      <li><a href="https://github.com/fullo/Sussurro/releases">Releases</a></li>
+      <li><a href="index.html">Blog</a></li>
+    </ul>
     <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
   </div>
 </footer>
@@ -284,7 +285,7 @@
     btns.forEach(x => x.classList.remove('active'));
     b.classList.add('active');
     const cat = b.dataset.cat;
-    cards.forEach(c => { c.style.display = (cat === 'all' || c.dataset.cat === cat) ? '' : 'none'; });
+    cards.forEach(c => { c.parentElement.style.display = (cat === 'all' || c.dataset.cat === cat) ? '' : 'none'; });
   }));
 </script>
 </body>
