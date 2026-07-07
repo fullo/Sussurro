@@ -1,0 +1,5 @@
+# Sussurro — https://fullo.github.io/Sussurro
+User-agent: *
+Allow: /
+
+Sitemap: https://fullo.github.io/Sussurro/sitemap.xml
