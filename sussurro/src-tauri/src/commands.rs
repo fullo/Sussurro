@@ -53,9 +53,9 @@ pub fn trigger_dictation(app: AppHandle, pressed: bool) {
 
 #[tauri::command]
 pub fn copy_text(text: String) -> Result<(), String> {
-    arboard::Clipboard::new()
-        .and_then(|mut c| c.set_text(text))
-        .map_err(|e| e.to_string())
+    // Shared with paste-injection so it persists on Linux (a transient arboard
+    // set would silently vanish — see inject::set_clipboard).
+    crate::inject::set_clipboard(&text).map_err(|e| format!("{e:#}"))
 }
 
 /// OS permission status (microphone, and accessibility for paste injection).
