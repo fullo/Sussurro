@@ -148,21 +148,32 @@ project decisions here, not in per-machine memory.**
     Flathub (needs the public repo). AppImage already ships in every release
     (it's the updater's Linux format) — nothing to add there.
 
-### 0.6.0 — candidate (not committed)
+### 0.6.x — shipped (current version 0.6.1)
 
-12. **Backend-agnostic cleanup client via the OpenAI-compatible API**
-    (noted 2026-07-06). Today `cleanup/ollama.rs` talks Ollama's native
-    schema (`/api/chat`, `/api/tags`). Switching to the de-facto standard
-    `/v1/chat/completions` (+ a configurable base URL/model) would let any
-    local runtime drive cleanup — Ollama (it also exposes `/v1`),
-    llama.cpp-server, LM Studio, and frontier engines like antirez's **DS4**
-    (DeepSeek V4, OpenAI/Anthropic-compatible) — with no per-backend code.
-    Prompted by evaluating DS4 as an Ollama replacement: rejected as a
-    *replacement* (single 284B model, 96–128 GB RAM, no Windows — wrong tool
-    for a 2–3B cleanup job on consumer hardware), but it flagged that our
-    Ollama-specific coupling is the real limitation. Keep Ollama the default;
-    this is additive. `/api/tags` model discovery has no `/v1` equivalent, so
-    the model picker would fall back to manual entry for non-Ollama backends.
+12. **Backend-agnostic cleanup via the OpenAI-compatible API** — **shipped in
+    0.6.0/0.6.1** (2026-07-07). `Settings.cleanup_api` (`Ollama` default |
+    `Openai`) + `api_key`; `cleanup/ollama.rs` dispatches `chat()`/`list_models()`
+    to Ollama native (`/api/chat`, `/api/tags`) or OpenAI-compatible
+    (`/v1/chat/completions`, `/v1/models`), with `openai_base()` URL
+    normalization. Any `/v1` server drives cleanup — llama.cpp-server, LM
+    Studio, Ollama's own `/v1`, antirez's **DS4**. Additive; Ollama stays the
+    default. Verified end-to-end against Ollama's `/v1`. How-to blog:
+    `docs/blog/use-ds4.html`.
+13. **Linux clipboard fix** — **shipped in 0.6.1** (2026-07-07). A transient
+    `arboard` set doesn't persist on Linux (the selection owner drops when the
+    `Clipboard` value drops), so Copy + paste were silent no-ops. Now clipboard
+    writes go through `wl-copy` (Wayland) / `xclip`|`xsel` (X11), which fork a
+    daemon holding the selection; `copy_text` shares `inject::set_clipboard`.
+    Confirmed on X11 and (with `wtype` for the keystroke) Wayland/KDE Plasma by
+    the issue-#40 reporter. Linux users now need a clipboard helper + a Wayland
+    keystroke tool — documented in `docs/compile/linux.md` +
+    `docs/blog/linux-injection.html`.
+
+### Candidate / not committed
+
+- **macOS Developer ID + notarization** and **Windows SignPath signing** —
+  deferred (see standing decisions); installers remain unsigned for now.
+- **Flatpak + Flathub** (roadmap item 11, still deferred).
 
 ## Per-machine setup
 
