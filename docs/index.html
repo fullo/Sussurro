@@ -145,9 +145,9 @@
   .demo-body { padding: 22px; }
   .demo-row { font-size: 15px; }
   .demo-row .tag { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-light); display: block; margin-bottom: 6px; }
-  .demo-raw { color: var(--text-light); font-family: var(--mono); font-size: 14px; background: var(--paper-alt); border-radius: 10px; padding: 12px 14px; }
+  .demo-raw { color: var(--text-light); font-family: var(--mono); font-size: 14px; background: var(--paper-alt); border-radius: 10px; padding: 12px 14px; transition: opacity .35s ease; min-height: 2.6em; }
   .demo-arrow { text-align: center; color: var(--red); font-size: 20px; margin: 12px 0; }
-  .demo-clean { color: var(--ink); font-weight: 500; font-size: 17px; padding: 4px 2px; }
+  .demo-clean { color: var(--ink); font-weight: 500; font-size: 17px; padding: 4px 2px; transition: opacity .35s ease; min-height: 1.6em; }
   .demo-clean .cursor { display:inline-block; width:2px; height:1.05em; background: var(--red); margin-left:2px; vertical-align:-2px; animation: blink 1.1s step-end infinite; }
   @keyframes blink { 50%{opacity:0} }
 
@@ -291,7 +291,7 @@
       <div class="demo-body">
         <div class="demo-row">
           <span class="tag">You say</span>
-          <div class="demo-raw">um so like, can you uh send me the report by uh friday i think</div>
+          <div class="demo-raw" id="said">um so like, can you uh send me the report by uh friday i think</div>
         </div>
         <div class="demo-arrow">↓</div>
         <div class="demo-row">
@@ -454,19 +454,45 @@
     es.forEach(e => { if (e.isIntersecting) { closerEye.classList.add('awake'); navEye.classList.add('awake'); } });
   }, { threshold: 0.6 }).observe(document.getElementById('download'));
 
-  // Typewriter demo (respects reduced motion)
-  const target = document.getElementById('typed');
-  const text = "Could you send me the report by Friday?";
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    target.innerHTML = text + '<span class="cursor"></span>';
-  } else {
-    let i = 0;
+  // Typewriter demo — cycles through a few before/after examples.
+  const said = document.getElementById('said');
+  const typed = document.getElementById('typed');
+  const cases = [
+    { raw: "um so like, can you uh send me the report by uh friday i think",
+      clean: "Could you send me the report by Friday?" },
+    { raw: "hey i'm gonna be like ten minutes late sorry",
+      clean: "Hey — I'm going to be about ten minutes late, sorry!" },
+    { raw: "so the bug is uh in the login flow when the token expires it doesn't refresh right",
+      clean: "The bug is in the login flow: when the token expires, it doesn't refresh." },
+    { raw: "ok so remember to uh buy milk and also call the dentist tomorrow morning",
+      clean: "Remember to buy milk and call the dentist tomorrow morning." },
+    { raw: "basically i think we should just uh ship it and see what happens honestly",
+      clean: "I think we should just ship it and see what happens." },
+  ];
+  const cursor = '<span class="cursor"></span>';
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let ci = 0;
+
+  function runCase(i) {
+    const c = cases[i];
+    said.textContent = c.raw;
+    said.style.opacity = 1;
+    typed.style.opacity = 1;
+    if (reduce) { typed.innerHTML = c.clean + cursor; return; } // no cycling
+    let k = 0;
     const type = () => {
-      target.innerHTML = text.slice(0, i) + '<span class="cursor"></span>';
-      if (i++ < text.length) setTimeout(type, 42 + Math.random() * 55);
+      typed.innerHTML = c.clean.slice(0, k) + cursor;
+      if (k++ < c.clean.length) { setTimeout(type, 42 + Math.random() * 55); return; }
+      // finished typing: hold, then fade out and advance to the next example
+      setTimeout(() => {
+        said.style.opacity = 0;
+        typed.style.opacity = 0;
+        setTimeout(() => { ci = (ci + 1) % cases.length; typed.innerHTML = ''; runCase(ci); }, 420);
+      }, 2400);
     };
-    setTimeout(type, 700);
+    setTimeout(type, 550);
   }
+  runCase(0);
 </script>
 </body>
 </html>
