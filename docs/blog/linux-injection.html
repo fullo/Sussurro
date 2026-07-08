@@ -57,7 +57,7 @@
 <p>Sussurro's usual way of injecting text is clipboard-based: save the clipboard, write the transcript, synthesize <code>Ctrl+V</code> (or <code>Cmd+V</code> on macOS), then restore the clipboard. On Linux, though, how the text actually reaches the app depends on whether the desktop runs X11 or Wayland — and on Wayland the <em>primary</em> path skips the clipboard entirely, typing the transcript directly through the RemoteDesktop portal. The two protocols have opposite security models, which is the whole reason Linux needs special handling.</p>
 
 <h3>X11</h3>
-<p>X11 has no permission model for input synthesis, so paste-injection works out of the box: no daemon, no consent dialog, no extra packages beyond what <code>docs/compile/linux.md</code> already lists for building the app.</p>
+<p>X11 has no permission model for input synthesis, so the keystroke needs no daemon and no consent dialog. It does need a clipboard helper, though — Sussurro pastes through the clipboard, and on Linux that only persists if an external tool holds the selection: <code>sudo apt install xclip</code> (or <code>xsel</code>). Without it, Copy and paste silently do nothing.</p>
 
 <h3>Wayland</h3>
 <p>Wayland compositors deliberately block apps from injecting input into other windows — that's a feature, not a bug, and it's exactly why KWin and Mutter don't expose the older <code>virtual-keyboard</code> protocol to arbitrary clients. Sussurro's primary path on Wayland is therefore the XDG <strong>RemoteDesktop portal</strong>: it asks the compositor's permission once, then types through a sanctioned channel that needs no daemon and no <code>uinput</code> access. This is the only zero-setup option on stock KDE and GNOME.</p>
@@ -72,13 +72,13 @@
 <li><strong>ydotool</strong>, which works on any compositor including GNOME because it goes through <code>uinput</code> instead of a Wayland protocol — but it needs its daemon running.</li>
 <li><strong>enigo</strong> as a last resort, which can silently no-op on pure Wayland but still helps with XWayland apps.</li>
 </ul>
-<p>The clipboard side has its own fallback: Sussurro normally uses the system clipboard crate, and drops to the native <code>wayland-data-control</code> protocol (via <code>wl-copy</code>/<code>wl-paste</code>) if that fails.</p>
+<p>The clipboard itself needs a helper that keeps holding the selection after Sussurro sets it: <code>wl-copy</code> (Wayland, from <code>wl-clipboard</code>) or <code>xclip</code>/<code>xsel</code> (X11). A transient in-process clipboard set reports success but empties immediately — so without one of these, Copy and the paste-restore step silently fail.</p>
 
 <h2>If paste doesn't work</h2>
 <ol class="figure-steps">
 <li>Dictate once and watch for the OS consent dialog — on Wayland it appears the first time Sussurro requests keyboard access. If you dismissed it by accident, dictate again to re-trigger it.</li>
 <li>On KDE, if injection suddenly stops working after a reboot, that's the known grant-reset above — approve the dialog again.</li>
-<li>Install the native fallback tools so there's something to fall back to if the portal is ever unavailable: <code>sudo apt install wtype</code> for wlroots/KDE, or <code>sudo apt install ydotool</code> plus <code>systemctl --user enable --now ydotool</code> for GNOME (your user needs access to <code>/dev/uinput</code>, typically via the <code>input</code> group).</li>
+<li><strong>The most common Wayland fix:</strong> after a dictation, press <kbd>Ctrl+V</kbd> by hand. If the dictated text pastes, the clipboard is fine and only the automatic keystroke is missing — the portal granted access but didn't deliver keys on your compositor. Install the native tool so Sussurro's fallback takes over: <code>sudo apt install wtype</code> for KDE/wlroots, or <code>sudo apt install ydotool</code> + <code>systemctl --user enable --now ydotool</code> for GNOME (your user needs <code>/dev/uinput</code> access, typically the <code>input</code> group). Confirmed on Ubuntu + KDE Plasma.</li>
 <li>For clipboard-only symptoms (paste works but the clipboard looks wrong afterward), install <code>wl-clipboard</code>: <code>sudo apt install wl-clipboard</code>.</li>
 <li>Check you're actually where you think you are: <code>echo $XDG_SESSION_TYPE</code> tells you X11 vs Wayland, which changes which of the above applies.</li>
 </ol>
