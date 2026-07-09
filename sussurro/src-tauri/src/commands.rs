@@ -207,6 +207,16 @@ pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     }
 }
 
+/// GGML whisper models (`ggml-*.bin`) already present in the models folder, so
+/// files shared with other whisper.cpp tools show up in the picker without a
+/// re-download. Point Settings → Models folder at a shared directory to reuse.
+#[tauri::command]
+pub fn list_whisper_models(state: State<'_, AppState>) -> Vec<String> {
+    let settings = state.settings.lock().unwrap();
+    let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
+    models::list_ggml_models(&models_dir)
+}
+
 /// Save a user correction of a past transcript: new words are auto-added to
 /// the personal dictionary (Wispr-style learning) and the corrected text is
 /// appended to history. Returns the words learned.

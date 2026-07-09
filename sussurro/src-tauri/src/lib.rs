@@ -119,6 +119,7 @@ pub fn run() {
             commands::usage_stats,
             commands::export_history,
             commands::model_is_downloaded,
+            commands::list_whisper_models,
             commands::download_model,
             commands::list_ollama_models,
             commands::list_input_devices,
