@@ -9,6 +9,22 @@ pub fn model_exists(models_dir: &Path, file: &str) -> bool {
     models_dir.join(file).exists()
 }
 
+/// Filenames of GGML whisper models already present in the folder
+/// (`ggml-*.bin`). Lets Sussurro reuse models shared with other whisper.cpp
+/// tools — point the models folder at a shared directory instead of
+/// re-downloading. Returns an empty list if the folder can't be read.
+pub fn list_ggml_models(models_dir: &Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(models_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.starts_with("ggml-") && n.ends_with(".bin"))
+        .collect();
+    out.sort();
+    out
+}
+
 /// Download the GGML model if missing. Blocking — callers must run this off
 /// the async runtime (spawn_blocking) and off the UI thread.
 pub fn ensure_model(models_dir: &Path, file: &str) -> Result<PathBuf> {
@@ -110,6 +126,23 @@ mod tests {
     fn parakeet_missing_on_empty_dir() {
         let dir = tempfile::tempdir().unwrap();
         assert!(!parakeet_exists(dir.path()));
+    }
+
+    #[test]
+    fn list_ggml_models_finds_only_ggml_bins_sorted() {
+        let dir = tempfile::tempdir().unwrap();
+        for f in ["ggml-small.bin", "ggml-base.en.bin", "notes.txt", "model.pt", "ggml-x.gguf"] {
+            std::fs::write(dir.path().join(f), b"x").unwrap();
+        }
+        assert_eq!(
+            list_ggml_models(dir.path()),
+            vec!["ggml-base.en.bin".to_string(), "ggml-small.bin".to_string()]
+        );
+    }
+
+    #[test]
+    fn list_ggml_models_empty_on_missing_dir() {
+        assert!(list_ggml_models(Path::new("/no/such/dir/here")).is_empty());
     }
 
     #[test]

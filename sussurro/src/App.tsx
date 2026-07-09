@@ -466,6 +466,10 @@ export default function App() {
   const [confirmClear, setConfirmClear] = useState(false);
   /** null = Ollama unreachable → free-text fallback */
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
+  /** GGML whisper models already present in the models folder (reuse). */
+  const [installedWhisper, setInstalledWhisper] = useState<string[]>([]);
+  /** Info shown when an installed Ollama model was auto-selected for cleanup. */
+  const [modelAdoptNote, setModelAdoptNote] = useState<string | null>(null);
   const [inputDevices, setInputDevices] = useState<string[]>([]);
   const [defaultPrompts, setDefaultPrompts] = useState<string[]>(["", "", ""]);
   const [pillHover, setPillHover] = useState(false);
@@ -524,10 +528,19 @@ export default function App() {
     }
   };
 
+  const loadWhisperModels = async () => {
+    try {
+      setInstalledWhisper(await invoke<string[]>("list_whisper_models"));
+    } catch {
+      setInstalledWhisper([]);
+    }
+  };
+
   const refresh = async () => {
     setSettings(await invoke<Settings>("get_settings"));
     setHistory(await invoke<HistoryEntry[]>("get_history", { n: 20 }));
     setModelReady(await invoke<boolean>("model_is_downloaded"));
+    loadWhisperModels();
     invoke<UsageStats>("usage_stats").then(setStats).catch(() => {});
   };
 
@@ -546,6 +559,27 @@ export default function App() {
       unlisten.then((f) => f());
     };
   }, []);
+
+  // If Ollama is running with models but the configured cleanup model isn't one
+  // of them, adopt an installed model instead of forcing a specific download —
+  // and tell the user what was picked (Matteo's onboarding feedback).
+  useEffect(() => {
+    const s = settings;
+    if (!s || s.cleanup_api !== "ollama") return;
+    if (!ollamaModels || ollamaModels.length === 0) return;
+    const have = ollamaModels.some(
+      (m) => m === s.ollama_model || m.startsWith(s.ollama_model + ":")
+    );
+    if (have) return;
+    const pick =
+      ollamaModels.find((m) => /llama3\.2|qwen2\.5|gemma2|phi3|mistral|instruct/i.test(m)) ||
+      ollamaModels[0];
+    setModelAdoptNote(
+      `Found ${ollamaModels.length} model${ollamaModels.length > 1 ? "s" : ""} on Ollama — selected “${pick}” for cleanup. Change it below anytime.`
+    );
+    save({ ...s, ollama_model: pick });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ollamaModels, settings?.cleanup_api, settings?.ollama_model]);
 
   const recordingNow = status.startsWith("recording");
 
@@ -599,6 +633,7 @@ export default function App() {
       await invoke("set_settings", { settings: next });
       setBusy("");
       setModelReady(await invoke<boolean>("model_is_downloaded"));
+      loadWhisperModels();
       if (serverChanged) loadOllamaModels();
     } catch (e) {
       setBusy(String(e));
@@ -748,10 +783,10 @@ export default function App() {
                 then Re-check.
               </li>
             )}
-            {settings.cleanup_api === "ollama" && ollamaStatus?.running && !ollamaStatus.has_model && (
+            {settings.cleanup_api === "ollama" && ollamaStatus?.running && !ollamaStatus.has_model && (!ollamaModels || ollamaModels.length === 0) && (
               <li>
-                <span className="setup-bad">✗</span> Model “{settings.ollama_model}”
-                is not on your Ollama server.
+                <span className="setup-bad">✗</span> No models on your Ollama
+                server yet — pull one to enable cleanup.
                 <button
                   className="btn-ghost"
                   disabled={pullingModel}
@@ -925,8 +960,15 @@ export default function App() {
                 onChange={(e) => save({ ...settings, whisper_model: e.target.value })}
               >
                 {MODELS.map((m) => (
-                  <option key={m.file} value={m.file}>{m.label}</option>
+                  <option key={m.file} value={m.file}>
+                    {m.label}{installedWhisper.includes(m.file) ? " · installed" : ""}
+                  </option>
                 ))}
+                {installedWhisper
+                  .filter((f) => !MODELS.some((m) => m.file === f))
+                  .map((f) => (
+                    <option key={f} value={f}>{f} · installed</option>
+                  ))}
               </select>
             ) : (
               <span className="fixed-model">Parakeet TDT 0.6B v3 · int8 · 456 MB</span>
@@ -1096,6 +1138,9 @@ export default function App() {
               onBlur={() => save(settings)}
               spellCheck={false}
             />
+          )}
+          {modelAdoptNote && (
+            <small className="model-note">✓ {modelAdoptNote}</small>
           )}
         </div>
 

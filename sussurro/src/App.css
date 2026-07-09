@@ -228,6 +228,9 @@ details.collapsible:not([open]) .chevron { transform: rotate(-90deg); }
 .field-label > span { font-weight: 600; color: var(--c-dark); }
 .field-label small { color: var(--c-text-light); font-size: 0.8rem; }
 
+/* Info note shown when an installed Ollama model is auto-selected for cleanup. */
+.model-note { display: block; margin-top: 6px; color: var(--brand-text); font-size: 0.78rem; line-height: 1.4; }
+
 /* ---------- Inputs ---------- */
 
 input, select, textarea {
