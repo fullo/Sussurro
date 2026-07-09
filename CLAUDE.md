@@ -148,7 +148,7 @@ project decisions here, not in per-machine memory.**
     Flathub (needs the public repo). AppImage already ships in every release
     (it's the updater's Linux format) — nothing to add there.
 
-### 0.6.x — shipped (current version 0.6.1)
+### 0.6.x — shipped (current version 0.6.2)
 
 12. **Backend-agnostic cleanup via the OpenAI-compatible API** — **shipped in
     0.6.0/0.6.1** (2026-07-07). `Settings.cleanup_api` (`Ollama` default |
@@ -168,6 +168,15 @@ project decisions here, not in per-machine memory.**
     the issue-#40 reporter. Linux users now need a clipboard helper + a Wayland
     keystroke tool — documented in `docs/compile/linux.md` +
     `docs/blog/linux-injection.html`.
+14. **Reuse installed models** — **shipped in 0.6.2** (2026-07-09), from a Mac
+    user's onboarding feedback. Ollama: if the daemon has models but the
+    configured one is absent, auto-adopt an installed model (prefer a small
+    instruct) and tell the user, instead of forcing a specific download — the
+    "pull a model" nag only fires when the server has zero models. Whisper: new
+    `list_whisper_models` command scans the models dir for any `ggml-*.bin`; the
+    picker surfaces them ("· installed") so pointing Settings → Models folder at
+    a directory shared with other whisper.cpp tools reuses them (ggml only;
+    OpenAI/MLX whisper files are not whisper.cpp-compatible).
 
 ### Candidate / not committed
 
