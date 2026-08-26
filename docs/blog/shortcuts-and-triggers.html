@@ -84,6 +84,7 @@
 
 <h2>Picking combinations that don't collide</h2>
 <p>Both shortcuts are registered as global OS-level hotkeys, so they need to be free of conflicts with your window manager, other apps, and each other. If a combination fails to register — a policy restriction on some Wayland compositors, for instance, or another app already holding it — dictation itself is never blocked: a failed shortcut registration falls back gracefully, and the Dictate button keeps working regardless.</p>
+<p>Being global also means the shortcuts fire wherever focus is — including over another app's password field, where pressing the dictation shortcut starts recording (as designed). The audio goes only to local speech-to-text and your configured cleanup endpoint; Sussurro never sees what the field contains.</p>
 
 <div class="callout">
   <span class="k">Tip</span>

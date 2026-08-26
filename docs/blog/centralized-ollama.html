@@ -94,7 +94,7 @@ OLLAMA_HOST=0.0.0.0:11434 ollama serve</code></pre>
     <p>On a LAN, the round-trip to a small model is negligible — a 2–3B model on a decent machine cleans a sentence in well under a second. With streaming typing and cleanup enabled, Sussurro makes one call per finished sentence; over Wi-Fi or Ethernet this stays smooth. Over a slower link (a remote server across the internet via VPN), prefer batch cleanup (paste on release) rather than per-sentence streaming.</p>
 
     <h2>Privacy note</h2>
-    <p>Centralizing Ollama keeps everything on <em>your</em> hardware — the audio is still transcribed locally on each device, and only the text transcript travels to your own server for cleanup. Nothing leaves the machines you control.</p>
+    <p>Centralizing Ollama keeps everything on <em>your</em> hardware — the audio is still transcribed locally on each device, and only the text transcript travels to your own server for cleanup. Nothing leaves the machines you control. With a remote endpoint, though, transcripts do leave the machine they were dictated on: Sussurro shows a warning in Settings when the cleanup server isn't local (<a href="https://github.com/fullo/Sussurro/issues/92">issue #92</a>).</p>
   </div>
 
   <footer class="post-foot">

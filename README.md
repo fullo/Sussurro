@@ -177,6 +177,20 @@ Current version **0.4.1**. Full detail (and standing decisions) in
   SmartScreen prompt (*More info → Run anyway*). Signing is on the roadmap
   (Windows via SignPath; macOS Developer ID later). The **updater** artifacts
   are always signed with the project's own key, independent of OS signing.
+- **Cleanup output is pasted without review.** The cleaned text — and in
+  command mode, the rewritten selection — goes straight into the focused app;
+  there is no step between the model and your cursor. By design the model only
+  ever generates text and never triggers actions, so instructions carried by a
+  dictation or a personal-dictionary entry can at most change what gets
+  pasted, not what Sussurro does.
+- **The global hotkey works over password fields too.** It fires wherever
+  focus is — including another app's password field — and starts recording
+  there (as designed); the audio goes only to local STT and your configured
+  cleanup endpoint.
+- **A remote cleanup endpoint sends transcripts off-machine.** Pointing
+  Cleanup at a server that isn't on this machine means the raw transcript is
+  sent there for cleanup; Sussurro shows a warning in Settings when the
+  endpoint is not local ([issue #92](https://github.com/fullo/Sussurro/issues/92)).
 
 ## Documentation
 

@@ -79,6 +79,8 @@
 <p>Both languages are required, not one. An earlier version shipped only the Italian example, and it taught the 3B model to <em>translate</em> English dictations into Italian — the hallucination guard would then correctly catch that Italian output as unrelated to an English input and fall back to raw, silently disabling cleanup for every English dictation. Pairing an English example with the Italian one keeps the model anchored to the instruction that actually matters: clean in whatever language the speaker used. The examples are skipped entirely when a translation is requested, since same-language examples would fight the translation instruction.</p>
 
 <p>The result is a cleanup step that fails safe twice over: a code-level guard that reverts to your actual words when the model drifts, and a prompt built from a bug report to stop that drift from being systematic.</p>
+
+<p>The cleaned text is then pasted into the focused app without a review step. That's acceptable by design because the model only ever generates text and never triggers actions — anything a dictation or a personal-dictionary entry can influence is confined to what gets pasted, not what Sussurro does.</p>
   </div>
 
   <footer class="post-foot">
