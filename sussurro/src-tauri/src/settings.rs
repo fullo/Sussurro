@@ -175,11 +175,17 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// Save settings as pretty JSON, creating parent directories as needed.
+    /// Serialization failures are mapped into the returned `io::Error` instead
+    /// of panicking — a settings write must degrade to an error the caller can
+    /// report, never take down the app.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, serde_json::to_string_pretty(self).expect("settings serialize"))
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| std::io::Error::other(format!("serialize settings: {e}")))?;
+        std::fs::write(path, json)
     }
 }
 
@@ -210,6 +216,20 @@ mod tests {
         };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
+    }
+
+    /// Settings always serialize, so the serde-error branch of save() is not
+    /// directly reachable; exercise its error-propagation shape instead: an
+    /// unwritable location must surface as `Err`, not a panic.
+    #[test]
+    fn save_propagates_io_errors_instead_of_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        // A file where the parent directory is expected: create_dir_all fails,
+        // so save() must return the io error.
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "x").unwrap();
+        let path = blocker.join("settings.json");
+        assert!(Settings::default().save(&path).is_err());
     }
 
     #[test]

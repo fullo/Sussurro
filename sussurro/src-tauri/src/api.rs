@@ -43,6 +43,13 @@ pub fn parse_url(url: &str) -> (&str, HashMap<String, String>) {
 /// Start the local HTTP API (loopback only). Best-effort: a bind failure is
 /// logged, never fatal. Applied at startup — toggling the setting needs an
 /// app restart.
+///
+/// Security design — keep these properties when changing this module:
+/// - Loopback-only bind (`127.0.0.1`, never `0.0.0.0`): the API is meant for
+///   local scripts and must not be reachable from other machines on the LAN.
+/// - Endpoints accept request bodies / query params only — no filesystem paths
+///   or other caller-controlled values are ever passed to the OS.
+/// - Request payloads are never logged: transcripts may contain sensitive text.
 pub fn spawn(app: AppHandle, port: u16) {
     std::thread::spawn(move || {
         let server = match tiny_http::Server::http(("127.0.0.1", port)) {
