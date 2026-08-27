@@ -10,11 +10,35 @@ pub fn paste_modifier() -> Key {
     }
 }
 
+/// Delays for the save → write → paste → restore sequence, each justified:
+///
+/// Pre-paste — on Windows/macOS the OS takes ownership of clipboard data
+/// synchronously (`SetClipboardData` / `NSPasteboard` writes return once the
+/// data is stored), so no propagation delay is actually needed; a small margin
+/// covers key-event delivery on loaded systems. On Linux, `wl-copy`/`xclip`
+/// fork a daemon that must own the selection before the target app reads it —
+/// give it real time.
+const PRE_PASTE_DELAY_MS: u64 = if cfg!(target_os = "linux") { 150 } else { 50 };
+
+/// Post-paste — the target app must have read the new content before the old
+/// one comes back. Slow targets (cold start, remote desktop) are why this
+/// stays generous even though it adds the same amount per streamed sentence.
+const POST_PASTE_RESTORE_DELAY_MS: u64 = 200;
+
+/// After a synthesized Ctrl+C, the target app needs time to place the
+/// selection on the clipboard before we read it back.
+const COPY_READ_DELAY_MS: u64 = 250;
+
 /// Paste `text` into the focused app: save clipboard → set text → synthesize
 /// Ctrl/Cmd+V → restore clipboard. Paste-injection works in far more apps
 /// than per-character typing. On Wayland the RemoteDesktop portal types the
 /// text directly first (the only zero-setup path on KDE/GNOME — issue #40);
 /// the native tool ladder and the clipboard flow remain as fallbacks.
+///
+/// Residual races, by design: the keystroke lands in whatever has focus when
+/// it is synthesized (switching windows during delivery moves the text with
+/// the focus), and only TEXT clipboard content survives the swap — images or
+/// file lists on the clipboard are not preserved across it.
 pub fn inject_text(text: &str) -> Result<()> {
     #[cfg(all(target_os = "linux", feature = "wayland-portal"))]
     if wayland::is_wayland() && crate::wayland_portal::type_text(text).is_ok() {
@@ -31,13 +55,11 @@ pub fn inject_text(text: &str) -> Result<()> {
         return wayland::type_text(text);
     }
     written?;
-    // Give the OS clipboard a beat to propagate before pasting.
-    std::thread::sleep(Duration::from_millis(120));
+    std::thread::sleep(Duration::from_millis(PRE_PASTE_DELAY_MS));
 
     synth_combo('v')?;
 
-    // Let the target app read the clipboard before we restore it.
-    std::thread::sleep(Duration::from_millis(200));
+    std::thread::sleep(Duration::from_millis(POST_PASTE_RESTORE_DELAY_MS));
     if let Some(prev) = saved {
         let _ = write_clipboard(&prev);
     }
@@ -52,7 +74,7 @@ pub fn copy_selection() -> Result<Option<String>> {
     clear_clipboard();
 
     synth_combo('c')?;
-    std::thread::sleep(Duration::from_millis(250));
+    std::thread::sleep(Duration::from_millis(COPY_READ_DELAY_MS));
 
     let text = read_clipboard().filter(|t| !t.trim().is_empty());
     if text.is_none() {

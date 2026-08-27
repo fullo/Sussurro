@@ -75,6 +75,7 @@
 
 <h2>Edge cases</h2>
 <ul>
+<li><strong>The paste goes to whatever has focus.</strong> The synthesized <code>Ctrl+V</code> lands in whatever window or field is focused at that moment. If you switch apps while a dictation is being delivered, the text follows your cursor — not the app you were dictating into. Don't move focus between the recording finishing and the paste landing; it's the one race this design can't guard against.</li>
 <li><strong>Apps that block or intercept paste.</strong> A small number of hardened or sandboxed apps disable programmatic paste, or don't expose a focused text field the way the OS expects. When that happens the keystroke lands but nothing appears — there's no per-app fallback beyond the clipboard-and-paste flow itself.</li>
 <li><strong>No clipboard manager conflicts.</strong> Because Sussurro restores your previous clipboard content immediately after pasting, clipboard-history tools that watch for changes may briefly see Sussurro's text appear and disappear. This is expected, not a bug.</li>
 <li><strong>Nothing selected in command mode.</strong> If you invoke command mode with no text selected, Sussurro finds nothing to copy and puts your original clipboard back untouched rather than pasting over random content.</li>
