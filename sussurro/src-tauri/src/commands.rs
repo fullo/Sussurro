@@ -17,6 +17,9 @@ pub fn set_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
+    // The model name flows into models_dir.join(name) for download and load —
+    // reject traversal/absolute paths before anything touches the filesystem.
+    models::validate_model_name(&settings.whisper_model).map_err(|e| e.to_string())?;
     hotkey::apply(&app, &settings.hotkey, &settings.command_hotkey).map_err(|e| e.to_string())?;
     // Only touch the OS launch entry when the state actually changes:
     // disabling a never-registered entry fails with os error 2 on Windows.
