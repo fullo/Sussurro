@@ -195,7 +195,8 @@ fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) ->
                         "model not downloaded — open Settings and click 'Download model'"
                     );
                 }
-                let path = models_dir.join(&settings.whisper_model);
+                // settings.json is user-editable — validate before loading.
+                let path = models::resolve_model_path(&models_dir, &settings.whisper_model)?;
                 AnyTranscriber::Whisper(Transcriber::load(&path)?)
             }
             SttEngine::Parakeet => {
