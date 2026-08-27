@@ -100,6 +100,57 @@ function fmtCount(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+/* ---------- Cleanup endpoint (privacy) ---------- */
+
+/** Host + transport of a user-entered cleanup endpoint URL (scheme optional).
+ *  Mirrors `is_local_endpoint()` in the Rust backend (settings.rs). */
+function parseEndpoint(url: string): { host: string; secure: boolean } | null {
+  const s = url.trim();
+  if (!s) return null;
+  // Drop an optional "scheme://" prefix so bare hosts parse too.
+  const sep = s.indexOf("://");
+  const rest = sep >= 0 ? s.slice(sep + 3) : s;
+  // Authority only: up to the first path/query/fragment character.
+  const authorityRaw = rest.split(/[/?#]/)[0] ?? "";
+  if (!authorityRaw) return null;
+  // Strip userinfo ("user@host"), then the port — bracketed IPv6 literals
+  // keep their address inside the brackets.
+  const at = authorityRaw.lastIndexOf("@");
+  const authority = at >= 0 ? authorityRaw.slice(at + 1) : authorityRaw;
+  if (!authority) return null;
+  let host: string;
+  if (authority.startsWith("[")) {
+    const close = authority.indexOf("]");
+    if (close < 0) return null;
+    host = authority.slice(1, close);
+  } else {
+    const colon = authority.lastIndexOf(":");
+    host = colon >= 0 ? authority.slice(0, colon) : authority;
+  }
+  host = host.toLowerCase();
+  if (!host) return null;
+  return { host, secure: /^https:/i.test(s) };
+}
+
+const LOCAL_ENDPOINT_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/** Whether the cleanup endpoint stays on this machine (mirrors is_local_endpoint in Rust). */
+function isLocalEndpoint(url: string): boolean {
+  const e = parseEndpoint(url);
+  return !!e && (LOCAL_ENDPOINT_HOSTS.has(e.host) || e.host.endsWith(".local"));
+}
+
+/** Privacy note under the cleanup Server field when the endpoint is remote. */
+function EndpointNote({ url }: { url: string }) {
+  const e = parseEndpoint(url);
+  if (!e || isLocalEndpoint(url)) return null;
+  return (
+    <small className="endpoint-note">
+      ⚠ Your transcripts will be sent to {e.host} over {e.secure ? "https" : "http"}
+    </small>
+  );
+}
+
 const MODELS = [
   { file: "ggml-base.en.bin", label: "Base · English · 148 MB · fastest" },
   { file: "ggml-small.bin", label: "Small · multilingual · 488 MB" },
@@ -1096,6 +1147,7 @@ export default function App() {
             onBlur={() => save(settings)}
             spellCheck={false}
           />
+          <EndpointNote url={settings.ollama_url} />
         </div>
 
         {settings.cleanup_api === "openai" && (
