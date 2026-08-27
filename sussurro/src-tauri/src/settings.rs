@@ -189,6 +189,45 @@ impl Settings {
     }
 }
 
+/// Whether a user-entered cleanup endpoint URL points at this machine:
+/// `localhost`, the loopback addresses (`127.0.0.1` / `::1`) or mDNS `.local`
+/// hostnames. Anything else — including unparseable input — counts as remote,
+/// so the privacy warning errs on the safe side.
+pub fn is_local_endpoint(url: &str) -> bool {
+    let Some(host) = endpoint_host(url) else {
+        return false;
+    };
+    host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".local")
+}
+
+/// Host of a user-entered endpoint URL, or `None` when there is none. Accepts
+/// an optional scheme (`localhost:11434` works), and strips the port,
+/// userinfo and any path/query/fragment.
+fn endpoint_host(url: &str) -> Option<String> {
+    let s = url.trim();
+    // Drop an optional "scheme://" prefix so bare hosts parse too.
+    let rest = s.split_once("://").map(|(_, r)| r).unwrap_or(s);
+    // Authority only: up to the first path/query/fragment character.
+    let mut authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return None;
+    }
+    // Strip userinfo ("user@host") and then the port — bracketed IPv6
+    // literals keep their address inside the brackets.
+    if let Some(at) = authority.rfind('@') {
+        authority = &authority[at + 1..];
+    }
+    let host = if authority.starts_with('[') {
+        authority[1..].split_once(']').map(|(inner, _)| inner.to_string())
+    } else if let Some(colon) = authority.rfind(':') {
+        Some(authority[..colon].to_string())
+    } else {
+        Some(authority.to_string())
+    }?;
+    let host = host.to_lowercase();
+    (!host.is_empty()).then_some(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,6 +269,45 @@ mod tests {
         std::fs::write(&blocker, "x").unwrap();
         let path = blocker.join("settings.json");
         assert!(Settings::default().save(&path).is_err());
+    }
+
+    #[test]
+    fn is_local_endpoint_recognizes_local_hosts() {
+        for url in [
+            "http://localhost:11434",
+            "http://localhost",
+            "https://localhost:8080/v1/chat/completions",
+            "localhost:11434", // no scheme
+            "HTTP://LOCALHOST/", // case-insensitive
+            "http://user@localhost:11434", // userinfo stripped
+            "http://127.0.0.1:11434",
+            "http://[::1]:11434",
+            "http://[::1]",
+            "http://my-mac.local:8080",
+            "http://foo.local/path?q=1#f", // path/query/fragment ignored
+        ] {
+            assert!(is_local_endpoint(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn is_local_endpoint_rejects_remote_hosts() {
+        for url in [
+            "http://example.com:11434",
+            "https://api.openai.com/v1",
+            "http://192.168.1.50:8080",
+            "http://10.0.0.5",
+            "example.com:11434", // no scheme, remote host
+        ] {
+            assert!(!is_local_endpoint(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn is_local_endpoint_handles_malformed_input() {
+        for url in ["", "   ", "http://", "://nope", "not a url", "http://:11434"] {
+            assert!(!is_local_endpoint(url), "{url}");
+        }
     }
 
     #[test]

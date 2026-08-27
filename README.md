@@ -15,7 +15,9 @@ into any app.
 
 - **100% local, private by design.** Audio is captured, transcribed and cleaned
   entirely on your device. No account, no telemetry, no network round-trip —
-  it works on a plane.
+  it works on a plane. The one exception: if you point the cleanup server at a
+  remote endpoint (Settings → Cleanup), your transcripts are sent there — over
+  plain http unless the URL is https.
 - **AI cleanup, not just transcription.** A small local model removes fillers,
   fixes punctuation and adapts tone — with graceful fallback to the raw
   transcript if the model isn't running.

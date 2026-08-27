@@ -231,6 +231,19 @@ details.collapsible:not([open]) .chevron { transform: rotate(-90deg); }
 /* Info note shown when an installed Ollama model is auto-selected for cleanup. */
 .model-note { display: block; margin-top: 6px; color: var(--brand-text); font-size: 0.78rem; line-height: 1.4; }
 
+/* Privacy note shown when the cleanup endpoint points off this machine. */
+.endpoint-note {
+  display: block;
+  margin-top: 6px;
+  padding: 0.45rem 0.7rem;
+  background: var(--brand-soft);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--c-text);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 /* ---------- Inputs ---------- */
 
 input, select, textarea {
