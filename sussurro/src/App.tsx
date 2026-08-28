@@ -536,6 +536,21 @@ export default function App() {
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [version, setVersion] = useState("");
   const [aboutOpen, setAboutOpen] = useState(false);
+  /** Raw text of the Personal Dictionary field. The parsed list round-trips
+   *  losslessly only when every line is non-empty — deriving the displayed
+   *  text from split/trim/join swallowed typed newlines (issue #88) — so the
+   *  textarea keeps its own raw text and resyncs from settings when the
+   *  dictionary changes elsewhere (learned words, portable config import).
+   */
+  const [dictText, setDictText] = useState("");
+  const dictRef = useRef<HTMLTextAreaElement>(null);
+  const dictionaryKey = settings ? settings.dictionary.join("\n") : "";
+
+  useEffect(() => {
+    // Resync the field from settings only when it is not focused, so
+    // external updates show up without fighting the user's cursor.
+    if (document.activeElement !== dictRef.current) setDictText(dictionaryKey);
+  }, [dictionaryKey]);
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => setVersion(""));
@@ -1234,14 +1249,16 @@ export default function App() {
             <small>names & jargon, one per line — biases both Whisper and the LLM</small>
           </div>
           <textarea
+            ref={dictRef}
             rows={3}
-            value={settings.dictionary.join("\n")}
-            onChange={(e) =>
+            value={dictText}
+            onChange={(e) => {
+              setDictText(e.target.value);
               setSettings({
                 ...settings,
                 dictionary: e.target.value.split("\n").map((w) => w.trim()).filter(Boolean),
-              })
-            }
+              });
+            }}
             onBlur={() => save(settings)}
             spellCheck={false}
             placeholder="Sussurro&#10;Tauri"
