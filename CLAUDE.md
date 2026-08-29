@@ -148,7 +148,7 @@ project decisions here, not in per-machine memory.**
     Flathub (needs the public repo). AppImage already ships in every release
     (it's the updater's Linux format) — nothing to add there.
 
-### 0.6.x — shipped (current version 0.6.2)
+### 0.6.x — shipped (current version 0.6.3)
 
 12. **Backend-agnostic cleanup via the OpenAI-compatible API** — **shipped in
     0.6.0/0.6.1** (2026-07-07). `Settings.cleanup_api` (`Ollama` default |
@@ -177,6 +177,21 @@ project decisions here, not in per-machine memory.**
     picker surfaces them ("· installed") so pointing Settings → Models folder at
     a directory shared with other whisper.cpp tools reuses them (ggml only;
     OpenAI/MLX whisper files are not whisper.cpp-compatible).
+15. **Security review batch + dictionary fix** — **shipped in 0.6.3**
+    (2026-08-27), from the security review published as issues #89–#95
+    (all closed, fixes merged to main): whisper model name validated
+    (`[A-Za-z0-9._-]+`) + resolved path confined to the models dir (#89);
+    downloads SHA-256-verified against the upstream-published digest
+    (HuggingFace tree API `lfs.oid`), fail-closed, with connect/idle
+    timeouts replacing `timeout(None)` (#90); strict CSP on the app windows
+    — capabilities audited clean, devtools off in release (#91); warning in
+    Settings when the cleanup endpoint is remote (#92); paste-injection
+    sleeps audited per platform + residual races documented (#93); privacy
+    disclosures (auto-paste without review, hotkey over password fields)
+    in README + blog (#94); `Settings::save` no longer panics on
+    serialization, local API security design documented (#95). Plus #88:
+    Personal Dictionary textarea keeps its raw text so typed newlines are
+    no longer swallowed (controlled-component round-trip bug).
 
 ### Candidate / not committed
 
