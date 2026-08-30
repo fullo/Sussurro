@@ -37,8 +37,13 @@ pub fn resolve_models_dir(paths: &AppPaths, settings: &Settings) -> PathBuf {
 
 pub struct AppState {
     pub recorder: Mutex<Recorder>,
-    /// Lazily loaded on first dictation; reset to None when engine/model change.
+    /// Lazily loaded on first dictation; reset to None when engine/model
+    /// change, and dropped again after idle time (see pipeline's idle unload).
     pub transcriber: Mutex<Option<AnyTranscriber>>,
+    /// When the transcriber was last loaded or used — drives the idle unload.
+    /// Written while holding the `transcriber` lock so load/refresh stays
+    /// atomic with respect to the unloader.
+    pub transcriber_last_used: Mutex<Option<std::time::Instant>>,
     pub settings: Mutex<Settings>,
     pub paths: AppPaths,
     /// True while the current recording was started by the command hotkey.

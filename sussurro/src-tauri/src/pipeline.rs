@@ -210,7 +210,63 @@ fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) ->
             }
         });
     }
+    // Refresh the idle-unload clock while still holding the transcriber lock,
+    // so a concurrent idle check can't unload what was just (re)loaded.
+    *state.transcriber_last_used.lock().unwrap() = Some(std::time::Instant::now());
     Ok(())
+}
+
+/// A loaded model holds hundreds of MB to a few GB of RAM while the app sits
+/// idle in the tray. After this much inactivity the transcriber is dropped;
+/// the next dictation pays one reload.
+const TRANSCRIBER_IDLE_UNLOAD: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Periodic idle check, called from the background thread spawned at setup.
+/// Never blocks dictation: an active recording counts as in use, and try_lock
+/// skips the round when a transcription holds the transcriber.
+pub fn unload_transcriber_if_idle(state: &AppState) -> bool {
+    if state.recorder.lock().unwrap().is_recording() {
+        return false;
+    }
+    let unloaded = unload_if_idle(
+        &state.transcriber,
+        &state.transcriber_last_used,
+        TRANSCRIBER_IDLE_UNLOAD,
+    );
+    if unloaded {
+        eprintln!(
+            "transcriber unloaded after {} min idle",
+            TRANSCRIBER_IDLE_UNLOAD.as_secs() / 60
+        );
+    }
+    unloaded
+}
+
+/// Generic over the slot content so tests can exercise the locking/expiry
+/// logic without loading a real model. Lock order (slot → last_used) matches
+/// `ensure_transcriber`, and `last_used` is only read under the slot lock —
+/// no unload can race a load that just refreshed the clock.
+fn unload_if_idle<T>(
+    slot: &std::sync::Mutex<Option<T>>,
+    last_used: &std::sync::Mutex<Option<std::time::Instant>>,
+    threshold: std::time::Duration,
+) -> bool {
+    let Ok(mut guard) = slot.try_lock() else {
+        return false; // busy transcribing — obviously not idle
+    };
+    if guard.is_none() {
+        return false;
+    }
+    let expired = last_used
+        .lock()
+        .unwrap()
+        .is_some_and(|t| t.elapsed() >= threshold);
+    if !expired {
+        return false;
+    }
+    *guard = None;
+    *last_used.lock().unwrap() = None;
+    true
 }
 
 /// Cleanup honouring the rule for the focused app: tone instruction plus the
@@ -599,5 +655,50 @@ mod tests {
         assert_eq!(stream_delta("", "hello world", 2), None);
         // Whisper revised the beginning: no longer a prefix, skip.
         assert_eq!(stream_delta("hello brave ", "help brave new world", 2), None);
+    }
+
+    #[test]
+    fn idle_unload_drops_an_expired_slot() {
+        let slot = std::sync::Mutex::new(Some(1u8));
+        let last = std::sync::Mutex::new(
+            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
+        );
+        assert!(unload_if_idle(&slot, &last, std::time::Duration::from_secs(1)));
+        assert!(slot.lock().unwrap().is_none());
+        assert!(last.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn idle_unload_keeps_a_recently_used_slot() {
+        let slot = std::sync::Mutex::new(Some(1u8));
+        let last = std::sync::Mutex::new(Some(std::time::Instant::now()));
+        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(60)));
+        assert!(slot.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn idle_unload_ignores_an_empty_or_never_used_slot() {
+        let empty: std::sync::Mutex<Option<u8>> = std::sync::Mutex::new(None);
+        let stale = std::sync::Mutex::new(
+            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
+        );
+        assert!(!unload_if_idle(&empty, &stale, std::time::Duration::from_secs(1)));
+
+        // Loaded but the clock was never set: leave it alone.
+        let slot = std::sync::Mutex::new(Some(1u8));
+        let never = std::sync::Mutex::new(None);
+        assert!(!unload_if_idle(&slot, &never, std::time::Duration::from_secs(1)));
+        assert!(slot.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn idle_unload_skips_when_the_slot_is_busy() {
+        let slot = std::sync::Mutex::new(Some(1u8));
+        let last = std::sync::Mutex::new(
+            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
+        );
+        let held = slot.lock().unwrap(); // a transcription in flight
+        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(1)));
+        assert!(held.is_some());
     }
 }

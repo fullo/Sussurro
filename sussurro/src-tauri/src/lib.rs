@@ -83,6 +83,7 @@ pub fn run() {
             app.manage(AppState {
                 recorder: Mutex::new(Recorder::default()),
                 transcriber: Mutex::new(None),
+                transcriber_last_used: Mutex::new(None),
                 settings: Mutex::new(settings),
                 paths,
                 command_mode: std::sync::atomic::AtomicBool::new(false),
@@ -94,6 +95,15 @@ pub fn run() {
                 if s.api_enabled {
                     api::spawn(handle.clone(), s.api_port);
                 }
+            }
+            // Idle model unload: a loaded transcriber holds up to GBs of RAM
+            // while the app lives in the tray — check once a minute.
+            {
+                let handle = handle.clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+                    pipeline::unload_transcriber_if_idle(&handle.state::<state::AppState>());
+                });
             }
             // Launched at login: live in the tray, don't pop the window.
             if std::env::args().any(|a| a == "--autostart") {

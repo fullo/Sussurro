@@ -29,6 +29,112 @@ pub fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> 
         .collect()
 }
 
+/// Streaming `downmix_to_mono` + `resample_linear`: feed interleaved
+/// device-rate chunks as the audio callback delivers them and collect
+/// 16 kHz mono incrementally, so the raw capture never has to be buffered
+/// whole (raw 48 kHz stereo f32 is ~384 KB/s — ~1.4 GB per hour — vs
+/// ~64 KB/s once converted). Produces bit-identical output to running the
+/// batch functions over the concatenated input (same frame grouping, same
+/// lerp math); the end-of-stream clamp of `resample_linear` happens in
+/// `flush`.
+pub struct StreamResampler {
+    channels: usize,
+    /// Input mono samples per output sample.
+    ratio: f64,
+    passthrough: bool,
+    /// Interleaved tail that doesn't yet form a complete frame.
+    frame_carry: Vec<f32>,
+    /// Mono samples not yet consumed; `mono_carry[0]` is absolute index `base`.
+    mono_carry: Vec<f32>,
+    base: usize,
+    /// Index of the next output sample to produce.
+    next_out: usize,
+}
+
+impl StreamResampler {
+    pub fn new(channels: usize, from_rate: u32, to_rate: u32) -> Self {
+        Self {
+            channels: channels.max(1),
+            ratio: from_rate as f64 / to_rate as f64,
+            passthrough: from_rate == to_rate,
+            frame_carry: Vec::new(),
+            mono_carry: Vec::new(),
+            base: 0,
+            next_out: 0,
+        }
+    }
+
+    /// Feed one interleaved chunk; returns every output sample that became
+    /// computable. Samples whose interpolation partner hasn't arrived yet are
+    /// held for the next `push` (or `flush`).
+    pub fn push(&mut self, input: &[f32]) -> Vec<f32> {
+        // Group into frames across chunk boundaries, then downmix.
+        self.frame_carry.extend_from_slice(input);
+        let full = self.frame_carry.len() / self.channels * self.channels;
+        for frame in self.frame_carry[..full].chunks(self.channels) {
+            self.mono_carry
+                .push(frame.iter().sum::<f32>() / frame.len() as f32);
+        }
+        self.frame_carry.drain(..full);
+
+        if self.passthrough {
+            self.base += self.mono_carry.len();
+            self.next_out = self.base;
+            return std::mem::take(&mut self.mono_carry);
+        }
+
+        let mut out = Vec::new();
+        let total = self.base + self.mono_carry.len();
+        loop {
+            let pos = self.next_out as f64 * self.ratio;
+            let idx = pos as usize;
+            // Interpolation needs idx+1; defer the stream tail to flush().
+            if idx + 1 >= total {
+                break;
+            }
+            let frac = (pos - idx as f64) as f32;
+            let a = self.mono_carry[idx - self.base];
+            let b = self.mono_carry[idx + 1 - self.base];
+            out.push(a + (b - a) * frac);
+            self.next_out += 1;
+        }
+        // Drop mono samples no future output will read.
+        let next_idx = (self.next_out as f64 * self.ratio) as usize;
+        let drop = next_idx.saturating_sub(self.base).min(self.mono_carry.len());
+        self.mono_carry.drain(..drop);
+        self.base += drop;
+        out
+    }
+
+    /// End of stream: emit the held-back tail, clamping the interpolation
+    /// partner like `resample_linear` does on its last samples.
+    pub fn flush(&mut self) -> Vec<f32> {
+        // `downmix_to_mono` averages a trailing partial frame too (its
+        // `chunks` includes the short tail) — match it. Real captures always
+        // end frame-aligned, but the equivalence must hold regardless.
+        if !self.frame_carry.is_empty() {
+            self.mono_carry
+                .push(self.frame_carry.iter().sum::<f32>() / self.frame_carry.len() as f32);
+            self.frame_carry.clear();
+        }
+        let total = self.base + self.mono_carry.len();
+        let out_len = (total as f64 / self.ratio).floor() as usize;
+        let mut out = Vec::new();
+        while self.next_out < out_len {
+            let pos = self.next_out as f64 * self.ratio;
+            let idx = pos as usize;
+            let frac = (pos - idx as f64) as f32;
+            let a = self.mono_carry[idx - self.base];
+            let b = self.mono_carry.get(idx + 1 - self.base).copied().unwrap_or(a);
+            out.push(a + (b - a) * frac);
+            self.next_out += 1;
+        }
+        self.mono_carry.clear();
+        self.frame_carry.clear();
+        out
+    }
+}
+
 /// Root-mean-square amplitude of the clip; 0.0 for empty input.
 pub fn rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
@@ -164,5 +270,80 @@ mod tests {
     fn empty_input_is_fine() {
         assert!(resample_linear(&[], 48_000, 16_000).is_empty());
         assert!(downmix_to_mono(&[], 2).is_empty());
+    }
+
+    /// Deterministic pseudo-random signal (no rand dep; Date-free).
+    fn noise(len: usize) -> Vec<f32> {
+        let mut x: u32 = 0x1234_5678;
+        (0..len)
+            .map(|_| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (x >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+            })
+            .collect()
+    }
+
+    fn stream_convert(input: &[f32], chunk_sizes: &[usize], channels: usize, from: u32, to: u32) -> Vec<f32> {
+        let mut conv = StreamResampler::new(channels, from, to);
+        let mut out = Vec::new();
+        let mut fed = 0;
+        let mut i = 0;
+        while fed < input.len() {
+            let n = chunk_sizes[i % chunk_sizes.len()].min(input.len() - fed);
+            out.extend(conv.push(&input[fed..fed + n]));
+            fed += n;
+            i += 1;
+        }
+        out.extend(conv.flush());
+        out
+    }
+
+    #[test]
+    fn stream_resampler_matches_batch_stereo_48k() {
+        let input = noise(48_000 * 2); // 1 s stereo @ 48 kHz, frame-aligned
+        let batch = resample_linear(&downmix_to_mono(&input, 2), 48_000, 16_000);
+        // Uneven chunk sizes, including ones that split frames.
+        let streamed = stream_convert(&input, &[7, 333, 1, 128, 4096], 2, 48_000, 16_000);
+        assert_eq!(streamed, batch);
+    }
+
+    #[test]
+    fn stream_resampler_matches_batch_mono_44k1() {
+        let input = noise(44_100);
+        let batch = resample_linear(&downmix_to_mono(&input, 1), 44_100, 16_000);
+        let streamed = stream_convert(&input, &[441, 63, 1000], 1, 44_100, 16_000);
+        assert_eq!(streamed, batch);
+    }
+
+    #[test]
+    fn stream_resampler_matches_batch_upsampling() {
+        let input = noise(8_000 * 2);
+        let batch = resample_linear(&downmix_to_mono(&input, 2), 8_000, 16_000);
+        let streamed = stream_convert(&input, &[255, 2, 999], 2, 8_000, 16_000);
+        assert_eq!(streamed, batch);
+    }
+
+    #[test]
+    fn stream_resampler_passthrough_at_target_rate() {
+        let input = noise(16_000);
+        let streamed = stream_convert(&input, &[100, 7], 1, 16_000, 16_000);
+        assert_eq!(streamed, input);
+    }
+
+    #[test]
+    fn stream_resampler_partial_trailing_frame_matches_batch() {
+        // 2-channel input with an odd sample count: batch averages the short
+        // tail chunk; the streaming flush must do the same.
+        let input = noise(1_001);
+        let batch = resample_linear(&downmix_to_mono(&input, 2), 48_000, 16_000);
+        let streamed = stream_convert(&input, &[10], 2, 48_000, 16_000);
+        assert_eq!(streamed, batch);
+    }
+
+    #[test]
+    fn stream_resampler_empty_is_fine() {
+        let mut conv = StreamResampler::new(2, 48_000, 16_000);
+        assert!(conv.push(&[]).is_empty());
+        assert!(conv.flush().is_empty());
     }
 }
