@@ -4,17 +4,19 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use crate::audio::resample::{downmix_to_mono, resample_linear};
+use crate::audio::resample::StreamResampler;
 
 pub const TARGET_RATE: u32 = 16_000;
 
 /// Owns no audio resources directly — the cpal Stream is !Send, so each
 /// recording runs on its own thread and hands samples back over a channel.
-/// The raw buffer is shared so live previews can snapshot it mid-recording.
+/// The buffer is shared so live previews can snapshot it mid-recording.
 #[derive(Default)]
 pub struct Recorder {
     stop_tx: Option<Sender<()>>,
     result_rx: Option<Receiver<Result<Vec<f32>>>>,
+    /// Capture converted to 16 kHz mono as it arrives (the raw device-rate
+    /// audio is never buffered whole — see `StreamResampler`).
     live: Arc<Mutex<Vec<f32>>>,
     /// (device sample rate, channel count) — 0 until the stream is up.
     meta: Arc<(AtomicU32, AtomicUsize)>,
@@ -49,20 +51,20 @@ impl Recorder {
 
     /// Copy of everything captured so far, already 16 kHz mono — for live
     /// preview transcription while the recording continues. None until the
-    /// audio stream has actually started.
+    /// audio stream has actually started. The buffer is stored converted, so
+    /// this is a plain copy — no per-snapshot downmix/resample of the whole
+    /// capture.
     pub fn snapshot_16k(&self) -> Option<Vec<f32>> {
         let rate = self.meta.0.load(Ordering::Relaxed);
         let channels = self.meta.1.load(Ordering::Relaxed);
         if !self.is_recording() || rate == 0 || channels == 0 {
             return None;
         }
-        let raw = self.live.lock().unwrap().clone();
-        let mono = downmix_to_mono(&raw, channels);
-        Some(resample_linear(&mono, rate, TARGET_RATE))
+        Some(self.live.lock().unwrap().clone())
     }
 
-    /// RMS amplitude of the most recent ~100 ms of raw capture — the live
-    /// input level for the mic VU meter. None until the stream is up.
+    /// RMS amplitude of the most recent ~100 ms of capture (16 kHz mono) —
+    /// the live input level for the mic VU meter. None until the stream is up.
     pub fn level(&self) -> Option<f32> {
         let rate = self.meta.0.load(Ordering::Relaxed);
         let channels = self.meta.1.load(Ordering::Relaxed);
@@ -70,7 +72,7 @@ impl Recorder {
             return None;
         }
         let buf = self.live.lock().unwrap();
-        let window = (rate as usize * channels) / 10;
+        let window = TARGET_RATE as usize / 10;
         Some(crate::audio::resample::rms(&buf[buf.len().saturating_sub(window)..]))
     }
 
@@ -118,24 +120,35 @@ fn record_until_stopped(
 
     let err_fn = |e| eprintln!("audio stream error: {e}");
 
+    // Convert to 16 kHz mono inside the callback so only the converted audio
+    // is ever buffered (~64 KB/s instead of the raw device rate). Shared with
+    // this thread so the tail held by the resampler can be flushed after stop.
+    let conv = Arc::new(Mutex::new(StreamResampler::new(channels, rate, TARGET_RATE)));
+
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => {
             let buf = buffer.clone();
+            let conv = conv.clone();
             device.build_input_stream(
                 &config.into(),
-                move |data: &[f32], _| buf.lock().unwrap().extend_from_slice(data),
+                move |data: &[f32], _| {
+                    let out = conv.lock().unwrap().push(data);
+                    buf.lock().unwrap().extend_from_slice(&out);
+                },
                 err_fn,
                 None,
             )?
         }
         cpal::SampleFormat::I16 => {
             let buf = buffer.clone();
+            let conv = conv.clone();
             device.build_input_stream(
                 &config.into(),
                 move |data: &[i16], _| {
-                    buf.lock()
-                        .unwrap()
-                        .extend(data.iter().map(|s| *s as f32 / i16::MAX as f32));
+                    let floats: Vec<f32> =
+                        data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
+                    let out = conv.lock().unwrap().push(&floats);
+                    buf.lock().unwrap().extend_from_slice(&out);
                 },
                 err_fn,
                 None,
@@ -148,9 +161,11 @@ fn record_until_stopped(
     let _ = stop_rx.recv(); // blocks until stop() is called (or Recorder is dropped)
     drop(stream);
 
-    let samples = buffer.lock().unwrap().clone();
-    let mono = downmix_to_mono(&samples, channels);
-    Ok(resample_linear(&mono, rate, TARGET_RATE))
+    // Callbacks have stopped: take the buffer (no full-size clone) and append
+    // the interpolation tail the resampler was holding back.
+    let mut samples = std::mem::take(&mut *buffer.lock().unwrap());
+    samples.extend(conv.lock().unwrap().flush());
+    Ok(samples)
 }
 
 #[cfg(test)]
