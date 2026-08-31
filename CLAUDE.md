@@ -99,7 +99,7 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03, current version 0.2.1)
+## Roadmap (agreed 2026-07-03, current version 0.6.3 — released)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -192,6 +192,17 @@ project decisions here, not in per-machine memory.**
     serialization, local API security design documented (#95). Plus #88:
     Personal Dictionary textarea keeps its raw text so typed newlines are
     no longer swallowed (controlled-component round-trip bug).
+16. **Memory optimization** — **shipped in 0.6.3** (2026-08-31, PR #96).
+    The audio callback converts to 16 kHz mono incrementally
+    (`StreamResampler`, output bit-identical to the batch path — proven by
+    equivalence tests), so the raw device-rate capture is never buffered
+    whole (~64 KB/s instead of ~384 KB/s for 48 kHz stereo) and the live
+    preview snapshot is a plain copy instead of a per-tick full
+    reconversion (was quadratic over the recording). Plus idle model
+    unload: a background thread drops the transcriber after 15 min unused
+    (constant for now; try_lock + recording check, so it never blocks or
+    races a dictation) — model RAM is only held while dictating. The
+    published v0.6.3 release includes this along with the #88–#95 batch.
 
 ### Candidate / not committed
 
