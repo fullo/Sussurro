@@ -6,7 +6,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import "./App.css";
+import { parseDictionaryFile, parseSnippetFile } from "./utils";
 
 interface OllamaStatus {
   installed: boolean;
@@ -706,30 +706,47 @@ export default function App() {
     }
   };
 
-  const downloadModel = async () => {
-    setDownloadingModel(true);
-    setBusy("Downloading model — this can take a while…");
+  const handleImportDictionary = async () => {
     try {
-      await invoke("download_model");
-      setBusy("");
-      setModelReady(true);
+      const selected = await openDialog({
+        title: "Import Dictionary",
+        filters: [{ name: "Text Files", extensions: ["txt"] }],
+      });
+      if (selected) {
+        const content = await openDialog({
+          title: "Select Dictionary File",
+          files: [selected],
+        });
+        if (content) {
+          const dict = parseDictionaryFile(content);
+          save({ ...settings, dictionary: dict });
+          setBusy("Dictionary imported successfully");
+          setTimeout(() => setBusy(""), 2000);
+        }
+      }
     } catch (e) {
       setBusy(String(e));
-    } finally {
-      setDownloadingModel(false);
     }
   };
 
-  const clearHistory = async () => {
-    if (!confirmClear) {
-      setConfirmClear(true);
-      setTimeout(() => setConfirmClear(false), 3000);
-      return;
-    }
-    setConfirmClear(false);
+  const handleImportSnippets = async () => {
     try {
-      await invoke("clear_history");
-      setHistory([]);
+      const selected = await openDialog({
+        title: "Import Snippets",
+        filters: [{ name: "CSV Files", extensions: ["csv"] }],
+      });
+      if (selected) {
+        const content = await openDialog({
+          title: "Select Snippet File",
+          files: [selected],
+        });
+        if (content) {
+          const snippets = parseSnippetFile(content);
+          save({ ...settings, snippets });
+          setBusy("Snippets imported successfully");
+          setTimeout(() => setBusy(""), 2000);
+        }
+      }
     } catch (e) {
       setBusy(String(e));
     }
@@ -1248,21 +1265,37 @@ export default function App() {
             <span>Personal dictionary <Tip text="Names, brands and jargon the models tend to misspell (e.g. Sussurro, Tauri). One per line. They are fed to Whisper as recognition hints and to the LLM as preferred spellings." /></span>
             <small>names & jargon, one per line — biases both Whisper and the LLM</small>
           </div>
-          <textarea
-            ref={dictRef}
-            rows={3}
-            value={dictText}
-            onChange={(e) => {
-              setDictText(e.target.value);
-              setSettings({
-                ...settings,
-                dictionary: e.target.value.split("\n").map((w) => w.trim()).filter(Boolean),
-              });
-            }}
-            onBlur={() => save(settings)}
-            spellCheck={false}
-            placeholder="Sussurro&#10;Tauri"
-          />
+          <div className="dict-import-row" style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+            <textarea
+              ref={dictRef}
+              rows={3}
+              value={dictText}
+              onChange={(e) => {
+                setDictText(e.target.value);
+                setSettings({
+                  ...settings,
+                  dictionary: e.target.value.split("\n").map((w) => w.trim()).filter(Boolean),
+                });
+              }}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+              placeholder="Sussurro&#10;Tauri"
+            />
+            <button
+              className="btn-ghost"
+              onClick={handleImportDictionary}
+              title="Import dictionary from .txt file"
+            >
+              Import .txt
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={handleImportDictionary}
+              title="Import dictionary from .txt file"
+            >
+              Import .txt
+            </button>
+          </div>
         </div>
 
         <div className="field field-col">
@@ -1337,49 +1370,58 @@ export default function App() {
             <span>Snippets <Tip text="Example: cue 'firma email' → pastes your full signature. Matching ignores case and punctuation, and skips the AI cleanup entirely." /></span>
             <small>say a cue exactly — Sussurro pastes the full text instead of transcribing</small>
           </div>
-          {settings.snippets.map((s, i) => (
-          <div className="snippet-row" key={i}>
-            <input
-              placeholder="cue (what you say)"
-              value={s.cue}
-              onChange={(e) => {
-                const snippets = settings.snippets.slice();
-                snippets[i] = { ...s, cue: e.target.value };
-                setSettings({ ...settings, snippets });
-              }}
-              onBlur={() => save(settings)}
-              spellCheck={false}
-            />
-            <textarea
-              placeholder="text to paste"
-              rows={2}
-              value={s.text}
-              onChange={(e) => {
-                const snippets = settings.snippets.slice();
-                snippets[i] = { ...s, text: e.target.value };
-                setSettings({ ...settings, snippets });
-              }}
-              onBlur={() => save(settings)}
-              spellCheck={false}
-            />
+          <div className="snippet-import-row" style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+            {settings.snippets.map((s, i) => (
+              <div className="snippet-row" key={i}>
+                <input
+                  placeholder="cue (what you say)"
+                  value={s.cue}
+                  onChange={(e) => {
+                    const snippets = settings.snippets.slice();
+                    snippets[i] = { ...s, cue: e.target.value };
+                    setSettings({ ...settings, snippets });
+                  }}
+                  onBlur={() => save(settings)}
+                  spellCheck={false}
+                />
+                <textarea
+                  placeholder="text to paste"
+                  rows={2}
+                  value={s.text}
+                  onChange={(e) => {
+                    const snippets = settings.snippets.slice();
+                    snippets[i] = { ...s, text: e.target.value };
+                    setSettings({ ...settings, snippets });
+                  }}
+                  onBlur={() => save(settings)}
+                  spellCheck={false}
+                />
+                <button
+                  className="btn-ghost"
+                  onClick={() =>
+                    save({ ...settings, snippets: settings.snippets.filter((_, j) => j !== i) })
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
             <button
               className="btn-ghost"
               onClick={() =>
-                save({ ...settings, snippets: settings.snippets.filter((_, j) => j !== i) })
+                setSettings({ ...settings, snippets: [...settings.snippets, { cue: "", text: "" }] })
               }
             >
-              Remove
+              + Add
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={handleImportSnippets}
+              title="Import snippets from .csv file"
+            >
+              Import .csv
             </button>
           </div>
-        ))}
-          <button
-            className="btn-ghost"
-            onClick={() =>
-              setSettings({ ...settings, snippets: [...settings.snippets, { cue: "", text: "" }] })
-            }
-          >
-            + Add snippet
-          </button>
         </div>
 
         <div className="field">
