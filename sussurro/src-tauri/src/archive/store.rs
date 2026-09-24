@@ -594,6 +594,9 @@ pub const EDITED_OUTSIDE_ERROR: &str = "edited outside Sussurro";
 /// markdown wins, so a line edit that could never reach it is not saved
 /// either. Returns the updated item.
 pub fn edit_segment(archive: &Path, id: &str, segment_id: u32, edit: SegmentEdit) -> Result<Item> {
+    // Same lock as the engine's checkpoints and update_meta: the check and
+    // the write must not interleave with another writer of this item.
+    let _lock = lock_items();
     let dir = existing_item_dir(archive, id)?;
     let path = transcript_path(&dir);
     let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
@@ -601,6 +604,12 @@ pub fn edit_segment(archive: &Path, id: &str, segment_id: u32, edit: SegmentEdit
         bail!(
             "'{id}' was {EDITED_OUTSIDE_ERROR}: its transcript.md is kept as is — edit it there"
         );
+    }
+    // A live item is still being written by its capture session (#153).
+    if let Ok((meta, _)) = frontmatter::parse(&String::from_utf8_lossy(&bytes)) {
+        if meta.session_state() == Some(SessionState::Recording) {
+            bail!("'{id}' is still being recorded — edit it when the session ends");
+        }
     }
     let mut segments = read_segments(&dir)?;
     let pos = segments
@@ -618,13 +627,16 @@ pub fn edit_segment(archive: &Path, id: &str, segment_id: u32, edit: SegmentEdit
             if seg.text != text {
                 seg.text = text.to_string();
                 seg.edited = true;
+                // Typed in by hand over a stretch STT could not transcribe.
+                seg.stt_error = None;
             }
         }
         SegmentEdit::Delete => {
             segments.segments.remove(pos);
         }
     }
-    save_segments(archive, id, &segments)?;
+    write_segments(&dir, &segments)?;
+    rerender_if_unchanged(&dir, &segments)?;
     read_item_at(id, &dir)
 }
 
@@ -884,6 +896,26 @@ mod tests {
         assert!(edit_segment(archive, &id, 42, SegmentEdit::Delete).is_err());
         assert!(edit_segment(archive, &id, 1, SegmentEdit::Text("  ".into())).is_err());
         assert!(edit_segment(archive, "2026", 1, SegmentEdit::Delete).is_err());
+    }
+
+    #[test]
+    fn edit_segment_refuses_live_items_and_clears_stt_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let mut live = meta("Live", DATE);
+        live.set_session_state(Some(SessionState::Recording));
+        let id = create_item(archive, &live, &segs(&["Uno."])).unwrap();
+        let err = edit_segment(archive, &id, 0, SegmentEdit::Delete).unwrap_err();
+        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
+
+        let mut failed = segs(&["", "Due."]);
+        failed.segments[0].stt_error = Some("model crashed".into());
+        let id = create_item(archive, &meta("Buco", DATE), &failed).unwrap();
+        let item =
+            edit_segment(archive, &id, 0, SegmentEdit::Text("Uno, a mano.".into())).unwrap();
+        let s = &item.segments.segments[0];
+        assert_eq!(s.text, "Uno, a mano.");
+        assert!(s.stt_error.is_none() && s.edited);
     }
 
     #[test]
