@@ -14,10 +14,11 @@ import {
   withBaseUrl,
 } from "../lib/llmProfiles";
 import type { LlmApi, LlmProfile } from "../lib/types";
+import { RecipesCard } from "./RecipesCard";
 
-/** Recipes (proposal A rail). This first version hosts the LLM profile
- *  editor (#119); the recipes themselves — named prompts that write a
- *  companion document or an answer — arrive with #120 in the card above it. */
+/** Recipes (proposal A rail): the recipes — named prompts that write a
+ *  companion document next to a transcript or an answer (#120) — above the
+ *  LLM profiles they run on (#119). */
 export function RecipesScreen({ ctl }: { ctl: Ctl }) {
   const { settings } = ctl;
   /** The profile open in the editor: a saved one, or a new draft (id ""). */
@@ -31,17 +32,7 @@ export function RecipesScreen({ ctl }: { ctl: Ctl }) {
         <span className="sh-muted">Prompts, and the LLM profiles they run on</span>
       </header>
       <div className="sh-scroll cards-col">
-        {/* #120 fills this card: built-in and user recipes. */}
-        <section className="card static-card recipes-soon" aria-labelledby="recipes-soon-title">
-          <header className="static-card-head">
-            <h2 id="recipes-soon-title">Recipes</h2>
-          </header>
-          <p className="card-hint">
-            Turn a note or a transcription into a formatted document, a summary, action items or decisions, and
-            write your own prompts. Coming in a later update; recipes will run on one of the profiles below.
-          </p>
-        </section>
-
+        <RecipesCard ctl={ctl} />
         <CollapsibleCard
           storageKey="recipesProfiles"
           title={<>LLM profiles <span className="via">Ollama or OpenAI-compatible</span></>}
@@ -268,6 +259,23 @@ function ProfileEditor({ ctl, initial, onDone }: { ctl: Ctl; initial: LlmProfile
         </button>
       </div>
       <p className={`prof-test ${test.state}`} role="status">{test.message}</p>
+
+      <div className="field">
+        <div className="field-label">
+          <span>Context window <Tip text="How many tokens the model can read at once. Recipes split long transcripts into parts that fit, then combine them. Leave empty if unsure: Sussurro assumes 4096, safe for small local models. On Ollama the model is loaded with this window." /></span>
+          <small>tokens · optional</small>
+        </div>
+        <input
+          type="number"
+          min={0}
+          step={1024}
+          inputMode="numeric"
+          value={draft.context_tokens ? String(draft.context_tokens) : ""}
+          placeholder="4096"
+          onChange={(e) => edit({ ...draft, context_tokens: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+          aria-label="Context window in tokens"
+        />
+      </div>
 
       {problems.length > 0 && (dirty || isNew) && (
         <ul className="prof-problems">

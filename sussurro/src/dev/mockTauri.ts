@@ -7,7 +7,7 @@
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import type { Item, ItemMeta, ItemSummary, LlmProfile, Segment, Settings } from "../lib/types";
+import type { CompanionDoc, Item, ItemMeta, ItemSummary, LlmProfile, Recipe, Segment, Settings } from "../lib/types";
 
 const params = new URLSearchParams(window.location.search);
 
@@ -18,10 +18,19 @@ const settings: Settings = {
   engine: "whisper",
   llm_profiles: [
     { id: "local", name: "Local", api: "ollama", base_url: "http://localhost:11434", api_key: "", model: "llama3.2:3b", external: false },
-    { id: "lm-studio", name: "LM Studio", api: "openai", base_url: "http://localhost:1234/v1", api_key: "", model: "qwen2.5-7b-instruct", external: false },
+    { id: "lm-studio", name: "LM Studio", api: "openai", base_url: "http://localhost:1234/v1", api_key: "", model: "qwen2.5-7b-instruct", external: false, context_tokens: 32768 },
     { id: "work", name: "Work", api: "openai", base_url: "https://llm.example.com/v1", api_key: "sk-demo", model: "gpt-4o-mini", external: true },
   ],
   cleanup_profile: "local",
+  recipes: [
+    {
+      id: "domande-aperte",
+      name: "Domande aperte",
+      prompt: "Elenca le domande rimaste aperte, con chi le ha sollevate.",
+      target: "companion_document",
+      builtin: false,
+    },
+  ],
   cleanup_level: "light",
   output_language: "",
   dictionary: ["Sussurro", "Tauri", "DarumaHQ"],
@@ -293,6 +302,132 @@ function listModels(p: LlmProfile | undefined): string[] {
   return p.api === "ollama" ? ["llama3.2:3b", "qwen2.5:3b"] : ["qwen2.5-7b-instruct", "gemma-3-4b-it"];
 }
 
+/* ---------- recipes (#120) ---------- */
+
+const BUILTIN_RECIPES: Recipe[] = [
+  { id: "formatted-document", name: "Formatted document", prompt: "Turn the transcript into a well-structured written document in markdown: a **tl;dr:** line, a # title, ## to ###### headings, tables where the content is tabular.", target: "companion_document", builtin: true },
+  { id: "summary", name: "Summary", prompt: "Summarise the transcript in markdown: a short paragraph with the gist, then the key points as a bullet list.", target: "companion_document", builtin: true },
+  { id: "action-items", name: "Action items", prompt: "List every action item in the transcript as a markdown task list (`- [ ] …`), with owner and deadline when said.", target: "companion_document", builtin: true },
+  { id: "decisions", name: "Decisions", prompt: "List the decisions taken in the transcript as a markdown bullet list, each with its reason.", target: "companion_document", builtin: true },
+];
+
+const allRecipes = (): Recipe[] => [...BUILTIN_RECIPES, ...settings.recipes];
+
+function companionFile(r: Recipe): string {
+  if (r.id === "formatted-document") return "document.md";
+  const s = r.name.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "untitled";
+  return s === "transcript" || s === "document" ? `recipe-${s}.md` : `${s}.md`;
+}
+
+function companion(item: Stored, r: Recipe, p: LlmProfile, body: string, date = new Date().toISOString()): CompanionDoc {
+  return {
+    file: companionFile(r),
+    meta: {
+      title: `${item.meta.title} — ${r.name}`,
+      generated_by: `${r.name} / ${p.name} / ${p.model}`,
+      recipe: r.id,
+      profile: p.name,
+      model: p.model,
+      external: p.external,
+      date,
+      transcript: "transcript.md",
+    },
+    body,
+    edited_externally: false,
+  };
+}
+
+const ONBOARDING_DOC = `**tl;dr:** Tre idee per un primo avvio più semplice: chiedere l'accesso a Documenti durante l'onboarding, riusare un modello già installato e proporre una nota di prova.
+
+# Idee per l'onboarding
+
+## Primo avvio
+
+### Permessi
+
+Su macOS la richiesta per la cartella Documenti va fatta **subito**, mai durante una registrazione.
+
+### Modelli
+
+Se Ollama ha già un modello, lo usiamo e lo diciamo all'utente invece di chiedere un download.
+
+## Priorità
+
+| Idea | Impegno | Release |
+|---|:---:|---|
+| Accesso a Documenti all'onboarding | Basso | 0.7 |
+| Riuso del modello installato | Medio | 0.7 |
+| Nota di prova guidata | Medio | 0.8 |
+
+## Prossimi passi
+
+- [ ] Discuterne con Anna nella weekly di giovedì
+- [x] Scrivere le idee in una nota`;
+
+/** Companion documents per item id. */
+const docs: Record<string, CompanionDoc[]> = {};
+if (!params.get("empty")) {
+  const onboarding = "2026/09/idee-per-l-onboarding";
+  const local = settings.llm_profiles[0];
+  docs[onboarding] = [
+    companion({ id: onboarding, meta: meta("Idee per l'onboarding", "note", at(0, 8, 40), "", "mic"), segments: [] }, BUILTIN_RECIPES[0], { ...local, model: "qwen3:1.7b" }, ONBOARDING_DOC, at(0, 8, 50)),
+  ];
+}
+
+function fakeResult(r: Recipe, item: Stored): string {
+  const text = item.segments.map((s) => s.text).filter(Boolean);
+  switch (r.id) {
+    case "formatted-document":
+      return `**tl;dr:** ${text[0] ?? ""}\n\n# ${item.meta.title}\n\n## Contenuto\n\n${text.slice(1).join(" ")}\n\n| Punto | Dettaglio |\n|---|---|\n${text.slice(0, 3).map((t, i) => `| ${i + 1} | ${t} |`).join("\n")}`;
+    case "action-items":
+      return text.slice(0, 2).map((t) => `- [ ] ${t}`).join("\n");
+    default:
+      return `${text[0] ?? ""}\n\n${text.slice(1, 4).map((t) => `- ${t}`).join("\n")}`;
+  }
+}
+
+/** Recipe runs in flight, by item id. */
+const recipeRuns: Record<string, { recipe: Recipe; cancelled: boolean; step: { phase: string; done: number; total: number } | null }> = {};
+
+async function runRecipe(id: string, recipeId: string, profileId: string | null) {
+  const item = find(id);
+  if (!item) throw `no archive item '${id}'`;
+  const r = allRecipes().find((x) => x.id === recipeId);
+  if (!r) throw `no recipe '${recipeId}'`;
+  const p = settings.llm_profiles.find((x) => x.id === profileId) ?? settings.llm_profiles[0];
+  if (p.external)
+    throw `“${p.name}” is an external profile: the transcript would leave this machine. Recipes on external profiles need a confirmation for each run, which arrives in a later update — pick a local profile for now.`;
+  if (item.recording) throw `'${id}' is still being recorded — run recipes when the session ends`;
+  if (recipeRuns[id]) throw `“${recipeRuns[id].recipe.name}” is already running on this item — wait for it or cancel it`;
+  const run = { recipe: r, cancelled: false, step: null as { phase: string; done: number; total: number } | null };
+  recipeRuns[id] = run;
+  const base = { item_id: id, recipe_id: r.id, recipe_name: r.name };
+  // Long items (transcriptions, meetings) go through map-reduce.
+  const parts = item.meta.type === "note" ? 0 : Math.max(2, Math.ceil(item.segments.length / 3));
+  const steps = parts ? [...Array.from({ length: parts + 1 }, (_, i) => ({ phase: "map", done: i, total: parts })), { phase: "reduce", done: 0, total: 1 }, { phase: "reduce", done: 1, total: 1 }] : [{ phase: "single", done: 0, total: 1 }, { phase: "single", done: 1, total: 1 }];
+  let finished;
+  for (const s of steps) {
+    if (run.cancelled) break;
+    run.step = s;
+    ev("recipe-progress", { ...base, ...s });
+    await new Promise((res) => setTimeout(res, 900));
+  }
+  delete recipeRuns[id];
+  if (run.cancelled) {
+    finished = { ...base, file: null, answer: null, error: null, cancelled: true };
+  } else {
+    const doc = companion(item, r, p, fakeResult(r, item));
+    const list = (docs[id] ??= []);
+    const idx = list.findIndex((d) => d.file === doc.file);
+    if (idx >= 0) list[idx] = doc;
+    else list.push(doc);
+    list.sort((a, b) => Number(a.file !== "document.md") - Number(b.file !== "document.md") || a.file.localeCompare(b.file));
+    finished = { ...base, file: doc.file, answer: null, error: null, cancelled: false };
+  }
+  ev("recipe-finished", finished);
+  return finished;
+}
+
 /* ---------- command table ---------- */
 
 type Args = Record<string, unknown>;
@@ -399,6 +534,23 @@ function handle(cmd: string, a: Args): unknown {
         (a.title as string | null) ?? null,
         runLanguage(a),
       );
+    case "recipes_list":
+      return allRecipes();
+    case "recipe_documents":
+      if (!find(String(a.id))) throw `no archive item '${a.id}'`;
+      return (docs[String(a.id)] ?? []).map((d) => ({ ...d, meta: { ...d.meta } }));
+    case "recipe_run":
+      return runRecipe(String(a.id), String(a.recipeId), (a.profileId as string | null) ?? null);
+    case "recipe_cancel": {
+      const run = recipeRuns[String(a.id)];
+      if (run) run.cancelled = true;
+      return !!run;
+    }
+    case "recipe_status":
+      return Object.entries(recipeRuns).map(([item_id, r]) => ({ item_id, recipe_id: r.recipe.id, recipe_name: r.recipe.name, progress: r.step }));
+    case "recipe_reveal_document":
+      console.info("[mock] reveal document", a.id, a.file);
+      return null;
     case "pick_import_file":
       // The real command opens the picker in Rust and returns {name, contents}
       // (null on cancel); the preview skips the dialog and returns a sample.

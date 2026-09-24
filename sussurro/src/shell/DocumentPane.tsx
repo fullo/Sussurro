@@ -6,6 +6,7 @@ import { fileManagerName, formatDurationLabel, formatLongDate, parseDuration } f
 import { TYPE_LABEL } from "../lib/library";
 import type { Item, ItemMeta } from "../lib/types";
 import { ChipEditor } from "./ChipEditor";
+import { DocumentTab } from "./DocumentTab";
 import { languageLabel } from "./labels";
 
 /** Source label for the header: "microphone", "file memo.m4a". */
@@ -32,6 +33,9 @@ export function DocumentPane({
   const [error, setError] = useState("");
   const [title, setTitle] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [tab, setTab] = useState<"transcript" | "document">("transcript");
+  /** Companion documents of the item (#120); null until counted. */
+  const [docCount, setDocCount] = useState<number | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -49,6 +53,14 @@ export function DocumentPane({
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, version]);
+
+  // The document count shows on the tab even while Transcript is open.
+  useEffect(() => {
+    setDocCount(null);
+    invoke<unknown[]>("recipe_documents", { id })
+      .then((d) => setDocCount(d.length))
+      .catch(() => setDocCount(0));
+  }, [id]);
 
   // A live item (#153) grows while its session records: follow it.
   const recording = !!item?.recording;
@@ -163,7 +175,19 @@ export function DocumentPane({
       </header>
 
       <div className="doc-tabs" role="tablist" aria-label="Document views">
-        <span role="tab" aria-selected="true" className="doc-tab active">Transcript</span>
+        {(["transcript", "document"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={tab === t}
+            className={`doc-tab${tab === t ? " active" : ""}`}
+            onClick={() => setTab(t)}
+          >
+            {t === "transcript" ? "Transcript" : "Document"}
+            {t === "document" && docCount ? <small className="doc-tab-n">{docCount}</small> : null}
+          </button>
+        ))}
       </div>
 
       <div className="doc-meta">
@@ -179,6 +203,10 @@ export function DocumentPane({
         />
       </div>
 
+      {tab === "document" ? (
+        <DocumentTab ctl={ctl} item={item} onCount={setDocCount} onChanged={onChanged} />
+      ) : (
+      <>
       {item.recording && (
         <div className="notice-live" role="status">
           <strong>● Recording.</strong> This item is being written by a running session; lines appear as they
@@ -215,6 +243,8 @@ export function DocumentPane({
           <p className="tx-empty">This item has no text.</p>
         )}
       </div>
+      </>
+      )}
 
       {confirmDelete && (
         <div className="modal-backdrop" role="presentation" onClick={() => setConfirmDelete(false)}>
