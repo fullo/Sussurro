@@ -1,5 +1,6 @@
 pub mod models;
 pub mod parakeet;
+pub mod pauses;
 pub mod whisper;
 
 /// The loaded engine, whichever it is. Kept in AppState behind a Mutex.
