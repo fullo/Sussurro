@@ -55,12 +55,27 @@ tauri-plugin-dialog = "2.7.1"
 symphonia = { version = "0.5.4", features = ["mp3", "isomp4", "aac"] }
 regex = "1.12.4"
 tiny_http = "0.12.0"
+# Archive (0.7): YAML frontmatter (pure Rust, maintained — serde_yaml is
+# deprecated), OS trash for deletes (never a hard delete), accent folding for
+# folder slugs, and the SQLite FTS5 search index (bundled SQLite, FTS5 on).
+serde-saphyr = "1.3"
+trash = "5.2"
+unicode-normalization = "0.1"
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # GPU acceleration per platform: Vulkan on Windows (needs the Vulkan SDK at
 # build time), Metal on macOS (ships with Xcode). Linux stays CPU-only by
 # default so contributor builds don't require the SDK.
 [target.'cfg(windows)'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["vulkan"] }
+# Is the process owning a session-journal entry still running (#158)?
+# OpenProcess + GetExitCodeProcess. Already in the tree (via tauri).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+# Unix counterpart: kill(pid, 0) for the journal liveness check (#158) and
+# O_NOFOLLOW for the import picker. Already in the tree.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["metal"] }

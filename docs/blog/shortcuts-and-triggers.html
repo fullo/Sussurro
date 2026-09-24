@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Shortcuts &amp; trigger modes: push-to-talk vs toggle — Sussurro Blog</title>
-<meta name="description" content="Push-to-talk or toggle, one shortcut for dictation and a separate one for command mode — how the click-to-record widget and the header Dictate button fit together." />
+<meta name="description" content="Push-to-talk or toggle, one system-wide shortcut for dictation — how the click-to-record widget and the header Dictate button fit together." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -17,7 +17,7 @@
 <meta property="og:site_name" content="Sussurro" />
 <meta property="og:type" content="article" />
 <meta property="og:title" content="Shortcuts &amp; trigger modes: push-to-talk vs toggle — Sussurro Blog" />
-<meta property="og:description" content="Push-to-talk or toggle, one shortcut for dictation and a separate one for command mode — how the click-to-record widget and the header Dictate button fit together." />
+<meta property="og:description" content="Push-to-talk or toggle, one system-wide shortcut for dictation — how the click-to-record widget and the header Dictate button fit together." />
 <meta property="og:url" content="https://fullo.github.io/Sussurro/blog/shortcuts-and-triggers.html" />
 <meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
 <meta property="og:image:width" content="1200" />
@@ -26,9 +26,9 @@
 <meta property="article:author" content="DarumaHQ" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Shortcuts &amp; trigger modes: push-to-talk vs toggle — Sussurro Blog" />
-<meta name="twitter:description" content="Push-to-talk or toggle, one shortcut for dictation and a separate one for command mode — how the click-to-record widget and the header Dictate button fit together." />
+<meta name="twitter:description" content="Push-to-talk or toggle, one system-wide shortcut for dictation — how the click-to-record widget and the header Dictate button fit together." />
 <meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Shortcuts & trigger modes: push-to-talk vs toggle","description":"Push-to-talk or toggle, one shortcut for dictation and a separate one for command mode — how the click-to-record widget and the header Dictate button fit together.","url":"https://fullo.github.io/Sussurro/blog/shortcuts-and-triggers.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-07-06","dateModified":"2026-07-06","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/shortcuts-and-triggers.html"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Shortcuts & trigger modes: push-to-talk vs toggle","description":"Push-to-talk or toggle, one system-wide shortcut for dictation — how the click-to-record widget and the header Dictate button fit together.","url":"https://fullo.github.io/Sussurro/blog/shortcuts-and-triggers.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-07-06","dateModified":"2026-07-06","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/shortcuts-and-triggers.html"}</script>
 <!-- seo:end -->
 </head>
 <body>
@@ -48,12 +48,12 @@
   <header class="post-head">
     <span class="chip cat-setup">Setup</span>
     <h1>Shortcuts &amp; trigger modes: push-to-talk vs toggle</h1>
-    <p class="dek">Push-to-talk or toggle, one shortcut for dictation and a separate one for command mode — how the click-to-record widget and the header Dictate button fit together.</p>
+    <p class="dek">Push-to-talk or toggle, one system-wide shortcut for dictation — how the click-to-record widget and the header Dictate button fit together.</p>
     <div class="meta">4 min read · Setup guide</div>
   </header>
 
   <div class="prose">
-<p>Sussurro is triggered two ways: a system-wide keyboard shortcut that works from any app, or the Dictate button in the header when the window is focused. Both share the same underlying setting for one important choice — do you <strong>hold</strong> to record, or <strong>tap</strong> to start and stop? There's also a second, separate shortcut for command mode, which edits text instead of writing it.</p>
+<p>Sussurro is triggered two ways: a system-wide keyboard shortcut that works from any app, or the Dictate button in the header when the window is focused. Both share the same underlying setting for one important choice — do you <strong>hold</strong> to record, or <strong>tap</strong> to start and stop?</p>
 
 <h2>Setting the dictation shortcut</h2>
 <p>In Settings → Dictation, the <strong>Shortcut</strong> field is a live recorder, not a text box. Click it, then press the key combination you want — Sussurro captures it directly from the keydown event and shows <code>Esc</code> as the way out if you change your mind. The default is <code>Ctrl+Shift+Space</code> (<code>⌘+Shift+Space</code> on macOS).</p>
@@ -77,14 +77,12 @@
   <p>The status pill next to the Sussurro wordmark is a real button, not just a status indicator. Hold it (push-to-talk) or click it (toggle) to dictate with the mouse instead of the keyboard — handy when the app is already focused. Dragging off the button while holding it stops the recording, the same as releasing a held key.</p>
 </div>
 
-<h2>The separate command-mode shortcut</h2>
-<p>Command mode has its own field, <strong>Command shortcut</strong>, defaulting to <code>Ctrl+Alt+Space</code>. It's registered independently from the dictation shortcut and configured with the same click-to-record widget. Select text anywhere, trigger the command shortcut, and speak an instruction — Sussurro sends it to the local LLM and replaces the selection with the result, instead of pasting new text.</p>
-<p>The command shortcut follows the same push-to-talk/toggle setting as dictation, since it's one switch for both triggers. With push-to-talk on (the default), you hold the command shortcut while speaking the instruction and release when you're done.</p>
-<p>For what to say once command mode is active, see <a href="command-mode.html">command mode</a>.</p>
+<h2>Editing existing text by voice</h2>
+<p>Sussurro has one shortcut, and it writes new text. Up to 0.6 there was a second <strong>Command shortcut</strong> that applied a spoken instruction to the selected text; it was removed in 0.7, because the operating systems already ship full voice control — Voice Control on macOS, Voice Access on Windows 11. Spoken formatting <em>inside</em> a dictation — “new line”, “scratch that” — still works: see <a href="voice-commands.html">voice &amp; formatting commands</a>.</p>
 
-<h2>Picking combinations that don't collide</h2>
-<p>Both shortcuts are registered as global OS-level hotkeys, so they need to be free of conflicts with your window manager, other apps, and each other. If a combination fails to register — a policy restriction on some Wayland compositors, for instance, or another app already holding it — dictation itself is never blocked: a failed shortcut registration falls back gracefully, and the Dictate button keeps working regardless.</p>
-<p>Being global also means the shortcuts fire wherever focus is — including over another app's password field, where pressing the dictation shortcut starts recording (as designed). The audio goes only to local speech-to-text and your configured cleanup endpoint; Sussurro never sees what the field contains.</p>
+<h2>Picking a combination that doesn't collide</h2>
+<p>The shortcut is registered as a global OS-level hotkey, so it needs to be free of conflicts with your window manager and other apps. If a combination fails to register — a policy restriction on some Wayland compositors, for instance, or another app already holding it — dictation itself is never blocked: a failed shortcut registration falls back gracefully, and the Dictate button keeps working regardless.</p>
+<p>Being global also means the shortcut fires wherever focus is — including over another app's password field, where pressing the dictation shortcut starts recording (as designed). The audio goes only to local speech-to-text and your configured cleanup endpoint; Sussurro never sees what the field contains.</p>
 
 <div class="callout">
   <span class="k">Tip</span>
@@ -96,7 +94,7 @@
     <div class="seealso">
       <h3>See also</h3>
       <ul>
-        <li><a href="command-mode.html">Command mode: edit text with your voice</a></li>
+        <li><a href="voice-commands.html">Voice &amp; formatting commands</a></li>
         <li><a href="mic-selector-vu.html">Microphone selector &amp; VU meter</a></li>
         <li><a href="first-run.html">First run: getting set up</a></li>
       </ul>

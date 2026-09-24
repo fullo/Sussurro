@@ -73,6 +73,21 @@ echo "== [7/7] Rust tests + clippy + E2E smoke"
 export CARGO_TARGET_DIR="$HOME/ci/target"
 cd src-tauri
 cargo test
+# Long-form engine end to end (#113): a public-domain speech sample through
+# decode → Silero VAD → whisper → archive item in a tempdir. The fixtures are
+# cached next to the build cache; the test itself never touches ~/Documents.
+FIXTURES="$HOME/ci/fixtures"
+mkdir -p "$FIXTURES"
+[ -f "$FIXTURES/ggml-tiny.en.bin" ] || curl -fsSL --retry 3 -o "$FIXTURES/ggml-tiny.en.bin" \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+[ -f "$FIXTURES/ggml-silero-v5.1.2.bin" ] || curl -fsSL --retry 3 -o "$FIXTURES/ggml-silero-v5.1.2.bin" \
+  https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin
+[ -f "$FIXTURES/jfk.wav" ] || curl -fsSL --retry 3 -o "$FIXTURES/jfk.wav" \
+  https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
+SUSSURRO_TEST_MODEL="$FIXTURES/ggml-tiny.en.bin" \
+  SUSSURRO_TEST_VAD_MODEL="$FIXTURES/ggml-silero-v5.1.2.bin" \
+  SUSSURRO_TEST_WAV="$FIXTURES/jfk.wav" \
+  cargo test engine_end_to_end -- --ignored --nocapture
 cargo clippy --all-targets
 cd ..
 # WSL has no GPU for WebKit: force software rendering everywhere (harmless

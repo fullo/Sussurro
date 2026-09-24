@@ -1,3 +1,4 @@
+use crate::llm::{LlmProfile, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, LOCAL_PROFILE_ID};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -21,7 +22,7 @@ pub enum SttEngine {
     Parakeet,
 }
 
-/// Which chat API the cleanup / command-mode LLM is driven through.
+/// Which chat API the cleanup LLM is driven through.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupApi {
@@ -75,15 +76,30 @@ pub struct Settings {
     pub whisper_model: String,
     /// Speech-to-text engine (whisper_model only applies to Whisper).
     pub engine: SttEngine,
-    pub ollama_url: String,
-    pub ollama_model: String,
-    /// Which chat API drives cleanup / command mode. Ollama native by default;
-    /// OpenAI-compatible reinterprets `ollama_url` as the server base and
-    /// `ollama_model` as the model id, talking `/v1/chat/completions`.
-    pub cleanup_api: CleanupApi,
-    /// Bearer token for the OpenAI-compatible API. Optional — most local
-    /// servers ignore it. Never sent to the Ollama native API.
-    pub api_key: String,
+    /// LLM profiles (0.8, #119): named chat-model connections that cleanup
+    /// (and later recipes and Ask) pick from. Missing in a pre-0.8 file: the
+    /// field-level default leaves it empty and [`Settings::normalize`]
+    /// migrates the flat `ollama_url`/`ollama_model`/`cleanup_api`/`api_key`
+    /// into one "Local" profile.
+    #[serde(default)]
+    pub llm_profiles: Vec<LlmProfile>,
+    /// Id of the profile that cleans dictations, long-form runs and the
+    /// local API's `/clean`. See [`Settings::cleanup_llm`].
+    pub cleanup_profile: String,
+    /// The user's own recipes (#120). The built-in ones live in code
+    /// ([`crate::recipes::builtin_recipes`]) and are never stored here.
+    pub recipes: Vec<crate::recipes::Recipe>,
+    /// Pre-0.8 flat cleanup settings (`ollama_url`, `ollama_model`,
+    /// `cleanup_api`, `api_key`): **read once for the migration, never
+    /// written**. `None` when absent (the 0.6 defaults then apply).
+    #[serde(default, rename = "ollama_url", skip_serializing)]
+    pub legacy_ollama_url: Option<String>,
+    #[serde(default, rename = "ollama_model", skip_serializing)]
+    pub legacy_ollama_model: Option<String>,
+    #[serde(default, rename = "cleanup_api", skip_serializing)]
+    pub legacy_cleanup_api: Option<CleanupApi>,
+    #[serde(default, rename = "api_key", skip_serializing)]
+    pub legacy_api_key: Option<String>,
     pub cleanup_level: CleanupLevel,
     /// Personal dictionary: names/jargon fed to both Whisper and the LLM.
     pub dictionary: Vec<String>,
@@ -107,9 +123,6 @@ pub struct Settings {
     pub models_dir: String,
     /// Input device name for capture. Empty = system default microphone.
     pub input_device: String,
-    /// Command mode shortcut: the spoken instruction is applied to the
-    /// currently selected text via the LLM (Wispr's command mode).
-    pub command_hotkey: String,
     /// Quiet-speech mode: boosts mic gain and lowers the silence gate.
     pub whisper_mode: bool,
     /// EXPERIMENTAL: type text into the app while speaking. With cleanup
@@ -129,6 +142,12 @@ pub struct Settings {
     /// Dictate-to-file mode: when set, completed dictations are APPENDED to
     /// this file (note-taking) instead of being pasted into the focused app.
     pub output_file: String,
+    /// Archive folder for notes, meetings and transcriptions. Empty = the
+    /// default `<Documents>/Sussurro` (see `archive::resolve_archive_dir`).
+    pub archive_dir: String,
+    /// Preview of the 0.7 workspace UI (left rail: New, Library, Models,
+    /// Settings). Off = today's single-column window. Removed when 0.7 ships.
+    pub ui_v2: bool,
 }
 
 impl Default for Settings {
@@ -138,10 +157,13 @@ impl Default for Settings {
             push_to_talk: true,
             whisper_model: "ggml-large-v3-turbo-q5_0.bin".into(),
             engine: SttEngine::Whisper,
-            ollama_url: "http://localhost:11434".into(),
-            ollama_model: "llama3.2:3b".into(),
-            cleanup_api: CleanupApi::Ollama,
-            api_key: String::new(),
+            llm_profiles: vec![LlmProfile::default()],
+            cleanup_profile: LOCAL_PROFILE_ID.into(),
+            recipes: Vec::new(),
+            legacy_ollama_url: None,
+            legacy_ollama_model: None,
+            legacy_cleanup_api: None,
+            legacy_api_key: None,
             cleanup_level: CleanupLevel::Light,
             dictionary: Vec::new(),
             autostart: false,
@@ -153,7 +175,6 @@ impl Default for Settings {
             app_styles: Vec::new(),
             models_dir: String::new(),
             input_device: String::new(),
-            command_hotkey: "CommandOrControl+Alt+Space".into(),
             whisper_mode: false,
             stream_injection: false,
             voice_commands: true,
@@ -162,17 +183,105 @@ impl Default for Settings {
             api_enabled: false,
             api_port: 4525,
             output_file: String::new(),
+            archive_dir: String::new(),
+            ui_v2: false,
         }
     }
 }
 
 impl Settings {
     /// Missing or unreadable file yields defaults — the app must always start.
+    /// The result is [normalized](Settings::normalize): a pre-0.8 file comes
+    /// back with its cleanup settings as the "Local" profile.
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
+        Self::load_migrating(path).0
+    }
+
+    /// [`Settings::load`], also telling whether the file needed the pre-0.8
+    /// → profiles migration (the caller then saves it once, so the file on
+    /// disk has the new shape).
+    pub fn load_migrating(path: &Path) -> (Self, bool) {
+        let Some(mut settings) = std::fs::read_to_string(path)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
+        else {
+            return (Self::default(), false);
+        };
+        let migrated = settings.normalize();
+        (settings, migrated)
+    }
+
+    /// Bring the LLM profiles into a usable shape; returns true when the
+    /// pre-0.8 flat cleanup settings were migrated.
+    ///
+    /// - No profiles (a pre-0.8 file): one "Local" profile built from the
+    ///   legacy `cleanup_api`/`ollama_url`/`ollama_model`/`api_key` (0.6
+    ///   defaults for any that are absent), `external` inferred from its URL,
+    ///   and selected for cleanup — so migrated users clean exactly as before.
+    /// - The legacy fields are then dropped: they are never written back.
+    /// - Empty or duplicate ids get a fresh `profile-N`, empty names "Untitled".
+    /// - A `cleanup_profile` naming no profile falls back to the first one.
+    /// - User recipes get unique ids that don't clash with the built-ins
+    ///   (see [`crate::recipes::normalize_user_recipes`]).
+    ///
+    /// Idempotent. Run on load and on every save from the UI.
+    pub fn normalize(&mut self) -> bool {
+        let migrated = self.llm_profiles.is_empty();
+        if migrated {
+            self.llm_profiles.push(self.legacy_profile());
+            self.cleanup_profile = LOCAL_PROFILE_ID.into();
+        }
+        self.legacy_ollama_url = None;
+        self.legacy_ollama_model = None;
+        self.legacy_cleanup_api = None;
+        self.legacy_api_key = None;
+
+        let all: std::collections::HashSet<String> =
+            self.llm_profiles.iter().map(|p| p.id.clone()).collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut next = 1;
+        for p in &mut self.llm_profiles {
+            p.id = p.id.trim().to_string();
+            if p.id.is_empty() || !seen.insert(p.id.clone()) {
+                while all.contains(&format!("profile-{next}")) || seen.contains(&format!("profile-{next}")) {
+                    next += 1;
+                }
+                p.id = format!("profile-{next}");
+                seen.insert(p.id.clone());
+            }
+            if p.name.trim().is_empty() {
+                p.name = "Untitled".into();
+            }
+        }
+        if !self.llm_profiles.iter().any(|p| p.id == self.cleanup_profile) {
+            self.cleanup_profile = self.llm_profiles[0].id.clone();
+        }
+        crate::recipes::normalize_user_recipes(&mut self.recipes);
+        migrated
+    }
+
+    /// The "Local" profile a pre-0.8 settings file describes.
+    fn legacy_profile(&self) -> LlmProfile {
+        LlmProfile::new(
+            LOCAL_PROFILE_ID,
+            "Local",
+            self.legacy_cleanup_api.clone().unwrap_or_default(),
+            self.legacy_ollama_url.as_deref().unwrap_or(DEFAULT_OLLAMA_URL),
+            self.legacy_api_key.as_deref().unwrap_or(""),
+            self.legacy_ollama_model.as_deref().unwrap_or(DEFAULT_OLLAMA_MODEL),
+        )
+    }
+
+    /// The profile cleanup runs on: the one `cleanup_profile` names, else the
+    /// first profile, else (settings never normalized) the one the legacy
+    /// fields describe — so cleanup always has somewhere to go.
+    pub fn cleanup_llm(&self) -> LlmProfile {
+        self.llm_profiles
+            .iter()
+            .find(|p| p.id == self.cleanup_profile)
+            .or_else(|| self.llm_profiles.first())
+            .cloned()
+            .unwrap_or_else(|| self.legacy_profile())
     }
 
     /// Save settings as pretty JSON, creating parent directories as needed.
@@ -217,8 +326,8 @@ fn endpoint_host(url: &str) -> Option<String> {
     if let Some(at) = authority.rfind('@') {
         authority = &authority[at + 1..];
     }
-    let host = if authority.starts_with('[') {
-        authority[1..].split_once(']').map(|(inner, _)| inner.to_string())
+    let host = if let Some(bracketed) = authority.strip_prefix('[') {
+        bracketed.split_once(']').map(|(inner, _)| inner.to_string())
     } else if let Some(colon) = authority.rfind(':') {
         Some(authority[..colon].to_string())
     } else {
@@ -238,7 +347,8 @@ mod tests {
         assert_eq!(s.hotkey, "CommandOrControl+Shift+Space");
         assert!(s.push_to_talk);
         assert_eq!(s.cleanup_level, CleanupLevel::Light);
-        assert_eq!(s.ollama_url, "http://localhost:11434");
+        assert_eq!(s.cleanup_llm(), LlmProfile::default());
+        assert_eq!(s.cleanup_profile, "local");
         assert!(s.dictionary.is_empty());
         assert!(!s.autostart);
     }
@@ -308,6 +418,249 @@ mod tests {
         for url in ["", "   ", "http://", "://nope", "not a url", "http://:11434"] {
             assert!(!is_local_endpoint(url), "{url}");
         }
+    }
+
+    /// Command mode was removed in 0.7: a settings.json written by an older
+    /// version still carries `command_hotkey`. It must load (the unknown key
+    /// is ignored, the other fields kept) and the key must be gone after the
+    /// next save.
+    #[test]
+    fn legacy_command_hotkey_is_ignored_and_dropped_on_save() {
+        let legacy = r#"{
+            "hotkey": "Alt+Space",
+            "command_hotkey": "CommandOrControl+Alt+Space",
+            "push_to_talk": false
+        }"#;
+        let mut s: Settings = serde_json::from_str(legacy).expect("legacy settings must load");
+        s.normalize();
+        assert_eq!(
+            s,
+            Settings {
+                hotkey: "Alt+Space".into(),
+                push_to_talk: false,
+                ..Default::default()
+            }
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, legacy).unwrap();
+        let loaded = Settings::load(&path);
+        assert_eq!(loaded, s, "load() must not fall back to defaults");
+        loaded.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("command_hotkey"), "{saved}");
+        assert!(!serde_json::to_string(&s).unwrap().contains("command_hotkey"));
+    }
+
+    /// Settings files written before 0.7 have no `archive_dir`: they must
+    /// still load (serde default) and get the default archive location.
+    #[test]
+    fn settings_without_archive_dir_load_with_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"hotkey":"Alt+Space","models_dir":"/m"}"#).unwrap();
+        let s = Settings::load(&path);
+        assert_eq!(s.hotkey, "Alt+Space");
+        assert_eq!(s.archive_dir, "");
+    }
+
+    /// Settings files written before the workspace preview have no `ui_v2`:
+    /// they load with the classic UI (serde default).
+    #[test]
+    fn settings_without_ui_v2_keep_the_classic_ui() {
+        let s: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert!(!s.ui_v2);
+        assert!(!Settings::default().ui_v2);
+        let on: Settings = serde_json::from_str(r#"{"ui_v2":true}"#).unwrap();
+        assert!(on.ui_v2);
+    }
+
+    /// A settings.json exactly as 0.6.3 writes it (every field, pretty
+    /// printed), with a non-default OpenAI-compatible cleanup setup.
+    const SETTINGS_063: &str = r#"{
+  "hotkey": "CommandOrControl+Shift+Space",
+  "push_to_talk": true,
+  "whisper_model": "ggml-large-v3-turbo-q5_0.bin",
+  "engine": "whisper",
+  "ollama_url": "http://localhost:8080/v1",
+  "ollama_model": "qwen2.5-3b-instruct",
+  "cleanup_api": "openai",
+  "api_key": "sk-local",
+  "cleanup_level": "medium",
+  "dictionary": ["Sussurro", "DarumaHQ"],
+  "autostart": false,
+  "sound_feedback": true,
+  "language": "it",
+  "output_language": "",
+  "snippets": [{"cue": "firma", "text": "Francesco"}],
+  "live_preview": true,
+  "app_styles": [{"app_match": "slack", "style": "casual", "language": "en"}],
+  "models_dir": "",
+  "input_device": "",
+  "command_hotkey": "CommandOrControl+Alt+Space",
+  "whisper_mode": false,
+  "stream_injection": false,
+  "voice_commands": true,
+  "prompt_overrides": {"light": "", "medium": "", "high": ""},
+  "history_retention_days": 30,
+  "api_enabled": true,
+  "api_port": 4525,
+  "output_file": ""
+}"#;
+
+    /// #119: the four flat cleanup settings become one "Local" profile,
+    /// selected for cleanup, with the same server, model, API and key — so
+    /// cleanup behaves exactly as before. The file is rewritten without the
+    /// old keys, and the other settings survive untouched.
+    #[test]
+    fn settings_063_migrate_to_one_local_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, SETTINGS_063).unwrap();
+
+        let (s, migrated) = Settings::load_migrating(&path);
+        assert!(migrated);
+        assert_eq!(
+            s.llm_profiles,
+            vec![LlmProfile {
+                id: "local".into(),
+                name: "Local".into(),
+                api: CleanupApi::Openai,
+                base_url: "http://localhost:8080/v1".into(),
+                api_key: "sk-local".into(),
+                model: "qwen2.5-3b-instruct".into(),
+                external: false,
+                context_tokens: 0,
+            }]
+        );
+        assert_eq!(s.cleanup_profile, "local");
+        assert_eq!(s.cleanup_llm(), s.llm_profiles[0]);
+        // Everything else is kept.
+        assert_eq!(s.cleanup_level, CleanupLevel::Medium);
+        assert_eq!(s.language, "it");
+        assert_eq!(s.dictionary, vec!["Sussurro", "DarumaHQ"]);
+        assert_eq!(s.snippets.len(), 1);
+        assert_eq!(s.app_styles[0].language, "en");
+        assert_eq!(s.history_retention_days, 30);
+        assert!(s.api_enabled);
+
+        // Saved once: the old keys are gone, the profile is there, and a
+        // second load is not a migration and yields the same settings.
+        s.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        for key in ["ollama_url", "ollama_model", "cleanup_api", "api_key", "command_hotkey"] {
+            assert!(json.get(key).is_none(), "{key} must not be written: {saved}");
+        }
+        assert_eq!(json["llm_profiles"][0]["base_url"], "http://localhost:8080/v1");
+        assert_eq!(json["cleanup_profile"], "local");
+        let (again, migrated_again) = Settings::load_migrating(&path);
+        assert!(!migrated_again);
+        assert_eq!(again, s);
+    }
+
+    /// A 0.6 user who pointed cleanup at a remote host gets a profile marked
+    /// external (the #92 warning keeps showing).
+    #[test]
+    fn migrated_remote_endpoint_is_external() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"ollama_url":"https://llm.example.com","cleanup_api":"openai"}"#,
+        )
+        .unwrap();
+        assert!(s.normalize());
+        assert_eq!(s.llm_profiles.len(), 1);
+        assert_eq!(s.llm_profiles[0].name, "Local");
+        assert!(s.llm_profiles[0].external);
+    }
+
+    /// A pre-0.8 file that never touched cleanup (no legacy keys) migrates to
+    /// the default profile — identical to the 0.6 defaults.
+    #[test]
+    fn legacy_file_without_cleanup_keys_gets_the_default_profile() {
+        let mut s: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert!(s.llm_profiles.is_empty(), "no profiles before normalize");
+        // Even un-normalized, cleanup resolves to the legacy (default) profile.
+        assert_eq!(s.cleanup_llm(), LlmProfile::default());
+        assert!(s.normalize());
+        assert_eq!(s.llm_profiles, vec![LlmProfile::default()]);
+        assert_eq!(s, Settings { hotkey: "Alt+Space".into(), ..Default::default() });
+    }
+
+    /// Once profiles exist, stray legacy keys (e.g. a file hand-merged from
+    /// an old backup) are ignored and do not create a second profile.
+    #[test]
+    fn legacy_keys_are_ignored_when_profiles_exist() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"ollama_url":"http://old:1","llm_profiles":[{"id":"a","name":"A","api":"ollama","base_url":"http://localhost:11434","api_key":"","model":"m","external":false}],"cleanup_profile":"a"}"#,
+        )
+        .unwrap();
+        assert!(!s.normalize());
+        assert_eq!(s.llm_profiles.len(), 1);
+        assert_eq!(s.cleanup_llm().base_url, "http://localhost:11434");
+        assert!(s.legacy_ollama_url.is_none());
+    }
+
+    #[test]
+    fn cleanup_llm_picks_the_selected_profile() {
+        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com/v1", "k", "gpt");
+        let mut s = Settings {
+            llm_profiles: vec![LlmProfile::default(), work.clone()],
+            cleanup_profile: "work".into(),
+            ..Default::default()
+        };
+        assert_eq!(s.cleanup_llm(), work);
+        s.cleanup_profile = "local".into();
+        assert_eq!(s.cleanup_llm(), LlmProfile::default());
+        // A dangling selection: cleanup_llm falls back to the first profile,
+        // and normalize() repairs the id.
+        s.cleanup_profile = "deleted".into();
+        assert_eq!(s.cleanup_llm().id, "local");
+        s.normalize();
+        assert_eq!(s.cleanup_profile, "local");
+    }
+
+    #[test]
+    fn normalize_repairs_ids_and_names() {
+        let mut s = Settings {
+            llm_profiles: vec![
+                LlmProfile { id: "a".into(), ..Default::default() },
+                LlmProfile { id: "a".into(), name: " ".into(), ..Default::default() },
+                LlmProfile { id: "".into(), ..Default::default() },
+                LlmProfile { id: "profile-1".into(), ..Default::default() },
+            ],
+            cleanup_profile: "a".into(),
+            ..Default::default()
+        };
+        assert!(!s.normalize());
+        let ids: Vec<_> = s.llm_profiles.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["a", "profile-2", "profile-3", "profile-1"]);
+        assert_eq!(s.llm_profiles[1].name, "Untitled");
+        assert_eq!(s.cleanup_profile, "a");
+        // Idempotent.
+        let before = s.clone();
+        s.normalize();
+        assert_eq!(s, before);
+    }
+
+    /// A manual `external` override survives save/load: normalize never
+    /// re-infers it (only a URL change does, in the editor).
+    #[test]
+    fn manual_external_override_survives_a_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut lan = LlmProfile::new("lan", "LAN box", CleanupApi::Ollama, "http://192.168.1.5:11434", "", "m");
+        assert!(lan.external);
+        lan.external = false;
+        let s = Settings {
+            llm_profiles: vec![LlmProfile::default(), lan],
+            cleanup_profile: "lan".into(),
+            ..Default::default()
+        };
+        s.save(&path).unwrap();
+        let loaded = Settings::load(&path);
+        assert!(!loaded.cleanup_llm().external);
+        assert_eq!(loaded, s);
     }
 
     #[test]

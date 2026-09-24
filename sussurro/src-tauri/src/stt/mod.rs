@@ -22,6 +22,34 @@ impl AnyTranscriber {
             AnyTranscriber::Parakeet(t) => t.transcribe(samples),
         }
     }
+
+    /// Long-form transcription with word timings (engine, #113). Both
+    /// engines report real timings; `words` can still come back empty (e.g.
+    /// no tokens), and the engine then falls back to a proportional split.
+    pub fn transcribe_timed(
+        &mut self,
+        samples: &[f32],
+        initial_prompt: Option<&str>,
+        language: &str,
+    ) -> anyhow::Result<TimedTranscript> {
+        match self {
+            AnyTranscriber::Whisper(t) => t.transcribe_timed(samples, initial_prompt, language),
+            AnyTranscriber::Parakeet(t) => t.transcribe_timed(samples),
+        }
+    }
+}
+
+/// One segment's transcript with word timings in ms relative to the start
+/// of the audio passed in.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TimedTranscript {
+    pub text: String,
+    pub words: Vec<crate::archive::Word>,
+    /// True when `words` were not measured by the engine but split
+    /// proportionally over the segment (`engine::timing`).
+    pub words_estimated: bool,
+    /// Language detected by the engine (whisper), `None` if unknown.
+    pub language: Option<String>,
 }
 
 /// Whisper "initial prompt" that biases recognition toward personal-dictionary

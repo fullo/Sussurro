@@ -25,10 +25,6 @@ const PRE_PASTE_DELAY_MS: u64 = if cfg!(target_os = "linux") { 150 } else { 50 }
 /// stays generous even though it adds the same amount per streamed sentence.
 const POST_PASTE_RESTORE_DELAY_MS: u64 = 200;
 
-/// After a synthesized Ctrl+C, the target app needs time to place the
-/// selection on the clipboard before we read it back.
-const COPY_READ_DELAY_MS: u64 = 250;
-
 /// Paste `text` into the focused app: save clipboard → set text → synthesize
 /// Ctrl/Cmd+V → restore clipboard. Paste-injection works in far more apps
 /// than per-character typing. On Wayland the RemoteDesktop portal types the
@@ -64,26 +60,6 @@ pub fn inject_text(text: &str) -> Result<()> {
         let _ = write_clipboard(&prev);
     }
     Ok(())
-}
-
-/// Copy the current selection via Ctrl/Cmd+C and return it (None when nothing
-/// is selected). The selection stays active, so pasting right after replaces
-/// it — exactly what command mode needs.
-pub fn copy_selection() -> Result<Option<String>> {
-    let before = read_clipboard();
-    clear_clipboard();
-
-    synth_combo('c')?;
-    std::thread::sleep(Duration::from_millis(COPY_READ_DELAY_MS));
-
-    let text = read_clipboard().filter(|t| !t.trim().is_empty());
-    if text.is_none() {
-        // Nothing selected: put the user's clipboard back.
-        if let Some(prev) = before {
-            let _ = write_clipboard(&prev);
-        }
-    }
-    Ok(text)
 }
 
 /* ---------- clipboard (arboard, with wl-clipboard fallback on Wayland) ---------- */
@@ -127,17 +103,6 @@ fn write_clipboard(text: &str) -> Result<()> {
     arboard::Clipboard::new()
         .and_then(|mut c| c.set_text(text.to_string()))
         .map_err(|e| anyhow::anyhow!("set clipboard: {e}"))
-}
-
-fn clear_clipboard() {
-    #[cfg(target_os = "linux")]
-    if wayland::is_wayland() {
-        wayland::wl_clear();
-    } else {
-        let _ = wayland::x11_copy(""); // empty selection = cleared
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = arboard::Clipboard::new().and_then(|mut c| c.clear());
 }
 
 /* ---------- key synthesis ---------- */
@@ -339,14 +304,6 @@ mod wayland {
         }
         let text = String::from_utf8_lossy(&out.stdout).to_string();
         Ok(if text.is_empty() { None } else { Some(text) })
-    }
-
-    pub fn wl_clear() {
-        let _ = Command::new("wl-copy")
-            .arg("--clear")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
     }
 
     /// X11 clipboard set via a tool that forks a daemon to hold the CLIPBOARD

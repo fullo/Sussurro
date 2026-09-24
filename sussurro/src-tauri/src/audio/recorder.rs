@@ -63,6 +63,19 @@ impl Recorder {
         Some(self.live.lock().unwrap().clone())
     }
 
+    /// Take (drain) everything captured since the last call, 16 kHz mono —
+    /// the long-form engine's mic source (#113) consumes a session this way
+    /// so the recorder never holds more than one poll interval of audio. A
+    /// recording that is drained returns only the undrained tail from
+    /// `stop()`. The dictation path never calls this (it snapshots and
+    /// stops), so its behaviour is unchanged.
+    pub fn take_new_16k(&self) -> Vec<f32> {
+        if !self.is_recording() {
+            return Vec::new();
+        }
+        std::mem::take(&mut *self.live.lock().unwrap())
+    }
+
     /// RMS amplitude of the most recent ~100 ms of capture (16 kHz mono) —
     /// the live input level for the mic VU meter. None until the stream is up.
     pub fn level(&self) -> Option<f32> {
@@ -183,6 +196,15 @@ mod tests {
     fn snapshot_is_none_when_idle() {
         let r = Recorder::default();
         assert!(r.snapshot_16k().is_none());
+    }
+
+    #[test]
+    fn take_new_is_empty_when_idle() {
+        let r = Recorder::default();
+        r.live.lock().unwrap().extend_from_slice(&[0.1, 0.2]);
+        // Not recording: nothing is drained (and the buffer is left alone).
+        assert!(r.take_new_16k().is_empty());
+        assert_eq!(r.live.lock().unwrap().len(), 2);
     }
 
     #[test]

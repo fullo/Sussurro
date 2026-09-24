@@ -3,7 +3,7 @@ use crate::hotkey;
 use crate::settings::Settings;
 use crate::state::AppState;
 use crate::stt::models;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
 #[tauri::command]
@@ -15,12 +15,14 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 pub fn set_settings(
     app: AppHandle,
     state: State<'_, AppState>,
-    settings: Settings,
+    mut settings: Settings,
 ) -> Result<(), String> {
+    // Valid LLM profiles and a cleanup selection that names one (#119).
+    settings.normalize();
     // The model name flows into models_dir.join(name) for download and load —
     // reject traversal/absolute paths before anything touches the filesystem.
     models::validate_model_name(&settings.whisper_model).map_err(|e| e.to_string())?;
-    hotkey::apply(&app, &settings.hotkey, &settings.command_hotkey).map_err(|e| e.to_string())?;
+    hotkey::apply(&app, &settings.hotkey).map_err(|e| e.to_string())?;
     // Only touch the OS launch entry when the state actually changes:
     // disabling a never-registered entry fails with os error 2 on Windows.
     let autolaunch = app.autolaunch();
@@ -33,16 +35,16 @@ pub fn set_settings(
     settings
         .save(&state.paths.settings_file)
         .map_err(|e| e.to_string())?;
-    let model_changed = {
-        let mut current = state.settings.lock().unwrap();
-        let changed = current.whisper_model != settings.whisper_model
-            || current.engine != settings.engine
-            || current.models_dir != settings.models_dir;
-        *current = settings;
-        changed
+    // Only the settings lock (never held long) is read here: the workspace
+    // layout follows a ui_v2 toggle (#114).
+    let workspace = {
+        let current = state.settings.lock().unwrap();
+        (current.ui_v2 != settings.ui_v2).then_some(settings.ui_v2)
     };
-    if model_changed {
-        *state.transcriber.lock().unwrap() = None; // reload lazily with the new engine/model
+    // Main thread: must never wait for the transcriber (#154).
+    crate::pipeline::swap_settings(&state, settings);
+    if let Some(on) = workspace {
+        crate::apply_main_window_layout(&app, on);
     }
     Ok(())
 }
@@ -51,7 +53,7 @@ pub fn set_settings(
 /// press/release, so push-to-talk vs toggle behaves identically.
 #[tauri::command]
 pub fn trigger_dictation(app: AppHandle, pressed: bool) {
-    crate::pipeline::handle_trigger(&app, pressed, false);
+    crate::pipeline::handle_trigger(&app, pressed);
 }
 
 #[tauri::command]
@@ -261,6 +263,48 @@ pub fn export_config(state: State<'_, AppState>, path: String) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
+/// Bulk import in Settings (#156): open the native file picker FROM RUST,
+/// filtered to the one extension `kind` accepts (.txt dictionary / .csv
+/// snippets), and return the picked file's name and text, or `None` if the
+/// user cancelled. No path crosses IPC in either direction, so a compromised
+/// webview can't point this at an arbitrary file; the frontend parses and
+/// merges the text.
+///
+/// Only the main window may call it: the overlay shares the default
+/// capability (and app commands aren't capability-scoped here), so the
+/// calling window's label is checked. Tauri sets that label from the IPC
+/// origin, the page can't forge it.
+#[tauri::command]
+pub async fn pick_import_file(
+    window: tauri::WebviewWindow,
+    kind: crate::config_io::ImportKind,
+) -> Result<Option<crate::config_io::ImportFile>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    crate::config_io::check_import_caller(window.label())?;
+    let dialog = window
+        .dialog()
+        .file()
+        .set_title(kind.dialog_title())
+        .add_filter(kind.filter_name(), &[kind.extension()])
+        .set_parent(&window);
+    // The blocking picker must stay off the main thread and off the async
+    // workers: it waits for the user.
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(picked) = dialog.blocking_pick_file() else {
+            return Ok(None);
+        };
+        let path = picked
+            .into_path()
+            .map_err(|e| format!("could not read file: {e}"))?;
+        crate::config_io::load_import_file(&path, kind)
+            .map(Some)
+            .map_err(|e| format!("could not read file: {e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Merge a config bundle from `path` into settings. Returns a summary string.
 #[tauri::command]
 pub fn import_config(state: State<'_, AppState>, path: String) -> Result<String, String> {
@@ -277,28 +321,238 @@ pub fn import_config(state: State<'_, AppState>, path: String) -> Result<String,
     Ok(format!("Imported {w} words, {sn} snippets, {st} app styles"))
 }
 
-/// Transcribe an audio file's bytes (from a file input) and clean the result
-/// with the current settings. Appends a history entry; returns (raw, cleaned).
+// ---- Long-form engine (0.7, #113): mic sessions and files → archive items ----
+
+/// What a finished engine run produced (also sent as `engine-done`).
+#[derive(serde::Serialize)]
+pub struct EngineResult {
+    /// The run's session id (as in its `engine-*` events; `engine-started`
+    /// announces it while the run is still going).
+    pub session_id: u64,
+    pub item_id: String,
+    pub item_type: crate::archive::ItemType,
+    pub title: String,
+    /// The cleaned transcript as plain text.
+    pub text: String,
+    pub segments: usize,
+    pub duration_s: f64,
+}
+
+/// Transcribe an audio file from its path (streamed decode, VAD segments,
+/// chunked cleanup) into an archive item of the chosen type — note by
+/// default, or transcription (P10). Resolves when the item is written;
+/// progress arrives as `engine-progress` / `engine-segment` events.
+/// `language` / `cleanup_level`: this run only (#157); omitted = the
+/// dictation settings, which are never modified.
 #[tauri::command]
-pub async fn transcribe_audio_file(
+pub async fn transcribe_file(
     app: AppHandle,
-    bytes: Vec<u8>,
-    ext: String,
-) -> Result<HistoryEntry, String> {
+    path: String,
+    item_type: Option<crate::archive::ItemType>,
+    title: Option<String>,
+    language: Option<String>,
+    cleanup_level: Option<crate::settings::CleanupLevel>,
+) -> Result<EngineResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let samples = crate::audio::decode::decode_bytes_16k_mono(bytes, &ext)
-            .map_err(|e| format!("{e:#}"))?;
-        let state = app.state::<AppState>();
-        let (raw, cleaned) =
-            crate::pipeline::transcribe_batch(&state, &samples).map_err(|e| format!("{e:#}"))?;
-        Ok(HistoryEntry {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            raw,
-            cleaned,
+        let r = crate::engine::session::transcribe_file(
+            &app,
+            std::path::Path::new(&path),
+            item_type.unwrap_or_default(),
+            title.unwrap_or_default(),
+            crate::engine::session::RunOptions {
+                language,
+                cleanup_level,
+            },
+        )
+        .map_err(|e| format!("{e:#}"))?;
+        Ok(EngineResult {
+            session_id: r.session_id,
+            item_id: r.item_id,
+            item_type: r.meta.item_type,
+            title: r.meta.title,
+            text: r.text,
+            segments: r.segments,
+            duration_s: r.duration_ms as f64 / 1000.0,
         })
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Start a long microphone session (independent of the dictation hotkey).
+/// Returns the session id; the item arrives as `engine-done` after
+/// `engine_stop_mic`. `defer`: transcribe only after the stop, for slow
+/// machines. `language` / `cleanup_level`: this run only (#157); omitted =
+/// the dictation settings, which are never modified.
+#[tauri::command]
+pub fn engine_start_mic(
+    app: AppHandle,
+    item_type: Option<crate::archive::ItemType>,
+    title: Option<String>,
+    defer: Option<bool>,
+    language: Option<String>,
+    cleanup_level: Option<crate::settings::CleanupLevel>,
+) -> Result<u64, String> {
+    crate::engine::session::start_mic(
+        &app,
+        item_type.unwrap_or_default(),
+        title.unwrap_or_default(),
+        defer.unwrap_or(false),
+        crate::engine::session::RunOptions {
+            language,
+            cleanup_level,
+        },
+    )
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// Transcribe a link (#123): a direct audio/video file, or a video
+/// platform through yt-dlp found on PATH. Returns the session id at once;
+/// `engine-download` events report the download, then the usual `engine-*`
+/// events the transcription into a `transcription` item (`source:
+/// url:<link>`). `allow_local`: this run may reach hosts on this computer
+/// or the local network (refused by default). An invalid link, a missing
+/// yt-dlp or an unwritable archive fail here, before any download.
+#[tauri::command]
+pub fn engine_start_link(
+    app: AppHandle,
+    url: String,
+    title: Option<String>,
+    allow_local: Option<bool>,
+    language: Option<String>,
+    cleanup_level: Option<crate::settings::CleanupLevel>,
+) -> Result<u64, String> {
+    crate::engine::session::start_link(
+        &app,
+        &url,
+        title.unwrap_or_default(),
+        allow_local.unwrap_or(false),
+        crate::engine::session::RunOptions {
+            language,
+            cleanup_level,
+        },
+    )
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// What the Link tab shows while the user types (#123). Pure: no network,
+/// no process.
+#[derive(serde::Serialize)]
+pub struct LinkInfo {
+    /// `direct` | `platform`; absent when the link is invalid.
+    pub kind: Option<crate::sources::url::LinkKind>,
+    /// Why the link can't be used, if so.
+    pub error: Option<String>,
+    /// The host is visibly this computer or the local network (an IP
+    /// literal or localhost): the run needs "Allow local network addresses".
+    pub local: bool,
+    /// Short form for display.
+    pub label: String,
+}
+
+#[tauri::command]
+pub fn link_inspect(url: String) -> LinkInfo {
+    match crate::sources::url::parse_link(&url) {
+        Ok(link) => LinkInfo {
+            kind: Some(link.kind),
+            error: None,
+            local: crate::sources::url::is_visibly_local(&link.url),
+            label: crate::sources::url::display_label(&link.url),
+        },
+        Err(e) => LinkInfo {
+            kind: None,
+            error: Some(format!("{e:#}")),
+            local: false,
+            label: String::new(),
+        },
+    }
+}
+
+/// Whether yt-dlp is installed (#123), for the Link tab.
+#[derive(serde::Serialize)]
+pub struct YtDlpStatus {
+    pub found: bool,
+    pub path: Option<String>,
+    /// `yt-dlp --version`, when it answered.
+    pub version: Option<String>,
+    /// How to install it on this OS.
+    pub install_help: String,
+}
+
+#[tauri::command]
+pub async fn yt_dlp_status() -> Result<YtDlpStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        use crate::sources::url::ytdlp;
+        let path = ytdlp::find();
+        let version = path
+            .as_deref()
+            .and_then(|p| ytdlp::version(p, std::time::Duration::from_secs(10)).ok());
+        YtDlpStatus {
+            found: path.is_some(),
+            path: path.map(|p| p.to_string_lossy().into_owned()),
+            version,
+            install_help: ytdlp::install_instructions(),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Stop recording the mic session; the queued segments are still
+/// transcribed and the item written. Returns the session id.
+#[tauri::command]
+pub fn engine_stop_mic(state: State<'_, AppState>) -> Result<u64, String> {
+    state
+        .engine
+        .stop_mic()
+        .ok_or_else(|| "no microphone session is running".to_string())
+}
+
+/// Abort a session (mic or file): nothing is written. False if unknown.
+#[tauri::command]
+pub fn engine_cancel(state: State<'_, AppState>, session_id: u64) -> bool {
+    state.engine.cancel(session_id)
+}
+
+#[derive(serde::Serialize)]
+pub struct EngineStatus {
+    /// Sessions running (mic + files).
+    pub active: usize,
+    /// The running mic session, if any.
+    pub mic_session: Option<u64>,
+    /// Running file transcriptions, oldest first (#158): a UI mounted
+    /// mid-run (window reload, `ui_v2` switched) adopts them, so a file
+    /// started from the other UI can still be followed and cancelled.
+    pub file_sessions: Vec<FileSessionStatus>,
+    /// Running link transcriptions, oldest first (#123), adopted likewise.
+    pub link_sessions: Vec<FileSessionStatus>,
+}
+
+#[derive(serde::Serialize)]
+pub struct FileSessionStatus {
+    pub session_id: u64,
+    /// The file's name.
+    pub label: String,
+}
+
+#[tauri::command]
+pub fn engine_status(state: State<'_, AppState>) -> EngineStatus {
+    EngineStatus {
+        active: state.engine.active_count(),
+        mic_session: state.engine.mic_session(),
+        file_sessions: state
+            .engine
+            .file_sessions()
+            .into_iter()
+            .map(|(session_id, label)| FileSessionStatus { session_id, label })
+            .collect(),
+        link_sessions: state
+            .engine
+            .link_sessions()
+            .into_iter()
+            .map(|(session_id, label)| FileSessionStatus { session_id, label })
+            .collect(),
+    }
 }
 
 /// One-off translation of a past history entry. Starts from the RAW
@@ -320,8 +574,8 @@ pub async fn translate_entry(
     tauri::async_runtime::spawn_blocking(move || {
         let translated = crate::cleanup::ollama::cleanup(&settings, None, &raw);
         if translated == raw {
-            // cleanup() falls back to the input on any Ollama error.
-            return Err("translation failed — is Ollama running?".to_string());
+            // cleanup() falls back to the input on any LLM error.
+            return Err("translation failed — is the cleanup server running?".to_string());
         }
         let entry = HistoryEntry {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -335,15 +589,23 @@ pub async fn translate_entry(
     .map_err(|e| e.to_string())?
 }
 
-/// Ollama environment status for the setup banner.
+/// Cleanup server status for the setup banner, for the cleanup profile.
 #[derive(serde::Serialize)]
 pub struct OllamaStatus {
     /// Binary found on PATH (or the server answered — installed for sure).
     pub installed: bool,
-    /// The HTTP server answered /api/tags.
+    /// The profile's server answered its model listing.
     pub running: bool,
-    /// The configured cleanup model is present on the server.
+    /// The profile's model is present on the server.
     pub has_model: bool,
+}
+
+/// Whether `model` is in `models`, Ollama-style: `llama3.2` matches
+/// `llama3.2:latest`.
+fn model_listed(models: &[String], model: &str) -> bool {
+    models
+        .iter()
+        .any(|m| m == model || m.starts_with(&format!("{model}:")))
 }
 
 fn ollama_binary_on_path() -> bool {
@@ -359,19 +621,11 @@ fn ollama_binary_on_path() -> bool {
 
 #[tauri::command]
 pub async fn ollama_status(state: State<'_, AppState>) -> Result<OllamaStatus, String> {
-    let (settings, model) = {
-        let s = state.settings.lock().unwrap();
-        (s.clone(), s.ollama_model.clone())
-    };
+    let profile = state.settings.lock().unwrap().cleanup_llm();
     tauri::async_runtime::spawn_blocking(move || {
-        let models = crate::cleanup::ollama::list_models(&settings).ok();
+        let models = crate::cleanup::ollama::list_models(&profile).ok();
         let running = models.is_some();
-        let has_model = models
-            .map(|ms| {
-                ms.iter()
-                    .any(|m| m == &model || m.starts_with(&format!("{model}:")))
-            })
-            .unwrap_or(false);
+        let has_model = models.is_some_and(|ms| model_listed(&ms, &profile.model));
         Ok(OllamaStatus {
             installed: running || ollama_binary_on_path(),
             running,
@@ -403,16 +657,10 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     };
     tauri::async_runtime::spawn_blocking(move || {
         use std::fmt::Write as _;
-        let models = crate::cleanup::ollama::list_models(&settings).ok();
-        let ollama_running = models.is_some();
-        let ollama_has_model = models
-            .map(|ms| {
-                ms.iter().any(|m| {
-                    m == &settings.ollama_model
-                        || m.starts_with(&format!("{}:", settings.ollama_model))
-                })
-            })
-            .unwrap_or(false);
+        let profile = settings.cleanup_llm();
+        let models = crate::cleanup::ollama::list_models(&profile).ok();
+        let llm_running = models.is_some();
+        let llm_has_model = models.is_some_and(|ms| model_listed(&ms, &profile.model));
 
         let mut r = String::new();
         let _ = writeln!(r, "Sussurro {} — diagnostics", env!("CARGO_PKG_VERSION"));
@@ -434,15 +682,20 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
         );
         let _ = writeln!(
             r,
-            "Hotkeys: dictation {} ({}) · command {}",
+            "Hotkey: dictation {} ({})",
             settings.hotkey,
-            if settings.push_to_talk { "push-to-talk" } else { "toggle" },
-            settings.command_hotkey
+            if settings.push_to_talk { "push-to-talk" } else { "toggle" }
         );
         let _ = writeln!(
             r,
-            "Cleanup: {:?} · {} @ {} (running: {ollama_running}, model present: {ollama_has_model})",
-            settings.cleanup_level, settings.ollama_model, settings.ollama_url
+            "Cleanup: {:?} · profile \"{}\" ({:?}, {}) · {} @ {} (running: {llm_running}, model present: {llm_has_model}) · {} profile(s)",
+            settings.cleanup_level,
+            profile.name,
+            profile.api,
+            if profile.external { "external" } else { "local" },
+            profile.model,
+            profile.base_url,
+            settings.llm_profiles.len()
         );
         let _ = writeln!(
             r,
@@ -489,14 +742,15 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// Pull the configured cleanup model on the Ollama server (blocking, can take
+/// Pull the cleanup profile's model on its Ollama server (blocking, can take
 /// minutes for a ~2 GB model).
 #[tauri::command]
 pub async fn pull_ollama_model(state: State<'_, AppState>) -> Result<(), String> {
-    let (url, model) = {
-        let s = state.settings.lock().unwrap();
-        (s.ollama_url.clone(), s.ollama_model.clone())
-    };
+    let profile = state.settings.lock().unwrap().cleanup_llm();
+    if profile.api != crate::settings::CleanupApi::Ollama {
+        return Err("pulling a model needs an Ollama profile".to_string());
+    }
+    let (url, model) = (profile.base_url, profile.model);
     tauri::async_runtime::spawn_blocking(move || {
         let client = reqwest::blocking::Client::builder()
             .timeout(None)
@@ -526,13 +780,20 @@ pub fn get_default_prompts() -> [String; 3] {
     ]
 }
 
-/// Models available on the configured Ollama server. Errors when unreachable —
-/// the frontend falls back to a free-text field.
+/// Models available on the cleanup profile's server. Errors when
+/// unreachable — the frontend falls back to a free-text field.
 #[tauri::command]
 pub async fn list_ollama_models(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let settings = { state.settings.lock().unwrap().clone() };
+    let profile = state.settings.lock().unwrap().cleanup_llm();
+    llm_list_models(profile).await
+}
+
+/// Models on any profile's server, saved or still being edited — the
+/// profile editor's "Test connection" (#119). Errors when unreachable.
+#[tauri::command]
+pub async fn llm_list_models(profile: crate::llm::LlmProfile) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::cleanup::ollama::list_models(&settings).map_err(|e| format!("{e:#}"))
+        crate::cleanup::ollama::list_models(&profile).map_err(|e| format!("{e:#}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -560,4 +821,505 @@ pub async fn download_model(state: State<'_, AppState>) -> Result<String, String
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// ---- Archive (0.7): notes, meetings and transcriptions as markdown files ----
+
+use crate::archive::{self, Item, ItemMeta, ItemSummary, SearchFilters};
+use std::path::{Path, PathBuf};
+
+/// Archive folder and index path for the current settings, cloned out of the
+/// state so the blocking work doesn't hold the settings lock.
+fn archive_paths(state: &AppState) -> Result<(PathBuf, PathBuf), String> {
+    let settings = state.settings.lock().unwrap();
+    let dir = crate::state::resolve_archive_dir(&state.paths, &settings)
+        .map_err(|e| format!("{e:#}"))?;
+    Ok((dir, state.paths.archive_index.clone()))
+}
+
+/// Filesystem and SQLite work runs off the async runtime.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || f().map_err(|e| format!("{e:#}")))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Keep the index in step after the app changed an item. The files are
+/// already written, so an index failure is only logged: the next search
+/// re-syncs (or rebuilds) from the folder anyway.
+fn reindex(
+    root: &Path,
+    db: &Path,
+    f: impl FnOnce(&mut archive::Index) -> anyhow::Result<()>,
+) {
+    let result = archive::Index::open(root, db).and_then(|mut idx| f(&mut idx));
+    if let Err(e) = result {
+        eprintln!("archive index: update failed ({e:#})");
+    }
+}
+
+/// The resolved archive folder (not created — just the path).
+#[tauri::command]
+pub fn archive_dir(state: State<'_, AppState>) -> Result<String, String> {
+    archive_paths(&state).map(|(dir, _)| dir.display().to_string())
+}
+
+/// Every item, newest first, by scanning the archive folder.
+#[tauri::command]
+pub async fn archive_list(state: State<'_, AppState>) -> Result<Vec<ItemSummary>, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || Ok(archive::list_items(&dir))).await
+}
+
+/// Full-text search with facets over the index (synced with the folder
+/// first). Empty query = all items passing the filters, newest first.
+#[tauri::command]
+pub async fn archive_search(
+    state: State<'_, AppState>,
+    query: String,
+    filters: Option<SearchFilters>,
+) -> Result<Vec<ItemSummary>, String> {
+    let (dir, db) = archive_paths(&state)?;
+    let filters = filters.unwrap_or_default();
+    blocking(move || archive::with_index(&dir, &db, |idx| idx.search(&query, &filters))).await
+}
+
+#[tauri::command]
+pub async fn archive_get(state: State<'_, AppState>, id: String) -> Result<Item, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || archive::read_item(&dir, &id)).await
+}
+
+/// Replace an item's frontmatter; returns the updated item. Participants
+/// are refused on notes (P10, see `archive::update_meta`).
+#[tauri::command]
+pub async fn archive_update_meta(
+    state: State<'_, AppState>,
+    id: String,
+    meta: ItemMeta,
+) -> Result<Item, String> {
+    let (dir, db) = archive_paths(&state)?;
+    blocking(move || {
+        let item = archive::update_meta(&dir, &id, &meta)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        Ok(item)
+    })
+    .await
+}
+
+/// Line editor: replace the text of one segment; returns the updated item.
+/// Refused when `transcript.md` was edited outside the app.
+#[tauri::command]
+pub async fn archive_update_segment(
+    state: State<'_, AppState>,
+    id: String,
+    segment_id: u32,
+    text: String,
+) -> Result<Item, String> {
+    edit_segment_command(&state, id, segment_id, archive::SegmentEdit::Text(text)).await
+}
+
+/// Line editor: delete one segment; returns the updated item. Refused when
+/// `transcript.md` was edited outside the app.
+#[tauri::command]
+pub async fn archive_delete_segment(
+    state: State<'_, AppState>,
+    id: String,
+    segment_id: u32,
+) -> Result<Item, String> {
+    edit_segment_command(&state, id, segment_id, archive::SegmentEdit::Delete).await
+}
+
+async fn edit_segment_command(
+    state: &AppState,
+    id: String,
+    segment_id: u32,
+    edit: archive::SegmentEdit,
+) -> Result<Item, String> {
+    let (dir, db) = archive_paths(state)?;
+    let journal = crate::engine::session::journal_path(state);
+    blocking(move || {
+        // A live item can't be line-edited (#158): the store refuses the
+        // `recording` marker, this a session that still owns the item.
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        let item = archive::edit_segment(&dir, &id, segment_id, edit)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        Ok(item)
+    })
+    .await
+}
+
+/// Move an item folder to the OS trash (never a hard delete). Refused for
+/// an item a capture session is writing (#158), in this process or another
+/// instance.
+#[tauri::command]
+pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let (dir, db) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
+    blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        archive::delete_item(&dir, &id)?;
+        reindex(&dir, &db, |idx| idx.remove_from_index(&id));
+        Ok(())
+    })
+    .await
+}
+
+/// Open the item's folder in the OS file manager — or, without an id, the
+/// archive folder itself (created if missing, so the empty Library can show
+/// the user where items will go).
+#[tauri::command]
+pub fn archive_reveal(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: Option<String>,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let (dir, _) = archive_paths(&state)?;
+    let target = match id {
+        Some(id) => {
+            let item = archive::paths::item_dir(&dir, &id).map_err(|e| format!("{e:#}"))?;
+            if !item.is_dir() {
+                return Err(format!("no archive item '{id}'"));
+            }
+            item
+        }
+        None => {
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("creating {}: {e}", dir.display()))?;
+            dir
+        }
+    };
+    app.opener()
+        .open_path(target.display().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// Drop and rebuild the search index from the folder; returns the item count.
+#[tauri::command]
+pub async fn archive_rebuild_index(state: State<'_, AppState>) -> Result<usize, String> {
+    let (dir, db) = archive_paths(&state)?;
+    blocking(move || archive::rebuild_index(&dir, &db)).await
+}
+
+// ---- Recipes (0.8, #120): prompts that write companion documents ----
+
+use crate::recipes::{self, Recipe};
+
+/// Every recipe: the built-ins first, then the user's own.
+#[tauri::command]
+pub fn recipes_list(state: State<'_, AppState>) -> Vec<Recipe> {
+    recipes::all_recipes(&state.settings.lock().unwrap().recipes)
+}
+
+/// The companion documents next to an item's transcript (`document.md`
+/// first).
+#[tauri::command]
+pub async fn recipe_documents(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<archive::companion::CompanionDoc>, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || archive::companion::list_companions(&dir, &id)).await
+}
+
+/// `recipe-progress` payload.
+#[derive(serde::Serialize, Clone)]
+pub struct RecipeProgressEvent {
+    pub item_id: String,
+    pub recipe_id: String,
+    pub recipe_name: String,
+    /// The question, for a free question (#121).
+    pub question: Option<String>,
+    #[serde(flatten)]
+    pub progress: recipes::engine::Progress,
+}
+
+/// How a recipe run ended (also sent as `recipe-finished`).
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct RecipeFinished {
+    pub item_id: String,
+    pub recipe_id: String,
+    pub recipe_name: String,
+    /// Companion document written, for a document recipe.
+    pub file: Option<String>,
+    /// The text, for an answer recipe or a free question.
+    pub answer: Option<String>,
+    /// Handle of the answer for `recipe_save_answer` (kept in memory only).
+    pub answer_id: Option<u64>,
+    /// The question, for a free question (#121).
+    pub question: Option<String>,
+    /// Profile the run used (name as shown), its model and external flag.
+    pub profile: String,
+    pub model: String,
+    pub external: bool,
+    pub error: Option<String>,
+    pub cancelled: bool,
+}
+
+/// The profile a recipe runs on when the caller names none: the cleanup
+/// profile when it is local, else the first local one, else the cleanup
+/// profile (which the privacy check then refuses with its explanation).
+fn default_recipe_profile(settings: &Settings) -> crate::llm::LlmProfile {
+    let cleanup = settings.cleanup_llm();
+    if !cleanup.external {
+        return cleanup;
+    }
+    settings
+        .llm_profiles
+        .iter()
+        .find(|p| !p.external)
+        .cloned()
+        .unwrap_or(cleanup)
+}
+
+/// The profile `profile_id` names, or the default one.
+fn recipe_profile(settings: &Settings, profile_id: Option<&str>) -> Result<crate::llm::LlmProfile, String> {
+    match profile_id {
+        Some(pid) => settings
+            .llm_profiles
+            .iter()
+            .find(|p| p.id == pid)
+            .cloned()
+            .ok_or_else(|| format!("no LLM profile '{pid}'")),
+        None => Ok(default_recipe_profile(settings)),
+    }
+}
+
+/// Run a recipe on an archive item with an LLM profile (default: see
+/// [`default_recipe_profile`]). Refusals — unknown recipe or profile, an
+/// external profile (#122 adds the per-run confirmation), a live item,
+/// another run on the same item — are errors, and nothing is sent. Once
+/// started, progress arrives as `recipe-progress` and the end as
+/// `recipe-finished`, whose payload this also returns (with `error` /
+/// `cancelled` set when it did not complete). An answer recipe's result is
+/// kept in memory for `recipe_save_answer` (`answer_id`).
+#[tauri::command]
+pub async fn recipe_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    recipe_id: String,
+    profile_id: Option<String>,
+) -> Result<RecipeFinished, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let recipe = recipes::find_recipe(&settings.recipes, &recipe_id)
+        .ok_or_else(|| format!("no recipe '{recipe_id}'"))?;
+    let profile = recipe_profile(&settings, profile_id.as_deref())?;
+    run_recipe(app, &state, id, recipe, None, profile).await
+}
+
+/// Ask a free question about an archive item (the Ask panel, #121): a
+/// transient answer recipe whose task is the question, run like any other
+/// recipe (map-reduce on long transcripts, same refusals, same events).
+/// The answer is not written anywhere unless saved with
+/// `recipe_save_answer`.
+#[tauri::command]
+pub async fn recipe_ask(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    question: String,
+    profile_id: Option<String>,
+) -> Result<RecipeFinished, String> {
+    let question = recipes::answer::normalize_question(&question).map_err(|e| format!("{e:#}"))?;
+    let recipe = recipes::answer::question_recipe(&question).map_err(|e| format!("{e:#}"))?;
+    let settings = state.settings.lock().unwrap().clone();
+    let profile = recipe_profile(&settings, profile_id.as_deref())?;
+    run_recipe(app, &state, id, recipe, Some(question), profile).await
+}
+
+async fn run_recipe(
+    app: AppHandle,
+    state: &State<'_, AppState>,
+    id: String,
+    recipe: Recipe,
+    question: Option<String>,
+    profile: crate::llm::LlmProfile,
+) -> Result<RecipeFinished, String> {
+    use tauri::{Emitter, Manager};
+    let (archive, db) = archive_paths(state)?;
+    recipes::run::check_profile(&profile).map_err(|e| format!("{e:#}"))?;
+    {
+        let journal = crate::engine::session::journal_path(state);
+        let (archive, id) = (archive.clone(), id.clone());
+        blocking(move || crate::engine::session::ensure_not_live(&journal, &archive, &id)).await?;
+    }
+    let cancel = state
+        .recipe_runs
+        .begin_with(&id, &recipe, question.as_deref())
+        .map_err(|e| format!("{e:#}"))?;
+
+    let handle = app.clone();
+    let (item_id, r, q, p) = (id.clone(), recipe.clone(), question.clone(), profile.clone());
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<AppState>();
+        /// Unregisters the run however the closure ends (panic included).
+        struct End<'a>(&'a recipes::run::Runs, &'a str);
+        impl Drop for End<'_> {
+            fn drop(&mut self) {
+                self.0.end(self.1);
+            }
+        }
+        let _end = End(&state.recipe_runs, &item_id);
+        let now = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+        let model = recipes::run::ProfileModel { profile: p.clone() };
+        let result = recipes::run::run_on_item(
+            &archive,
+            &item_id,
+            &r,
+            &p,
+            &model,
+            &now,
+            &cancel,
+            &mut |step| {
+                state.recipe_runs.set_progress(&item_id, step);
+                let _ = handle.emit(
+                    "recipe-progress",
+                    RecipeProgressEvent {
+                        item_id: item_id.clone(),
+                        recipe_id: r.id.clone(),
+                        recipe_name: r.name.clone(),
+                        question: q.clone(),
+                        progress: step,
+                    },
+                );
+            },
+        );
+        if result.as_ref().is_ok_and(|o| o.file.is_some()) {
+            // Keep the index in step with the item folder.
+            reindex(&archive, &db, |idx| idx.index_item(&item_id));
+        }
+        result.map(|out| (out, now))
+    })
+    .await;
+    let mut finished = RecipeFinished {
+        item_id: id.clone(),
+        recipe_id: recipe.id.clone(),
+        recipe_name: recipe.name.clone(),
+        file: None,
+        answer: None,
+        answer_id: None,
+        question: question.clone(),
+        profile: profile.name.trim().to_string(),
+        model: profile.model.trim().to_string(),
+        external: profile.external,
+        error: None,
+        cancelled: false,
+    };
+    match joined {
+        Ok(Ok((out, now))) => {
+            finished.file = out.file;
+            if let Some(text) = out.answer {
+                finished.answer_id = Some(state.recipe_answers.put(recipes::answer::PendingAnswer {
+                    item_id: id,
+                    recipe_id: recipe.id.clone(),
+                    recipe_name: recipe.name.clone(),
+                    question,
+                    profile: finished.profile.clone(),
+                    model: finished.model.clone(),
+                    external: profile.external,
+                    date: now,
+                    text: text.clone(),
+                }));
+                finished.answer = Some(text);
+            }
+        }
+        Ok(Err(e)) if e.downcast_ref::<recipes::engine::Cancelled>().is_some() => {
+            finished.cancelled = true;
+        }
+        Ok(Err(e)) => finished.error = Some(format!("{e:#}")),
+        Err(e) => finished.error = Some(e.to_string()),
+    }
+    let _ = app.emit("recipe-finished", finished.clone());
+    Ok(finished)
+}
+
+/// Save an answer shown in the Ask panel as a companion document next to
+/// the transcript (`<slug of the question>.md`, or of the recipe name),
+/// with provenance frontmatter. Never replaces an existing file. The
+/// answer is forgotten once saved. Returns the file name written.
+#[tauri::command]
+pub async fn recipe_save_answer(
+    state: State<'_, AppState>,
+    id: String,
+    answer_id: u64,
+) -> Result<String, String> {
+    let (archive, db) = archive_paths(&state)?;
+    let answer = state
+        .recipe_answers
+        .get(&id, answer_id)
+        .ok_or("this answer is no longer available — ask again to save it")?;
+    let item_id = id.clone();
+    let file = blocking(move || {
+        let file = recipes::answer::save_answer(&archive, &answer)?;
+        reindex(&archive, &db, |idx| idx.index_item(&item_id));
+        Ok(file)
+    })
+    .await?;
+    state.recipe_answers.remove(&id, answer_id);
+    Ok(file)
+}
+
+/// Forget an answer the Ask panel no longer shows (dismissed, replaced).
+#[tauri::command]
+pub fn recipe_dismiss_answer(state: State<'_, AppState>, id: String, answer_id: u64) -> bool {
+    state.recipe_answers.remove(&id, answer_id)
+}
+
+/// Stop the recipe running on an item after its current step. False when
+/// none runs there.
+#[tauri::command]
+pub fn recipe_cancel(state: State<'_, AppState>, id: String) -> bool {
+    state.recipe_runs.cancel(&id)
+}
+
+/// Recipe runs in flight (a UI mounted mid-run adopts them).
+#[tauri::command]
+pub fn recipe_status(state: State<'_, AppState>) -> Vec<recipes::run::RunStatus> {
+    state.recipe_runs.list()
+}
+
+/// Show a companion document in the OS file manager.
+#[tauri::command]
+pub fn recipe_reveal_document(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    file: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let (dir, _) = archive_paths(&state)?;
+    let path =
+        archive::companion::companion_path(&dir, &id, &file).map_err(|e| format!("{e:#}"))?;
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod recipe_tests {
+    use super::*;
+    use crate::llm::LlmProfile;
+    use crate::settings::CleanupApi;
+
+    #[test]
+    fn default_recipe_profile_prefers_a_local_one() {
+        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
+        let lan = LlmProfile::new("lan", "LAN", CleanupApi::Ollama, "http://localhost:11434", "", "m");
+        let mut s = Settings {
+            llm_profiles: vec![work.clone(), lan],
+            cleanup_profile: "work".into(),
+            ..Default::default()
+        };
+        assert_eq!(default_recipe_profile(&s).id, "lan");
+        s.cleanup_profile = "lan".into();
+        assert_eq!(default_recipe_profile(&s).id, "lan");
+        // Only external profiles: the run is then refused with the reason.
+        s.llm_profiles = vec![work];
+        s.cleanup_profile = "work".into();
+        assert_eq!(default_recipe_profile(&s).id, "work");
+    }
 }

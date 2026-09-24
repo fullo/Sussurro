@@ -1,0 +1,97 @@
+/* Transcript lines — self-contained (fallback values for every token) so the
+   extension side panel can use them without App.css. Editing and selection
+   use ink, not red: red is reserved for recording. */
+
+.tx-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.tx-end { height: 0; padding: 0; }
+
+.tx-line {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius, 8px);
+  align-items: start;
+}
+.tx-line:hover, .tx-line:focus-within, .tx-line.editing { background: var(--c-surface-alt, #f3f2ee); }
+
+.tx-time {
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--c-text-light, #595959);
+  padding-top: 3px;
+  white-space: nowrap;
+}
+
+.tx-body { min-width: 0; }
+.tx-text {
+  margin: 0;
+  font-family: var(--f-serif, Georgia, serif);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--c-dark, #1a1a1a);
+  overflow-wrap: anywhere;
+}
+.tx-failed { font-family: var(--f-mono, ui-monospace, monospace); font-size: 13px; color: var(--c-text-light, #595959); }
+.tx-edited { font-family: var(--f-sans, system-ui, sans-serif); font-size: 11px; color: var(--c-text-light, #595959); }
+
+/* Line actions float over the line's top-right corner on hover/focus, so
+   they take no space (no gaps between lines, no jump on hover) yet stay
+   reachable by keyboard: tabbing onto a hidden button reveals it. */
+.tx-line { position: relative; }
+.tx-actions {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px;
+  border-radius: var(--radius-pill, 100px);
+  background: var(--c-surface-alt, #f3f2ee);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.tx-line:hover .tx-actions, .tx-line:focus-within .tx-actions { opacity: 1; pointer-events: auto; }
+.tx-actions-open { position: static; opacity: 1; pointer-events: auto; background: transparent; padding: 0; margin-top: 6px; flex-wrap: wrap; }
+@media (hover: none) { .tx-actions { position: static; opacity: 1; pointer-events: auto; background: transparent; padding: 0; margin-top: 6px; } }
+
+.tx-btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill, 100px);
+  border: 1px solid var(--border-strong, #c9c9c2);
+  background: var(--c-surface, #fff);
+  color: var(--c-text, #2d2d2d);
+  cursor: pointer;
+}
+.tx-btn:hover { border-color: var(--c-dark, #1a1a1a); }
+.tx-btn:focus-visible { outline: 2px solid var(--c-dark, #1a1a1a); outline-offset: 2px; }
+.tx-btn:disabled { opacity: 0.55; cursor: default; }
+.tx-btn-primary { background: var(--c-dark, #1a1a1a); border-color: var(--c-dark, #1a1a1a); color: #fff; }
+.tx-btn-danger { background: var(--brand-soft, #fce8e7); border-color: var(--brand, #e52520); color: var(--brand-text, #c91e1a); }
+
+.tx-edit { min-width: 0; }
+.tx-edit textarea {
+  width: 100%;
+  font-family: var(--f-serif, Georgia, serif);
+  font-size: 15px;
+  line-height: 1.5;
+  border: 2px solid var(--c-dark, #1a1a1a);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--c-surface, #fff);
+  resize: vertical;
+}
+.tx-edit textarea:focus, .tx-edit textarea:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.18); }
+.tx-hint { font-size: 11.5px; color: var(--c-text-light, #595959); }
+
+.tx-empty { font-family: var(--f-serif, Georgia, serif); font-style: italic; color: var(--c-text-light, #595959); margin: 12px 10px; }
+
+@media (max-width: 560px) {
+  .tx-line { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}

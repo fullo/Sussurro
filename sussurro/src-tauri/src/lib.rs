@@ -1,15 +1,20 @@
 pub mod api;
+pub mod archive;
 pub mod audio;
 pub mod cleanup;
 pub mod commands;
 pub mod config_io;
+pub mod engine;
 pub mod history;
 pub mod hotkey;
 pub mod inject;
+pub mod llm;
 pub mod permissions;
 pub mod pipeline;
+pub mod recipes;
 pub mod settings;
 pub mod snippets;
+pub mod sources;
 pub mod state;
 pub mod stats;
 pub mod stt;
@@ -35,6 +40,28 @@ pub fn app_handle() -> Option<AppHandle> {
     APP_HANDLE.get().cloned()
 }
 
+/// Main window size for the classic single-column UI and for the workspace
+/// preview (`Settings::ui_v2`): (width, height, min width, min height), in
+/// logical pixels. The classic values match `tauri.conf.json`.
+pub fn main_window_layout(workspace: bool) -> (f64, f64, f64, f64) {
+    if workspace {
+        (1120.0, 740.0, 800.0, 560.0)
+    } else {
+        (700.0, 860.0, 560.0, 640.0)
+    }
+}
+
+/// Resize the main window for the chosen UI. Best effort: a failure only
+/// leaves the window at its current size.
+pub fn apply_main_window_layout(app: &AppHandle, workspace: bool) {
+    let Some(w) = app.get_webview_window("main") else {
+        return;
+    };
+    let (width, height, min_w, min_h) = main_window_layout(workspace);
+    let _ = w.set_min_size(Some(tauri::LogicalSize::new(min_w, min_h)));
+    let _ = w.set_size(tauri::LogicalSize::new(width, height));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -48,16 +75,9 @@ pub fn run() {
         ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, shortcut, event| {
+                .with_handler(|app, _shortcut, event| {
                     let pressed = event.state() == ShortcutState::Pressed;
-                    let is_command = {
-                        let state = app.state::<state::AppState>();
-                        let cmd = state.settings.lock().unwrap().command_hotkey.clone();
-                        cmd.parse::<tauri_plugin_global_shortcut::Shortcut>()
-                            .map(|c| c == *shortcut)
-                            .unwrap_or(false)
-                    };
-                    pipeline::handle_trigger(app, pressed, is_command);
+                    pipeline::handle_trigger(app, pressed);
                 })
                 .build(),
         )
@@ -65,16 +85,28 @@ pub fn run() {
             let handle = app.handle();
             let _ = APP_HANDLE.set(handle.clone());
             let paths = AppPaths::from_app(handle);
-            let settings = Settings::load(&paths.settings_file);
+            let (settings, migrated) = Settings::load_migrating(&paths.settings_file);
+            // Pre-0.8 cleanup settings became the "Local" LLM profile (#119):
+            // write the new shape once. Best effort — the in-memory settings
+            // are already migrated, and the next load would migrate again.
+            if migrated {
+                if let Err(e) = settings.save(&paths.settings_file) {
+                    eprintln!("could not save the migrated settings: {e}");
+                }
+            }
             // Wayland portal injection persists its consent token next to
             // the settings; without this the dialog would reappear per launch.
             #[cfg(all(target_os = "linux", feature = "wayland-portal"))]
             wayland_portal::init(paths.settings_file.with_file_name("portal-restore-token"));
             let _ = history::prune_older_than(&paths.history_file, settings.history_retention_days);
+            // tauri.conf.json sizes the window for the classic UI.
+            if settings.ui_v2 {
+                apply_main_window_layout(handle, true);
+            }
             // Neither a failed shortcut registration (e.g. GNOME Wayland
             // policy) nor a missing tray host (headless CI, minimal WMs) is
             // fatal: the window and the in-app Dictate button still work.
-            if let Err(e) = hotkey::apply(handle, &settings.hotkey, &settings.command_hotkey) {
+            if let Err(e) = hotkey::apply(handle, &settings.hotkey) {
                 eprintln!("global shortcut unavailable: {e:#}");
             }
             if let Err(e) = tray::setup(handle) {
@@ -86,10 +118,20 @@ pub fn run() {
                 transcriber_last_used: Mutex::new(None),
                 settings: Mutex::new(settings),
                 paths,
-                command_mode: std::sync::atomic::AtomicBool::new(false),
                 mic_test: std::sync::atomic::AtomicBool::new(false),
                 stream: Mutex::new(state::StreamState::default()),
+                engine: Default::default(),
+                dictation: Default::default(),
+                recipe_runs: Default::default(),
+                recipe_answers: Default::default(),
             });
+            // Long-form sessions the last run never finished (crash, forced
+            // quit): keep their items as "interrupted" (#153). Off the main
+            // thread; a session started meanwhile waits on the journal lock.
+            {
+                let handle = handle.clone();
+                std::thread::spawn(move || engine::session::recover_after_crash(&handle));
+            }
             {
                 let s = app.state::<state::AppState>().settings.lock().unwrap().clone();
                 if s.api_enabled {
@@ -132,6 +174,7 @@ pub fn run() {
             commands::list_whisper_models,
             commands::download_model,
             commands::list_ollama_models,
+            commands::llm_list_models,
             commands::list_input_devices,
             commands::start_mic_test,
             commands::stop_mic_test,
@@ -142,15 +185,63 @@ pub fn run() {
             commands::learn_correction,
             commands::export_config,
             commands::import_config,
-            commands::transcribe_audio_file,
+            commands::pick_import_file,
+            commands::transcribe_file,
+            commands::engine_start_mic,
+            commands::engine_start_link,
+            commands::link_inspect,
+            commands::yt_dlp_status,
+            commands::engine_stop_mic,
+            commands::engine_cancel,
+            commands::engine_status,
             commands::get_default_prompts,
             commands::ollama_status,
             commands::diagnostics,
             commands::pull_ollama_model,
             commands::translate_entry,
             commands::check_permissions,
-            commands::open_settings
+            commands::open_settings,
+            commands::archive_dir,
+            commands::archive_list,
+            commands::archive_search,
+            commands::archive_get,
+            commands::archive_update_meta,
+            commands::archive_update_segment,
+            commands::archive_delete_segment,
+            commands::archive_delete,
+            commands::archive_reveal,
+            commands::archive_rebuild_index,
+            commands::recipes_list,
+            commands::recipe_documents,
+            commands::recipe_run,
+            commands::recipe_ask,
+            commands::recipe_save_answer,
+            commands::recipe_dismiss_answer,
+            commands::recipe_cancel,
+            commands::recipe_status,
+            commands::recipe_reveal_document
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::main_window_layout;
+
+    /// The classic layout restored when the workspace preview is switched
+    /// off must match the window declared in tauri.conf.json.
+    #[test]
+    fn classic_window_layout_matches_tauri_conf() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let main = &conf["app"]["windows"][0];
+        let (w, h, min_w, min_h) = main_window_layout(false);
+        assert_eq!(main["width"].as_f64(), Some(w));
+        assert_eq!(main["height"].as_f64(), Some(h));
+        assert_eq!(main["minWidth"].as_f64(), Some(min_w));
+        assert_eq!(main["minHeight"].as_f64(), Some(min_h));
+        let (ww, _, wmin, _) = main_window_layout(true);
+        assert!(ww > w && wmin >= 800.0);
+    }
 }

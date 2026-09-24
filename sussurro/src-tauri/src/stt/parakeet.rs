@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::path::Path;
-use transcribe_rs::onnx::parakeet::{ParakeetModel, ParakeetParams};
+use transcribe_rs::onnx::parakeet::{ParakeetModel, ParakeetParams, TimestampGranularity};
 use transcribe_rs::onnx::Quantization;
 
 /// Directory (inside the app models dir) holding the extracted ONNX files.
@@ -31,4 +31,42 @@ impl ParakeetTranscriber {
             .map_err(|e| anyhow!("parakeet inference failed: {e}"))?;
         Ok(result.text.trim().to_string())
     }
+
+    /// Long-form variant (engine, #113): the same inference asking
+    /// transcribe-rs for word-level timestamps (TDT frame times, seconds,
+    /// already shifted back past its 250 ms leading pad) → words in ms
+    /// relative to the start of `samples`.
+    pub fn transcribe_timed(&mut self, samples: &[f32]) -> Result<super::TimedTranscript> {
+        let params = ParakeetParams {
+            timestamp_granularity: Some(TimestampGranularity::Word),
+            ..Default::default()
+        };
+        let result = self
+            .model
+            .transcribe_with(samples, &params)
+            .map_err(|e| anyhow!("parakeet inference failed: {e}"))?;
+        let words = result
+            .segments
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|s| {
+                let w = s.text.trim().to_string();
+                (!w.is_empty()).then(|| crate::archive::Word {
+                    w,
+                    start_ms: secs_to_ms(s.start),
+                    end_ms: secs_to_ms(s.end.max(s.start)),
+                })
+            })
+            .collect();
+        Ok(super::TimedTranscript {
+            text: result.text.trim().to_string(),
+            words,
+            words_estimated: false,
+            language: None,
+        })
+    }
+}
+
+fn secs_to_ms(s: f32) -> u64 {
+    (s.max(0.0) * 1000.0).round() as u64
 }

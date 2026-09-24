@@ -1,8 +1,23 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
+/// HuggingFace repo of the whisper.cpp GGML models.
+pub const WHISPER_REPO: &str = "ggerganov/whisper.cpp";
+
+/// Silero VAD for whisper.cpp's built-in `whisper_vad` (long-form engine,
+/// #113). Published in its own repo, NOT in ggerganov/whisper.cpp (whose
+/// listing has no `ggml-silero-*` file); whisper.cpp's own
+/// `download-vad-model` script fetches it from here too. Its SHA-256 comes
+/// from the repo's tree API (`lfs.oid`) like the whisper models, fail-closed.
+pub const VAD_REPO: &str = "ggml-org/whisper-vad";
+pub const VAD_MODEL_FILE: &str = "ggml-silero-v5.1.2.bin";
+
 pub fn model_url(file: &str) -> String {
-    format!("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{file}")
+    hf_resolve_url(WHISPER_REPO, file)
+}
+
+fn hf_resolve_url(repo: &str, file: &str) -> String {
+    format!("https://huggingface.co/{repo}/resolve/main/{file}")
 }
 
 /// Validate a configured whisper model name. `settings.json` is user-editable
@@ -52,10 +67,11 @@ pub fn resolve_model_path(models_dir: &Path, name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// HuggingFace repo tree listing for ggerganov/whisper.cpp. For LFS files
-/// (every ggml .bin) each entry carries `lfs.oid` — the file's SHA-256 hex.
-const HF_TREE_API: &str =
-    "https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/main";
+/// HuggingFace repo tree listing. For LFS files (every ggml .bin) each entry
+/// carries `lfs.oid` — the file's SHA-256 hex.
+fn hf_tree_api(repo: &str) -> String {
+    format!("https://huggingface.co/api/models/{repo}/tree/main")
+}
 
 /// Parse a HuggingFace tree listing and return the published SHA-256 of
 /// `file` (the entry's `lfs.oid`). Pure — testable without network.
@@ -79,9 +95,13 @@ pub fn sha256_from_hf_tree(json: &str, file: &str) -> Result<String> {
 
 /// Fetch the expected SHA-256 of `file` from HuggingFace. Fails closed: an
 /// unverifiable download is a failed download.
-fn fetch_expected_sha256(client: &reqwest::blocking::Client, file: &str) -> Result<String> {
+fn fetch_expected_sha256(
+    client: &reqwest::blocking::Client,
+    repo: &str,
+    file: &str,
+) -> Result<String> {
     let body = client
-        .get(HF_TREE_API)
+        .get(hf_tree_api(repo))
         .send()
         .context("model integrity check: HuggingFace tree API request failed")?
         .error_for_status()
@@ -97,10 +117,16 @@ fn fetch_expected_sha256(client: &reqwest::blocking::Client, file: &str) -> Resu
 /// models on slow links still complete while a malicious or broken server can't
 /// hold the download open forever.
 fn download_client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
+    Ok(download_client_builder().build()?)
+}
+
+/// The download client's settings (connect 10 s, 60 s per operation), for
+/// other downloads to start from — the link source (#123) adds its own
+/// redirect and DNS rules. Never `timeout(None)`.
+pub(crate) fn download_client_builder() -> reqwest::blocking::ClientBuilder {
+    reqwest::blocking::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(60))
-        .build()?)
 }
 
 pub fn model_exists(models_dir: &Path, file: &str) -> bool {
@@ -118,6 +144,8 @@ pub fn list_ggml_models(models_dir: &Path) -> Vec<String> {
         .flatten()
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| n.starts_with("ggml-") && n.ends_with(".bin"))
+        // The Silero VAD model shares the prefix but is not a whisper model.
+        .filter(|n| !n.starts_with("ggml-silero"))
         .collect();
     out.sort();
     out
@@ -126,6 +154,22 @@ pub fn list_ggml_models(models_dir: &Path) -> Vec<String> {
 /// Download the GGML model if missing. Blocking — callers must run this off
 /// the async runtime (spawn_blocking) and off the UI thread.
 pub fn ensure_model(models_dir: &Path, file: &str) -> Result<PathBuf> {
+    ensure_hf_file(models_dir, WHISPER_REPO, file)
+}
+
+pub fn vad_model_exists(models_dir: &Path) -> bool {
+    models_dir.join(VAD_MODEL_FILE).is_file()
+}
+
+/// Download the Silero VAD model (~0.9 MB) if missing, verified like the
+/// whisper models. Blocking.
+pub fn ensure_vad_model(models_dir: &Path) -> Result<PathBuf> {
+    ensure_hf_file(models_dir, VAD_REPO, VAD_MODEL_FILE)
+}
+
+/// Download `file` from the HuggingFace `repo` into `models_dir` if missing,
+/// verified against the SHA-256 the repo publishes (fail closed). Blocking.
+fn ensure_hf_file(models_dir: &Path, repo: &str, file: &str) -> Result<PathBuf> {
     // settings.json is user-editable — validate before any filesystem work.
     let path = resolve_model_path(models_dir, file)?;
     if path.exists() {
@@ -138,7 +182,7 @@ pub fn ensure_model(models_dir: &Path, file: &str) -> Result<PathBuf> {
 
     let client = download_client()?;
     let mut resp = client
-        .get(model_url(file))
+        .get(hf_resolve_url(repo, file))
         .send()
         .context("model download request failed")?
         .error_for_status()?;
@@ -148,7 +192,7 @@ pub fn ensure_model(models_dir: &Path, file: &str) -> Result<PathBuf> {
 
     // Integrity check (fail closed): the upstream repo publishes each file's
     // SHA-256 — verify before keeping the downloaded bytes.
-    let expected = fetch_expected_sha256(&client, file)
+    let expected = fetch_expected_sha256(&client, repo, file)
         .with_context(|| format!("verifying {file} against huggingface.co"))?;
     let actual = sha256_hex(&tmp)?;
     if !actual.eq_ignore_ascii_case(&expected) {
@@ -243,7 +287,14 @@ mod tests {
     #[test]
     fn list_ggml_models_finds_only_ggml_bins_sorted() {
         let dir = tempfile::tempdir().unwrap();
-        for f in ["ggml-small.bin", "ggml-base.en.bin", "notes.txt", "model.pt", "ggml-x.gguf"] {
+        for f in [
+            "ggml-small.bin",
+            "ggml-base.en.bin",
+            "notes.txt",
+            "model.pt",
+            "ggml-x.gguf",
+            "ggml-silero-v5.1.2.bin", // the VAD model is not a whisper model
+        ] {
             std::fs::write(dir.path().join(f), b"x").unwrap();
         }
         assert_eq!(
@@ -263,6 +314,29 @@ mod tests {
             model_url("ggml-base.en.bin"),
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
         );
+    }
+
+    #[test]
+    fn vad_model_lives_in_the_whisper_vad_repo() {
+        assert_eq!(
+            hf_resolve_url(VAD_REPO, VAD_MODEL_FILE),
+            "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin"
+        );
+        assert_eq!(
+            hf_tree_api(VAD_REPO),
+            "https://huggingface.co/api/models/ggml-org/whisper-vad/tree/main"
+        );
+        assert!(validate_model_name(VAD_MODEL_FILE).is_ok());
+    }
+
+    #[test]
+    fn ensure_vad_model_returns_existing_file_without_network() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!vad_model_exists(dir.path()));
+        std::fs::write(dir.path().join(VAD_MODEL_FILE), b"fake vad").unwrap();
+        assert!(vad_model_exists(dir.path()));
+        let got = ensure_vad_model(dir.path()).unwrap();
+        assert_eq!(got.file_name().and_then(|n| n.to_str()), Some(VAD_MODEL_FILE));
     }
 
     #[test]
