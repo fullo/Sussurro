@@ -35,6 +35,12 @@ impl ItemType {
         }
     }
 
+    /// Whether items of this type carry participants (P10): meetings and
+    /// transcriptions do, notes (the user's own voice) never do.
+    pub fn has_participants(self) -> bool {
+        self != ItemType::Note
+    }
+
     /// Case-insensitive parse; `None` for anything unknown.
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
@@ -61,6 +67,35 @@ pub struct Participant {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+}
+
+/// Participants as the app writes them: names and emails trimmed, entries
+/// without a name dropped, an empty email cleared, and repeats (same name
+/// and email, ignoring case) kept once.
+pub fn normalize_participants(list: &[Participant]) -> Vec<Participant> {
+    let mut seen = std::collections::HashSet::new();
+    list.iter()
+        .filter_map(|p| {
+            let name = p.name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let email = p
+                .email
+                .as_deref()
+                .map(str::trim)
+                .filter(|e| !e.is_empty())
+                .map(str::to_string);
+            let key = (
+                name.to_lowercase(),
+                email.as_deref().unwrap_or("").to_lowercase(),
+            );
+            seen.insert(key).then(|| Participant {
+                name: name.to_string(),
+                email,
+            })
+        })
+        .collect()
 }
 
 impl<'de> Deserialize<'de> for Participant {

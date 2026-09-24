@@ -15,7 +15,9 @@
 use super::frontmatter;
 use super::paths::{folder_name, id_from_dir, item_dir, month_dir, slugify};
 use super::render::render_transcript;
-use super::types::{ItemMeta, SegmentsFile, SessionState, SEGMENTS_VERSION, SESSION_KEY};
+use super::types::{
+    normalize_participants, ItemMeta, SegmentsFile, SessionState, SEGMENTS_VERSION, SESSION_KEY,
+};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -475,6 +477,12 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
 /// marker is kept, so a UI sending back a stale copy can neither resurrect
 /// `recording` on a finished item nor clear it on a live one.
 ///
+/// Participants are written normalized ([`normalize_participants`]). Notes
+/// never get participants (P10): an update that would add or change them on
+/// a note is refused. A note whose frontmatter already lists participants
+/// (typed by hand outside the app) may send them back unchanged, so editing
+/// its title or tags still works and the user's list is kept as is.
+///
 /// Refused (nothing written) when the current frontmatter is not valid YAML
 /// — replacing it would silently drop the user's edits there — and when the
 /// file changes on disk while the update is being written (#155).
@@ -502,6 +510,8 @@ fn update_meta_with(
         )
     })?;
     let mut meta = meta.clone();
+    meta.participants = normalize_participants(&meta.participants);
+    check_note_participants(&old, &meta)?;
     // The file's own marker (if any) comes back with the merge below.
     if meta.session_state().is_some() {
         meta.extra.remove(SESSION_KEY);
@@ -521,6 +531,23 @@ fn update_meta_with(
         commit_transcript(&dir, doc.as_bytes(), &expected, true, before_commit)?;
     }
     read_item_at(id, &dir)
+}
+
+/// P10: participants belong to meetings and transcriptions. A note may only
+/// keep, untouched, participants its file already had as a note.
+fn check_note_participants(old: &ItemMeta, new: &ItemMeta) -> Result<()> {
+    if new.item_type.has_participants() || new.participants.is_empty() {
+        return Ok(());
+    }
+    let unchanged = !old.item_type.has_participants()
+        && normalize_participants(&old.participants) == new.participants;
+    if !unchanged {
+        bail!(
+            "notes have no participants — participants belong to meetings and transcriptions. \
+             Remove them, or change the item's type first."
+        );
+    }
+    Ok(())
 }
 
 /// Store new segments. `segments.json` is always written; `transcript.md`
@@ -790,7 +817,7 @@ pub(crate) mod test_trash {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::archive::types::{ItemType, Segment};
+    use crate::archive::types::{ItemType, Participant, Segment};
 
     fn meta(title: &str, date: &str) -> ItemMeta {
         ItemMeta {
@@ -1294,6 +1321,114 @@ mod tests {
         assert!(item.edited_externally);
         assert_eq!(item.segments.segments[0].text, "Due.");
         assert!(temp_leftovers(&archive.join(&id)).is_empty());
+    }
+
+    fn person(name: &str, email: Option<&str>) -> Participant {
+        Participant {
+            name: name.into(),
+            email: email.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn transcription_participants_round_trip_through_the_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let mut m = meta("Podcast", DATE);
+        m.item_type = ItemType::Transcription;
+        let id = create_item(archive, &m, &segs(&["Benvenuti."])).unwrap();
+
+        let mut m = read_item(archive, &id).unwrap().meta;
+        m.participants = vec![
+            person("  Anna Rossi ", Some(" anna@example.com ")),
+            person("Ospite", Some("  ")),
+            person("anna rossi", Some("ANNA@example.com")), // repeat
+            person("   ", Some("nobody@example.com")),      // no name
+        ];
+        let item = update_meta(archive, &id, &m).unwrap();
+        let want = vec![
+            person("Anna Rossi", Some("anna@example.com")),
+            person("Ospite", None),
+        ];
+        assert_eq!(item.meta.participants, want);
+        assert!(!item.edited_externally);
+
+        // Written to the file and read back from it.
+        let path = archive.join(&id).join("transcript.md");
+        let doc = std::fs::read_to_string(&path).unwrap();
+        assert!(doc.contains("participants:"), "{doc}");
+        assert!(doc.contains("anna@example.com"), "{doc}");
+        assert_eq!(read_item(archive, &id).unwrap().meta.participants, want);
+
+        // Edit one, then remove them all.
+        m.participants = vec![person("Anna Rossi", Some("anna.rossi@example.com"))];
+        let item = update_meta(archive, &id, &m).unwrap();
+        assert_eq!(
+            item.meta.participants[0].email.as_deref(),
+            Some("anna.rossi@example.com")
+        );
+        m.participants.clear();
+        let item = update_meta(archive, &id, &m).unwrap();
+        assert!(item.meta.participants.is_empty());
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("anna"));
+    }
+
+    #[test]
+    fn update_meta_refuses_participants_on_a_note() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = create_item(archive, &meta("Idea", DATE), &segs(&["Testo."])).unwrap();
+        let path = archive.join(&id).join("transcript.md");
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let mut m = read_item(archive, &id).unwrap().meta;
+        m.participants = vec![person("Anna", None)];
+        let msg = format!("{:#}", update_meta(archive, &id, &m).unwrap_err());
+        assert!(msg.contains("notes have no participants"), "{msg}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+
+        // A transcription can't carry its participants into a note either.
+        let mut t = meta("Intervista", DATE);
+        t.item_type = ItemType::Transcription;
+        t.participants = vec![person("Anna", None)];
+        let tid = create_item(archive, &t, &segs(&["Ciao."])).unwrap();
+        let mut t = read_item(archive, &tid).unwrap().meta;
+        t.item_type = ItemType::Note;
+        assert!(update_meta(archive, &tid, &t).is_err());
+        t.participants.clear();
+        let item = update_meta(archive, &tid, &t).unwrap();
+        assert_eq!(item.meta.item_type, ItemType::Note);
+        assert!(item.meta.participants.is_empty());
+    }
+
+    #[test]
+    fn a_note_keeps_participants_written_by_hand() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = create_item(archive, &meta("Idea", DATE), &segs(&["Testo."])).unwrap();
+        let path = archive.join(&id).join("transcript.md");
+        let doc: String = std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(|l| match l.starts_with("participants:") {
+                true => "participants: [Anna]\n".to_string(),
+                false => format!("{l}\n"),
+            })
+            .collect();
+        assert!(doc.contains("[Anna]"), "{doc}");
+        std::fs::write(&path, doc).unwrap();
+
+        // The UI round-trips the list it got: a title edit still works.
+        let mut m = read_item(archive, &id).unwrap().meta;
+        assert_eq!(m.participants, vec![person("Anna", None)]);
+        m.title = "Idea migliore".into();
+        let item = update_meta(archive, &id, &m).unwrap();
+        assert_eq!(item.meta.title, "Idea migliore");
+        assert_eq!(item.meta.participants, vec![person("Anna", None)]);
+
+        // Changing them is still refused.
+        m.participants.push(person("Bob", None));
+        assert!(update_meta(archive, &id, &m).is_err());
     }
 
     #[test]
