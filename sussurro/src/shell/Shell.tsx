@@ -47,6 +47,7 @@ export function Shell({ ctl }: { ctl: Ctl }) {
     mic: { tags: [], categories: [] },
     file: { tags: [], categories: [] },
     link: { tags: [], categories: [] },
+    system: { tags: [], categories: [] },
   });
   const applied = useRef(new Set<string>());
 

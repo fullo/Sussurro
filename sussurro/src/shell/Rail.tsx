@@ -91,8 +91,10 @@ export function Rail({
   onNavigate: (s: Screen) => void;
   libraryCount: number | null;
 }) {
-  const mic = engine.runs.mic;
+  // The live capture: a mic session, or System audio + mic (#139).
+  const mic = isRunning(engine.runs.system) ? engine.runs.system : engine.runs.mic;
   const micLive = isRunning(mic) && mic.status === "running";
+  const liveWhat = mic?.kind === "system" ? "System audio session" : "Microphone session";
   const elapsed = useElapsed(micLive ? mic.startedAt : null, micLive);
   // Red is the recording moment: a dictation or a mic session in progress.
   const recording = ctl.state === "recording" || micLive;
@@ -127,7 +129,7 @@ export function Rail({
       </nav>
       <div className="sh-foot">
         {micLive && (
-          <button type="button" className="sh-live" onClick={() => onNavigate("new")} title="Microphone session recording — open New" aria-label={`Microphone session recording, ${formatClock(elapsed)} — open New`}>
+          <button type="button" className="sh-live" onClick={() => onNavigate("new")} title={`${liveWhat} recording — open New`} aria-label={`${liveWhat} recording, ${formatClock(elapsed)} — open New`}>
             <span aria-hidden="true">●</span> <span className="sh-foot-text">Rec {formatClock(elapsed)}</span>
           </button>
         )}
