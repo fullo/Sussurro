@@ -99,6 +99,27 @@ pub struct SegmenterParams {
     pub max_segment_ms: u32,
     /// At the cap, cut at the quietest frame within this last stretch.
     pub cap_search_ms: u32,
+    /// Once a segment holds this much audio, a pause of `soft_silence_ms`
+    /// ends it. `None` (whisper): only `min_silence_ms` and the cap do.
+    /// Parakeet can drop the sentences after a pause in long input (#194),
+    /// so its segments end at the first pause after ~8 s.
+    pub soft_max_ms: Option<u32>,
+    pub soft_silence_ms: u32,
+}
+
+impl SegmenterParams {
+    /// The segmentation for an STT engine: whisper keeps the defaults,
+    /// Parakeet gets the #194 soft cap.
+    pub fn for_engine(engine: &crate::settings::SttEngine) -> Self {
+        match engine {
+            crate::settings::SttEngine::Whisper => Self::default(),
+            crate::settings::SttEngine::Parakeet => Self {
+                soft_max_ms: Some(crate::stt::pauses::PARAKEET.soft_max_ms),
+                soft_silence_ms: crate::stt::pauses::PARAKEET.min_pause_ms,
+                ..Self::default()
+            },
+        }
+    }
 }
 
 impl Default for SegmenterParams {
@@ -113,6 +134,8 @@ impl Default for SegmenterParams {
             pad_ms: 200,
             max_segment_ms: 30_000,
             cap_search_ms: 5_000,
+            soft_max_ms: None,
+            soft_silence_ms: 300,
         }
     }
 }
@@ -241,11 +264,17 @@ impl Segmenter {
         out
     }
 
-    /// Frames of silence that end the open segment: the short rule once it
-    /// holds `min_segment_ms` of audio before the silence, the long one
-    /// before that.
+    /// Frames of silence that end the open segment: the soft-cap pause once
+    /// it holds `soft_max_ms` (Parakeet), the short rule once it holds
+    /// `min_segment_ms` of audio before the silence, the long one before
+    /// that.
     fn silence_to_close(&self) -> usize {
         let content = self.cur_probs.len().saturating_sub(self.silence_run);
+        if let Some(soft) = self.p.soft_max_ms {
+            if content >= frames(soft) {
+                return frames(self.p.soft_silence_ms).min(frames(self.p.min_silence_ms));
+            }
+        }
         if content >= frames(self.p.min_segment_ms) {
             frames(self.p.min_silence_ms)
         } else {
@@ -437,6 +466,37 @@ mod tests {
             ],
         );
         assert_eq!(segs.len(), 2);
+    }
+
+    #[test]
+    fn whisper_keeps_the_default_segmentation() {
+        use crate::settings::SttEngine;
+        assert_eq!(
+            SegmenterParams::for_engine(&SttEngine::Whisper),
+            SegmenterParams::default()
+        );
+        assert_eq!(SegmenterParams::default().soft_max_ms, None);
+    }
+
+    #[test]
+    fn parakeet_segments_end_at_the_first_pause_after_the_soft_cap() {
+        use crate::settings::SttEngine;
+        let p = SegmenterParams::for_engine(&SttEngine::Parakeet);
+        // A 0.4 s pause after 9 s of speech: too short for the default
+        // rule (0.8 s), enough for Parakeet's soft cap (#194).
+        let runs = [(0.9, secs(9.0)), (0.1, secs(0.4)), (0.9, secs(5.0))];
+        let (segs, _) = run(SegmenterParams::default(), &runs);
+        assert_eq!(segs.len(), 1);
+        let (segs, _) = run(p, &runs);
+        assert_eq!(segs.len(), 2);
+        // Nothing lost between the two: the second starts where the first
+        // ended (its pre-roll is the rest of the pause).
+        assert_eq!(segs[0].end(), segs[1].start);
+        let speech_end = (secs(9.0) * FRAME) as u64;
+        assert!(segs[0].end() >= speech_end);
+        // The same pause before 8 s of audio keeps the segment open.
+        let (segs, _) = run(p, &[(0.9, secs(5.0)), (0.1, secs(0.4)), (0.9, secs(5.0))]);
+        assert_eq!(segs.len(), 1);
     }
 
     #[test]
