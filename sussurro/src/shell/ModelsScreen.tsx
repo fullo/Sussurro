@@ -1,4 +1,4 @@
-import { AdvancedGroup, CollapsibleCard } from "../components/ui";
+import { AdvancedGroup, Card } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { EngineField, ModelField, ModelsFolderField } from "../settings/SpeechCard";
 import { QWEN3_ASR_NOTE } from "../lib/engines";
@@ -8,8 +8,8 @@ import { cleanupGate } from "../lib/privacy";
 import { cleanupLabel } from "./labels";
 import type { SectionId } from "./SettingsScreen";
 
-/** Models: the same engine / model choice and download as the classic
- *  Speech card (shared components, not a copy). */
+/** Models: engine and model choice and download (the same fields as the
+ *  onboarding's model step — shared components, not a copy). */
 export function ModelsScreen({
   ctl,
   onOpenSettings,
@@ -36,7 +36,7 @@ export function ModelsScreen({
         </span>
       </header>
       <div className="sh-scroll cards-col">
-        <CollapsibleCard storageKey="modelsStt" title={<>Speech-to-text <span className="via">engine & model</span></>} collapsible={false}>
+        <Card title={<>Speech-to-text <span className="via">engine & model</span></>}>
           <EngineField ctl={ctl} />
           <ModelField ctl={ctl} />
           <p className="card-hint" role="status">
@@ -49,9 +49,9 @@ export function ModelsScreen({
           <AdvancedGroup>
             <ModelsFolderField ctl={ctl} />
           </AdvancedGroup>
-        </CollapsibleCard>
+        </Card>
 
-        <CollapsibleCard storageKey="modelsQwen" title={<>Qwen3-ASR <span className="via">optional engine</span></>} collapsible={false}>
+        <Card title={<>Qwen3-ASR <span className="via">optional engine</span></>}>
           <p className="card-hint">{QWEN3_ASR_NOTE}</p>
           {!sidecarAvailable && !qwenInUse ? (
             <p className="card-hint" role="status">
@@ -75,13 +75,9 @@ export function ModelsScreen({
               )}
             </div>
           )}
-        </CollapsibleCard>
+        </Card>
 
-        <CollapsibleCard
-          storageKey="modelsBundledLlm"
-          title={<>Local (bundled) <span className="via">LLM for cleanup and recipes</span></>}
-          collapsible={false}
-        >
+        <Card title={<>Local (bundled) <span className="via">LLM for cleanup and recipes</span></>}>
           <p className="card-hint">{bundledNote(bundledLlm)}</p>
           {bundledLlm && !bundledLlm.available ? (
             <p className="card-hint" role="status">
@@ -108,9 +104,9 @@ export function ModelsScreen({
             </div>
           )}
           <BundledProblem ctl={ctl} />
-        </CollapsibleCard>
+        </Card>
 
-        <CollapsibleCard storageKey="modelsLlm" title={<>Cleanup <span className="via">LLM profile</span></>} collapsible={false}>
+        <Card title={<>Cleanup <span className="via">LLM profile</span></>}>
           <p className="card-hint">
             Currently: <strong>{cleanupLabel(settings)}</strong>
             {profile && (
@@ -129,7 +125,7 @@ export function ModelsScreen({
               Open cleanup settings
             </button>
           </div>
-        </CollapsibleCard>
+        </Card>
       </div>
     </div>
   );

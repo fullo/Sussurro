@@ -48,19 +48,10 @@ pub fn set_settings(
     settings
         .save(&state.paths.settings_file)
         .map_err(|e| e.to_string())?;
-    // Only the settings lock (never held long) is read here: the workspace
-    // layout follows a ui_v2 toggle (#114).
-    let workspace = {
-        let current = state.settings.lock().unwrap();
-        (current.ui_v2 != settings.ui_v2).then_some(settings.ui_v2)
-    };
     // Main thread: must never wait for the transcriber (#154).
     // The UI learns where each key ended up (keychain, or the file fallback).
     let saved = settings.clone();
     crate::pipeline::swap_settings(&state, settings);
-    if let Some(on) = workspace {
-        crate::apply_main_window_layout(&app, on);
-    }
     Ok(saved)
 }
 
@@ -144,7 +135,8 @@ pub fn check_permissions() -> crate::permissions::Permissions {
     crate::permissions::check()
 }
 
-/// Open the OS privacy pane for a permission ("microphone" / "accessibility").
+/// Open the OS privacy pane for a permission ("microphone" / "accessibility" /
+/// "files").
 #[tauri::command]
 pub fn open_settings(target: String) -> Result<(), String> {
     crate::permissions::open_settings(&target).map_err(|e| e.to_string())
@@ -810,8 +802,8 @@ pub struct EngineStatus {
     /// The *System audio + mic* session, if any (#139).
     pub system_session: Option<u64>,
     /// Running file transcriptions, oldest first (#158): a UI mounted
-    /// mid-run (window reload, `ui_v2` switched) adopts them, so a file
-    /// started from the other UI can still be followed and cancelled.
+    /// mid-run (a window reload) adopts them, so a file started before the
+    /// reload can still be followed and cancelled.
     pub file_sessions: Vec<FileSessionStatus>,
     /// Running link transcriptions, oldest first (#123), adopted likewise.
     pub link_sessions: Vec<FileSessionStatus>,
@@ -1187,6 +1179,19 @@ fn reindex(
 #[tauri::command]
 pub fn archive_dir(state: State<'_, AppState>) -> Result<String, String> {
     archive_paths(&state).map(|(dir, _)| dir.display().to_string())
+}
+
+/// Create the archive folder now and return its path (onboarding, #115):
+/// on macOS this is the deliberate moment for the Documents prompt, so it
+/// never pops up when a recording starts.
+#[tauri::command]
+pub async fn archive_prepare(state: State<'_, AppState>) -> Result<String, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || {
+        archive::prepare_archive_dir(&dir)?;
+        Ok(dir.display().to_string())
+    })
+    .await
 }
 
 /// Every item, newest first, by scanning the archive folder.

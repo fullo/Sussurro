@@ -2,7 +2,8 @@
    Red stays reserved for the recording moment; selection, editing and focus
    use ink (--c-dark). */
 
-html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; }
+/* The workspace fills the window: panes scroll, never the page. */
+html, body, #root { height: 100%; overflow: hidden; }
 
 .shell {
   --rail-w: 168px;
@@ -124,7 +125,7 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
 .row-gap.end { justify-content: flex-end; }
 .push { margin-left: auto; }
 
-/* Buttons local to the shell (the classic .btn-ghost is 30 px; here 36–44). */
+/* Buttons local to the shell (the shared .btn-ghost is 30 px; here 36–44). */
 .sh-btn { min-height: 36px; padding: 0.3rem 0.9rem; }
 .btn-dark, .btn-rec, .btn-stop, .btn-danger {
   font: inherit;
@@ -229,7 +230,7 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
 .opt-grid select { min-width: 0; width: 100%; }
 .opt-grid .segmented { justify-self: start; max-width: 100%; }
 .opt-grid .segmented button { padding: 0.3rem 0.6rem; font-size: 0.82rem; }
-/* Card headings in the workspace are ink, not the classic red. */
+/* Card headings in the workspace are ink, not App.css's red. */
 .shell .card h2 { color: var(--c-dark); }
 .shell .card h2.sh-sect { color: var(--c-text-light); font-size: 11.5px; letter-spacing: 0.08em; }
 .opt-k { color: var(--c-text-light); font-size: 12.5px; }
@@ -967,3 +968,36 @@ button.pchip-name:hover { text-decoration: underline; }
 /* #136: the reminder while recording other people — one quiet line. */
 .rec-reminder { margin: 0; }
 .rec-reminder::before { content: "●"; color: var(--brand); font-size: 9px; margin-right: 6px; vertical-align: 1px; }
+
+/* ---------- First-run onboarding (#115) ---------- */
+
+.sh-contents { display: contents; }
+.onb-backdrop { background: rgba(26, 26, 26, 0.35); }
+.onb { width: min(680px, 100%); max-height: min(92vh, 820px); padding: 0; gap: 0; }
+.onb-head { display: flex; align-items: center; gap: 10px; padding: 18px 22px 10px; }
+.onb-head h2 { margin: 0; font-size: 18px; color: var(--c-dark); letter-spacing: -0.01em; }
+.onb-steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0 22px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.onb-steps li { padding: 2px 9px; border-radius: var(--radius-pill); border: 1px solid var(--border); color: var(--c-text-light); }
+.onb-steps li.on { color: var(--c-dark); border-color: var(--c-dark); font-weight: 600; }
+.onb-steps li.done { color: var(--c-text); }
+.onb-steps li.done::after { content: " ✓"; }
+.onb-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 22px; display: flex; flex-direction: column; gap: 10px; }
+.onb-body .field:first-of-type { border-top: 1px solid var(--border); }
+.onb-lead { margin: 0; font-size: 15px; color: var(--c-dark); }
+.onb-h3 { margin: 6px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--c-text-light); }
+.onb-list { margin: 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 6px; }
+.onb-list.small { font-size: 13px; color: var(--c-text); }
+.onb-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.onb-checks li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
+.onb-checks li:first-child { border-top: none; }
+.onb-checks li > button, .onb-checks li > .onb-ok { flex: none; }
+.onb-check-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.onb-check-text .vu { margin-top: 6px; max-width: 280px; }
+.onb-ok { color: var(--c-dark); font-weight: 600; }
+.onb-bad { color: var(--warn); font-weight: 600; }
+.onb-status { margin: 0; font-size: 13px; min-height: 1.2em; overflow-wrap: anywhere; }
+.onb-archive { display: flex; flex-direction: column; gap: 8px; }
+.onb-archive .card-hint { margin: 0; }
+.onb-archive .list-actions { align-items: center; }
+.onb-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 22px 16px; border-top: 1px solid var(--border); }
+.onb-busy { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--c-text); }

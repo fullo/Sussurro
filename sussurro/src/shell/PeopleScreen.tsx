@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CollapsibleCard } from "../components/ui";
+import { Card } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import {
   filterPeople,
@@ -60,10 +60,8 @@ export function PeopleScreen({ ctl }: { ctl: Ctl }) {
         <span className="sh-muted">Names, emails and aliases for participants</span>
       </header>
       <div className="sh-scroll cards-col">
-        <CollapsibleCard
-          storageKey="peopleList"
+        <Card
           title={<>People {people && people.length > 0 && <span className="via">{people.length}</span>}</>}
-          collapsible={false}
           headerExtra={
             <button
               type="button"
@@ -166,7 +164,7 @@ export function PeopleScreen({ ctl }: { ctl: Ctl }) {
               ))}
             </ul>
           )}
-        </CollapsibleCard>
+        </Card>
       </div>
     </div>
   );

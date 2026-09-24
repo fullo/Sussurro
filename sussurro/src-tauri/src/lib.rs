@@ -42,28 +42,6 @@ pub fn app_handle() -> Option<AppHandle> {
     APP_HANDLE.get().cloned()
 }
 
-/// Main window size for the classic single-column UI and for the workspace
-/// preview (`Settings::ui_v2`): (width, height, min width, min height), in
-/// logical pixels. The classic values match `tauri.conf.json`.
-pub fn main_window_layout(workspace: bool) -> (f64, f64, f64, f64) {
-    if workspace {
-        (1120.0, 740.0, 800.0, 560.0)
-    } else {
-        (700.0, 860.0, 560.0, 640.0)
-    }
-}
-
-/// Resize the main window for the chosen UI. Best effort: a failure only
-/// leaves the window at its current size.
-pub fn apply_main_window_layout(app: &AppHandle, workspace: bool) {
-    let Some(w) = app.get_webview_window("main") else {
-        return;
-    };
-    let (width, height, min_w, min_h) = main_window_layout(workspace);
-    let _ = w.set_min_size(Some(tauri::LogicalSize::new(min_w, min_h)));
-    let _ = w.set_size(tauri::LogicalSize::new(width, height));
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -125,10 +103,6 @@ pub fn run() {
             #[cfg(all(target_os = "linux", feature = "wayland-portal"))]
             wayland_portal::init(paths.settings_file.with_file_name("portal-restore-token"));
             let _ = history::prune_older_than(&paths.history_file, settings.history_retention_days);
-            // tauri.conf.json sizes the window for the classic UI.
-            if settings.ui_v2 {
-                apply_main_window_layout(handle, true);
-            }
             // Neither a failed shortcut registration (e.g. GNOME Wayland
             // policy) nor a missing tray host (headless CI, minimal WMs) is
             // fatal: the window and the in-app Dictate button still work.
@@ -244,6 +218,7 @@ pub fn run() {
             commands::check_permissions,
             commands::open_settings,
             commands::archive_dir,
+            commands::archive_prepare,
             commands::archive_list,
             commands::archive_search,
             commands::archive_facets,
@@ -297,21 +272,17 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::main_window_layout;
-
-    /// The classic layout restored when the workspace preview is switched
-    /// off must match the window declared in tauri.conf.json.
+    /// #115: the workspace is the only UI, so tauri.conf.json opens the main
+    /// window at its size (the rail plus a two-pane Library need ~800 px).
     #[test]
-    fn classic_window_layout_matches_tauri_conf() {
+    fn main_window_is_sized_for_the_workspace() {
         let conf: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let main = &conf["app"]["windows"][0];
-        let (w, h, min_w, min_h) = main_window_layout(false);
-        assert_eq!(main["width"].as_f64(), Some(w));
-        assert_eq!(main["height"].as_f64(), Some(h));
-        assert_eq!(main["minWidth"].as_f64(), Some(min_w));
-        assert_eq!(main["minHeight"].as_f64(), Some(min_h));
-        let (ww, _, wmin, _) = main_window_layout(true);
-        assert!(ww > w && wmin >= 800.0);
+        assert!(main["label"].is_null() || main["label"] == "main");
+        assert_eq!(main["width"].as_f64(), Some(1120.0));
+        assert_eq!(main["height"].as_f64(), Some(740.0));
+        assert_eq!(main["minWidth"].as_f64(), Some(800.0));
+        assert_eq!(main["minHeight"].as_f64(), Some(560.0));
     }
 }

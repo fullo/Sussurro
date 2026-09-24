@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { parseEndpoint } from "../lib/endpoint";
 
 /* ---------- Info tooltip ---------- */
@@ -12,64 +12,28 @@ export function Tip({ text }: { text: string }) {
   );
 }
 
-/* ---------- Collapsible section ---------- */
+/* ---------- Card ---------- */
 
-/** A settings card. In the classic window it is an accordion whose open state
- *  is remembered per card; the workspace shows one card at a time, always open
- *  (`collapsible={false}`), with the same content. */
-export function CollapsibleCard({
-  storageKey,
+/** A titled card: a settings section, a Models or Recipes panel. */
+export function Card({
   title,
   className = "card",
   headerExtra,
-  defaultOpen = false,
-  collapsible = true,
   children,
 }: {
-  storageKey: string;
   title: ReactNode;
   className?: string;
   headerExtra?: ReactNode;
-  defaultOpen?: boolean;
-  collapsible?: boolean;
   children: ReactNode;
 }) {
-  // First run: only the cards marked defaultOpen are expanded. Afterwards the
-  // user's own open/closed choice (localStorage) always wins.
-  const [open, setOpen] = useState(() => {
-    const stored = localStorage.getItem(storageKey);
-    return stored === null ? defaultOpen : stored === "1";
-  });
-  if (!collapsible) {
-    return (
-      <section className={`static-card ${className}`}>
-        <header className="static-card-head">
-          <h2>{title}</h2>
-          {headerExtra && <span className="summary-right">{headerExtra}</span>}
-        </header>
-        {children}
-      </section>
-    );
-  }
   return (
-    <details
-      className={`collapsible ${className}`}
-      open={open}
-      onToggle={(e) => {
-        const o = (e.target as HTMLDetailsElement).open;
-        setOpen(o);
-        localStorage.setItem(storageKey, o ? "1" : "0");
-      }}
-    >
-      <summary>
+    <section className={`static-card ${className}`}>
+      <header className="static-card-head">
         <h2>{title}</h2>
-        <span className="summary-right">
-          {headerExtra}
-          <span className="chevron" aria-hidden="true">▾</span>
-        </span>
-      </summary>
+        {headerExtra && <span className="summary-right">{headerExtra}</span>}
+      </header>
       {children}
-    </details>
+    </section>
   );
 }
 

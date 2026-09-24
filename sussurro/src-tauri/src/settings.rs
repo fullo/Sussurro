@@ -52,6 +52,31 @@ pub enum SubtitlesMode {
     Always,
 }
 
+/// Where the first-run onboarding stands (#115). Stored in the settings
+/// file, so it is shown once per install.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Onboarding {
+    /// A fresh install (no settings file yet): the full guided setup.
+    #[default]
+    Welcome,
+    /// An existing settings file without the flag — an upgrade from 0.6.x
+    /// (or a pre-release 0.7 build): one "What's new" screen instead.
+    WhatsNew,
+    /// Finished or skipped. Settings → About → "Run the setup again"
+    /// reopens the setup without changing this.
+    Done,
+}
+
+impl Onboarding {
+    /// Field-level serde default: a settings file that exists but predates
+    /// the flag belongs to a user upgrading. A missing file never reaches
+    /// serde ([`Settings::load`] returns [`Settings::default`], `Welcome`).
+    fn upgrade() -> Self {
+        Onboarding::WhatsNew
+    }
+}
+
 /// Optional user overrides for the per-level cleanup instructions sent to the
 /// LLM. Empty string = use the built-in default for that level.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -162,9 +187,12 @@ pub struct Settings {
     /// Archive folder for notes, meetings and transcriptions. Empty = the
     /// default `<Documents>/Sussurro` (see `archive::resolve_archive_dir`).
     pub archive_dir: String,
-    /// Preview of the 0.7 workspace UI (left rail: New, Library, Models,
-    /// Settings). Off = today's single-column window. Removed when 0.7 ships.
-    pub ui_v2: bool,
+    /// First-run onboarding (#115): the full setup on a fresh install, a
+    /// "What's new" screen on an upgrade, nothing once done. The workspace
+    /// is the only UI: a pre-0.7 `ui_v2` key is ignored on load (serde skips
+    /// unknown keys) and dropped by the next save.
+    #[serde(default = "Onboarding::upgrade")]
+    pub onboarding: Onboarding,
     /// 0.9 meetings (E12): the browser-extension routes of the local API
     /// (`/app/version`, `/live`, `/items/…`) answer only when this is on,
     /// and so do meeting speaker labels ("Voice N") and the speaker panel on
@@ -224,7 +252,7 @@ impl Default for Settings {
             api_port: 4525,
             output_file: String::new(),
             archive_dir: String::new(),
-            ui_v2: false,
+            onboarding: Onboarding::Welcome,
             meetings_enabled: false,
             extension_token: String::new(),
             subtitles: SubtitlesMode::OnRequest,
@@ -609,6 +637,8 @@ mod tests {
             Settings {
                 hotkey: "Alt+Space".into(),
                 push_to_talk: false,
+                // An existing file without the flag is an upgrade (#115).
+                onboarding: Onboarding::WhatsNew,
                 ..Default::default()
             }
         );
@@ -640,7 +670,7 @@ mod tests {
     #[test]
     fn subtitles_default_to_on_request_and_round_trip() {
         assert_eq!(Settings::default().subtitles, SubtitlesMode::OnRequest);
-        let old: Settings = serde_json::from_str(r#"{"ui_v2":true}"#).unwrap();
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
         assert_eq!(old.subtitles, SubtitlesMode::OnRequest);
         let on: Settings = serde_json::from_str(r#"{"subtitles":"always"}"#).unwrap();
         assert_eq!(on.subtitles, SubtitlesMode::Always);
@@ -663,15 +693,112 @@ mod tests {
         assert!(on.save_audio);
     }
 
-    /// Settings files written before the workspace preview have no `ui_v2`:
-    /// they load with the classic UI (serde default).
+    /// #115: the workspace is the only UI. A settings file from the preview
+    /// era (`ui_v2` true or false) still loads — nothing else in it is lost
+    /// — and the key is gone after the next save.
     #[test]
-    fn settings_without_ui_v2_keep_the_classic_ui() {
-        let s: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
-        assert!(!s.ui_v2);
-        assert!(!Settings::default().ui_v2);
-        let on: Settings = serde_json::from_str(r#"{"ui_v2":true}"#).unwrap();
-        assert!(on.ui_v2);
+    fn ui_v2_key_is_ignored_on_load_and_dropped_on_save() {
+        for flag in ["true", "false"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            std::fs::write(
+                &path,
+                format!(r#"{{"hotkey":"Alt+Space","ui_v2":{flag},"archive_dir":"/notes"}}"#),
+            )
+            .unwrap();
+            let s = Settings::load(&path);
+            assert_eq!(s.hotkey, "Alt+Space", "ui_v2={flag} must not reset the file");
+            assert_eq!(s.archive_dir, "/notes");
+            s.save(&path).unwrap();
+            let saved = std::fs::read_to_string(&path).unwrap();
+            assert!(!saved.contains("ui_v2"), "{saved}");
+            assert_eq!(Settings::load(&path).hotkey, "Alt+Space");
+        }
+    }
+
+    /// #115: the upgrade path from a real 0.6.3 settings.json (same keys
+    /// and order as one written by the released app; values anonymised).
+    /// It loads without falling back to defaults, becomes the "Local"
+    /// profile, gets "What's new", and the migration save (as at startup)
+    /// keeps that and drops every legacy key.
+    #[test]
+    fn a_real_0_6_3_settings_file_upgrades_to_whats_new() {
+        let v063 = r#"{
+  "hotkey": "CommandOrControl+Shift+Space",
+  "push_to_talk": true,
+  "whisper_model": "ggml-large-v3-turbo-q5_0.bin",
+  "engine": "whisper",
+  "ollama_url": "http://192.168.1.10:11434/",
+  "ollama_model": "qwen2.5:7b",
+  "cleanup_api": "ollama",
+  "api_key": "",
+  "cleanup_level": "none",
+  "dictionary": ["Sussurro"],
+  "autostart": false,
+  "sound_feedback": true,
+  "language": "auto",
+  "output_language": "",
+  "snippets": [],
+  "live_preview": true,
+  "app_styles": [],
+  "models_dir": "",
+  "input_device": "",
+  "command_hotkey": "CommandOrControl+Alt+Space",
+  "whisper_mode": false,
+  "stream_injection": false,
+  "voice_commands": true,
+  "prompt_overrides": { "light": "", "medium": "", "high": "" },
+  "history_retention_days": 0,
+  "api_enabled": false,
+  "api_port": 4525,
+  "output_file": ""
+}"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, v063).unwrap();
+        let (s, migrated) = Settings::load_migrating(&path);
+        assert!(migrated);
+        assert_eq!(s.onboarding, Onboarding::WhatsNew);
+        assert_eq!(s.cleanup_level, CleanupLevel::None, "not the defaults");
+        assert_eq!(s.dictionary, vec!["Sussurro".to_string()]);
+        assert_eq!(s.cleanup_llm().base_url, "http://192.168.1.10:11434/");
+        assert_eq!(s.cleanup_llm().model, "qwen2.5:7b");
+        s.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        for gone in ["ollama_url", "ollama_model", "command_hotkey", "cleanup_api", "ui_v2"] {
+            assert!(!saved.contains(gone), "{gone} in {saved}");
+        }
+        assert_eq!(Settings::load(&path).onboarding, Onboarding::WhatsNew);
+    }
+
+    /// #115: a fresh install gets the full onboarding; an existing file
+    /// without the flag (0.6.x, or a 0.7 pre-release) gets "What's new";
+    /// the stored value round-trips.
+    #[test]
+    fn onboarding_is_welcome_when_fresh_and_whats_new_on_upgrade() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        assert_eq!(Settings::load(&path).onboarding, Onboarding::Welcome);
+        assert_eq!(Settings::default().onboarding, Onboarding::Welcome);
+
+        std::fs::write(&path, r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert_eq!(Settings::load(&path).onboarding, Onboarding::WhatsNew);
+
+        // A fresh install that saved settings before finishing the setup
+        // still gets it on the next start.
+        Settings::default().save(&path).unwrap();
+        assert_eq!(Settings::load(&path).onboarding, Onboarding::Welcome);
+
+        let done = Settings {
+            onboarding: Onboarding::Done,
+            ..Settings::default()
+        };
+        done.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).onboarding, Onboarding::Done);
+        assert_eq!(
+            serde_json::to_value(Onboarding::WhatsNew).unwrap(),
+            "whats_new"
+        );
     }
 
     /// #126: meetings stay off and unpaired until the user opts in; the
@@ -814,7 +941,14 @@ mod tests {
         assert_eq!(s.cleanup_llm(), LlmProfile::default());
         assert!(s.normalize());
         assert_eq!(s.llm_profiles, vec![LlmProfile::default()]);
-        assert_eq!(s, Settings { hotkey: "Alt+Space".into(), ..Default::default() });
+        assert_eq!(
+            s,
+            Settings {
+                hotkey: "Alt+Space".into(),
+                onboarding: Onboarding::WhatsNew,
+                ..Default::default()
+            }
+        );
     }
 
     /// Once profiles exist, stray legacy keys (e.g. a file hand-merged from

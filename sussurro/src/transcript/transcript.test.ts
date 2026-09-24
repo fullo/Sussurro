@@ -33,7 +33,7 @@ describe("transcript helpers (via the @sussurro/transcript alias)", () => {
       [anna],
     );
     expect(lines.map((l) => l.speaker)).toEqual([anna, undefined, undefined]);
-    // Without a speaker list nothing is attached (notes, the classic UI).
+    // Without a speaker list nothing is attached (notes).
     expect(toLines([{ id: 0, start_ms: 0, text: "x", speaker_id: "voice:1" }])[0].speaker).toBeUndefined();
   });
 });

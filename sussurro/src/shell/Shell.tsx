@@ -6,9 +6,11 @@ import type { Ctl } from "../hooks/useAppController";
 import { useEngineRuns } from "../hooks/useEngineRuns";
 import type { RunKind } from "../lib/engineRuns";
 import { withDefaults } from "../lib/library";
+import { onboardingMode, type OnboardingMode } from "../lib/onboarding";
 import type { Item } from "../lib/types";
 import { LibraryScreen } from "./LibraryScreen";
 import { ModelsScreen } from "./ModelsScreen";
+import { Onboarding } from "./Onboarding";
 import { PeopleScreen } from "./PeopleScreen";
 import { RecipesScreen } from "./RecipesScreen";
 import { NewScreen, type NewDefaults } from "./NewScreen";
@@ -28,7 +30,7 @@ function loadScreen(): Screen {
   return "library";
 }
 
-/** Workspace preview (proposal A, #114): left rail with New · Library ·
+/** The workspace (proposal A, #114): left rail with New · Library ·
  *  People · Recipes · Models · Settings. Dictation stays tray-first and is
  *  configured under Settings → Dictation. Recipes hosts the LLM profiles
  *  (#119) next to the recipes (#120); People is the registry that gives
@@ -41,6 +43,9 @@ export function Shell({ ctl }: { ctl: Ctl }) {
   const [libraryCount, setLibraryCount] = useState<number | null>(null);
   const [section, setSection] = useState<SectionId>("dictation");
   const [aboutOpen, setAboutOpen] = useState(false);
+  /** First-run onboarding (#115): the setup on a fresh install, "What's
+   *  new" on an upgrade; Settings → About reopens the setup. */
+  const [onboarding, setOnboarding] = useState<OnboardingMode | null>(() => onboardingMode(ctl.settings));
   const [defaults, setDefaults] = useState<NewDefaults>({ tags: [], categories: [] });
   /** Defaults captured when each run started, applied when it finishes. */
   const runDefaults = useRef<Record<RunKind, NewDefaults>>({
@@ -58,12 +63,6 @@ export function Shell({ ctl }: { ctl: Ctl }) {
     } catch {
       /* ignore */
     }
-  }, []);
-
-  // The workspace fills the window; the classic page scrolls the body.
-  useEffect(() => {
-    document.documentElement.classList.add("ui-v2");
-    return () => document.documentElement.classList.remove("ui-v2");
   }, []);
 
   const refreshLibrary = useCallback(() => setLibraryVersion((v) => v + 1), []);
@@ -143,15 +142,21 @@ export function Shell({ ctl }: { ctl: Ctl }) {
 
   return (
     <div className="shell">
-      <Rail
-        ctl={ctl}
-        engine={engine}
-        screen={screen}
-        onNavigate={setScreen}
-        libraryCount={libraryCount}
-      />
-      <main className="sh-main">
-        {ctl.busy && <p className="busy" role="alert">{ctl.busy}</p>}
+      {/* The onboarding is modal: the rail and the screen behind it are inert. */}
+      <div className="sh-contents" inert={onboarding ? true : undefined}>
+        <Rail
+          ctl={ctl}
+          engine={engine}
+          screen={screen}
+          onNavigate={setScreen}
+          libraryCount={libraryCount}
+        />
+      </div>
+      <main className="sh-main" inert={onboarding ? true : undefined}>
+        {ctl.busy && !onboarding && <p className="busy" role="alert">{ctl.busy}</p>}
+        {/* Nothing behind the onboarding reads the archive: on macOS the
+            first access to Documents must happen in its archive step (#115). */}
+        {onboarding ? null : <>
         {screen === "new" && (
           <NewScreen
             ctl={ctl}
@@ -190,10 +195,15 @@ export function Shell({ ctl }: { ctl: Ctl }) {
             onOpenModels={() => setScreen("models")}
             onOpenRecipes={() => setScreen("recipes")}
             onAbout={() => setAboutOpen(true)}
+            onRunSetup={() => setOnboarding("welcome")}
           />
         )}
+        </>}
       </main>
       {aboutOpen && <AboutDialog version={ctl.version} onClose={() => setAboutOpen(false)} />}
+      {onboarding && (
+        <Onboarding ctl={ctl} mode={onboarding} onModeChange={setOnboarding} onClose={() => setOnboarding(null)} />
+      )}
     </div>
   );
 }

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { CollapsibleCard, Tip } from "../components/ui";
+import { Card, Tip } from "../components/ui";
 import { LANGUAGES } from "../lib/constants";
 import type { CardProps } from "./DictationCard";
 import { importDictionary, importSnippets } from "./listImport";
 
-export function PersonalizationCard({ ctl, collapsible }: CardProps) {
+export function PersonalizationCard({ ctl }: CardProps) {
   const { settings, setSettings, save, setBusy } = ctl;
   /** Raw text of the Personal Dictionary field. The parsed list round-trips
    *  losslessly only when every line is non-empty — deriving the displayed
@@ -30,11 +30,7 @@ export function PersonalizationCard({ ctl, collapsible }: CardProps) {
   const handleImportSnippets = () => importSnippets(ctl);
 
   return (
-    <CollapsibleCard
-      storageKey="snippetsOpen"
-      title={<>Personalization <span className="via">dictionary · styles · snippets</span></>}
-      collapsible={collapsible}
-    >
+    <Card title={<>Personalization <span className="via">dictionary · styles · snippets</span></>}>
       <div className="field field-col">
         <div className="field-label">
           <span>Personal dictionary <Tip text="Names, brands and jargon the models tend to misspell (e.g. Sussurro, Tauri). One per line. They are fed to Whisper as recognition hints and to the LLM as preferred spellings." /></span>
@@ -247,6 +243,6 @@ export function PersonalizationCard({ ctl, collapsible }: CardProps) {
         </label>
         </div>
       </div>
-    </CollapsibleCard>
+    </Card>
   );
 }
