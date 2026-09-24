@@ -111,6 +111,25 @@ export interface Settings {
   archive_dir: string;
   /** Workspace preview (#114): the new shell instead of the classic window. */
   ui_v2: boolean;
+  /** Subtitles setting (P7, #133): `transcript.srt` only when asked, or on
+   *  every save. Meetings and transcriptions only (P10). */
+  subtitles: SubtitlesMode;
+}
+
+export type SubtitlesMode = "on_request" | "always";
+
+/** What an archive item can be exported as (#133). */
+export type ExportFormat = "md" | "txt" | "srt" | "vtt";
+
+/** Where an item's `transcript.srt` stands (`archive_subtitles_status`). */
+export interface SubtitlesStatus {
+  /** `transcript.srt`. */
+  file: string;
+  /** A meeting or a transcription: notes have no subtitles (P10). */
+  applicable: boolean;
+  exists: boolean;
+  /** Changed since the app wrote it (or not the app's): never overwritten. */
+  edited_externally: boolean;
 }
 
 export interface OllamaStatus {
