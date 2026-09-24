@@ -749,9 +749,10 @@ mod tests {
             .all(|x| x.pid == std::process::id()));
         // Every entry of this process is live until its session ends.
         assert!(owned_by_live_session(&e.journal, &e.archive, &ids[0]));
-        drop(items); // as if these processes had written them
-        // A live instance's session, a crashed one's, and an entry written
-        // before the pid was recorded.
+        // As if other processes had written them: a live instance's
+        // session, a crashed one's, and an entry written before the pid
+        // was recorded.
+        drop(items);
         set_pids(&e.journal, &[other.id(), dead_pid(), 0]);
         assert!(owned_by_live_session(&e.journal, &e.archive, &ids[0]));
         assert!(!owned_by_live_session(&e.journal, &e.archive, &ids[1]));
@@ -763,7 +764,10 @@ mod tests {
         assert!(running.recording && !running.interrupted, "left alone");
         let kept = journal_entries(&e.journal);
         assert_eq!(kept.len(), 1);
-        assert_eq!((kept[0].id.as_str(), kept[0].pid), (ids[0].as_str(), other.id()));
+        assert_eq!(
+            (kept[0].id.as_str(), kept[0].pid),
+            (ids[0].as_str(), other.id())
+        );
 
         // Once that instance is gone, the next start recovers it.
         other.kill().unwrap();

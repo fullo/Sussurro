@@ -1263,28 +1263,49 @@ fn cancel_while_waiting_for_a_dictation_ends_the_run() {
     assert!(gate.is_pending(), "the dictation itself is untouched");
 }
 
-/// #157: a session started with a language and a cleanup level from New
-/// transcribes and cleans with them, records the language in the
-/// frontmatter, and leaves the global (dictation) settings untouched. One
-/// without overrides falls back to the settings.
+/// #157, through the real `session::run_request_with` (#158 finding 9): a
+/// session started with a language and a cleanup level from New transcribes
+/// and cleans with them and records the language in the frontmatter; one
+/// without overrides uses the dictation settings. The app's shared settings
+/// are read once at the start and never written: a change the user makes
+/// mid-run neither reaches the run nor gets overwritten by it.
 #[test]
 fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
     use crate::settings::{CleanupLevel, Settings};
-    use session::{run_parts, start_meta, RunOptions};
+    use crate::state::AppPaths;
+    use session::{run_request_with, Request, RunOptions};
 
-    let global = Mutex::new(Settings {
+    let dictation = Settings {
         language: "it".into(),
         cleanup_level: CleanupLevel::Light,
         ..Default::default()
-    });
-    let before = global.lock().unwrap().clone();
+    };
+    // What the user switches to in Settings while the run is going.
+    let changed_mid_run = Settings {
+        language: "fr".into(),
+        cleanup_level: CleanupLevel::None,
+        ..dictation.clone()
+    };
 
     let run_with = |options: RunOptions| {
         let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("appdata");
+        let paths = AppPaths {
+            settings_file: dir.path().join("settings.json"),
+            models_dir: data.join("models"),
+            history_file: data.join("history.jsonl"),
+            stats_file: data.join("stats.json"),
+            archive_index: data.join("index.sqlite"),
+            documents_dir: Some(dir.path().join("Documents")),
+            home_dir: Some(dir.path().to_path_buf()),
+        };
+        let shared = Mutex::new(dictation.clone());
         let languages = Mutex::new(Vec::<String>::new());
         let levels = Mutex::new(Vec::<CleanupLevel>::new());
         let fake_stt = |samples: &[f32], language: &str| -> Result<TimedTranscript> {
             languages.lock().unwrap().push(language.to_string());
+            // The user changes the dictation settings during the run.
+            *shared.lock().unwrap() = changed_mid_run.clone();
             Ok(TimedTranscript {
                 text: format!("parole {}", samples.len()),
                 // The engine "detects" Italian: an explicit language wins.
@@ -1296,30 +1317,43 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
             levels.lock().unwrap().push(s.cleanup_level.clone());
             raw.to_uppercase()
         };
-        // Like the app: the run reads a copy of the settings at its start.
-        let snapshot = global.lock().unwrap().clone();
-        let (settings, mut stt, cleaner) = run_parts(&snapshot, &options, fake_stt, fake_clean);
-        let mut job = job(
-            dir.path(),
-            bursts(&[(true, 2.0), (false, 2.5), (true, 2.0), (false, 1.0)]),
-            Policy::Block { max_queued: 2 },
-        );
-        job.meta = start_meta(
-            &settings,
-            ItemType::Note,
-            "Opzioni".into(),
-            "file:test.wav".into(),
-            String::new(),
-        );
-        let r = run(job, &mut stt, &cleaner, Arc::new(VecSink::default())).unwrap();
+        let req = Request {
+            id: 7,
+            cancel: Arc::new(AtomicBool::new(false)),
+            source: Box::new(VecSource::new(
+                bursts(&[(true, 2.0), (false, 2.5), (true, 2.0), (false, 1.0)]),
+                Channel::File,
+            )),
+            policy: Policy::Block { max_queued: 2 },
+            defer: false,
+            item_type: ItemType::Note,
+            title: "Opzioni".into(),
+            source_label: "file:test.wav".into(),
+            options,
+        };
+        let r = run_request_with(
+            &shared,
+            &paths,
+            req,
+            fake_stt,
+            fake_clean,
+            |_| Box::new(EnergyDetector::default()),
+            Arc::new(VecSink::default()),
+        )
+        .unwrap();
         assert_eq!(r.segments, 2);
-        let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+        let archive_dir = dir.path().join("Documents").join("Sussurro");
+        let item = archive::read_item(&archive_dir, &r.item_id).unwrap();
         assert!(item
             .segments
             .segments
             .iter()
             .all(|s| s.text == s.raw.to_uppercase()));
-        drop((stt, cleaner));
+        assert_eq!(
+            *shared.lock().unwrap(),
+            changed_mid_run,
+            "the run never writes the shared settings"
+        );
         (
             languages.into_inner().unwrap(),
             levels.into_inner().unwrap(),
@@ -1335,9 +1369,9 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
     assert_eq!(langs, ["en", "en"]);
     assert_eq!(levels, [CleanupLevel::High, CleanupLevel::High]);
     assert_eq!(recorded, "en");
-    assert_eq!(*global.lock().unwrap(), before, "settings must not change");
 
-    // No overrides (a blank language counts as none): the dictation settings.
+    // No overrides (a blank language counts as none): the dictation
+    // settings as they were when the run started, not the mid-run change.
     let (langs, levels, recorded) = run_with(RunOptions {
         language: Some("  ".into()),
         cleanup_level: None,
@@ -1345,5 +1379,4 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
     assert_eq!(langs, ["it", "it"]);
     assert_eq!(levels, [CleanupLevel::Light, CleanupLevel::Light]);
     assert_eq!(recorded, "it");
-    assert_eq!(*global.lock().unwrap(), before);
 }

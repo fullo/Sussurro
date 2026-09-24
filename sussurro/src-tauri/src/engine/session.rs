@@ -8,7 +8,7 @@ use super::{Cleaner, EngineEvent, EngineSink, Job, RunResult, SegmentStt};
 use crate::archive::{ItemMeta, ItemType};
 use crate::settings::{CleanupLevel, Settings, SttEngine};
 use crate::sources::Source;
-use crate::state::AppState;
+use crate::state::{AppPaths, AppState};
 use crate::stt::TimedTranscript;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -296,13 +296,13 @@ fn load_detector(models_dir: &Path) -> Box<dyn SpeechDetector> {
 
 /// A file of the engine's in the app data dir (next to the dictation
 /// history): mic spools and the session journal.
-fn app_data_file(state: &AppState, name: &str) -> std::path::PathBuf {
-    state.paths.history_file.with_file_name(name)
+fn app_data_file(paths: &AppPaths, name: &str) -> std::path::PathBuf {
+    paths.history_file.with_file_name(name)
 }
 
 /// The session journal ([`super::checkpoint`]) in the app data dir.
 pub fn journal_path(state: &AppState) -> std::path::PathBuf {
-    app_data_file(state, super::checkpoint::JOURNAL_FILE)
+    app_data_file(&state.paths, super::checkpoint::JOURNAL_FILE)
 }
 
 /// Refuse a delete or a line edit of an item a running capture session is
@@ -349,37 +349,62 @@ fn ensure_archive_writable(state: &AppState) -> Result<()> {
     crate::archive::live::ensure_writable(&archive)
 }
 
-struct Request {
-    id: u64,
-    cancel: Arc<AtomicBool>,
-    source: Box<dyn Source>,
-    policy: Policy,
-    defer: bool,
-    item_type: ItemType,
-    title: String,
-    source_label: String,
-    options: RunOptions,
+/// One run to start: the source and what the caller chose for it.
+pub(crate) struct Request {
+    pub id: u64,
+    pub cancel: Arc<AtomicBool>,
+    pub source: Box<dyn Source>,
+    pub policy: Policy,
+    pub defer: bool,
+    pub item_type: ItemType,
+    pub title: String,
+    pub source_label: String,
+    pub options: RunOptions,
 }
 
 fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
-    let sink: Arc<dyn EngineSink> = Arc::new(TauriSink { app: app.clone() });
     let state = app.state::<AppState>();
-    let global = state.settings.lock().unwrap().clone();
+    let transcribe = app_transcriber(app.clone(), req.cancel.clone());
+    run_request_with(
+        &state.settings,
+        &state.paths,
+        req,
+        transcribe,
+        crate::cleanup::ollama::cleanup_with_context,
+        load_detector,
+        Arc::new(TauriSink { app: app.clone() }),
+    )
+}
+
+/// The body of [`run_request`], with the app's pieces passed in so tests
+/// drive the real path (#158): `shared` is the app's settings, read
+/// **once** when the run starts and never written — this run's language
+/// and cleanup level (#157) apply to a copy, and later changes to the
+/// settings don't reach a run in flight.
+pub(crate) fn run_request_with<T, C>(
+    shared: &Mutex<Settings>,
+    paths: &AppPaths,
+    req: Request,
+    transcribe: T,
+    clean: C,
+    detector: impl FnOnce(&Path) -> Box<dyn SpeechDetector>,
+    sink: Arc<dyn EngineSink>,
+) -> Result<RunResult>
+where
+    T: FnMut(&[f32], &str) -> Result<TimedTranscript> + Send,
+    C: Fn(&Settings, Option<&str>, &str) -> String + Send,
+{
+    let global = shared.lock().unwrap().clone();
     // This run's settings: the dictation's plus the choices made in New
     // (#157). The global settings are not modified.
-    let (settings, mut stt, cleaner) = run_parts(
-        &global,
-        &req.options,
-        app_transcriber(app.clone(), req.cancel.clone()),
-        crate::cleanup::ollama::cleanup_with_context,
-    );
+    let (settings, mut stt, cleaner) = run_parts(&global, &req.options, transcribe, clean);
     let prepared = (|| -> Result<Job> {
-        let archive_dir = crate::state::resolve_archive_dir(&state.paths, &settings)?;
-        let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
+        let archive_dir = crate::state::resolve_archive_dir(paths, &settings)?;
+        let models_dir = crate::state::resolve_models_dir(paths, &settings);
         Ok(Job {
             session_id: req.id,
             source: req.source,
-            detector: load_detector(&models_dir),
+            detector: detector(&models_dir),
             params: SegmenterParams::default(),
             policy: req.policy,
             // App data dir (next to the dictation history), not the shared
@@ -387,7 +412,7 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
             // The `<prefix><pid>-` part lets the next start tell a dead
             // process's spool from a live one (see `checkpoint`).
             spool_path: app_data_file(
-                &state,
+                paths,
                 &format!(
                     "{}{}-{}.f32",
                     super::checkpoint::SPOOL_PREFIX,
@@ -400,8 +425,8 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
             // Spoken "new line" etc. only make sense in the user's own notes.
             voice_commands: settings.voice_commands && req.item_type == ItemType::Note,
             archive_dir,
-            index_db: Some(state.paths.archive_index.clone()),
-            journal: Some(journal_path(&state)),
+            index_db: Some(paths.archive_index.clone()),
+            journal: Some(app_data_file(paths, super::checkpoint::JOURNAL_FILE)),
             meta: start_meta(
                 &settings,
                 req.item_type,

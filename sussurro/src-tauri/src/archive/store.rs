@@ -1091,7 +1091,10 @@ mod tests {
         let markdown = std::fs::read_to_string(dir.join(TRANSCRIPT_FILE)).unwrap();
         assert!(markdown.contains("Due, corretto."), "{markdown}");
         let saved = read_segments(&dir).unwrap();
-        assert_eq!(saved.segments[1].text, "Due, corretto.", "in step with the markdown");
+        assert_eq!(
+            saved.segments[1].text, "Due, corretto.",
+            "in step with the markdown"
+        );
         assert!(saved.segments[1].edited);
     }
 
@@ -1184,7 +1187,10 @@ mod tests {
         let id = crate::archive::live::begin_session(&archive, &meta("Live", DATE)).unwrap();
         let never = |_: &Path| -> Result<()> { panic!("must not trash") };
         let err = delete_finished_item_with(&archive, &id, never).unwrap_err();
-        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("still being recorded"),
+            "{err:#}"
+        );
         assert!(delete_item(&archive, &id).is_err());
         assert!(read_item(&archive, &id).is_ok());
 

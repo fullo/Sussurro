@@ -224,8 +224,7 @@ mod tests {
             std::thread::spawn(move || {
                 for i in 0..3 {
                     let mut m =
-                        acquire_yielding(&gate, &NO_CANCEL, || Ok(model.lock().unwrap()))
-                            .unwrap();
+                        acquire_yielding(&gate, &NO_CANCEL, || Ok(model.lock().unwrap())).unwrap();
                     m.push(format!("segment {i}"));
                     if i == 0 {
                         // A long segment: the hotkey is pressed meanwhile.
