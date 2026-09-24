@@ -185,7 +185,10 @@ pub fn mark_interrupted(archive: &Path, id: &str) -> Result<bool> {
     let _lock = lock_items();
     let dir = existing_item_dir(archive, id)?;
     let path = transcript_path(&dir);
-    let doc = std::fs::read_to_string(&path).unwrap_or_default();
+    // A read error is an error (the caller keeps its journal entry, #158),
+    // not "not recording"; invalid UTF-8 is not a read error.
+    let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let doc = String::from_utf8_lossy(&bytes);
     let recording = frontmatter::parse(&doc)
         .map(|(m, _)| m.session_state() == Some(SessionState::Recording))
         .unwrap_or(false);

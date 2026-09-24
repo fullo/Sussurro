@@ -194,9 +194,17 @@ impl LiveItem {
         let meta = match meta {
             Ok(m) => m,
             Err(e) => {
-                // Keep what is on disk, as after a crash.
-                let _ = live::mark_interrupted(&self.archive, &self.id);
-                self.unjournal();
+                // Keep what is on disk, as after a crash. The journal entry
+                // goes only once the item is no longer `recording` (#158):
+                // if even the marker can't be rewritten, the next start
+                // retries instead of leaving it "recording" forever.
+                match live::mark_interrupted(&self.archive, &self.id) {
+                    Ok(_) => self.unjournal(),
+                    Err(m) => eprintln!(
+                        "engine: {} left in the session journal for the next start ({m:#})",
+                        self.id
+                    ),
+                }
                 return Err(e.context("finalizing the archive item"));
             }
         };
@@ -217,11 +225,15 @@ impl LiveItem {
         }
         let saved = live::checkpoint(&self.archive, &self.id, &self.file, false)
             .and_then(|()| live::mark_interrupted(&self.archive, &self.id));
-        self.unjournal();
         match saved {
-            Ok(_) => Some(self.id.clone()),
+            Ok(_) => {
+                self.unjournal();
+                Some(self.id.clone())
+            }
             Err(e) => {
-                eprintln!("engine: could not keep {} ({e:#})", self.id);
+                // Still `recording` on disk: the journal entry stays, so the
+                // next start marks it interrupted (#158).
+                eprintln!("engine: could not keep {} for now ({e:#})", self.id);
                 None
             }
         }
@@ -232,16 +244,18 @@ impl LiveItem {
     /// user edited its transcript meanwhile, then it is kept as
     /// `interrupted`. Returns the kept item's id, if any.
     pub fn discard(self) -> Option<String> {
-        let kept = match live::discard_session(&self.archive, &self.id) {
-            Ok(live::Discarded::Removed | live::Discarded::Trashed) => None,
-            Ok(live::Discarded::Kept) => Some(self.id.clone()),
+        match live::discard_session(&self.archive, &self.id) {
+            Ok(done) => {
+                self.unjournal();
+                (done == live::Discarded::Kept).then(|| self.id.clone())
+            }
             Err(e) => {
-                eprintln!("engine: could not remove {} ({e:#})", self.id);
+                // Still on disk and `recording`: the journal entry stays, so
+                // the next start marks it interrupted instead (#158).
+                eprintln!("engine: could not remove {} for now ({e:#})", self.id);
                 None
             }
-        };
-        self.unjournal();
-        kept
+        }
     }
 }
 
@@ -259,8 +273,11 @@ pub struct Recovery {
 
 /// Run once at app start, before any session: mark the items of sessions
 /// that never finished as `interrupted` (indexing those in `current_archive`
-/// into `index_db`), empty the journal and delete stale mic spools in
-/// `spool_dir`.
+/// into `index_db`), drop their journal entries and delete stale mic spools
+/// in `spool_dir`. An entry is dropped only once its item is in a final
+/// state (#158): marked, already finished, or deleted by the user. One whose
+/// archive folder is missing (an unplugged drive) or whose item could not be
+/// rewritten stays for the next start.
 pub fn recover(
     journal: &Path,
     current_archive: Option<&Path>,
@@ -269,6 +286,7 @@ pub fn recover(
 ) -> Recovery {
     let mut out = Recovery::default();
     let _g = JOURNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut keep = Vec::new();
     for entry in journal_read(journal) {
         match live::mark_interrupted(&entry.archive, &entry.id) {
             Ok(true) => {
@@ -289,12 +307,24 @@ pub fn recover(
             // Already finalized (the crash hit after the marker was
             // cleared) or not marked by us: nothing to do.
             Ok(false) => {}
-            // Deleted by the user, or the archive is gone.
-            Err(e) => eprintln!("engine: skipping journal entry {} ({e:#})", entry.id),
+            // Deleted by the user: nothing left to recover. The archive
+            // folder missing, or the item still there but not rewritable:
+            // try again at the next start.
+            Err(e) => {
+                let item_left = archive::paths::item_dir(&entry.archive, &entry.id)
+                    .map(|d| d.join(archive::store::TRANSCRIPT_FILE).is_file())
+                    .unwrap_or(false);
+                if item_left || !entry.archive.is_dir() {
+                    eprintln!("engine: journal entry {} kept for later ({e:#})", entry.id);
+                    keep.push(entry);
+                } else {
+                    eprintln!("engine: skipping journal entry {} ({e:#})", entry.id);
+                }
+            }
         }
     }
-    if let Err(e) = journal_write(journal, &[]) {
-        eprintln!("engine: could not clear the session journal ({e:#})");
+    if let Err(e) = journal_write(journal, &keep) {
+        eprintln!("engine: could not update the session journal ({e:#})");
     }
     out.spools_removed = remove_stale_spools(spool_dir, std::process::id());
     out
@@ -503,6 +533,53 @@ mod tests {
             "a cancel with text goes to the trash (#158)"
         );
         assert!(journal_entries(&e.journal).is_empty());
+    }
+
+    /// #158 finding 3: when finish / abandon / discard can't bring the item
+    /// to a final state (here: the archive drive is unplugged), the journal
+    /// entry stays, so a later start still marks it interrupted instead of
+    /// leaving it `recording` forever.
+    #[test]
+    fn a_failed_end_of_session_keeps_the_journal_entry() {
+        let e = env();
+        let mut ids = Vec::new();
+        let mut items = Vec::new();
+        for title in ["Finish", "Abandon", "Discard"] {
+            let mut live = LiveItem::begin(&e.archive, &meta(title), Some(&e.journal)).unwrap();
+            live.push(seg(0));
+            ids.push(live.id().to_string());
+            items.push(live);
+        }
+        let away = e.archive.with_file_name("Unplugged");
+        std::fs::rename(&e.archive, &away).unwrap();
+        let mut items = items.into_iter();
+        assert!(items
+            .next()
+            .unwrap()
+            .finish(&meta("Finish"), |m| m)
+            .is_err());
+        assert_eq!(items.next().unwrap().abandon(), None);
+        assert_eq!(items.next().unwrap().discard(), None);
+        assert_eq!(
+            journal_entries(&e.journal).len(),
+            3,
+            "every entry kept for the next start"
+        );
+
+        // A start while the drive is still missing keeps the entries too.
+        let r = recover(&e.journal, Some(&e.archive), None, &e.data);
+        assert!(r.interrupted.is_empty());
+        assert_eq!(journal_entries(&e.journal).len(), 3);
+
+        // Plugged back in: the next start recovers all three.
+        std::fs::rename(&away, &e.archive).unwrap();
+        let r = recover(&e.journal, Some(&e.archive), None, &e.data);
+        assert_eq!(r.interrupted, ids);
+        for id in &ids {
+            let item = read_item(&e.archive, id).unwrap();
+            assert!(item.interrupted && !item.recording, "{id}");
+        }
+        assert!(!e.journal.exists());
     }
 
     #[test]
