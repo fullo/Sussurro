@@ -36,8 +36,13 @@ const EXT = fileURLToPath(new URL("..", import.meta.url));
 const TOKEN = "e2e0".repeat(16);
 const GECKO_ID = "sussurro@darumahq.it";
 const FIREFOX_UUID = "5b7f3a52-6c1e-4f0e-9c1a-2d8b3c4e5f60";
+/** Firefox's id for the add-on's sidebar (its widget id + a suffix). */
+const SIDEBAR_ID = "sussurro_darumahq_it-sidebar-action";
+const SIDEBAR_URL = `moz-extension://${FIREFOX_UUID}/sidepanel.html`;
 const headless = !process.env.HEADED;
 const CAPTURE_MS = 6000;
+/** A tab id no tab has. */
+const NO_TAB = 999_999;
 /** Firefox's event-page idle timeout in the harness (default 30 s): short,
  *  so that everything the extension does while capturing, and while the app
  *  finishes after Stop (FINISH_MS), outlasts it several times over. */
@@ -118,6 +123,14 @@ function pagePanel(p: Page): Panel {
   };
 }
 
+interface Sidebar extends Panel {
+  hide(): Promise<void>;
+  show(): Promise<void>;
+  /** Make a new blank tab the window's active one (true), or go back to
+   *  the first tab and close it (false). */
+  otherTab(on: boolean): Promise<void>;
+}
+
 interface Launched {
   ctx: BrowserContext;
   /** Store the pairing, as the options page does (#127's keys). */
@@ -126,6 +139,9 @@ interface Launched {
   tabIdOf(part: string): Promise<number>;
   /** The side panel, opened as a tab controlling `tabId`. */
   openPanel(tabId: number): Promise<Panel>;
+  /** Firefox: the real sidebar, in the window of the first tab whose URL
+   *  contains `part`. */
+  openSidebar?(part: string): Promise<Sidebar>;
   micTone: number;
   /** Firefox: how many times the event page was suspended so far (it
    *  runs with a short idle timeout, see FIREFOX_IDLE_MS). */
@@ -228,6 +244,22 @@ async function launchFirefox(config: Config): Promise<Launched> {
   })()`);
   const targets = await rdpc.watchAddon(id);
   const target = (part: string): Promise<string> => until(`the ${part} document`, () => [...targets].find(([url]) => url.includes(part))?.[1] ?? "");
+  /** A panel document scripted over RDP (found per call: the sidebar's
+   *  document goes away when it is closed). */
+  const rdpPanel = (urlEnd: string): Panel => {
+    const js = async (code: string) => rdpc.evaluate(await until(`the ${urlEnd} document`, () => [...targets].find(([url]) => url.endsWith(urlEnd))?.[1] ?? ""), code);
+    const q = (id: string) => `document.querySelector('[data-testid="${id}"]')`;
+    return {
+      async click(id) {
+        await until(`${id} to be clickable`, async () => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true);
+        await js(`${q(id)}.click(); 0`);
+      },
+      status: async (attr) => ((await js(`${q("status")}?.getAttribute("data-${attr}") ?? null`)) as string | null) ?? null,
+      canClick: async (id) => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true,
+      text: async () => String(await js(`document.querySelector("main")?.innerText ?? ""`)),
+      texts: async (selector) => JSON.parse(String(await js(`JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.innerText))`))) as string[],
+    };
+  };
   // The event page may be suspended (idle) or just restarting: wake it,
   // then evaluate in its current document.
   const bg = async (code: string): Promise<unknown> => {
@@ -266,18 +298,39 @@ async function launchFirefox(config: Config): Promise<Launched> {
     async openPanel(tabId) {
       // Playwright doesn't see moz-extension:// tabs: script the panel over RDP.
       await bg(`browser.tabs.create({ url: browser.runtime.getURL("sidepanel.html?tabId=${tabId}") }); 0`);
-      const c = await target(`sidepanel.html?tabId=${tabId}`);
-      const js = (code: string) => rdpc.evaluate(c, code);
-      const q = (id: string) => `document.querySelector('[data-testid="${id}"]')`;
+      return rdpPanel(`sidepanel.html?tabId=${tabId}`);
+    },
+    async openSidebar(part) {
+      // The real sidebar, as the toolbar button opens it (sidebarAction
+      // .open() needs a user action, so through the browser window), in
+      // the window of that tab. It has no ?tabId=: it follows the window's
+      // active tab, made the page's tab here (Playwright gives each page a
+      // window of its own, where openPanel's tab may be the active one).
+      await chromeJs(`(() => {
+        const has = (t) => t.linkedBrowser.currentURI.spec.includes(${JSON.stringify(part)});
+        const w = [...Services.wm.getEnumerator("navigator:browser")].find((w) => w.gBrowser.tabs.some(has));
+        globalThis.__e2eSidebarWindow = w;
+        globalThis.__e2eSidebarTab = w.gBrowser.tabs.find(has);
+        w.gBrowser.selectedTab = globalThis.__e2eSidebarTab;
+        w.SidebarController.show(${JSON.stringify(SIDEBAR_ID)});
+        return 0;
+      })()`);
+      const sidebar = rdpPanel(SIDEBAR_URL);
+      const w = "globalThis.__e2eSidebarWindow";
       return {
-        async click(id) {
-          await until(`${id} to be clickable`, async () => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true);
-          await js(`${q(id)}.click(); 0`);
+        ...sidebar,
+        async hide() {
+          await chromeJs(`${w}.SidebarController.hide(); 0`);
+          await until("the sidebar to close", () => ![...targets.keys()].some((url) => url.endsWith(SIDEBAR_URL)));
         },
-        status: async (attr) => ((await js(`${q("status")}?.getAttribute("data-${attr}") ?? null`)) as string | null) ?? null,
-        canClick: async (id) => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true,
-        text: async () => String(await js(`document.querySelector("main")?.innerText ?? ""`)),
-        texts: async (selector) => JSON.parse(String(await js(`JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.innerText))`))) as string[],
+        show: async () => void (await chromeJs(`${w}.SidebarController.show(${JSON.stringify(SIDEBAR_ID)}); 0`)),
+        async otherTab(on) {
+          await chromeJs(
+            on
+              ? `(() => { const g = ${w}.gBrowser; g.selectedTab = g.addTab("about:blank", { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() }); return 0; })()`
+              : `(() => { const g = ${w}.gBrowser; const extra = g.selectedTab; g.selectedTab = globalThis.__e2eSidebarTab; g.removeTab(extra); return 0; })()`,
+          );
+        },
       };
     },
     async close() {
@@ -304,7 +357,17 @@ async function runConfig(config: Config): Promise<Check[]> {
   const b = config === "firefox" ? await launchFirefox(config) : await launchChromium(config);
   let shownPanel: Panel | null = null;
   try {
+    // Not paired yet: the panel says so, and follows the pairing once it
+    // is stored (storage.local change events).
+    const unpaired = await b.openPanel(NO_TAB);
+    const unpairedText = await until("the not-paired note", async () => ((await unpaired.text()).includes("Not paired") ? await unpaired.text() : ""), 10_000).catch(() => "");
+    check("before pairing, the panel says it is not paired", unpairedText.includes("Not paired with the Sussurro app"), unpairedText);
     await b.pair(server.port, TOKEN);
+    const paired = await until("the panel to see the pairing", async () => {
+      const text = await unpaired.text();
+      return !text.includes("Not paired") && text.includes("Open a Google Meet") ? text : "";
+    }).catch(async () => unpaired.text());
+    check("once paired, the panel drops the note and follows the tab", paired.includes("Open a Google Meet"), paired);
 
     // 0. Firefox's event page (#137): with nothing going on it is suspended
     //    after the idle timeout — so the lifetime checks below mean something.
@@ -376,10 +439,32 @@ async function runConfig(config: Config): Promise<Check[]> {
     const copied = await until("Copy as text", () => server.items.find((r) => r.path === "/items/e2e-1/export" && r.format === "txt"), 5000).catch(() => null);
     check("Copy as text → GET /items/{id}/export?format=txt", !!copied, server.items);
 
+    // 2c. Firefox: the real sidebar (#137), opened mid-meeting in the call
+    //     tab's window, shows the meeting so far and follows the window's
+    //     active tab; Stop is pressed there.
+    let stopFrom: Panel = panel;
+    if (b.openSidebar) {
+      const sidebar = await b.openSidebar("role=A");
+      const lines = () => sidebar.texts("[data-testid=transcript] .tx-text");
+      const restored = await until("the lines in the sidebar", async () => ((await lines()).length === 3 ? await lines() : null), 10_000).catch(() => null);
+      check("sidebar: opened mid-meeting, shows the lines so far", JSON.stringify(restored) === JSON.stringify(await panel.texts("[data-testid=transcript] .tx-text")), restored);
+      check("sidebar: live, with the reminder", (await sidebar.status("phase")) === "live" && (await sidebar.texts("[data-testid=reminder]")).length === 1);
+      await sidebar.otherTab(true);
+      const elsewhere = await until("the sidebar to follow the active tab", async () => ((await sidebar.text()).includes("Open a Google Meet") ? await sidebar.text() : ""), 5000).catch(() => "");
+      check("sidebar: follows the window's active tab", elsewhere !== "" && (await lines()).length === 0, elsewhere);
+      await sidebar.otherTab(false);
+      await until("the sidebar back on the call", async () => (await sidebar.status("phase")) === "live" && (await lines()).length === 3, 5000).catch(() => null);
+      await sidebar.hide();
+      await sidebar.show();
+      const reopened = await until("the reopened sidebar", async () => ((await lines()).length === 3 ? await lines() : null), 10_000).catch(() => null);
+      check("sidebar: closed and reopened, the lines are back", !!reopened, reopened);
+      stopFrom = sidebar;
+    }
+
     await sleep(Math.max(0, CAPTURE_MS - (Date.now() - t0)));
     const a = await A.evaluate(() => (window as any).callState());
     const bs = await B.evaluate(() => (window as any).callState());
-    await panel.click("stop");
+    await stopFrom.click("stop");
     // The app works through its backlog for FINISH_MS before `done`.
     const finishing = await until("phase stopping", async () => (await phase()) === "stopping", 5000).catch(() => false);
     check("Stop → stopping while the app finishes", !!finishing);
