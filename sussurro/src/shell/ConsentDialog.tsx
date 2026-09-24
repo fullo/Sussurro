@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { obtainConsent, sizeLabel, type ConsentRequest } from "../lib/privacy";
+import { obtainConsent, peopleLabel, sizeLabel, type ConsentRequest } from "../lib/privacy";
 import type { ExternalRunPreview, LlmProfile } from "../lib/types";
 
 /** The per-run confirmation for an external LLM profile (#122): which
@@ -14,6 +14,8 @@ export function ConsentDialog({
   onAnswer: (ok: boolean) => void;
 }) {
   const task = preview.question ? `Question: “${preview.question}”` : `Recipe: ${preview.recipe_name}`;
+  // Speaker and participant names go along; emails only when ticked (#143).
+  const people = peopleLabel(preview);
   return (
     <div className="modal-backdrop" role="presentation" onClick={() => onAnswer(false)}>
       <div
@@ -40,6 +42,12 @@ export function ConsentDialog({
           <dd>{preview.item_title || "Untitled"}</dd>
           <dt>Task</dt>
           <dd>{task}</dd>
+          {people && (
+            <>
+              <dt>People</dt>
+              <dd>{people}</dd>
+            </>
+          )}
           <dt>Size</dt>
           <dd>{sizeLabel(preview.chars, preview.approx_tokens)}</dd>
           <dt>Server</dt>

@@ -3,7 +3,8 @@
    Settings::normalize) repairs whatever reaches it; these keep the UI's
    edits well-formed in the first place. */
 
-import type { CompanionDoc, LlmProfile, Recipe, RecipeStep, RecipeTarget, Settings } from "./types";
+import { speakersEnabled } from "./speakers";
+import type { CompanionDoc, Item, LlmProfile, Recipe, RecipeStep, RecipeTarget, Settings } from "./types";
 
 export const TARGET_LABELS: Record<RecipeTarget, string> = {
   companion_document: "Document",
@@ -76,6 +77,40 @@ export function commitRecipe(s: Settings, all: Recipe[], r: Recipe): { settings:
 
 export function removeRecipe(s: Settings, id: string): Settings {
   return { ...s, recipes: (s.recipes ?? []).filter((r) => r.id !== id) };
+}
+
+/** A hand-edited transcript line that names its speaker, as the app
+ *  renders it: `**[00:01:02] Anna:** …` (mirrors recipes::chunk). */
+const BODY_SPEAKER_LINE = /^\*\*\[\d+:[0-5]\d:[0-5]\d\] [^*\n]+?:\*\* /m;
+
+/** Whether the transcript names its speakers (#143) — what a
+ *  speakers-only recipe needs (mirrors recipes::run::item_has_speakers):
+ *  never a note; a line with a labelled speaker, from the segments, or
+ *  from the markdown when it was edited outside Sussurro. */
+export function itemHasSpeakers(item: Pick<Item, "meta" | "segments" | "body" | "edited_externally">): boolean {
+  if (item.meta.type === "note") return false;
+  if (item.edited_externally || !item.segments.segments.length) return BODY_SPEAKER_LINE.test(item.body);
+  const labelled = new Set(item.segments.speakers.filter((s) => s.label.trim()).map((s) => s.id));
+  return item.segments.segments.some((s) => s.text.trim() && s.speaker_id && labelled.has(s.speaker_id));
+}
+
+/** The recipes offered on `item` (#143): speakers-only recipes (Meeting
+ *  minutes, Who said what) appear only where the transcript names its
+ *  speakers and the speaker features are on for its type (meetings behind
+ *  the 0.9 preview flag, E12). */
+export function recipesFor(
+  recipes: Recipe[],
+  settings: Pick<Settings, "meetings_enabled">,
+  item: Pick<Item, "meta" | "segments" | "body" | "edited_externally">,
+): Recipe[] {
+  const speakers = speakersEnabled(settings, item) && itemHasSpeakers(item);
+  return recipes.filter((r) => !r.speakers_only || speakers);
+}
+
+/** Participants of `item` with an email: the per-run "include emails"
+ *  choice is offered only when there are some (#143). */
+export function participantEmails(item: Pick<Item, "meta">): number {
+  return (item.meta.participants ?? []).filter((p) => p.name.trim() && (p.email ?? "").trim()).length;
 }
 
 /** File a document recipe writes (mirrors recipes::companion_file_name). */

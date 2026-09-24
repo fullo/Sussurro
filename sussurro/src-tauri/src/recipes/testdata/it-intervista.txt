@@ -1,0 +1,24 @@
+# Synthetic corpus (#143): Italian transcription of a recorded interview,
+# speakers labelled by voice only ("Identify voices"), no participants.
+# Invented content.
+type: transcription
+title: Intervista — cooperativa agricola
+date: 2026-09-18T11:00:00+02:00
+language: it
+speaker: voice:1 = Voice 1
+speaker: voice:2 = Voice 2
+---
+00:00:01 voice:1 | Grazie per averci ricevuto. Ci racconta come è nata la cooperativa?
+00:00:07 voice:2 | Siamo partiti in sei, nel 2014, con tre ettari di uliveto abbandonato sopra il paese.
+00:00:16 voice:2 | Oggi siamo ventidue soci e lavoriamo quaranta ettari, quasi tutti in biologico.
+00:00:25 voice:1 | Qual è stata la difficoltà più grande all'inizio?
+00:00:30 voice:2 | L'accesso al credito. Nessuna banca voleva finanziare dei trentenni senza garanzie.
+00:00:39 voice:2 | Alla fine ci ha aiutato un fondo regionale per l'agricoltura giovanile.
+00:00:47 voice:1 | E adesso, su cosa state lavorando?
+00:00:51 voice:2 | Stiamo costruendo un piccolo frantoio nostro. Entro la primavera prossima vogliamo molire tutto in casa.
+00:01:01 voice:2 | Questo ci permette di controllare la qualità e di tenere il valore qui in valle.
+00:01:09 voice:1 | Avete bisogno di nuovi soci?
+00:01:13 voice:2 | Sì, cerchiamo soprattutto giovani con competenze di vendita online. Chi è interessato può scriverci entro fine ottobre.
+00:01:23 voice:1 | Un'ultima domanda: cosa consiglierebbe a chi vuole tornare alla terra?
+00:01:29 voice:2 | Di non farlo da soli. Da soli si molla al primo inverno difficile.
+00:01:36 voice:1 | Grazie mille, è stato un piacere.

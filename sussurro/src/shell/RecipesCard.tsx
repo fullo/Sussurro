@@ -42,7 +42,9 @@ export function RecipesCard({ ctl }: { ctl: Ctl }) {
       <p className="card-hint">
         Run a recipe from the <em>Document</em> tab of a note, meeting or transcription: it reads the transcript (with
         speakers and timestamps when there are any) and writes a markdown file next to it. Long transcripts are read in
-        parts that fit the profile's context window, then combined.
+        parts that fit the profile's context window, then combined, keeping who said what. Recipes marked{" "}
+        <em>Speakers</em> appear only where the transcript names its speakers; participants go to the model by name,
+        their emails only when you tick them for a run.
       </p>
       <ul className="prof-list" aria-label="Recipes">
         {all.map((r) => (
@@ -57,6 +59,11 @@ export function RecipesCard({ ctl }: { ctl: Ctl }) {
               <span className="prof-sub">
                 {r.target === "companion_document" ? companionFileName(r) : "answer in the Ask panel"}
               </span>
+              {r.speakers_only && (
+                <span className="tb meeting" title="Offered on meetings and transcriptions whose transcript names its speakers">
+                  Speakers
+                </span>
+              )}
               {r.builtin && <span className="tb note">Built-in</span>}
             </button>
           </li>

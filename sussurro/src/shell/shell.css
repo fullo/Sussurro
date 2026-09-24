@@ -655,6 +655,10 @@ button.pchip-name:hover { text-decoration: underline; }
 .consent-facts dt { color: var(--c-text-light); font-weight: 600; }
 .consent-facts dd { margin: 0; color: var(--c-dark); overflow-wrap: anywhere; }
 .rc-note.warn { color: var(--warn); }
+/* Per-run participant-email opt-in (#143). */
+.email-opt-in { font-size: 12.5px; }
+.rc-tab > .email-opt-in { margin: 8px 18px 0; }
+.ctx-sect > .email-opt-in { margin: 6px 0 0; }
 .sent-ext { padding: 0 6px; line-height: 16px; }
 .doc-title-row .sent-ext { align-self: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

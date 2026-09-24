@@ -20,7 +20,8 @@ import {
 } from "../lib/ask";
 import { type ExportChoice, exportChoices, exportFileName, hasSubtitles, subtitlesInfo } from "../lib/export";
 import { profileHostOf } from "../lib/privacy";
-import { companionFileName, progressFraction, progressLabel } from "../lib/recipes";
+import { companionFileName, participantEmails, progressFraction, progressLabel, recipesFor } from "../lib/recipes";
+import { EmailOptIn } from "./EmailOptIn";
 import type { Item, Person, Recipe, RecipeFinished, RecipeProgress, RecipeRunStatus, SubtitlesStatus } from "../lib/types";
 import { useExternalConsent } from "./ConsentDialog";
 import { Markdown } from "./Markdown";
@@ -108,6 +109,8 @@ export function ContextPane({
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [state, dispatch] = useReducer(askReducer, INITIAL_ASK);
   const [question, setQuestion] = useState("");
+  /** Send participant emails with the next run (#143); never remembered. */
+  const [emails, setEmails] = useState(false);
   const [profileId, setProfileId] = useState<string | null>(() => defaultAskProfile(settings, remembered())?.id ?? null);
   const recipesRef = useRef<Recipe[]>([]);
   recipesRef.current = recipes;
@@ -142,6 +145,7 @@ export function ContextPane({
   }, [settings.recipes]);
 
   useEffect(() => {
+    setEmails(false);
     // A run on this item may already be going (started before a reload).
     invoke<RecipeRunStatus[]>("recipe_status")
       .then((all) => {
@@ -181,6 +185,9 @@ export function ContextPane({
   const busy = !!state.run;
   const noun = KIND_NOUN[item.meta.type] ?? "document";
   const showSpeakers = speakersEnabled(settings, item);
+  // Meeting recipes only where the transcript names its speakers (#143).
+  const shown = recipesFor(recipes, settings, item);
+  const emailCount = participantEmails(item);
 
   const dropAnswer = () => {
     const a = state.answer;
@@ -190,10 +197,12 @@ export function ContextPane({
   const start = async (r: Recipe | null, q: string | null) => {
     if (!profile || busy || blocked || asking) return;
     const answerRun = q !== null || r?.target === "answer";
+    // Participant emails go along only when ticked for this run (#143).
+    const includeEmails = emails && emailCount > 0;
     // An external profile asks first, every time (#122); Cancel sends nothing.
     let consent: string | null = null;
     try {
-      const got = await consentFor(profile, { id, recipeId: r?.id ?? null, question: q, profileId: profile.id });
+      const got = await consentFor(profile, { id, recipeId: r?.id ?? null, question: q, profileId: profile.id, includeEmails });
       if (!got) {
         dispatch({ type: "declined", notice: `Nothing was sent to ${profileHostOf(profile) || profile.name}.` });
         if (q !== null) setQuestion((cur) => cur || q);
@@ -208,11 +217,12 @@ export function ContextPane({
     // A new answer replaces the one shown; a document run leaves it.
     if (answerRun) dropAnswer();
     dispatch({ type: "start", recipeId: r?.id ?? QUESTION_RECIPE_ID, recipeName: r?.name ?? "Question", question: q, answerRun });
+    setEmails(false);
     try {
       // Progress and the end arrive as events; the reply matters only for
       // refusals, which happen before anything is sent.
-      if (q !== null) await invoke<RecipeFinished>("recipe_ask", { id, question: q, profileId: profile.id, consent });
-      else if (r) await invoke<RecipeFinished>("recipe_run", { id, recipeId: r.id, profileId: profile.id, consent });
+      if (q !== null) await invoke<RecipeFinished>("recipe_ask", { id, question: q, profileId: profile.id, consent, includeEmails });
+      else if (r) await invoke<RecipeFinished>("recipe_run", { id, recipeId: r.id, profileId: profile.id, consent, includeEmails });
     } catch (e) {
       dispatch({ type: "refused", error: String(e) });
       // Give a refused question back to edit or re-ask.
@@ -332,7 +342,7 @@ export function ContextPane({
       <section className="ctx-sect" aria-labelledby="ctx-ask-h">
         <h3 id="ctx-ask-h">Ask</h3>
         <div className="ctx-recipes" role="group" aria-label="Recipes">
-          {recipes.map((r) => (
+          {shown.map((r) => (
             <button
               key={r.id}
               type="button"
@@ -372,6 +382,7 @@ export function ContextPane({
           </button>
         </form>
         {questionIssue && <p className="ctx-note warn">{questionIssue}</p>}
+        {!blocked && <EmailOptIn count={emailCount} checked={emails} onChange={setEmails} disabled={busy} />}
 
         {choices.length > 0 && (
           <fieldset className="ctx-profiles" disabled={busy}>
