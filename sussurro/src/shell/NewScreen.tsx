@@ -30,7 +30,7 @@ import {
 import { CleanupLevelPicker } from "../settings/CleanupCard";
 import { AUDIO_EXTENSIONS, pickAudioFile } from "../settings/AudioFileCard";
 import { LANGUAGES } from "../lib/constants";
-import { differsFromDictation, effectiveRun, runArgs, type RunChoice } from "../lib/runOptions";
+import { differsFromDictation, effectiveRun, runArgs, saveAudioChoice, type RunChoice } from "../lib/runOptions";
 import { identifyVoicesArg } from "../lib/speakers";
 import { ChipEditor } from "./ChipEditor";
 import { sttLabel } from "./labels";
@@ -72,7 +72,7 @@ export function NewScreen({
   onOpenItem: (id: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>(() => initialTab(engine.runs));
-  const options = runArgs(ctl.settings, defaults);
+  const options: RunArgs = { ...runArgs(ctl.settings, defaults), saveAudio: saveAudioChoice(ctl.settings, defaults) };
 
   return (
     <div className="sh-screen">
@@ -184,8 +184,53 @@ function OptionsCard({
         )}{" "}
         Tags and category are added to the item when it is saved.
       </p>
+      <SaveAudio
+        checked={saveAudioChoice(settings, defaults)}
+        onChange={(saveAudio) => onChange({ ...defaults, saveAudio })}
+      />
       <p className="sh-note">Engine: {sttLabel(settings)}</p>
     </section>
+  );
+}
+
+/* ---------- "Save audio" (P9, #141) ---------- */
+
+/** Off unless the user asks (or turned the default on in Settings →
+ *  Archive). The note names the folder: Documents is often synced to
+ *  iCloud Drive or OneDrive, and the audio would go with it. */
+function SaveAudio({ checked, onChange }: { checked: boolean; onChange: (on: boolean) => void }) {
+  const [dir, setDir] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    invoke<string>("archive_dir")
+      .then((d) => alive && setDir(d))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return (
+    <div className="save-audio">
+      <label className="check-row">
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <span>
+          Save audio <span className="sh-muted">— keep the recording next to the transcript</span>
+        </span>
+      </label>
+      <p className="sh-note" role="note">
+        {checked ? "Saved" : "When ticked, saved"} as <code>audio.wav</code> (one file per channel for a meeting) in
+        the item's folder
+        {dir ? (
+          <>
+            {" "}under <code>{dir}</code>
+          </>
+        ) : (
+          " in the archive"
+        )}
+        . If that folder syncs to iCloud Drive, OneDrive or another cloud, the audio is uploaded too. About 115 MB per
+        hour; you can delete it later from the document and keep the transcript.
+      </p>
+    </div>
   );
 }
 

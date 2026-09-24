@@ -10,6 +10,7 @@ import { peopleSuggestions, personFromParticipant } from "../lib/people";
 import { usePeople } from "../hooks/usePeople";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import type { Item, ItemMeta, Participant } from "../lib/types";
+import { AudioBar } from "./AudioBar";
 import { ChipEditor } from "./ChipEditor";
 import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
 import { DocumentTab } from "./DocumentTab";
@@ -294,6 +295,15 @@ export function DocumentPane({
           </>
         )}
       </div>
+
+      <AudioBar
+        ctl={ctl}
+        item={item}
+        onItem={(updated) => {
+          setItem(updated);
+          onChanged();
+        }}
+      />
 
       {tab === "document" ? (
         <DocumentTab
