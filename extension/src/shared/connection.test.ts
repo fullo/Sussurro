@@ -21,12 +21,31 @@ describe("classifyResponse", () => {
     });
   });
 
+  it("reads the app's subtitles setting (#129), ignoring unknown values", () => {
+    expect(classifyResponse(200, { app: "0.9.0", protocol: PROTOCOL_VERSION, subtitles: "on_request" })).toMatchObject({ kind: "ok", subtitles: "on_request" });
+    expect(classifyResponse(200, { app: "0.9.0", protocol: PROTOCOL_VERSION, subtitles: "always" })).toMatchObject({ kind: "ok", subtitles: "always" });
+    expect(classifyResponse(200, { app: "0.9.0", protocol: PROTOCOL_VERSION, subtitles: "sometimes" })).not.toHaveProperty("subtitles");
+  });
+
   it("refuses another protocol", () => {
     expect(classifyResponse(200, { app: "1.2.0", protocol: PROTOCOL_VERSION + 1 })).toEqual({
       kind: "protocol_mismatch",
       app: "1.2.0",
       protocol: PROTOCOL_VERSION + 1,
     });
+  });
+
+  it("accepts a newer app that still speaks our protocol (protocol_min)", () => {
+    const newer = { app: "1.0.0", protocol: PROTOCOL_VERSION + 1, protocol_min: PROTOCOL_VERSION - 1 };
+    expect(classifyResponse(200, newer)).toEqual({ kind: "ok", app: "1.0.0", protocol: PROTOCOL_VERSION + 1 });
+    // An app older than us (it doesn't know our messages) is refused, and
+    // so is a newer one that dropped our protocol.
+    expect(classifyResponse(200, { app: "0.9.0", protocol: 1 }).kind).toBe(PROTOCOL_VERSION > 1 ? "protocol_mismatch" : "ok");
+    expect(classifyResponse(200, { app: "2.0.0", protocol: PROTOCOL_VERSION + 2, protocol_min: PROTOCOL_VERSION + 1 }).kind).toBe(
+      "protocol_mismatch",
+    );
+    // A nonsense range reads as "only its own protocol".
+    expect(classifyResponse(200, { app: "1.0.0", protocol: PROTOCOL_VERSION, protocol_min: 99 }).kind).toBe("ok");
   });
 
   it("maps the app's refusals", () => {

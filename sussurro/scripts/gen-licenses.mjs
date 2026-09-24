@@ -249,12 +249,49 @@ function downloadedModels() {
   ];
 }
 
+// Prebuilt upstream binaries shipped inside the installers (the llama-server
+// sidecar, #116). Read from the pinned lock so the version and licence texts
+// always match what `npm run sidecar` bundles.
+function bundledBinaries() {
+  const sidecarDir = join(ROOT, "src-tauri", "sidecar");
+  const lock = JSON.parse(readFileSync(join(sidecarDir, "llama-server.lock.json"), "utf8"));
+  const out = [
+    {
+      name: "llama.cpp (llama-server sidecar)",
+      version: lock.release,
+      license: lock.license,
+      spdx: "",
+      repository: lock.upstream,
+      text: readFileSync(join(sidecarDir, lock.licenseText), "utf8").trim(),
+      ecosystem: "binary",
+    },
+  ];
+  const seen = new Set();
+  for (const t of Object.values(lock.targets)) {
+    for (const x of t.extraLicenses) {
+      if (seen.has(x.component)) continue;
+      seen.add(x.component);
+      out.push({
+        name: x.component,
+        version: lock.release,
+        license: x.license,
+        spdx: "",
+        repository: x.repository || "",
+        text: readFileSync(join(sidecarDir, x.text), "utf8").trim(),
+        ecosystem: "binary",
+      });
+    }
+  }
+  return out;
+}
+
 const byName = (a, b) =>
   a.name.localeCompare(b.name) || a.version.localeCompare(b.version);
 const collected = [
   ...rustCrates().sort(byName),
   ...npmPackages().sort(byName),
   ...downloadedModels(),
+  ...bundledBinaries(),
 ];
 
 // Deduplicate license texts by content: Apache-2.0 (identical everywhere)
@@ -284,7 +321,8 @@ const packages = collected.map((p) => {
 
 const rust = packages.filter((p) => p.ecosystem === "rust").length;
 const models = packages.filter((p) => p.ecosystem === "model").length;
-const npm = packages.length - rust - models;
+const binaries = packages.filter((p) => p.ecosystem === "binary").length;
+const npm = packages.length - rust - models - binaries;
 // public/ (not src/) so Vite serves it as a static asset the About dialog
 // fetches on demand — it never enters the main JS bundle.
 writeFileSync(
@@ -293,5 +331,6 @@ writeFileSync(
 );
 console.log(
   `Wrote public/licenses.json — ${rust} Rust crates, ${npm} npm packages, ` +
-    `${models} downloaded models, ${texts.length} unique license texts`,
+    `${models} downloaded models, ${binaries} bundled binaries, ` +
+    `${texts.length} unique license texts`,
 );

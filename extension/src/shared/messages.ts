@@ -9,6 +9,9 @@ import type { MicVia, RemoteVia } from "../content/registry";
 import type { Platform } from "./platform";
 import type { AppProblem } from "./appcheck";
 import type { TransportMode } from "./transport";
+import type { HealthReport, PageSpeakerMsg } from "./speakerEvents";
+import type { SubtitlesMode } from "./connection";
+import type { LiveAction, LiveTranscript } from "./live";
 import type { Phase } from "../background/session";
 
 /** What the page-side capture reports (about once a second while armed,
@@ -36,7 +39,9 @@ export type FromMain =
   | { t: "armed"; rate: number }
   | { t: "arm-failed"; error: string }
   | { t: "pcm"; seq: number; mic: ArrayBuffer; remote: ArrayBuffer | null }
-  | { t: "state"; state: CaptureSnapshot };
+  | { t: "state"; state: CaptureSnapshot }
+  /** Meet names (#131): a speaker event, stamped in page frames. */
+  | { t: "speaker"; msg: PageSpeakerMsg };
 
 // ---- content / offscreen ↔ background (runtime ports) -----------------------
 
@@ -48,6 +53,7 @@ export type ToBackground =
   | { type: "arm-failed"; error: string }
   | { type: "pcm"; seq: number; mic?: Payload; remote?: Payload }
   | { type: "state"; state: CaptureSnapshot }
+  | { type: "speaker"; msg: PageSpeakerMsg }
   | { type: "offscreen-error"; error: string };
 
 export type FromBackground =
@@ -75,7 +81,7 @@ export interface PanelState {
   platform: Platform | null;
   paired: boolean;
   /** Result of the last app check (null: not checked yet). */
-  app: { ok: true; version: string } | { ok: false; problem: AppProblem } | null;
+  app: { ok: true; version: string; subtitles?: SubtitlesMode } | { ok: false; problem: AppProblem } | null;
   phase: Phase;
   problem?: AppProblem;
   message?: string;
@@ -86,18 +92,29 @@ export interface PanelState {
   tabCapture: "off" | "starting" | "on" | "failed";
   /** How audio crosses the page → background port (diagnostics). */
   transport: TransportMode | null;
+  /** The Meet name observer's last health report (#131; null: none, e.g.
+   *  not a Meet page or not capturing). `names_unavailable`: new speakers
+   *  stay "Voice N". */
+  names?: HealthReport | null;
 }
 
 export type PanelRequest =
   | { type: "panel:get"; tabId: number }
+  /** The tab's live transcript (#129): a snapshot, then `panel:live`. */
+  | { type: "panel:transcript"; tabId: number }
   | { type: "panel:start"; tabId: number }
   | { type: "panel:stop"; tabId: number };
 
 /** Broadcast by the background to every open panel. */
 export type PanelBroadcast =
   | { type: "panel:state"; state: PanelState }
-  /** An app → extension `/live` message (segments, speakers, status), for #129. */
-  | { type: "panel:live"; tabId: number; message: unknown };
+  /** One change to a tab's live transcript (#129): an app → extension
+   *  `/live` message, or a reset on a new Start. `rev` is the transcript's
+   *  revision after it; `epoch` names that transcript (a restarted
+   *  background starts a new one). See `live.ts` (`mirrorReceive`). */
+  | { type: "panel:live"; tabId: number; epoch: string; rev: number; action: LiveAction };
+
+export type { LiveTranscript };
 
 // ---- background ↔ offscreen document (Chrome) -------------------------------
 

@@ -25,9 +25,19 @@ export const PAIRING_KEYS = { port: "port", token: "token" } as const;
 /** The app's default local API port (`Settings::api_port`). */
 export const DEFAULT_PORT = 4525;
 
-/** Protocol spoken with the app (`api::protocol::PROTOCOL_VERSION`, returned
- *  by `GET /app/version`). The extension refuses to run against another. */
-export const PROTOCOL_VERSION = 1;
+/** Protocol spoken with the app (`api::protocol::PROTOCOL_VERSION`). The app
+ *  reports its own protocol and the oldest it still accepts
+ *  (`GET /app/version` → `protocol`, `protocol_min`); the extension runs
+ *  when its version is in that range (`protocolCompatible`). 2 (#131):
+ *  speaker ids, `speaker_idle`, `speaker_name`, `observer_health`. */
+export const PROTOCOL_VERSION = 2;
+
+/** Whether this extension can talk to an app speaking `protocol`, which
+ *  accepts clients from `protocolMin` (absent: only its own). Pure. */
+export function protocolCompatible(protocol: number, protocolMin?: number): boolean {
+  const min = typeof protocolMin === "number" && protocolMin <= protocol ? protocolMin : protocol;
+  return min <= PROTOCOL_VERSION && PROTOCOL_VERSION <= protocol;
+}
 
 /** The subset of `storage.local` used here (injectable for tests). */
 export interface PairingStorage {

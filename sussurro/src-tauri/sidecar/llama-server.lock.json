@@ -1,0 +1,111 @@
+{
+  "_comment": "Pinned llama.cpp build shipped as the llama-server sidecar (plan E9, #116). One upstream release for every target. Fetch + verify with `npm run sidecar` (sussurro/scripts/fetch-sidecar.mjs); a checksum mismatch fails the build. To bump: change release/commit/version, every url/asset/sha256/size (the GitHub release page lists each asset's sha256), re-check the libs lists against the new archives, then run the tests in sussurro/scripts/.",
+  "name": "sussurro-llama-server",
+  "upstream": "https://github.com/ggml-org/llama.cpp",
+  "release": "b11146",
+  "commit": "7fe450e19",
+  "version": "0.5.0-dev (build 11146)",
+  "license": "MIT",
+  "licenseFile": "LICENSE",
+  "licenseText": "licenses/llama.cpp.txt",
+  "libDir": "llama-server-libs",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "backend": "Metal",
+      "asset": "llama-b11146-bin-macos-arm64.tar.gz",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-macos-arm64.tar.gz",
+      "sha256": "1ad3f9eff80edb9dbef4259ad564d1720612ef7eea48fa4afed0e54f5f3d5711",
+      "size": 11189714,
+      "root": "llama-b11146/",
+      "binary": "llama-server",
+      "libs": [
+        "libllama-server-impl.dylib",
+        "libllama-common.0.dylib",
+        "libmtmd.0.dylib",
+        "libllama.0.dylib",
+        "libggml.0.dylib",
+        "libggml-base.0.dylib",
+        "libggml-cpu.0.dylib",
+        "libggml-blas.0.dylib",
+        "libggml-metal.0.dylib",
+        "libggml-rpc.0.dylib"
+      ],
+      "extraLicenses": []
+    },
+    "x86_64-pc-windows-msvc": {
+      "backend": "Vulkan",
+      "asset": "llama-b11146-bin-win-vulkan-x64.zip",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-win-vulkan-x64.zip",
+      "sha256": "55a378aa095b466979d85075234f66d7655c7a7483222af0c006c0e55b4d7bd6",
+      "size": 32127004,
+      "root": "",
+      "binary": "llama-server.exe",
+      "licenseInArchive": false,
+      "libs": [
+        "llama-server-impl.dll",
+        "llama-common.dll",
+        "mtmd.dll",
+        "llama.dll",
+        "ggml.dll",
+        "ggml-base.dll",
+        "ggml-vulkan.dll",
+        "ggml-cpu-x64.dll",
+        "ggml-cpu-sse42.dll",
+        "ggml-cpu-sandybridge.dll",
+        "ggml-cpu-ivybridge.dll",
+        "ggml-cpu-piledriver.dll",
+        "ggml-cpu-haswell.dll",
+        "ggml-cpu-skylakex.dll",
+        "ggml-cpu-cannonlake.dll",
+        "ggml-cpu-cascadelake.dll",
+        "ggml-cpu-cooperlake.dll",
+        "ggml-cpu-icelake.dll",
+        "ggml-cpu-alderlake.dll",
+        "ggml-cpu-sapphirerapids.dll",
+        "ggml-cpu-zen4.dll",
+        "libomp.dll"
+      ],
+      "extraLicenses": [
+        {
+          "file": "LICENSE-LLVM-OpenMP",
+          "text": "licenses/llvm-openmp.txt",
+          "component": "LLVM OpenMP runtime (libomp.dll, Windows build only)",
+          "license": "Apache-2.0 WITH LLVM-exception",
+          "repository": "https://github.com/llvm/llvm-project"
+        }
+      ]
+    },
+    "x86_64-unknown-linux-gnu": {
+      "backend": "CPU",
+      "asset": "llama-b11146-bin-ubuntu-x64.tar.gz",
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-ubuntu-x64.tar.gz",
+      "sha256": "c150306eb16b5ab696f76a8bdf810c35fd98a24e82158742e6fa28f420ff8410",
+      "size": 16998357,
+      "root": "llama-b11146/",
+      "binary": "llama-server",
+      "libs": [
+        "libllama-server-impl.so",
+        "libllama-common.so.0",
+        "libmtmd.so.0",
+        "libllama.so.0",
+        "libggml.so.0",
+        "libggml-base.so.0",
+        "libggml-cpu-x64.so",
+        "libggml-cpu-sse42.so",
+        "libggml-cpu-sandybridge.so",
+        "libggml-cpu-ivybridge.so",
+        "libggml-cpu-piledriver.so",
+        "libggml-cpu-haswell.so",
+        "libggml-cpu-skylakex.so",
+        "libggml-cpu-cannonlake.so",
+        "libggml-cpu-cascadelake.so",
+        "libggml-cpu-cooperlake.so",
+        "libggml-cpu-icelake.so",
+        "libggml-cpu-alderlake.so",
+        "libggml-cpu-sapphirerapids.so",
+        "libggml-cpu-zen4.so"
+      ],
+      "extraLicenses": []
+    }
+  }
+}

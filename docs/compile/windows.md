@@ -73,9 +73,52 @@ npm run tauri build    # production bundle (NSIS .exe + .msi)
 cd src-tauri; cargo test   # headless test suite
 ```
 
+### The llama-server sidecar (release bundles)
+
+Release installers ship a pinned upstream `llama-server` (llama.cpp, Vulkan
+build) for the optional Qwen3-ASR engine (plan E9). Fetch it once, and again
+whenever `src-tauri/sidecar/llama-server.lock.json` changes (SHA-256-checked,
+fails closed):
+
+```powershell
+npm run sidecar
+npm run tauri build -- --config src-tauri/tauri.sidecar.conf.json
+```
+
+Without the `--config` there is no sidecar in the installer; `cargo test`
+and clippy never need it. It installs as `sussurro-llama-server.exe` next to
+`sussurro.exe`, with its DLLs (llama, ggml, the Vulkan and CPU backends,
+`libomp.dll`) in `llama-server-libs\`; the app starts it with that folder as
+working directory and prepended to `PATH`. It needs the Visual C++ runtime
+(`MSVCP140.dll`, already required by Sussurro itself) and, for the GPU, the
+Vulkan loader that comes with the graphics driver — without it ggml falls
+back to the CPU. Antivirus tools may flag an unsigned helper executable the
+first time it runs.
+
 ## Runtime notes
 
 - Settings → Privacy & security → Microphone → enable **"Let desktop apps
   access your microphone"**.
 - WebView2 is preinstalled on Windows 11; on older Windows 10 install the
   [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
+
+### System audio + mic: a virtual cable
+
+*New → System audio + mic* (meetings preview, Settings → Browser extension)
+records a call from a desktop app — Zoom, Teams, anything that plays through
+the computer — as two channels: your microphone ("You") and a second input
+device that carries the computer's sound (the others, told apart as
+"Voice 1, Voice 2…"). Sussurro reads any input device; the OS needs a
+virtual device that turns the output into an input.
+
+1. Install [VB-Cable](https://vb-audio.com/Cable/) (free; Voicemeeter
+   works too).
+2. Send the call to **CABLE Input**: set it as the meeting app's speaker,
+   or as the Windows output. To keep hearing it, open Sound → Recording →
+   **CABLE Output** → Properties → Listen, tick *Listen to this device* and
+   pick your headphones.
+3. In Sussurro choose **CABLE Output (VB-Audio Virtual Cable)** as the
+   system audio device. Some sound cards also offer **Stereo Mix**, which
+   works without installing anything.
+
+Native WASAPI loopback (no virtual cable) is planned (#140).

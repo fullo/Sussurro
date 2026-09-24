@@ -162,8 +162,12 @@ impl Host for TestHost {
         let inner = self.0.clone();
         std::thread::spawn(move || {
             let cancel = Arc::new(AtomicBool::new(false));
-            let req = crate::engine::session::meeting_request(id, cancel, &m.start, m.source);
-            let _ = crate::engine::session::run_request_with(
+            let req = crate::engine::session::meeting_request(id, cancel, &m.start, m.source, m.names);
+            // No speaker model in tests: voices are off, names and "You" work.
+            let no_model = |_: PathBuf| -> crate::speakers::tracker::EmbedderLoader {
+                Box::new(|| Err(anyhow::anyhow!("no speaker model in tests")))
+            };
+            let _ = crate::engine::session::run_request_with_speakers(
                 &inner.settings,
                 &inner.paths,
                 req,
@@ -172,6 +176,7 @@ impl Host for TestHost {
                 |_: &std::path::Path| {
                     Box::new(EnergyDetector::default()) as Box<dyn crate::engine::segmenter::SpeechDetector>
                 },
+                no_model,
                 m.sink,
             );
             inner.meeting_running.store(false, Ordering::SeqCst);
@@ -194,6 +199,8 @@ fn start_server(meetings_enabled: bool) -> Running {
     let settings = Settings {
         archive_dir: archive.to_string_lossy().into_owned(),
         language: "en".into(),
+        // Meeting speaker labels (#130, #131) follow the API's flag.
+        meetings_enabled,
         ..Default::default()
     };
     let paths = AppPaths {
@@ -209,6 +216,7 @@ fn start_server(meetings_enabled: bool) -> Running {
         config: Mutex::new(ApiConfig {
             meetings_enabled,
             extension_token: TOKEN.into(),
+            ..Default::default()
         }),
         settings: Mutex::new(settings),
         paths,
@@ -317,8 +325,20 @@ fn meeting_routes_check_token_origin_and_send_cors() {
     );
     assert_eq!(ok.status, 200);
     assert_eq!(ok.json()["protocol"], protocol::PROTOCOL_VERSION);
+    assert_eq!(ok.json()["protocol_min"], protocol::MIN_PROTOCOL);
     assert_eq!(ok.json()["app"], env!("CARGO_PKG_VERSION"));
     assert_eq!(ok.header("Access-Control-Allow-Origin"), Some(EXT));
+    // The subtitles setting, for the side panel's "Create .srt" (#129).
+    assert_eq!(ok.json()["subtitles"], "on_request");
+    r.host.0.config.lock().unwrap().subtitles = crate::settings::SubtitlesMode::Always;
+    let always = http(
+        r.port,
+        "GET",
+        "/app/version",
+        &[("Authorization", &auth), ("Origin", EXT)],
+        "",
+    );
+    assert_eq!(always.json()["subtitles"], "always");
     // A local script: token, no origin.
     let script = http(r.port, "GET", "/app/version", &[("Authorization", &auth)], "");
     assert_eq!(script.status, 200);
@@ -497,9 +517,16 @@ fn a_websocket_meeting_becomes_an_archive_item() {
             )))
             .unwrap();
         }
+        // A protocol 1 client: a bare name when the indicator changes.
         if n == 200 {
             ws.send(Message::text(r#"{"type":"speaker_active","name":"Anna Rossi","t":4000}"#))
                 .unwrap();
+        }
+        if n == 400 {
+            ws.send(Message::text(
+                r#"{"type":"observer_health","state":"names_unavailable","hooks":{"speaking":"broken","x y":"ok"}}"#,
+            ))
+            .unwrap();
         }
     }
     ws.send(Message::text(r#"{"type":"stop"}"#)).unwrap();
@@ -508,9 +535,15 @@ fn a_websocket_meeting_becomes_an_archive_item() {
     let mut states = Vec::new();
     let mut warnings = Vec::new();
     let mut done_item = None;
+    let mut speakers = Vec::new();
     while let Some(m) = read_json(&mut ws) {
         match m["type"].as_str() {
             Some("segment") => segments.push(m["segment"].clone()),
+            Some("speaker") => speakers.push((
+                m["id"].as_str().unwrap_or_default().to_string(),
+                m["label"].as_str().unwrap_or_default().to_string(),
+                m["color"].as_str().unwrap_or_default().to_string(),
+            )),
             Some("status") => {
                 let state = m["state"].as_str().unwrap_or_default().to_string();
                 if state == "warning" {
@@ -550,17 +583,47 @@ fn a_websocket_meeting_becomes_an_archive_item() {
     assert!(mic.start_ms < 1_000, "{}", mic.start_ms);
     assert!((3_000..4_000).contains(&remote.start_ms), "{}", remote.start_ms);
     assert!(segs.windows(2).all(|w| w[0].start_ms <= w[1].start_ms));
-    assert!(segs.iter().all(|s| s.speaker_id.is_none()), "attribution is #131");
+    // Speakers (#131): the mic is You, the remote line takes the name the
+    // page showed during it (no speaker model here, so no voices); both
+    // announced to the client once, before their first segment.
+    assert_eq!(mic.speaker_id.as_deref(), Some("you"));
+    assert_eq!(remote.speaker_id.as_deref(), Some("meet:Anna Rossi"));
+    let listed: Vec<(&str, &str)> = item
+        .segments
+        .speakers
+        .iter()
+        .map(|s| (s.id.as_str(), s.label.as_str()))
+        .collect();
+    assert_eq!(listed, [("you", "You"), ("meet:Anna Rossi", "Anna Rossi")]);
+    // Announced with the item's own labels and colours.
+    let item_speakers: Vec<(String, String, String)> = item
+        .segments
+        .speakers
+        .iter()
+        .map(|s| (s.id.clone(), s.label.clone(), s.color.clone()))
+        .collect();
+    assert_eq!(speakers, item_speakers);
+    // The page's participants are the item's (emails would come from People).
+    let names: Vec<&str> = item.meta.participants.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["Anna Rossi", "Bo"]);
 
-    // The page's events are stored for #131, on the session clock.
+    // The page's events are stored, on the session clock.
     let events = archive::meeting::read_events(&r.host.0.archive, &item_id).unwrap();
-    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(events.len(), 3, "{events:?}");
     assert!(matches!(&events[0], archive::meeting::MeetingEvent::Participants { names, .. } if names.len() == 2));
-    let archive::meeting::MeetingEvent::SpeakerActive { at_ms, t_ms, name } = &events[1] else {
+    let archive::meeting::MeetingEvent::SpeakerActive {
+        at_ms, t_ms, name, id, ..
+    } = &events[1]
+    else {
         panic!("{events:?}")
     };
-    assert_eq!((name.as_str(), *t_ms), ("Anna Rossi", 4_000));
+    assert_eq!((name.as_deref(), *t_ms, id.as_deref()), (Some("Anna Rossi"), 4_000, None));
     assert!((3_900..=4_100).contains(at_ms), "{at_ms}");
+    let archive::meeting::MeetingEvent::ObserverHealth { state, hooks, .. } = &events[2] else {
+        panic!("{events:?}")
+    };
+    assert_eq!(state, "names_unavailable");
+    assert_eq!(hooks.len(), 1, "a bad hook name is dropped: {hooks:?}");
 
     // Export and open over HTTP, with the token.
     let auth = bearer();
@@ -574,8 +637,8 @@ fn a_websocket_meeting_becomes_an_archive_item() {
     assert_eq!(txt.status, 200);
     assert!(txt.header("Content-Type").unwrap().starts_with("text/plain"));
     assert_eq!(txt.header("Access-Control-Allow-Origin"), Some(EXT));
-    assert!(txt.body.contains("] hello from mic."), "{}", txt.body);
-    assert!(txt.body.contains("] hello from remote."), "{}", txt.body);
+    assert!(txt.body.contains("] You: hello from mic."), "{}", txt.body);
+    assert!(txt.body.contains("] Anna Rossi: hello from remote."), "{}", txt.body);
     let md = http(
         r.port,
         "GET",

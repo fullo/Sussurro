@@ -5,6 +5,7 @@ import { isFatal, problemText, toAppCheck, type AppProblem } from "./appcheck";
 describe("toAppCheck", () => {
   it("passes a compatible app", () => {
     expect(toAppCheck({ kind: "ok", app: "0.9.0", protocol: 1 })).toEqual({ ok: true, app: "0.9.0" });
+    expect(toAppCheck({ kind: "ok", app: "0.9.0", protocol: 1, subtitles: "on_request" })).toEqual({ ok: true, app: "0.9.0", subtitles: "on_request" });
   });
 
   it("names every failure, not paired included", () => {

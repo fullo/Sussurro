@@ -3,17 +3,23 @@
    mapping are separate so the mapping can be tested without a network.
 
    What the app answers (sussurro/src-tauri/src/api):
-   - 200 `{app, protocol}`  → paired; compatible when `protocol` matches ours
+   - 200 `{app, protocol, protocol_min?, subtitles}` → paired; compatible
+                               when ours is within `protocol_min..=protocol`
+                               (`subtitles`: the app's setting, #129)
    - 401                     → wrong or missing token (or never paired in the app)
    - 403                     → origin refused (should not happen from the extension)
    - 404                     → meetings are off (E12: the route doesn't exist), or
                                a Sussurro older than 0.9
    - connection refused      → the app isn't running, or its local API is off,
                                or it listens on another port */
-import { PROTOCOL_VERSION, appUrl, authHeaders, type Pairing } from "./pairing";
+import { PROTOCOL_VERSION, appUrl, authHeaders, protocolCompatible, type Pairing } from "./pairing";
+
+/** The app's subtitles setting (#133): `on_request` → the side panel
+ *  offers "Create .srt" (#129). Unknown on an app that doesn't say. */
+export type SubtitlesMode = "on_request" | "always";
 
 export type ConnectionResult =
-  | { kind: "ok"; app: string; protocol: number }
+  | { kind: "ok"; app: string; protocol: number; subtitles?: SubtitlesMode }
   | { kind: "protocol_mismatch"; app: string; protocol: number }
   | { kind: "not_running" }
   | { kind: "timeout" }
@@ -32,9 +38,10 @@ export function classifyResponse(status: number, body: unknown): ConnectionResul
   if (status === 403) return { kind: "forbidden" };
   if (status === 404) return { kind: "meetings_disabled" };
   if (status === 200 && body && typeof body === "object") {
-    const { app, protocol } = body as { app?: unknown; protocol?: unknown };
+    const { app, protocol, protocol_min, subtitles } = body as { app?: unknown; protocol?: unknown; protocol_min?: unknown; subtitles?: unknown };
     if (typeof app === "string" && typeof protocol === "number") {
-      return protocol === PROTOCOL_VERSION ? { kind: "ok", app, protocol } : { kind: "protocol_mismatch", app, protocol };
+      if (!protocolCompatible(protocol, typeof protocol_min === "number" ? protocol_min : undefined)) return { kind: "protocol_mismatch", app, protocol };
+      return subtitles === "on_request" || subtitles === "always" ? { kind: "ok", app, protocol, subtitles } : { kind: "ok", app, protocol };
     }
   }
   return { kind: "unexpected", status };

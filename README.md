@@ -205,6 +205,12 @@ Current version **0.4.1**. Full detail (and standing decisions) in
   SmartScreen prompt (*More info → Run anyway*). Signing is on the roadmap
   (Windows via SignPath; macOS Developer ID later). The **updater** artifacts
   are always signed with the project's own key, independent of OS signing.
+- **Recording a desktop call needs a virtual audio device** (meetings
+  preview, *New → System audio + mic*): BlackHole or Loopback on macOS,
+  VB-Cable or Voicemeeter on Windows, a PulseAudio/PipeWire monitor source
+  on Linux turn the computer's sound into an input that Sussurro records
+  next to your microphone. Setup per OS is in
+  [`docs/compile/`](docs/compile/); native loopback is planned (#140).
 - **Editing a selection by voice is not built in.** Command mode (a second
   hotkey that applied a spoken instruction to the selected text) was removed
   in 0.7; use your OS voice control instead — Voice Control on macOS, Voice
@@ -252,6 +258,23 @@ terms — contact [DarumaHQ.it](https://darumahq.it).
 
 Bundled third-party components keep their own (permissive/compatible) licenses;
 see the in-app About dialog or [`sussurro/public/licenses.json`](sussurro/public/licenses.json).
+
+### Third-party binaries
+
+The installers include one prebuilt program that Sussurro does not compile:
+**`sussurro-llama-server`**, the unmodified `llama-server` from a pinned
+[llama.cpp](https://github.com/ggml-org/llama.cpp) release (MIT; currently
+`b11146` — Metal on macOS, Vulkan on Windows, CPU on Linux) with its shared
+libraries in `llama-server-libs/`. It runs the optional extra speech
+engines (Qwen3-ASR) as a separate local process, only when you choose such an
+engine; its models download on first use. The release and the SHA-256 of
+every upstream archive are committed in
+[`sussurro/src-tauri/sidecar/llama-server.lock.json`](sussurro/src-tauri/sidecar/llama-server.lock.json),
+and the build refuses any file that doesn't match. The Windows build also
+ships the LLVM OpenMP runtime (`libomp.dll`, Apache-2.0 WITH
+LLVM-exception) that llama.cpp needs. Like Sussurro itself these binaries
+are not OS-code-signed, so an antivirus may ask about
+`sussurro-llama-server.exe` the first time it runs.
 
 ---
 

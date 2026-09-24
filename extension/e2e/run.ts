@@ -3,7 +3,11 @@
  * after Start in the side panel both channels reach `/live` separately
  * (each side of the call has its own tone), `seq` is gap-free, the call
  * keeps working both ways, Stop ends the meeting, and closing the tab mid-
- * capture sends `stop`.
+ * capture sends `stop`. The side panel (#129) shows the fake app's live
+ * lines with their speaker chips and backlog, and its Open in Sussurro /
+ * Copy as text / Create .srt reach the app's item routes. On a fake Meet
+ * page (Chromium), the Meet name observer (#131) sends the contributing-
+ * source timeline, the bound names, the participants and its health.
  *
  *   npm run build && npm run test:e2e            (all configurations)
  *   npm run test:e2e -- chromium firefox          (a subset)
@@ -26,7 +30,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Rdp } from "./rdp.ts";
-import { rms, startServer, toneShare, type LiveSession } from "./server.ts";
+import { LIVE_SCRIPT, rms, startServer, toneShare, type LiveSession } from "./server.ts";
 
 const EXT = fileURLToPath(new URL("..", import.meta.url));
 const TOKEN = "e2e0".repeat(16);
@@ -95,6 +99,8 @@ interface Panel {
   status(attr: "phase" | "transport"): Promise<string | null>;
   canClick(testId: string): Promise<boolean>;
   text(): Promise<string>;
+  /** The inner text of every element matching `selector`. */
+  texts(selector: string): Promise<string[]>;
 }
 
 function pagePanel(p: Page): Panel {
@@ -103,6 +109,7 @@ function pagePanel(p: Page): Panel {
     status: (attr) => p.locator('[data-testid="status"]').getAttribute(`data-${attr}`),
     canClick: (id) => p.locator(`[data-testid="${id}"]:not([disabled])`).isVisible(),
     text: () => p.locator("main").innerText(),
+    texts: (selector) => p.locator(selector).allInnerTexts(),
   };
 }
 
@@ -123,6 +130,8 @@ async function launchChromium(config: Config): Promise<Launched> {
   const ctx = await chromium.launchPersistentContext(join(tmpRoot, `profile-${config}`), {
     channel: "chromium",
     headless,
+    // "Create .srt" downloads a file: keep it in the temp dir.
+    downloadsPath: join(tmpRoot, "downloads"),
     permissions: ["microphone"],
     args: [
       `--disable-extensions-except=${ext}`,
@@ -169,6 +178,7 @@ async function launchFirefox(config: Config): Promise<Launched> {
   mkdirSync(home, { recursive: true });
   const ctx = await firefox.launchPersistentContext(join(tmpRoot, `profile-${config}`), {
     headless,
+    downloadsPath: join(tmpRoot, "downloads"),
     args: ["-start-debugger-server", String(rdp)],
     // macOS: Firefox looks for ~/Library/Application Support/Firefox and
     // exits when it can't read it; keep it inside the temp dir.
@@ -216,6 +226,7 @@ async function launchFirefox(config: Config): Promise<Launched> {
         status: async (attr) => ((await js(`${q("status")}?.getAttribute("data-${attr}") ?? null`)) as string | null) ?? null,
         canClick: async (id) => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true,
         text: async () => String(await js(`document.querySelector("main")?.innerText ?? ""`)),
+        texts: async (selector) => JSON.parse(String(await js(`JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.innerText))`))) as string[],
       };
     },
     async close() {
@@ -268,11 +279,41 @@ async function runConfig(config: Config): Promise<Check[]> {
     await until("phase live", async () => (await phase()) === "live", 15_000);
     const transport = await panel.status("transport");
     check(`transport is ${config === "chromium-json" ? "base64" : "binary"}`, transport === (config === "chromium-json" ? "base64" : "binary"), transport);
-    await sleep(CAPTURE_MS);
+    const t0 = Date.now();
+
+    // 2b. The side panel mirrors the fake app's live transcript (#129).
+    const lastLine = (LIVE_SCRIPT[4] as { segment: { text: string } }).segment.text;
+    await until("the live lines in the side panel", async () => (await panel.texts("[data-testid=transcript] .tx-text")).some((x) => x.includes(lastLine)), 10_000);
+    const lines = (await panel.texts("[data-testid=transcript] .tx-text")).map((x) => x.trim());
+    check(
+      "live lines render, the correction replacing the first line",
+      JSON.stringify(lines) === JSON.stringify(["Hello from the far side, corrected.", "Hi Anna, loud and clear.", "A third voice joins."]),
+      lines,
+    );
+    const chips = (await panel.texts("[data-testid=transcript] .tx-chip")).map((x) => x.trim());
+    check("speaker chips: the app's name, You on the mic, Voice N", JSON.stringify(chips) === JSON.stringify(["Anna", "You", "Voice 2"]), chips);
+    const times = (await panel.texts("[data-testid=transcript] .tx-time")).map((x) => x.trim());
+    check("lines carry their timestamps", JSON.stringify(times) === JSON.stringify(["00:00:01", "00:00:02", "00:00:03"]), times);
+    const backlog = (await panel.texts("[data-testid=backlog]"))[0] ?? "";
+    check("the backlog indicator shows the app's status", backlog.includes("7 s behind"), backlog);
+    check("Create .srt waits for the end of the recording", !(await panel.canClick("action-srt")) && (await panel.texts("[data-testid=action-srt]")).length === 1);
+    await panel.click("action-open");
+    const opened = await until("Open in Sussurro", () => server.items.find((r) => r.method === "POST" && r.path === "/items/e2e-1/open"), 5000).catch(() => null);
+    check("Open in Sussurro → POST /items/{id}/open", !!opened, server.items);
+    await panel.click("action-copy");
+    const copied = await until("Copy as text", () => server.items.find((r) => r.path === "/items/e2e-1/export" && r.format === "txt"), 5000).catch(() => null);
+    check("Copy as text → GET /items/{id}/export?format=txt", !!copied, server.items);
+
+    await sleep(Math.max(0, CAPTURE_MS - (Date.now() - t0)));
     const a = await A.evaluate(() => (window as any).callState());
     const bs = await B.evaluate(() => (window as any).callState());
     await panel.click("stop");
     await until("phase done", async () => (await phase()) === "done", 10_000);
+    await panel.click("action-srt");
+    const srt = await until("Create .srt", () => server.items.find((r) => r.path === "/items/e2e-1/export" && r.format === "srt"), 5000).catch(() => null);
+    const note = await until("the .srt note", async () => (await panel.texts("[data-testid=action-note]")).find((x) => x.includes(".srt")) ?? "", 5000).catch(() => "");
+    check("after Stop, Create .srt downloads GET /items/{id}/export?format=srt", !!srt && note.includes("e2e-1.srt"), note || server.items);
+    check("the lines stay after Stop", (await panel.texts("[data-testid=transcript] .tx-text")).length === 3);
 
     const s: LiveSession | undefined = server.sessions[0];
     check("one /live session, from the extension origin", server.sessions.length === 1 && /^(chrome|moz)-extension:\/\//.test(s?.origin ?? ""), s?.origin);
@@ -305,10 +346,21 @@ async function runConfig(config: Config): Promise<Check[]> {
     // 3. Teardown: closing the tab mid-capture ends the meeting.
     await panel.click("start");
     await until("second session live", () => server.sessions[1]?.start && (server.sessions[1].channels.get(0)?.frames ?? 0) > 5, 15_000);
+    // A new Start is a new meeting: the panel shows only its lines (the
+    // script again), not the first meeting's plus a "connection lost" part.
+    const again = await panel.texts("[data-testid=transcript] .tx-text");
+    check("a new Start clears the previous meeting's lines", again.length === 3 && !(await panel.text()).includes("Connection lost"), again);
     await A.close();
     const second = await until("stop after the tab closed", () => (server.sessions[1].stopped ? server.sessions[1] : null), 10_000).catch(() => null);
     check("closing the tab sends stop", !!second);
     await B.close();
+
+    // 4. Meet names (#131): a fake Meet page (served at meet.google.com by
+    //    a route) with tiles and faked contributing sources. Chromium only:
+    //    Firefox does not run the temporary add-on's content scripts in a
+    //    page Playwright fulfils from a route (the observer's logic is
+    //    browser-independent and unit tested).
+    if (config !== "firefox") await meetNames();
   } catch (e) {
     const shown = shownPanel ? await shownPanel.text().catch(() => "") : "";
     check("harness ran", false, `${String(e instanceof Error ? e.stack : e)}\n    side panel: ${shown.replace(/\s+/g, " ")}`);
@@ -317,6 +369,44 @@ async function runConfig(config: Config): Promise<Check[]> {
     await server.close();
   }
   return checks;
+
+  async function meetNames() {
+    await b.ctx.route("https://meet.google.com/**", (r) =>
+      r.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: readFileSync(join(EXT, "e2e", "meet.html"), "utf8") }),
+    );
+    const M = await b.ctx.newPage();
+    await M.goto("https://meet.google.com/e2e-fake");
+    await M.click("#join");
+    await until("the fake Meet call", () => M.evaluate(() => (window as any).callState().joined), 10_000);
+    const meetPanel = await b.openPanel(await b.tabIdOf("meet.google.com"));
+    shownPanel = meetPanel;
+    await until("Start on the Meet tab", () => meetPanel.canClick("start"));
+    const before = server.sessions.length;
+    await meetPanel.click("start");
+    await until("Meet session live", async () => (await meetPanel.status("phase")) === "live", 15_000);
+    await sleep(9_000);
+    await meetPanel.click("stop");
+    await until("Meet session done", async () => (await meetPanel.status("phase")) === "done", 10_000);
+    const ms = server.sessions[before];
+    const ctl = (type: string) => (ms?.controls ?? []).filter((c) => c.type === type);
+    check("Meet: start says platform meet", ms?.start?.platform === "meet", ms?.start);
+    const act = ctl("speaker_active");
+    check(
+      "Meet: speaker_active from the contributing sources (rtp, csrc ids, t on the audio clock)",
+      act.some((c) => c.id === "csrc:1001" && c.source === "rtp") &&
+        act.some((c) => c.id === "csrc:1002") &&
+        act.every((c, i) => typeof c.t === "number" && c.t >= 0 && c.t <= 15_000 && (i === 0 || (c.t as number) >= (act[i - 1].t as number) - 500)),
+      act,
+    );
+    check("Meet: speaker_idle when a speaker stops", ctl("speaker_idle").some((c) => c.id === "csrc:1001"), ctl("speaker_idle"));
+    const bound = Object.fromEntries(ctl("speaker_name").map((c) => [c.id, c.name]));
+    check("Meet: names bound to the sources by the lit tiles", bound["csrc:1001"] === "Bo E2e" && bound["csrc:1002"] === "Cy E2e", bound);
+    const people = ctl("participants").flatMap((c) => c.names as string[]);
+    check("Meet: participants without the user", people.includes("Bo E2e") && people.includes("Cy E2e") && !people.includes("Ada E2e"), people);
+    const health = ctl("observer_health").at(-1);
+    check("Meet: observer health ok, with the selector set", health?.state === "ok" && health?.set === "meet-2026-09a", health);
+    await M.close();
+  }
 }
 
 // ---- main ------------------------------------------------------------------------------

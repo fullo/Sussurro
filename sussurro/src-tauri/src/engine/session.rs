@@ -17,9 +17,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
+/// The live capture session: a microphone session, or a system-audio one
+/// (#139) — both hold the microphone, so one at a time.
 struct MicSession {
     id: u64,
     stop: Arc<AtomicBool>,
+    /// A *System audio + mic* session (#139).
+    system: bool,
 }
 
 /// What a session captures, with the label `engine_status` reports.
@@ -32,6 +36,8 @@ pub enum SessionKind {
     Link(String),
     /// A browser meeting (#126): the meeting page's host.
     Meeting(String),
+    /// System audio + mic (#139): the system audio device's name.
+    System(String),
 }
 
 /// One running session's bookkeeping.
@@ -150,16 +156,40 @@ impl Sessions {
         out
     }
 
-    /// Id of the running mic session, if any.
+    /// Id of the running mic session, if any (not a system-audio one).
     pub fn mic_session(&self) -> Option<u64> {
-        self.mic.lock().unwrap().as_ref().map(|m| m.id)
+        self.capture_session(false)
+    }
+
+    /// Id of the running *System audio + mic* session, if any (#139).
+    pub fn system_session(&self) -> Option<u64> {
+        self.capture_session(true)
+    }
+
+    fn capture_session(&self, system: bool) -> Option<u64> {
+        self.mic
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|m| m.system == system)
+            .map(|m| m.id)
     }
 
     /// Ask the mic session to stop recording; the engine then finishes the
     /// queued segments and writes the item. Returns the session id.
     pub fn stop_mic(&self) -> Option<u64> {
+        self.stop_capture(false)
+    }
+
+    /// Ask the system-audio session to stop recording (#139), like
+    /// [`Self::stop_mic`].
+    pub fn stop_system(&self) -> Option<u64> {
+        self.stop_capture(true)
+    }
+
+    fn stop_capture(&self, system: bool) -> Option<u64> {
         let mic = self.mic.lock().unwrap();
-        mic.as_ref().map(|m| {
+        mic.as_ref().filter(|m| m.system == system).map(|m| {
             m.stop.store(true, Ordering::Relaxed);
             m.id
         })
@@ -204,9 +234,18 @@ pub struct RunOptions {
     /// "Voice N". Off by default; ignored for notes (never) and meetings
     /// (the 0.9 preview decides, see [`speaker_options`]).
     pub identify_voices: bool,
+    /// "Save audio" (P9, #141) for this run: `None` = the per-app default
+    /// ([`Settings::save_audio`], off unless the user turned it on).
+    pub save_audio: Option<bool>,
 }
 
 impl RunOptions {
+    /// Whether this run saves its audio: the run's choice, else the
+    /// per-app default. Pure.
+    pub fn saves_audio(&self, global: &Settings) -> bool {
+        self.save_audio.unwrap_or(global.save_audio)
+    }
+
     /// The settings a run uses: a copy of `global` with this run's
     /// overrides. Pure — `global` is only read.
     pub fn apply(&self, global: &Settings) -> Settings {
@@ -426,6 +465,8 @@ pub(crate) struct Request {
     pub title: String,
     pub source_label: String,
     pub options: RunOptions,
+    /// A browser meeting's page timeline (#131): names for its remote lines.
+    pub names: Option<crate::speakers::names::SharedNames>,
 }
 
 fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
@@ -504,7 +545,13 @@ where
             &req.source_label,
             req.options.identify_voices,
         )
-        .map(|o| crate::speakers::Tracker::new(o, speaker_model(models_dir.clone())));
+        .map(|mut o| {
+            // A browser meeting's page names apply to its remote lines (#131).
+            if o.two_channel {
+                o.names = req.names.clone();
+            }
+            crate::speakers::Tracker::new(o, speaker_model(models_dir.clone()))
+        });
         Ok(Job {
             session_id: req.id,
             source: req.source,
@@ -535,6 +582,7 @@ where
             external_cleanup: external_cleanup_entry(&settings),
             speakers,
             write_subtitles: settings.subtitles == crate::settings::SubtitlesMode::Always,
+            save_audio: req.options.saves_audio(&global),
             meta: start_meta(
                 &settings,
                 req.item_type,
@@ -569,7 +617,10 @@ where
 /// - One channel (the in-room case, a file or a link): it is clustered.
 /// - A browser meeting (`source: browser:<host>`, #126) records the mic
 ///   and the remote side apart: the mic is always "You" and only the
-///   remote channel is clustered (names from the meeting page are #131).
+///   remote channel is clustered; the run adds the page's names
+///   (`Request::names`, #131) for the remote lines the page attributes.
+/// - System audio + mic (`source: system`, #139) likewise: the mic is
+///   "You" and the system channel is clustered.
 ///
 /// Pure.
 pub(crate) fn speaker_options(
@@ -592,6 +643,13 @@ pub(crate) fn speaker_options(
         crate::speakers::SpeakerOptions {
             cluster: vec![Channel::Remote],
             two_channel: true,
+            names: None,
+        }
+    } else if source_label == crate::sources::system::SOURCE_LABEL {
+        crate::speakers::SpeakerOptions {
+            cluster: vec![Channel::System],
+            two_channel: true,
+            names: None,
         }
     } else {
         crate::speakers::SpeakerOptions::clustering(&[channel])
@@ -649,7 +707,11 @@ pub fn start_mic(
     let source = crate::sources::mic::MicSource::start(&device, stop.clone())
         .context("could not start the microphone")?;
     let (id, cancel) = state.engine.begin(SessionKind::Mic);
-    *mic = Some(MicSession { id, stop });
+    *mic = Some(MicSession {
+        id,
+        stop,
+        system: false,
+    });
     drop(mic);
 
     let app = app.clone();
@@ -668,6 +730,7 @@ pub fn start_mic(
             defer,
             item_type,
             title,
+            names: None,
             source_label: "mic".to_string(),
             options,
         };
@@ -678,13 +741,121 @@ pub fn start_mic(
     Ok(id)
 }
 
+/// A *System audio + mic* session records other people (#139): like the
+/// browser meetings it is a 0.9 meeting piece, behind `meetings_enabled`
+/// (E12) until #138 — checked here, not only in the UI. Pure.
+pub(crate) fn ensure_system_audio_allowed(settings: &Settings) -> Result<()> {
+    if !settings.meetings_enabled {
+        anyhow::bail!(
+            "recording system audio is part of the meetings preview — turn it on in Settings → Browser extension"
+        );
+    }
+    Ok(())
+}
+
+/// The run of a *System audio + mic* session (#139): a `meeting` item
+/// whose source is `system`, fed live (the queue spills like a mic
+/// session's). The mic channel is "You", the system channel is clustered
+/// ([`speaker_options`]).
+pub(crate) fn system_request(
+    id: u64,
+    cancel: Arc<AtomicBool>,
+    source: crate::sources::system::SystemSource,
+    title: String,
+    defer: bool,
+    options: RunOptions,
+) -> Request {
+    Request {
+        id,
+        cancel: cancel.clone(),
+        source: Box::new(source.with_cancel(cancel)),
+        policy: Policy::Spill {
+            max_in_ram: super::MIC_MAX_IN_RAM,
+        },
+        defer,
+        item_type: ItemType::Meeting,
+        title,
+        source_label: crate::sources::system::SOURCE_LABEL.to_string(),
+        options,
+        names: None,
+    }
+}
+
+/// Start a *System audio + mic* session (#139): the microphone
+/// (`mic_device`, empty = the dictation's input device) and a second input
+/// device carrying the computer's output (`system_device`, e.g. BlackHole)
+/// as two channels of one meeting. Returns the session id at once; the item
+/// arrives as `engine-done` after [`Sessions::stop_system`]. Refused without
+/// the meetings preview, with the same device twice, or while a mic session
+/// runs (both need the microphone).
+pub fn start_system(
+    app: &AppHandle,
+    mic_device: Option<String>,
+    system_device: &str,
+    title: String,
+    defer: bool,
+    options: RunOptions,
+) -> Result<u64> {
+    let state = app.state::<AppState>();
+    let settings = state.settings.lock().unwrap().clone();
+    ensure_system_audio_allowed(&settings)?;
+    let mic_device = mic_device.unwrap_or(settings.input_device);
+    crate::sources::system::validate_devices(
+        &mic_device,
+        system_device,
+        crate::audio::recorder::default_input_device_name().as_deref(),
+    )?;
+    if !crate::audio::recorder::list_input_devices()
+        .iter()
+        .any(|d| d == system_device)
+    {
+        anyhow::bail!("the input device '{system_device}' is not available — is it connected?");
+    }
+    let mut mic = state.engine.mic.lock().unwrap();
+    if let Some(m) = mic.as_ref() {
+        anyhow::bail!(if m.system {
+            "a system audio session is already running"
+        } else {
+            "a microphone session is running — stop it first"
+        });
+    }
+    ensure_archive_writable(&state)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let source = crate::sources::system::SystemSource::start(&mic_device, system_device, stop.clone())
+        .context("could not start the audio devices")?;
+    let (id, cancel) = state
+        .engine
+        .begin(SessionKind::System(system_device.to_string()));
+    *mic = Some(MicSession {
+        id,
+        stop,
+        system: true,
+    });
+    drop(mic);
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _guard = SessionGuard {
+            app: app.clone(),
+            id,
+        };
+        let req = system_request(id, cancel, source, title, defer, options);
+        if let Err(e) = run_request(&app, req) {
+            eprintln!("system audio session {id} failed: {e:#}");
+        }
+    });
+    Ok(id)
+}
+
 /// The run of a browser meeting (#126): a `meeting` item whose source is
-/// `browser:<host>`, fed live (the queue spills like a mic session's).
+/// `browser:<host>`, fed live (the queue spills like a mic session's). `names`: the
+/// page's speaker timeline the `/live` connection fills (#131).
 pub(crate) fn meeting_request(
     id: u64,
     cancel: Arc<AtomicBool>,
     start: &crate::api::protocol::Start,
     source: crate::sources::browser::BrowserSource,
+    names: crate::speakers::names::SharedNames,
 ) -> Request {
     Request {
         id,
@@ -696,6 +867,7 @@ pub(crate) fn meeting_request(
         defer: false,
         item_type: ItemType::Meeting,
         title: start.title.clone(),
+        names: Some(names),
         source_label: start.source_label(),
         options: RunOptions::default(),
     }
@@ -712,6 +884,7 @@ pub fn start_meeting(app: &AppHandle, meeting: crate::api::live::MeetingStart) -
         start,
         source,
         sink,
+        names,
     } = meeting;
     let (id, cancel) = state.engine.begin_meeting(&start.host)?;
     crate::pipeline::refresh_overlay(app);
@@ -722,7 +895,7 @@ pub fn start_meeting(app: &AppHandle, meeting: crate::api::live::MeetingStart) -
             id,
         };
         let state = app.state::<AppState>();
-        let req = meeting_request(id, cancel.clone(), &start, source);
+        let req = meeting_request(id, cancel.clone(), &start, source, names);
         let sinks: Vec<Arc<dyn EngineSink>> = vec![Arc::new(TauriSink { app: app.clone() }), sink];
         if let Err(e) = run_request_with(
             &state.settings,
@@ -780,6 +953,7 @@ pub fn transcribe_file(
             defer: false,
             item_type,
             title,
+            names: None,
             source_label: crate::sources::file::source_label(path),
             options,
         },
@@ -931,6 +1105,7 @@ where
             // Audio recorded by others (P10).
             item_type: ItemType::Transcription,
             title,
+            names: None,
             source_label: url::source_label(&link.url),
             options,
         },
@@ -1053,14 +1228,98 @@ mod tests {
         *s.mic.lock().unwrap() = Some(MicSession {
             id,
             stop: stop.clone(),
+            system: false,
         });
         assert_eq!(s.mic_session(), Some(id));
+        assert_eq!(s.system_session(), None);
         assert!(s.file_sessions().is_empty(), "the mic is not a file");
+        assert_eq!(s.stop_system(), None, "not a system-audio session");
+        assert!(!stop.load(Ordering::Relaxed));
         assert_eq!(s.stop_mic(), Some(id));
         assert!(stop.load(Ordering::Relaxed));
         s.end(id);
         assert_eq!(s.mic_session(), None);
         assert!(!s.is_active());
+    }
+
+    #[test]
+    fn system_session_is_reported_and_stopped_apart_from_the_mic() {
+        let s = Sessions::default();
+        let (id, _) = s.begin(SessionKind::System("BlackHole 2ch".into()));
+        let stop = Arc::new(AtomicBool::new(false));
+        *s.mic.lock().unwrap() = Some(MicSession {
+            id,
+            stop: stop.clone(),
+            system: true,
+        });
+        // A UI mounted mid-session adopts it as system audio, not as a mic
+        // session, and the Microphone tab's Stop can't end it.
+        assert_eq!((s.system_session(), s.mic_session()), (Some(id), None));
+        assert_eq!(s.stop_mic(), None);
+        assert!(!stop.load(Ordering::Relaxed));
+        assert_eq!(s.stop_system(), Some(id));
+        assert!(stop.load(Ordering::Relaxed));
+        assert!(s.file_sessions().is_empty() && s.link_sessions().is_empty());
+        s.end(id);
+        assert_eq!(s.system_session(), None);
+        assert!(!s.is_active());
+    }
+
+    #[test]
+    fn system_audio_is_gated_by_the_meetings_preview() {
+        let off = Settings::default();
+        assert!(!off.meetings_enabled, "off by default (E12)");
+        assert!(ensure_system_audio_allowed(&off).is_err());
+        let on = Settings {
+            meetings_enabled: true,
+            ..Default::default()
+        };
+        assert!(ensure_system_audio_allowed(&on).is_ok());
+    }
+
+    #[test]
+    fn a_system_audio_run_is_a_meeting_from_source_system() {
+        use crate::sources::system::{Capture, Pacer, SystemSource};
+        struct Silent;
+        impl Capture for Silent {
+            fn take(&mut self) -> Vec<f32> {
+                Vec::new()
+            }
+            fn failed(&self) -> bool {
+                false
+            }
+            fn stop(&mut self) -> Vec<f32> {
+                Vec::new()
+            }
+        }
+        struct NoWait;
+        impl Pacer for NoWait {
+            fn wait(&mut self) {}
+            fn now(&self) -> u64 {
+                0
+            }
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        let source = SystemSource::from_parts(
+            Box::new(Silent),
+            Box::new(Silent),
+            Box::new(NoWait),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let options = RunOptions {
+            language: Some("it".into()),
+            ..Default::default()
+        };
+        let req = system_request(3, cancel.clone(), source, "Standup".into(), false, options.clone());
+        assert_eq!(req.item_type, ItemType::Meeting);
+        assert_eq!(req.source_label, "system");
+        assert_eq!(req.source.channel(), crate::archive::Channel::System);
+        assert_eq!((req.title.as_str(), req.options), ("Standup", options));
+        assert!(matches!(req.policy, Policy::Spill { .. }), "a live source spills");
+        // The run's cancel reaches the source: it stops waiting for audio.
+        cancel.store(true, Ordering::Relaxed);
+        let mut source = req.source;
+        assert_eq!(source.next_frame().unwrap(), None);
     }
 
     #[test]
@@ -1075,6 +1334,7 @@ mod tests {
             language: Some(" en ".into()),
             cleanup_level: Some(CleanupLevel::None),
             identify_voices: true,
+            save_audio: Some(true),
         };
         let s = o.apply(&global);
         assert_eq!(
@@ -1176,6 +1436,38 @@ mod tests {
         )
         .unwrap();
         assert!(b.two_channel && b.clusters(Channel::Remote) && !b.clusters(Channel::Mic));
+        // System audio + mic (#139): the mic is You, the system side is
+        // clustered — and only with the 0.9 flag, whatever the toggle.
+        let sys = speaker_options(&on, ItemType::Meeting, Channel::System, "system", false).unwrap();
+        assert!(sys.two_channel && sys.clusters(Channel::System) && !sys.clusters(Channel::Mic));
+        assert_eq!(
+            speaker_options(&Settings::default(), ItemType::Meeting, Channel::System, "system", true),
+            None
+        );
+    }
+
+    /// P9 (#141): audio is saved only on request — the run's choice wins,
+    /// an unset choice follows the per-app default, which is off.
+    #[test]
+    fn save_audio_is_off_unless_asked() {
+        let off = Settings::default();
+        assert!(!off.save_audio);
+        assert!(!RunOptions::default().saves_audio(&off));
+        let on = Settings {
+            save_audio: true,
+            ..Default::default()
+        };
+        assert!(RunOptions::default().saves_audio(&on));
+        let no = RunOptions {
+            save_audio: Some(false),
+            ..Default::default()
+        };
+        assert!(!no.saves_audio(&on));
+        let yes = RunOptions {
+            save_audio: Some(true),
+            ..Default::default()
+        };
+        assert!(yes.saves_audio(&off));
     }
 
     #[test]

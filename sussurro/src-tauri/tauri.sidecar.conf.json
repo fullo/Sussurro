@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "externalBin": ["binaries/sussurro-llama-server"],
+    "resources": {
+      "binaries/llama-server-libs/": "llama-server-libs/"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libgomp1", "libssl3t64 | libssl3"]
+      },
+      "rpm": {
+        "depends": ["libgomp", "openssl-libs"]
+      }
+    }
+  }
+}

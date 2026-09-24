@@ -1,6 +1,8 @@
 //! What the meeting page said while a browser session ran (0.9, #126):
 //! who the page showed speaking and who was in the call, with timestamps.
-//! Stored for speaker attribution (#131), which is not done yet.
+//! The engine attributes remote lines from the same events as they arrive
+//! (#131, `speakers::names`); this log keeps them for later passes and for
+//! diagnosis.
 //!
 //! ```text
 //! <item>/.sussurro/meeting-events.jsonl   one JSON event per line, appended
@@ -17,20 +19,68 @@ use std::path::{Path, PathBuf};
 
 pub const MEETING_EVENTS_FILE: &str = "meeting-events.jsonl";
 
+/// What saw a speaker (protocol 2, #131).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum NameSource {
+    /// The audio's RTP contributing sources: no indicator lag.
+    Rtp,
+    /// The page's speaking indicator (every protocol 1 event).
+    #[default]
+    Dom,
+    /// The page's live captions (later than the indicator).
+    Caption,
+}
+
+impl NameSource {
+    fn is_dom(&self) -> bool {
+        *self == NameSource::Dom
+    }
+}
+
 /// One event. `at_ms` is the session position when the app received it
 /// (the clock segments' `start_ms` use); `t_ms` is the client's own
-/// timestamp, when it sent one.
+/// timestamp, when it sent one. `id` / `source` / `speaker_idle` /
+/// `speaker_name` / `observer_health` come from protocol 2 clients (#131);
+/// lines written before them read the same as before.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MeetingEvent {
     SpeakerActive {
         at_ms: u64,
         t_ms: u64,
-        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "NameSource::is_dom")]
+        source: NameSource,
+    },
+    SpeakerIdle {
+        at_ms: u64,
+        t_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    SpeakerName {
+        at_ms: u64,
+        id: String,
+        #[serde(default)]
+        name: Option<String>,
     },
     Participants {
         at_ms: u64,
         names: Vec<String>,
+    },
+    ObserverHealth {
+        at_ms: u64,
+        state: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        set: Option<String>,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        hooks: std::collections::BTreeMap<String, String>,
     },
 }
 
@@ -101,7 +151,9 @@ mod tests {
         let b = MeetingEvent::SpeakerActive {
             at_ms: 1_500,
             t_ms: 1_480,
-            name: "Anna".into(),
+            name: Some("Anna".into()),
+            id: None,
+            source: NameSource::Dom,
         };
         append_events(&archive, &id, std::slice::from_ref(&a)).unwrap();
         append_events(&archive, &id, &[]).unwrap();
@@ -116,5 +168,43 @@ mod tests {
         .unwrap();
         assert!(raw.lines().next().unwrap().contains(r#""kind":"participants""#));
         assert!(append_events(&archive, "2026/09/missing", std::slice::from_ref(&b)).is_err());
+    }
+
+    #[test]
+    fn protocol_one_lines_still_read_and_new_fields_are_optional() {
+        let old = r#"{"kind":"speaker_active","at_ms":10,"t_ms":8,"name":"Anna"}"#;
+        assert_eq!(
+            serde_json::from_str::<MeetingEvent>(old).unwrap(),
+            MeetingEvent::SpeakerActive {
+                at_ms: 10,
+                t_ms: 8,
+                name: Some("Anna".into()),
+                id: None,
+                source: NameSource::Dom,
+            }
+        );
+        let rtp = MeetingEvent::SpeakerActive {
+            at_ms: 10,
+            t_ms: 8,
+            name: None,
+            id: Some("csrc:42".into()),
+            source: NameSource::Rtp,
+        };
+        let line = serde_json::to_string(&rtp).unwrap();
+        assert_eq!(
+            line,
+            r#"{"kind":"speaker_active","at_ms":10,"t_ms":8,"id":"csrc:42","source":"rtp"}"#
+        );
+        assert_eq!(serde_json::from_str::<MeetingEvent>(&line).unwrap(), rtp);
+        let health = MeetingEvent::ObserverHealth {
+            at_ms: 1,
+            state: "names_unavailable".into(),
+            set: None,
+            hooks: Default::default(),
+        };
+        assert_eq!(
+            serde_json::to_string(&health).unwrap(),
+            r#"{"kind":"observer_health","at_ms":1,"state":"names_unavailable"}"#
+        );
     }
 }

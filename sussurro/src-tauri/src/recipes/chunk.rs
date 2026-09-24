@@ -2,6 +2,11 @@
 //! its timestamp and speaker when the item has them, and greedy chunking of
 //! those lines into pieces that fit a character budget.
 //!
+//! With speakers (#143), chunks follow speaker turns: a turn (consecutive
+//! lines of one speaker) that fits a chunk is never cut across two, and a
+//! line too long for any chunk is split into pieces that each keep its
+//! `[HH:MM:SS] Name:` prefix, so every piece a model reads says who spoke.
+//!
 //! Sizes are counted in characters, and tokens are estimated at
 //! [`CHARS_PER_TOKEN`] characters each — conservative for Italian and
 //! English prose (typically 3.5–4.5), so a chunk rarely overflows a
@@ -68,24 +73,82 @@ pub fn lines_from_segments(meta: &ItemMeta, segs: &SegmentsFile) -> Vec<InputLin
 
 /// Input lines from the markdown body (an item edited outside Sussurro —
 /// the markdown wins — or one written by hand without segments): its
-/// non-empty lines, minus the leading `# title`. Timestamps and speakers
-/// the body carries (`**[00:01:02] Anna:** …`) stay in the text.
+/// non-empty lines, minus the leading `# title`. Lines in the shape the app
+/// renders (`**[00:01:02] Anna:** …`, `**[00:01:02]** …`, `[00:01:02] …`)
+/// get their timestamp and speaker back, so a meeting edited by hand stays
+/// speaker-aware (#143); anything else is kept as plain text.
 pub fn lines_from_body(body: &str) -> Vec<InputLine> {
     let mut lines = body.lines().map(str::trim).filter(|l| !l.is_empty()).peekable();
     if lines.peek().is_some_and(|l| l.starts_with("# ")) {
         lines.next();
     }
-    lines
-        .map(|l| InputLine {
-            text: l.to_string(),
-            ..Default::default()
-        })
-        .collect()
+    lines.map(parse_body_line).collect()
+}
+
+/// `HH:MM:SS` (hours may grow past 99) → milliseconds.
+fn parse_timestamp(ts: &str) -> Option<u64> {
+    let parts: Vec<&str> = ts.split(':').collect();
+    if parts.len() != 3 || parts.iter().any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit())) {
+        return None;
+    }
+    let (h, m, s): (u64, u64, u64) = (parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?);
+    (m < 60 && s < 60).then_some((h * 3600 + m * 60 + s) * 1000)
+}
+
+fn collapse(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// One body line back as an input line (see [`lines_from_body`]).
+fn parse_body_line(line: &str) -> InputLine {
+    let plain = || InputLine { text: line.to_string(), ..Default::default() };
+    if let Some(rest) = line.strip_prefix("**[") {
+        let Some((ts, rest)) = rest.split_once(']') else { return plain() };
+        let Some(ms) = parse_timestamp(ts) else { return plain() };
+        // `**[ts]** text`: a line without a speaker.
+        if let Some(text) = rest.strip_prefix("**") {
+            return InputLine { start_ms: Some(ms), speaker: None, text: collapse(text) };
+        }
+        // `**[ts] Label:** text`
+        let Some((label, text)) = rest.split_once(":**") else { return plain() };
+        let label = collapse(label);
+        if label.is_empty() || label.contains('*') {
+            return plain();
+        }
+        return InputLine { start_ms: Some(ms), speaker: Some(label), text: collapse(text) };
+    }
+    if let Some((ts, text)) = line.strip_prefix('[').and_then(|r| r.split_once("] ")) {
+        if let Some(ms) = parse_timestamp(ts) {
+            return InputLine { start_ms: Some(ms), speaker: None, text: collapse(text) };
+        }
+    }
+    plain()
 }
 
 /// Whether any line names a speaker (the prompt then explains the format).
 pub fn has_speakers(lines: &[InputLine]) -> bool {
     lines.iter().any(|l| l.speaker.is_some())
+}
+
+/// The speakers the lines name, each once, in order of first appearance.
+pub fn speaker_names(lines: &[InputLine]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for sp in lines.iter().filter_map(|l| l.speaker.as_deref()) {
+        if !out.iter().any(|o| o == sp) {
+            out.push(sp.to_string());
+        }
+    }
+    out
+}
+
+/// A speaker nobody identified: the generic "Voice N" label clustering
+/// gives (`speakers::doc::voice_label`). Passed to the model as-is, with
+/// the instruction not to guess who it is (#143).
+pub fn is_generic_voice(label: &str) -> bool {
+    label
+        .trim()
+        .strip_prefix("Voice ")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Characters of transcript input that fit in one call to a model with a
@@ -171,6 +234,104 @@ pub fn chunk_lines(lines: &[String], budget: usize) -> Vec<String> {
     chunks
 }
 
+/// Pieces of `line`, formatted, of at most `budget` characters each. A
+/// line over budget is split on its text (see [`split_long_line`]) and
+/// every piece keeps the line's `[HH:MM:SS] Name:` prefix, so attribution
+/// survives the cut. (A prefix taking half the budget or more — never on
+/// real windows — falls back to cutting the formatted line.)
+pub fn format_split(line: &InputLine, budget: usize) -> Vec<String> {
+    let budget = budget.max(1);
+    let full = line.format();
+    if char_len(&full) <= budget {
+        return vec![full];
+    }
+    let prefix = InputLine { text: String::new(), ..line.clone() }.format();
+    let plen = char_len(&prefix);
+    if plen == 0 || plen * 2 > budget {
+        return split_long_line(&full, budget);
+    }
+    split_long_line(line.text.trim(), budget - plen)
+        .into_iter()
+        .map(|piece| format!("{prefix}{piece}"))
+        .collect()
+}
+
+/// Speaker turns: runs of consecutive lines with the same speaker (lines
+/// without a speaker form runs of their own).
+pub fn speaker_turns(lines: &[InputLine]) -> Vec<&[InputLine]> {
+    let mut turns = Vec::new();
+    let mut start = 0;
+    for i in 1..=lines.len() {
+        if i == lines.len() || lines[i].speaker != lines[start].speaker {
+            turns.push(&lines[start..i]);
+            start = i;
+        }
+    }
+    turns
+}
+
+/// Chunks being filled: formatted lines joined by `\n`.
+struct Packer {
+    budget: usize,
+    chunks: Vec<String>,
+    current: String,
+    len: usize,
+}
+
+impl Packer {
+    fn flush(&mut self) {
+        if !self.current.is_empty() {
+            self.chunks.push(std::mem::take(&mut self.current));
+            self.len = 0;
+        }
+    }
+
+    /// Whether `len` more characters fit the current chunk.
+    fn fits(&self, len: usize) -> bool {
+        self.current.is_empty() || self.len + 1 + len <= self.budget
+    }
+
+    fn push(&mut self, piece: &str) {
+        let len = char_len(piece);
+        if !self.fits(len) {
+            self.flush();
+        }
+        if !self.current.is_empty() {
+            self.current.push('\n');
+            self.len += 1;
+        }
+        self.current.push_str(piece);
+        self.len += len;
+    }
+}
+
+/// Pack input lines, in order, into chunks of at most `budget` characters
+/// (formatted lines joined by `\n`), on speaker-turn boundaries: a turn
+/// that fits a chunk starts a new chunk rather than being cut across two;
+/// only a turn longer than a whole chunk is split, between its lines (and
+/// an over-long line with [`format_split`], each piece keeping its
+/// speaker). Without speakers this is [`chunk_lines`] on the formatted
+/// lines. Every character of every line ends up in exactly one chunk, in
+/// the original order.
+pub fn chunk_turns(lines: &[InputLine], budget: usize) -> Vec<String> {
+    let budget = budget.max(1);
+    let mut p = Packer { budget, chunks: Vec::new(), current: String::new(), len: 0 };
+    for turn in speaker_turns(lines) {
+        let pieces: Vec<String> = turn.iter().flat_map(|l| format_split(l, budget)).collect();
+        let turn_len = pieces.iter().map(|x| char_len(x)).sum::<usize>() + pieces.len().saturating_sub(1);
+        // A turn that won't fit what is left of this chunk but fits one of
+        // its own is kept together. (Lines without a speaker are no turn.)
+        if turn[0].speaker.is_some() && !p.fits(turn_len) && turn_len <= budget {
+            p.flush();
+        }
+        for piece in &pieces {
+            p.push(piece);
+        }
+    }
+    p.flush();
+    p.chunks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,7 +390,123 @@ mod tests {
     fn body_lines_drop_the_title_heading_and_blank_lines() {
         let body = "\n# Weekly\n\n**[00:00:01] Anna:** ciao\n\n**[00:00:05] Bob:** hi\n";
         let lines: Vec<_> = lines_from_body(body).iter().map(InputLine::format).collect();
-        assert_eq!(lines, ["**[00:00:01] Anna:** ciao", "**[00:00:05] Bob:** hi"]);
+        assert_eq!(lines, ["[00:00:01] Anna: ciao", "[00:00:05] Bob: hi"]);
+    }
+
+    #[test]
+    fn body_lines_get_their_speakers_and_timestamps_back() {
+        let body = "# T\n**[01:02:03] Voice 2:** Buongiorno  a tutti.\n**[00:00:09]** senza voce\n\
+                    [00:00:10] plain timed\nJust text: with a colon\n**[xx:00:01] Anna:** bad ts\n\
+                    **[00:00:11] **Bold**:** odd\n[00:61:00] bad minutes";
+        let lines = lines_from_body(body);
+        assert_eq!(
+            lines[0],
+            InputLine { start_ms: Some(3_723_000), speaker: Some("Voice 2".into()), text: "Buongiorno a tutti.".into() }
+        );
+        assert_eq!(lines[1], InputLine { start_ms: Some(9_000), speaker: None, text: "senza voce".into() });
+        assert_eq!(lines[2], InputLine { start_ms: Some(10_000), speaker: None, text: "plain timed".into() });
+        // Anything else stays plain text, untouched.
+        let rest = [
+            "Just text: with a colon",
+            "**[xx:00:01] Anna:** bad ts",
+            "**[00:00:11] **Bold**:** odd",
+            "[00:61:00] bad minutes",
+        ];
+        for (i, raw) in rest.iter().enumerate() {
+            assert_eq!(lines[3 + i], InputLine { text: raw.to_string(), ..Default::default() }, "{raw}");
+        }
+        assert_eq!(speaker_names(&lines), ["Voice 2"]);
+    }
+
+    #[test]
+    fn speaker_names_in_order_and_generic_voices() {
+        let l = |sp: Option<&str>| InputLine { speaker: sp.map(str::to_string), text: "x".into(), ..Default::default() };
+        let lines = [l(Some("Anna")), l(None), l(Some("Voice 1")), l(Some("Anna")), l(Some("Bob"))];
+        assert_eq!(speaker_names(&lines), ["Anna", "Voice 1", "Bob"]);
+        assert!(is_generic_voice("Voice 1") && is_generic_voice(" Voice 12 "));
+        for named in ["Anna", "Voice", "Voice one", "Voice 2b", "voice 2", "My Voice 2"] {
+            assert!(!is_generic_voice(named), "{named}");
+        }
+    }
+
+    fn turn_line(sec: u64, sp: &str, text: &str) -> InputLine {
+        InputLine { start_ms: Some(sec * 1000), speaker: Some(sp.into()), text: text.into() }
+    }
+
+    #[test]
+    fn turns_group_consecutive_lines_of_one_speaker() {
+        let lines = [
+            turn_line(1, "Anna", "a"),
+            turn_line(2, "Anna", "b"),
+            turn_line(3, "Bob", "c"),
+            InputLine { text: "d".into(), ..Default::default() },
+            turn_line(5, "Anna", "e"),
+        ];
+        let sizes: Vec<_> = speaker_turns(&lines).iter().map(|t| t.len()).collect();
+        assert_eq!(sizes, [2, 1, 1, 1]);
+        assert!(speaker_turns(&[]).is_empty());
+    }
+
+    #[test]
+    fn chunks_follow_speaker_turns() {
+        // Turns of three lines, alternating speakers.
+        let mut lines = Vec::new();
+        for t in 0..12u64 {
+            let sp = ["Anna", "Bob", "Voice 1"][t as usize % 3];
+            for k in 0..3 {
+                lines.push(turn_line(t * 10 + k, sp, &format!("turn {t} line {k}")));
+            }
+        }
+        let budget = 150;
+        let chunks = chunk_turns(&lines, budget);
+        assert!(chunks.len() > 2);
+        let formatted: Vec<String> = lines.iter().map(InputLine::format).collect();
+        // Order and content preserved, budget respected.
+        assert_eq!(chunks.join("\n"), formatted.join("\n"));
+        assert!(chunks.iter().all(|c| c.chars().count() <= budget));
+        // No turn is cut: every chunk starts with the first line of a turn.
+        for c in &chunks {
+            assert!(c.lines().next().unwrap().ends_with("line 0"), "chunk starts mid-turn: {c:?}");
+        }
+        // Plain line packing would have cut turns at this budget.
+        let plain = chunk_lines(&formatted, budget);
+        assert!(plain.iter().any(|c| !c.lines().next().unwrap().ends_with("line 0")));
+    }
+
+    #[test]
+    fn a_turn_over_budget_is_split_and_every_piece_keeps_its_speaker() {
+        let long = "Questa è una frase lunga. ".repeat(12);
+        let lines = [
+            turn_line(1, "Anna", "breve"),
+            turn_line(2, "Voice 2", long.trim()),
+            turn_line(3, "Voice 2", "coda"),
+            turn_line(4, "Bob", "fine"),
+        ];
+        let budget = 120;
+        let chunks = chunk_turns(&lines, budget);
+        assert!(chunks.iter().all(|c| c.chars().count() <= budget), "{chunks:?}");
+        let all: Vec<&str> = chunks.iter().flat_map(|c| c.lines()).collect();
+        assert!(all.iter().all(|l| l.starts_with("[00:00:0")), "{all:?}");
+        let voice: Vec<&str> = all.iter().copied().filter(|l| l.contains("frase")).collect();
+        assert!(voice.len() > 1, "the long line was split");
+        assert!(voice.iter().all(|l| l.starts_with("[00:00:02] Voice 2: ")), "{voice:?}");
+        // The text survives the split.
+        let text: Vec<&str> = voice.iter().map(|l| l.trim_start_matches("[00:00:02] Voice 2: ")).collect();
+        assert_eq!(text.join(" "), long.trim());
+        // Without speakers it is plain line packing.
+        let plain: Vec<InputLine> = (0..20).map(|i| InputLine { text: format!("line {i}"), ..Default::default() }).collect();
+        let formatted: Vec<String> = plain.iter().map(InputLine::format).collect();
+        assert_eq!(chunk_turns(&plain, 40), chunk_lines(&formatted, 40));
+    }
+
+    #[test]
+    fn format_split_keeps_short_lines_whole() {
+        let l = turn_line(61, "Anna", "ciao");
+        assert_eq!(format_split(&l, 100), ["[00:01:01] Anna: ciao"]);
+        // A prefix longer than half the budget: plain cut.
+        let pieces = format_split(&l, 20);
+        assert!(pieces.iter().all(|p| p.chars().count() <= 20));
+        assert_eq!(pieces.join(" "), "[00:01:01] Anna: ciao");
     }
 
     #[test]

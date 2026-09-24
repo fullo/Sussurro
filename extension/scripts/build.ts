@@ -80,6 +80,14 @@ for (const [name, entry] of scripts) {
   );
 }
 
+// Chrome runs the background as a service worker: no DOM. A stray import
+// of the page code (React, the transcript components' CSS) would bring
+// `document` in and kill the worker at load — refuse to ship that.
+if (/\bdocument\./.test(readFileSync(join(outDir, "background.js"), "utf8"))) {
+  console.error("background.js uses `document`, which Chrome's service worker lacks: keep page-only code out of src/background/.");
+  process.exit(1);
+}
+
 // 3. Icons (the app's own) and the manifest.
 mkdirSync(join(outDir, "icons"), { recursive: true });
 for (const size of [32, 64, 128]) {

@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "licenses": "node scripts/gen-licenses.mjs",
+    "sidecar": "node scripts/fetch-sidecar.mjs",
     "test": "vitest run"
   },
   "dependencies": {

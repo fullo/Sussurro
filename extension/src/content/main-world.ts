@@ -22,6 +22,10 @@ import { FRAME_SAMPLES, rms16, toPcm16 } from "../shared/frame";
 import type { CaptureSnapshot, FromMain, ToMain } from "../shared/messages";
 import { TrackRegistry, diffTracks, type Selection } from "./registry";
 import { PROCESSOR_NAME, WORKLET_SOURCE } from "./worklet";
+import { MeetObserver } from "./meet/observer";
+import type { ObserverMsg } from "./meet/messages";
+import { detectPlatform } from "../shared/platform";
+import { perfToFrame, type PageSpeakerMsg } from "../shared/speakerEvents";
 
 type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -38,6 +42,8 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
   const NativeBlob = window.Blob;
   const createObjectURL = URL.createObjectURL.bind(URL);
   const revokeObjectURL = URL.revokeObjectURL.bind(URL);
+  const perfNow = performance.now.bind(performance);
+  const isMeet = detectPlatform(location.href) === "meet";
 
   const reg = new TrackRegistry<MediaStreamTrack, RTCPeerConnection, RTCRtpSender>();
   const errors: string[] = [];
@@ -47,6 +53,10 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
   let pcCount = 0;
   let port: MessagePort | null = null;
   let capture: Capture | null = null;
+  /** Peer connections open in the page (for the Meet observer's receivers). */
+  const pcs = new Set<RTCPeerConnection>();
+  /** The Meet name observer (#131): Meet pages only, while armed. */
+  let observer: MeetObserver | null = null;
 
   const send = (m: FromMain, transfer: Transferable[] = []) => {
     try {
@@ -160,6 +170,7 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
     });
     wrap(proto, "close", undefined, (pc: RTCPeerConnection) => {
       reg.closePc(pc);
+      pcs.delete(pc);
       changed();
     });
     if (window.RTCRtpSender) {
@@ -179,6 +190,7 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
         const pc = Reflect.construct(target, args, newTarget) as RTCPeerConnection;
         pcCount++;
         reg.addPc(pc);
+        pcs.add(pc);
         pc.addEventListener("track", (e: RTCTrackEvent) => {
           reg.addRemote(pc, e.track);
           watch(e.track);
@@ -250,7 +262,11 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
     private ownTracks: MediaStreamTrack[] = [];
     private askedOwnMic = false;
     private seq = 0;
-    private levels = [0, 0];
+    levels = [0, 0];
+    /** The last worklet block: its page frame and when it arrived (the
+     *  page clock for speaker events, #131). */
+    anchor: { seq: number; at: number } | null = null;
+    readonly armedAt = perfNow();
     private timer: ReturnType<typeof setInterval> | undefined;
     private resumeOnGesture = () => {
       void this.ctx.resume().catch(() => {});
@@ -337,6 +353,7 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
     private block(mic: Int16Array, remote: Int16Array) {
       if (this.closed) return;
       this.levels = [rms16(mic), rms16(remote)];
+      this.anchor = { seq: this.seq, at: perfNow() };
       const m: FromMain = { t: "pcm", seq: this.seq++, mic: mic.buffer as ArrayBuffer, remote: this.remoteOn ? (remote.buffer as ArrayBuffer) : null };
       send(m, this.remoteOn ? [mic.buffer, remote.buffer] : [mic.buffer]);
     }
@@ -462,12 +479,59 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
     };
   };
 
+  // ---- Meet names (#131) -----------------------------------------------------
+
+  /** The page's remote audio receivers (their CSRCs say who speaks). */
+  const remoteReceivers = (): RTCRtpReceiver[] => {
+    const out: RTCRtpReceiver[] = [];
+    for (const pc of pcs) {
+      try {
+        for (const r of pc.getReceivers()) if (r.track?.kind === "audio" && r.track.readyState === "live") out.push(r);
+      } catch {
+        /* closed meanwhile */
+      }
+    }
+    return out;
+  };
+
+  /** Observer time → page frames, then to the ISOLATED script. */
+  const sendSpeaker = (c: Capture, m: ObserverMsg) => {
+    let msg: PageSpeakerMsg;
+    if (m.type === "speaker_active" || m.type === "speaker_idle") {
+      const { at, ...rest } = m;
+      msg = { ...rest, pf: perfToFrame(at, c.anchor, c.armedAt, c.ctx.sampleRate) } as PageSpeakerMsg;
+    } else msg = m;
+    send({ t: "speaker", msg });
+  };
+
+  const startObserver = (c: Capture) => {
+    if (!isMeet || observer) return;
+    try {
+      observer = new MeetObserver({
+        doc: document,
+        receivers: remoteReceivers,
+        now: perfNow,
+        timeOrigin: performance.timeOrigin,
+        remoteLevel: () => c.levels[1],
+        emit: (m) => sendSpeaker(c, m),
+        note,
+      });
+      observer.start();
+    } catch (e) {
+      observer = null;
+      note(`meet observer: ${String(e)}`);
+    }
+  };
+
   // ---- commands from the ISOLATED script ------------------------------------
 
   /** Longest silence from the ISOLATED script while armed. */
   const WATCHDOG_MS = 10_000;
   let lastCommandAt = 0;
   const disarm = () => {
+    // Speakers end before the clock goes away.
+    observer?.stop();
+    observer = null;
     capture?.close();
     capture = null;
     send({ t: "state", state: snapshot() });
@@ -487,6 +551,7 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
           await c.start();
           if (capture !== c) return; // disarmed while starting
           send({ t: "armed", rate: c.ctx.sampleRate });
+          startObserver(c);
           send({ t: "state", state: snapshot() });
         } catch (e) {
           c?.close();

@@ -70,6 +70,67 @@ pub fn you_speaker() -> DocSpeaker {
     }
 }
 
+/// Prefix of the names from the meeting page (`meet:Anna Rossi`, #131).
+pub const MEET_PREFIX: &str = "meet:";
+
+pub fn meet_id(name: &str) -> String {
+    format!("{MEET_PREFIX}{name}")
+}
+
+pub fn is_meet(id: &str) -> bool {
+    id.starts_with(MEET_PREFIX)
+}
+
+/// A name from the meeting page. `k` is its order among the document's
+/// names: they take the voice colours from the other end of the list, so
+/// a small meeting's names and voices don't share a colour.
+pub fn meet_speaker(name: &str, k: usize) -> DocSpeaker {
+    DocSpeaker {
+        id: meet_id(name),
+        label: name.to_string(),
+        color: VOICE_COLORS[VOICE_COLORS.len() - 1 - k % VOICE_COLORS.len()].to_string(),
+        person_id: None,
+        label_before_link: None,
+    }
+}
+
+/// Make the speaker list match the lines after the page's names were
+/// applied (#131): an entry for every name and voice a line uses (new
+/// ones get the defaults; existing entries keep their label and link),
+/// none for names or voices no line uses. Other speakers ("You") stay
+/// first, then the names in order of first appearance, then the voices by
+/// number.
+pub fn sync_named_speakers(file: &mut SegmentsFile) {
+    let mut names: Vec<String> = Vec::new();
+    for id in file.segments.iter().filter_map(|s| s.speaker_id.as_deref()) {
+        if is_meet(id) && !names.iter().any(|n| n == id) {
+            names.push(id.to_string());
+        }
+    }
+    let old = std::mem::take(&mut file.speakers);
+    let (meets, rest): (Vec<DocSpeaker>, Vec<DocSpeaker>) =
+        old.into_iter().partition(|s| is_meet(&s.id));
+    file.speakers = rest;
+    let at = file
+        .speakers
+        .iter()
+        .position(|s| voice_number(&s.id).is_some())
+        .unwrap_or(file.speakers.len());
+    let entries: Vec<DocSpeaker> = names
+        .iter()
+        .enumerate()
+        .map(|(k, id)| {
+            meets
+                .iter()
+                .find(|s| &s.id == id)
+                .cloned()
+                .unwrap_or_else(|| meet_speaker(id.strip_prefix(MEET_PREFIX).unwrap_or(id), k))
+        })
+        .collect();
+    file.speakers.splice(at..at, entries);
+    tidy_voices(file);
+}
+
 fn is_voice(speaker: Option<&str>) -> bool {
     speaker.is_some_and(|s| voice_number(s).is_some())
 }

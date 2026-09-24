@@ -8,6 +8,7 @@ import {
   formatCount,
   needsConsent,
   obtainConsent,
+  peopleLabel,
   profileHostOf,
   sentExternally,
   sizeLabel,
@@ -68,7 +69,7 @@ describe("per-run consent", () => {
     expect(got).toEqual({ consent: "t1" });
     expect(confirm).toHaveBeenCalledWith(preview);
     expect(call.mock.calls.map((c) => c[0])).toEqual(["external_run_preview", "prepare_external_run"]);
-    expect(call.mock.calls[1][1]).toEqual({ id: "2026/09/a", recipeId: "summary", question: null, profileId: "work" });
+    expect(call.mock.calls[1][1]).toEqual({ id: "2026/09/a", recipeId: "summary", question: null, profileId: "work", includeEmails: false });
   });
 
   it("sends nothing and issues no token when the user cancels", async () => {
@@ -100,8 +101,40 @@ describe("per-run consent", () => {
   });
 
   it("builds a question or a recipe request, never both", () => {
-    expect(consentArgs({ id: "a", recipeId: "summary", question: "Who?", profileId: "w" })).toEqual({ id: "a", recipeId: null, question: "Who?", profileId: "w" });
-    expect(consentArgs({ id: "a", recipeId: "summary", question: null, profileId: "w" })).toEqual({ id: "a", recipeId: "summary", question: null, profileId: "w" });
+    expect(consentArgs({ id: "a", recipeId: "summary", question: "Who?", profileId: "w" })).toEqual({ id: "a", recipeId: null, question: "Who?", profileId: "w", includeEmails: false });
+    expect(consentArgs({ id: "a", recipeId: "summary", question: null, profileId: "w" })).toEqual({ id: "a", recipeId: "summary", question: null, profileId: "w", includeEmails: false });
+  });
+
+  // #143: the email choice is part of what is confirmed.
+  it("sends the participant-email choice with the request", async () => {
+    expect(consentArgs({ id: "a", recipeId: "meeting-minutes", question: null, profileId: "w", includeEmails: true })).toEqual({
+      id: "a",
+      recipeId: "meeting-minutes",
+      question: null,
+      profileId: "w",
+      includeEmails: true,
+    });
+    const calls: [string, Record<string, unknown>][] = [];
+    const call = vi.fn(async (cmd: string, args: Record<string, unknown>) => {
+      calls.push([cmd, args]);
+      return cmd === "prepare_external_run" ? { token: "t", expires_in_secs: 120 } : preview;
+    });
+    await obtainConsent(call, async () => true, work, { id: "a", recipeId: "summary", question: null, profileId: "work", includeEmails: true });
+    expect(calls.map(([c, a]) => [c, a.includeEmails])).toEqual([
+      ["external_run_preview", true],
+      ["prepare_external_run", true],
+    ]);
+  });
+
+  it("says which names and emails go along", () => {
+    const base = { speakers: ["Anna", "Voice 2"], participants: 3, emails_available: 2, emails_sent: 0 };
+    expect(peopleLabel(base)).toBe("2 speaker names (Anna, Voice 2) and 3 participant names — emails are not sent");
+    expect(peopleLabel({ ...base, emails_sent: 2 })).toBe("2 speaker names (Anna, Voice 2) and 3 participant names and 2 emails");
+    expect(peopleLabel({ speakers: ["Voice 1"], participants: 1, emails_available: 1, emails_sent: 0 })).toBe(
+      "1 speaker name (Voice 1) and 1 participant name — the email is not sent",
+    );
+    expect(peopleLabel({ speakers: [], participants: 0 })).toBe("");
+    expect(peopleLabel({})).toBe("");
   });
 
   it("describes the size", () => {
