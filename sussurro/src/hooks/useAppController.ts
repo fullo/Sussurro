@@ -4,7 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { cleanupProfile, cleanupServerChanged, modelListed, patchCleanupProfile } from "../lib/llmProfiles";
+import { cleanupProfile, cleanupServerChanged, mergeKeyStorage, modelListed, patchCleanupProfile } from "../lib/llmProfiles";
 import type {
   HistoryEntry,
   OllamaStatus,
@@ -109,7 +109,9 @@ export function useAppController() {
     // The old server's model list must not be adopted into the new profile.
     if (serverChanged) setOllamaModels(null);
     try {
-      await invoke("set_settings", { settings: next });
+      const saved = await invoke<Settings | null>("set_settings", { settings: next });
+      // Where each API key ended up: OS credential store or file fallback (#159).
+      if (saved) setSettings((cur) => (cur ? mergeKeyStorage(cur, saved) : cur));
       setBusy("");
       setModelReady(await invoke<boolean>("model_is_downloaded"));
       loadWhisperModels();

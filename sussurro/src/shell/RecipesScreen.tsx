@@ -6,6 +6,8 @@ import {
   API_LABELS,
   cleanupProfile,
   commitProfile,
+  keyStorageBadge,
+  keyStorageWarning,
   newProfile,
   profileProblems,
   profileSummary,
@@ -13,7 +15,7 @@ import {
   withApi,
   withBaseUrl,
 } from "../lib/llmProfiles";
-import type { LlmApi, LlmProfile } from "../lib/types";
+import type { CredentialStoreStatus, LlmApi, LlmProfile } from "../lib/types";
 import { RecipesCard } from "./RecipesCard";
 
 /** Recipes (proposal A rail): the recipes — named prompts that write a
@@ -65,6 +67,9 @@ export function RecipesScreen({ ctl }: { ctl: Ctl }) {
                   <span className="prof-name">{p.name}</span>
                   <span className="prof-sub">{profileSummary(p)}</span>
                   {p.id === cleanupId && <span className="tb note">Cleanup</span>}
+                  {keyStorageBadge(p) && (
+                    <span className="ext" title="Open the profile for details">{keyStorageBadge(p)}</span>
+                  )}
                   {p.external ? (
                     <span className="ext" title="Text sent to this profile leaves this machine">↗ External</span>
                   ) : (
@@ -98,6 +103,8 @@ function ProfileEditor({ ctl, initial, onDone }: { ctl: Ctl; initial: LlmProfile
   const [test, setTest] = useState<TestState>({ state: "idle", message: "" });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** The OS credential store, for the API key warning (#159); null = unknown. */
+  const [store, setStore] = useState<CredentialStoreStatus | null>(null);
 
   const isNew = initial.id === "";
   const isCleanup = !isNew && cleanupProfile(settings)?.id === initial.id;
@@ -135,6 +142,7 @@ function ProfileEditor({ ctl, initial, onDone }: { ctl: Ctl; initial: LlmProfile
 
   // A saved profile shows its models right away when the server answers.
   useEffect(() => {
+    invoke<CredentialStoreStatus>("credential_store_status").then(setStore).catch(() => {});
     if (!isNew) testConnection(initial, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -158,6 +166,7 @@ function ProfileEditor({ ctl, initial, onDone }: { ctl: Ctl; initial: LlmProfile
     }
   };
 
+  const keyWarning = keyStorageWarning(draft, isNew ? null : initial, store);
   const modelMissing = models !== null && draft.model !== "" && !models.includes(draft.model);
 
   return (
@@ -211,9 +220,10 @@ function ProfileEditor({ ctl, initial, onDone }: { ctl: Ctl; initial: LlmProfile
       </div>
 
       {draft.api === "openai" && (
+        <>
         <div className="field">
           <div className="field-label">
-            <span>API key <Tip text="Optional bearer token. Local servers usually ignore it; hosted services need one. Stored in Sussurro's settings file on this machine." /></span>
+            <span>API key <Tip text="Optional bearer token. Local servers usually ignore it; hosted services need one. Kept in the system keychain (macOS Keychain, Windows Credential Manager, or the Secret Service on Linux), not in Sussurro's settings file." /></span>
             <small>optional</small>
           </div>
           <input
@@ -225,6 +235,8 @@ function ProfileEditor({ ctl, initial, onDone }: { ctl: Ctl; initial: LlmProfile
             aria-label="API key"
           />
         </div>
+        {keyWarning && <small className="endpoint-note" role="note">⚠ {keyWarning}</small>}
+        </>
       )}
 
       <div className="field">
