@@ -86,6 +86,10 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
             let _ = APP_HANDLE.set(handle.clone());
+            // Tauri drops its resource table on every way out (exit event,
+            // restart, the updater's Windows install): no sidecar outlives
+            // the app (#117).
+            app.resources_table().add(stt::remote::ExitGuard);
             let paths = AppPaths::from_app(handle);
             let (mut settings, migrated) = Settings::load_migrating(&paths.settings_file);
             // Profile API keys live in the OS credential store (#159): read
@@ -255,8 +259,15 @@ pub fn run() {
             commands::external_run_preview,
             commands::prepare_external_run
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Also covered by the ExitGuard; explicit here so the
+                // sidecar is gone before anything else shuts down.
+                stt::remote::kill_all();
+            }
+        });
 }
 
 #[cfg(test)]
