@@ -10,6 +10,7 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
+import { DATE_BUCKETS, localToday, type DateBucket, type Facets, type FacetValue } from "../lib/facets";
 import type { CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Person, Recipe, Segment, Settings } from "../lib/types";
 
 const params = new URLSearchParams(window.location.search);
@@ -112,7 +113,7 @@ let items: Stored[] = params.get("empty")
   : [
       {
         id: "2026/09/idee-per-l-onboarding",
-        meta: meta("Idee per l'onboarding", "note", at(0, 8, 40), "00:03:12", "mic", { tags: ["onboarding", "idee"], categories: ["prodotto"] }),
+        meta: meta("Idee per l'onboarding", "note", at(0, 8, 40), "00:03:12", "mic", { tags: ["onboarding", "idee", "release"], categories: ["prodotto"] }),
         segments: segs([
           "Tre idee per rendere il primo avvio più semplice.",
           "Primo: chiedere l'accesso alla cartella Documenti durante l'onboarding, mai durante una registrazione.",
@@ -125,7 +126,7 @@ let items: Stored[] = params.get("empty")
       {
         id: "2026/09/podcast-daruma-ep-12-intervista",
         meta: meta("Podcast Daruma, ep. 12 — intervista", "transcription", at(1, 17, 5), "00:48:10", "file:podcast-ep12.mp3", {
-          tags: ["podcast"],
+          tags: ["podcast", "privacy"], categories: ["daruma"],
           participants: [{ name: "Francesco Fullone", email: "francesco@example.com" }, { name: "Ospite" }],
         }),
         segments: segs([
@@ -142,7 +143,7 @@ let items: Stored[] = params.get("empty")
       {
         id: "2026/09/call-con-studio-verdi",
         meta: meta("Call con Studio Verdi", "meeting", at(2, 11, 0), "00:38:02", "mic", {
-          categories: ["clienti"],
+          tags: ["Release", "roadmap"], categories: ["clienti"],
           participants: [{ name: "Anna Rossi", email: "anna@example.com" }, { name: "Marco Bianchi", email: "marco@example.com" }, { name: "Voice 1" }],
         }),
         segments: segs([
@@ -172,13 +173,13 @@ let items: Stored[] = params.get("empty")
       })(),
       {
         id: "2026/09/lezione-diritto-d-autore-e-ia",
-        meta: meta("Lezione: diritto d'autore e IA — una lezione molto lunga con un titolo lunghissimo", "transcription", at(5, 9, 30), "01:12:40", "file:lezione.m4a"),
+        meta: meta("Lezione: diritto d'autore e IA — una lezione molto lunga con un titolo lunghissimo", "transcription", at(5, 9, 30), "01:12:40", "file:lezione.m4a", { tags: ["copyright", "privacy"], categories: ["studio"], participants: [{ name: "Prof. Neri" }] }),
         segments: segs(["Oggi vediamo come il diritto d'autore si applica ai modelli generativi.", "Partiamo dalla direttiva europea sul copyright nel mercato unico digitale."], 30000),
         interrupted: true,
       },
       {
         id: "2026/09/appunti-treno-per-bologna",
-        meta: meta("Appunti treno per Bologna", "note", at(6, 7, 55), "00:02:04", "mic"),
+        meta: meta("Appunti treno per Bologna", "note", at(6, 7, 55), "00:02:04", "mic", { tags: ["idee"], categories: ["prodotto"] }),
         segments: segs(["Ricordarsi di prenotare il ritorno.", "Scrivere il post sul blog per la 0.7 durante il viaggio."]),
       },
       {
@@ -284,6 +285,94 @@ function search(query: string, type?: string): ItemSummary[] {
       const snippet = `${from > 0 ? "…" : ""}${text.slice(from, at)}**${text.slice(at, at + w)}**${text.slice(at + w, at + 80)}…`;
       return [toSummary(s, snippet)];
     });
+}
+
+/* ---------- Library facets (#135), mirroring archive/facets.rs ---------- */
+
+interface MockFilters {
+  type?: string;
+  types?: string[];
+  tags?: string[];
+  categories?: string[];
+  participants?: string[];
+  date_bucket?: DateBucket;
+  date_from?: string;
+  date_to?: string;
+  today?: string;
+}
+
+type FacetName = "type" | "tag" | "category" | "participant" | "date";
+
+const valueKey = (v: string) => v.trim().split(/\s+/).join(" ").toLowerCase();
+const participantKey = (p: { name: string; email?: string }) => {
+  const who = personFor(people, p);
+  return who ? `person:${who.id}` : `name:${nameKey(p.name)}`;
+};
+/** The item's local day (the real index uses the day written in the
+ *  frontmatter, which is the local day where it was recorded). */
+const dayOf = (s: Stored) => localToday(new Date(s.meta.date));
+
+function inBucket(day: string, b: DateBucket, today: string): boolean {
+  const [y, m, d] = today.split("-").map(Number);
+  const monday = localToday(new Date(y, m - 1, d - ((new Date(y, m - 1, d).getDay() + 6) % 7)));
+  const from = { today, week: monday, month: `${today.slice(0, 7)}-01`, year: `${today.slice(0, 4)}-01-01`, older: "" }[b];
+  return b === "older" ? day < `${today.slice(0, 4)}-01-01` : day >= from && day <= today;
+}
+
+function passes(s: Stored, f: MockFilters, today: string, skip?: FacetName): boolean {
+  const any = (list: string[] | undefined, have: string[]) => !list?.length || list.some((k) => have.includes(k));
+  if (skip !== "type" && ((f.type && s.meta.type !== f.type) || !any(f.types, [s.meta.type]))) return false;
+  if (skip !== "tag" && !any(f.tags?.map(valueKey), s.meta.tags.map(valueKey))) return false;
+  if (skip !== "category" && !any(f.categories?.map(valueKey), s.meta.categories.map(valueKey))) return false;
+  if (skip !== "participant" && !any(f.participants, s.meta.participants.map(participantKey))) return false;
+  if (skip !== "date") {
+    const day = dayOf(s);
+    if (f.date_bucket && !inBucket(day, f.date_bucket, today)) return false;
+    if (f.date_from && day < f.date_from) return false;
+    if (f.date_to && day > f.date_to) return false;
+  }
+  return true;
+}
+
+/** Distinct items per value key, most first; label = min() of the spellings. */
+function grouped(list: Stored[], values: (s: Stored) => { key: string; label: string }[]): FacetValue[] {
+  const out = new Map<string, FacetValue>();
+  for (const s of list) {
+    const seen = new Set<string>();
+    for (const v of values(s)) {
+      if (seen.has(v.key)) continue;
+      seen.add(v.key);
+      const cur = out.get(v.key);
+      if (!cur) out.set(v.key, { ...v, count: 1 });
+      else {
+        cur.count++;
+        if (v.label < cur.label) cur.label = v.label;
+      }
+    }
+  }
+  return [...out.values()].sort((a, b) => b.count - a.count || nameKey(a.label).localeCompare(nameKey(b.label)));
+}
+
+function facetSearch(query: string, f: MockFilters): { items: ItemSummary[]; facets: Facets } {
+  const today = f.today || localToday();
+  const hits = new Map(search(query).map((h) => [h.id, h]));
+  const matched = items.filter((s) => hits.has(s.id)).sort(newestFirst);
+  const base = (skip?: FacetName) => matched.filter((s) => passes(s, f, today, skip));
+  const found = base().map((s) => hits.get(s.id) as ItemSummary);
+  const byType = base("type");
+  const byDate = base("date");
+  const personName = (v: FacetValue) => ({ ...v, label: people.find((p) => `person:${p.id}` === v.key)?.name ?? v.label });
+  return {
+    items: found,
+    facets: {
+      total: found.length,
+      types: (["note", "meeting", "transcription"] as const).map((t) => ({ key: t, label: t, count: byType.filter((s) => s.meta.type === t).length })),
+      tags: grouped(base("tag"), (s) => s.meta.tags.map((t) => ({ key: valueKey(t), label: t }))),
+      categories: grouped(base("category"), (s) => s.meta.categories.map((c) => ({ key: valueKey(c), label: c }))),
+      participants: grouped(base("participant"), (s) => s.meta.participants.map((p) => ({ key: participantKey(p), label: p.name }))).map(personName),
+      dates: DATE_BUCKETS.map((b) => ({ key: b.value, label: b.label, count: byDate.filter((s) => inBucket(dayOf(s), b.value, today)).length })),
+    },
+  };
 }
 
 /* ---------- engine simulation ---------- */
@@ -807,10 +896,10 @@ function handle(cmd: string, a: Args): unknown {
       return settings.archive_dir || ARCHIVE;
     case "archive_list":
       return items.slice().sort(newestFirst).map((s) => toSummary(s));
-    case "archive_search": {
-      const f = (a.filters ?? {}) as { type?: string };
-      return search(String(a.query ?? ""), f.type);
-    }
+    case "archive_search":
+      return facetSearch(String(a.query ?? ""), (a.filters ?? {}) as MockFilters).items;
+    case "archive_facets":
+      return facetSearch(String(a.query ?? ""), (a.filters ?? {}) as MockFilters);
     case "archive_get": {
       const s = find(String(a.id));
       if (!s) throw `no archive item '${a.id}'`;

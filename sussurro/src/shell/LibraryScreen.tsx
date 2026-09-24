@@ -3,17 +3,23 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName } from "../lib/format";
 import {
-  filterByType,
-  itemSubtitle,
-  matchesQuery,
-  splitHighlights,
-  TYPE_FILTERS,
-  TYPE_LABEL,
-  type TypeFilter,
-} from "../lib/library";
+  activeCount,
+  clearAll,
+  clearTypes,
+  loadFacetState,
+  localToday,
+  saveFacetState,
+  toFilters,
+  toggleType,
+  type Facets,
+  type FacetedSearch,
+  type FacetState,
+} from "../lib/facets";
+import { itemSubtitle, matchesQuery, splitHighlights, TYPE_FILTERS, TYPE_LABEL } from "../lib/library";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import type { ItemSummary } from "../lib/types";
 import { DocumentPane } from "./DocumentPane";
+import { LibraryFacets } from "./LibraryFacets";
 
 /** Debounced copy of a value (search as you type without a query per key). */
 function useDebounced<T>(value: T, ms: number): T {
@@ -44,7 +50,13 @@ export function LibraryScreen({
   onNew: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [type, setType] = useState<TypeFilter>("all");
+  /** Type chips + facets (#135), remembered across screens and restarts. */
+  const [sel, setSelState] = useState<FacetState>(loadFacetState);
+  const setSel = (s: FacetState) => {
+    setSelState(s);
+    saveFacetState(s);
+  };
+  const [facets, setFacets] = useState<Facets | null>(null);
   const [items, setItems] = useState<ItemSummary[] | null>(null);
   /** Items in the whole archive, to tell "empty archive" from "no match". */
   const [total, setTotal] = useState<number | null>(null);
@@ -66,23 +78,25 @@ export function LibraryScreen({
         onCount(all.length);
       }
       try {
-        const filters = type === "all" ? {} : { type };
-        const found = await invoke<ItemSummary[]>("archive_search", { query: q, filters });
+        const found = await invoke<FacetedSearch>("archive_facets", { query: q, filters: toFilters(sel, localToday()) });
         if (stale) return;
         setIndexDown(false);
-        setItems(found);
+        setItems(found.items);
+        setFacets(found.facets);
       } catch {
-        // Index unavailable: fall back to the folder scan, filtered here.
+        // Index unavailable: fall back to the folder scan, filtered here by
+        // type and text only (the facets need the index).
         if (stale) return;
         setIndexDown(true);
-        setItems(filterByType(all ?? [], type).filter((i) => matchesQuery(i, q)));
+        setFacets(null);
+        setItems((all ?? []).filter((i) => (!sel.types.length || sel.types.includes(i.meta.type)) && matchesQuery(i, q)));
       }
     })();
     return () => {
       stale = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, type, version, ctl.settings.archive_dir]);
+  }, [q, sel, version, ctl.settings.archive_dir]);
 
   const revealArchive = () =>
     invoke("archive_reveal", { id: null }).catch((e) => ctl.setBusy(String(e)));
@@ -113,26 +127,45 @@ export function LibraryScreen({
               onChange={(e) => setQuery(e.target.value)}
               spellCheck={false}
             />
-            <div className="fchips" role="radiogroup" aria-label="Item type">
-              {TYPE_FILTERS.map((f) => (
-                <button
-                  key={f.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={type === f.value}
-                  className={`fchip${type === f.value ? " on" : ""}`}
-                  onClick={() => setType(f.value)}
-                >
-                  {f.label}
-                </button>
-              ))}
+            <div className="fchips" role="group" aria-label="Item type">
+              {TYPE_FILTERS.map((f) => {
+                const on = f.value === "all" ? sel.types.length === 0 : sel.types.includes(f.value);
+                const n = f.value === "all" ? null : facets?.types.find((t) => t.key === f.value)?.count;
+                return (
+                  <button
+                    key={f.value}
+                    type="button"
+                    aria-pressed={on}
+                    className={`fchip${on ? " on" : ""}`}
+                    onClick={() => setSel(f.value === "all" ? clearTypes(sel) : toggleType(sel, f.value))}
+                  >
+                    {f.label}
+                    {n != null && <span className="fchip-n">{n}</span>}
+                  </button>
+                );
+              })}
             </div>
-            {indexDown && <p className="sh-note">Search index unavailable — matching titles and tags only.</p>}
+            <LibraryFacets state={sel} facets={facets} onChange={setSel} disabled={indexDown} />
+            {indexDown && (
+              <p className="sh-note">
+                Search index unavailable — matching titles and tags only{activeCount(sel) > sel.types.length ? "; the other filters are off" : ""}.
+              </p>
+            )}
           </div>
           <div className="lib-list" role="list">
             {items === null && <p className="sh-note pad">Loading…</p>}
             {items !== null && items.length === 0 && !archiveEmpty && (
-              <p className="sh-note pad">No items match{query.trim() ? ` “${query.trim()}”` : ""}.</p>
+              <div className="sh-note pad">
+                <p>
+                  No items match{query.trim() ? ` “${query.trim()}”` : ""}
+                  {activeCount(sel) ? " with these filters" : ""}.
+                </p>
+                {activeCount(sel) > 0 && (
+                  <button type="button" className="btn-ghost sh-btn" onClick={() => setSel(clearAll())}>
+                    Clear filters
+                  </button>
+                )}
+              </div>
             )}
             {archiveEmpty && <p className="sh-note pad">Nothing here yet.</p>}
             {items?.map((it) => (
