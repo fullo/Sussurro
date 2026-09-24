@@ -51,7 +51,7 @@ describe("classifyResponse", () => {
   it("maps the app's refusals", () => {
     expect(classifyResponse(401, { error: "missing or wrong extension token" })).toEqual({ kind: "bad_token" });
     expect(classifyResponse(403, { error: "origin not allowed" })).toEqual({ kind: "forbidden" });
-    expect(classifyResponse(404, { error: "unknown endpoint" })).toEqual({ kind: "meetings_disabled" });
+    expect(classifyResponse(404, { error: "unknown endpoint" })).toEqual({ kind: "app_outdated" });
   });
 
   it("flags anything else as unexpected", () => {
@@ -99,7 +99,7 @@ describe("testConnection", () => {
   it("maps HTTP answers, including non-JSON ones", async () => {
     const answer = (r: Response) => testConnection(PAIRING, { fetchImpl: async () => r });
     expect(await answer(json(401, { error: "x" }))).toEqual({ kind: "bad_token" });
-    expect(await answer(json(404, { error: "unknown endpoint" }))).toEqual({ kind: "meetings_disabled" });
+    expect(await answer(json(404, { error: "unknown endpoint" }))).toEqual({ kind: "app_outdated" });
     expect(await answer(new Response("<html>hello</html>", { status: 200 }))).toEqual({ kind: "unexpected", status: 200 });
   });
 });
@@ -114,7 +114,7 @@ describe("describeResult", () => {
     { kind: "blocked" },
     { kind: "bad_token" },
     { kind: "forbidden" },
-    { kind: "meetings_disabled" },
+    { kind: "app_outdated" },
     { kind: "unexpected", status: 500 },
   ];
 
@@ -128,7 +128,7 @@ describe("describeResult", () => {
   it("says what to do", () => {
     expect(describeResult({ kind: "not_running" }, 5000).detail).toMatch(/127\.0\.0\.1:5000.*Start Sussurro/);
     expect(describeResult({ kind: "bad_token" }, 4525).detail).toMatch(/Copy the pairing code again/);
-    expect(describeResult({ kind: "meetings_disabled" }, 4525).detail).toMatch(/Turn on Meetings/);
+    expect(describeResult({ kind: "app_outdated" }, 4525).detail).toMatch(/update Sussurro/);
     expect(describeResult(all[1], 4525).detail).toMatch(/update the extension/);
     expect(describeResult(all[2], 4525).detail).toMatch(/update Sussurro/);
     expect(describeResult(all[0], 4525).title).toBe("Connected to Sussurro 0.9.0");
