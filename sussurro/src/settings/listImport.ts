@@ -1,9 +1,9 @@
 /* Bulk import for the Personal dictionary (.txt) and Snippets (.csv).
-   Kept in one small module on purpose: #156 replaces the path-based read
-   below with a Rust-side picker, and that change should stay local. */
+   The file is picked by a native dialog opened from Rust (`pick_import_file`,
+   #156): no path crosses IPC, the backend only hands back the picked file's
+   name and text. Parsing and merging stay here and in ../utils. */
 
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { Ctl } from "../hooks/useAppController";
 import {
   describeDictionaryMerge,
@@ -14,24 +14,26 @@ import {
   parseSnippetFile,
 } from "../utils";
 
-// Pick a file, read its text via the narrow `read_import_file` command
-// (.txt/.csv only), then MERGE into the current list — existing entries are
-// never replaced. Empty/unparseable files change nothing.
-async function readImportFile(title: string, name: string, ext: string): Promise<string | null> {
-  const path = await openDialog({
-    title,
-    multiple: false,
-    directory: false,
-    filters: [{ name, extensions: [ext] }],
-  });
-  if (!path || typeof path !== "string") return null;
-  return invoke<string>("read_import_file", { path });
+type ImportKind = "dictionary" | "snippets";
+
+interface ImportFile {
+  name: string;
+  contents: string;
+}
+
+// Let the backend show the picker (.txt for the dictionary, .csv for
+// snippets) and read the file, then MERGE into the current list — existing
+// entries are never replaced. Empty/unparseable files change nothing.
+// Resolves to null when the user cancels the dialog.
+async function pickImportFile(kind: ImportKind): Promise<string | null> {
+  const file = await invoke<ImportFile | null>("pick_import_file", { kind });
+  return file ? file.contents : null;
 }
 
 export async function importDictionary(ctl: Ctl): Promise<void> {
   const { settings, save, setBusy } = ctl;
   try {
-    const content = await readImportFile("Import dictionary", "Text files", "txt");
+    const content = await pickImportFile("dictionary");
     if (content === null) return;
     const words = parseDictionaryFile(content);
     if (words.length === 0) {
@@ -49,7 +51,7 @@ export async function importDictionary(ctl: Ctl): Promise<void> {
 export async function importSnippets(ctl: Ctl): Promise<void> {
   const { settings, save, setBusy } = ctl;
   try {
-    const content = await readImportFile("Import snippets", "CSV files", "csv");
+    const content = await pickImportFile("snippets");
     if (content === null) return;
     const imported = parseSnippetFile(content);
     if (imported.length === 0) {

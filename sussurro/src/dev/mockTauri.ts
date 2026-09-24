@@ -369,6 +369,12 @@ function handle(cmd: string, a: Args): unknown {
       return cancel(Number(a.sessionId));
     case "transcribe_file":
       return transcribeFile(String(a.path), (a.itemType as "note" | "transcription") ?? "note", (a.title as string | null) ?? null);
+    case "pick_import_file":
+      // The real command opens the picker in Rust and returns {name, contents}
+      // (null on cancel); the preview skips the dialog and returns a sample.
+      return a.kind === "snippets"
+        ? { name: "snippets.csv", contents: 'cue,text\nfirma,"Un saluto,\nFrancesco"\nindirizzo,Via Roma 1\n' }
+        : { name: "dictionary.txt", contents: "Sussurro\nTauri\nwhisper.cpp\n" };
     case "plugin:app|version":
       return "0.7.0-dev";
     case "plugin:dialog|open": {

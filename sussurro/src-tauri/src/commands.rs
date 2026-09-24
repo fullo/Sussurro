@@ -261,12 +261,46 @@ pub fn export_config(state: State<'_, AppState>, path: String) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
-/// Read a user-picked dictionary (.txt) or snippets (.csv) file for the bulk
-/// import in Settings. Returns the text; the frontend parses and merges it.
+/// Bulk import in Settings (#156): open the native file picker FROM RUST,
+/// filtered to the one extension `kind` accepts (.txt dictionary / .csv
+/// snippets), and return the picked file's name and text, or `None` if the
+/// user cancelled. No path crosses IPC in either direction, so a compromised
+/// webview can't point this at an arbitrary file; the frontend parses and
+/// merges the text.
+///
+/// Only the main window may call it: the overlay shares the default
+/// capability (and app commands aren't capability-scoped here), so the
+/// calling window's label is checked. Tauri sets that label from the IPC
+/// origin, the page can't forge it.
 #[tauri::command]
-pub fn read_import_file(path: String) -> Result<String, String> {
-    crate::config_io::read_import_text(std::path::Path::new(&path))
-        .map_err(|e| format!("could not read file: {e:#}"))
+pub async fn pick_import_file(
+    window: tauri::WebviewWindow,
+    kind: crate::config_io::ImportKind,
+) -> Result<Option<crate::config_io::ImportFile>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    crate::config_io::check_import_caller(window.label())?;
+    let dialog = window
+        .dialog()
+        .file()
+        .set_title(kind.dialog_title())
+        .add_filter(kind.filter_name(), &[kind.extension()])
+        .set_parent(&window);
+    // The blocking picker must stay off the main thread and off the async
+    // workers: it waits for the user.
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(picked) = dialog.blocking_pick_file() else {
+            return Ok(None);
+        };
+        let path = picked
+            .into_path()
+            .map_err(|e| format!("could not read file: {e}"))?;
+        crate::config_io::load_import_file(&path, kind)
+            .map(Some)
+            .map_err(|e| format!("could not read file: {e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Merge a config bundle from `path` into settings. Returns a summary string.
