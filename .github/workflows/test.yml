@@ -48,6 +48,15 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox
 
+      # Firefox on Linux needs an audio server for WebAudio and <audio>
+      # output (without one, AudioContexts stay suspended); the runner has
+      # none. PulseAudio with its automatic null sink is enough.
+      - name: Audio server (null sink)
+        run: |
+          sudo apt-get install -y --no-install-recommends pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl info | grep -E "Server Name|Default Sink"
+
       - name: Capture harness (Chromium + Firefox)
         run: npm run test:e2e
 
