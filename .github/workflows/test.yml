@@ -9,8 +9,9 @@ on:
   pull_request:
 
 jobs:
-  # Browser extension (extension/): type-check, unit tests, both builds and
-  # `web-ext lint` on the Firefox build. Its own job, so it runs in parallel
+  # Browser extension (extension/): type-check, unit tests, both builds,
+  # `web-ext lint` on the Firefox build and the Playwright capture harness
+  # (e2e/). Its own job, so it runs in parallel
   # with the Rust one and needs no Rust toolchain.
   extension:
     runs-on: ubuntu-24.04
@@ -40,6 +41,15 @@ jobs:
 
       - name: web-ext lint (Firefox build)
         run: npm run lint
+
+      # Capture harness (#128): both builds in headless Chromium and Firefox
+      # against a local two-peer call and a fake /live; ~30 s plus the
+      # browser download.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox
+
+      - name: Capture harness (Chromium + Firefox)
+        run: npm run test:e2e
 
       - uses: actions/upload-artifact@v4
         with:

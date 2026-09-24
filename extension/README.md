@@ -6,8 +6,11 @@ Sussurro app running on the same computer, which transcribes and saves it.
 The extension is a capture device plus a live mirror; editing happens in the
 app (plan decision E3).
 
-**Status: preview.** Pairing with the app works (#127); capture (#128) and
-the live side panel (#129) come next. Build it only to work on it.
+**Status: preview.** Pairing with the app (#127) and capture (#128) work;
+the live transcript in the side panel (#129) comes next. Capture is
+verified automatically against a local two-peer call (see *Capture
+harness*); real Meet / Teams / Zoom calls are still checked by hand (#184).
+Build it only to work on it.
 
 ## Pairing
 
@@ -31,23 +34,90 @@ defined once in the app (`sussurro/src/lib/pairingCode.ts`) and imported
 here as `@sussurro/pairing`. The token is never logged and the options
 page shows it only masked once saved.
 
+## Capture (#128)
+
+Nothing is captured until the user presses **Start recording** in the side
+panel (Chrome) / sidebar (Firefox) of the meeting tab; while capturing, the
+toolbar button shows a red **REC** badge on that tab. **Stop**, closing the
+tab or navigating away ends the meeting on the app (`stop`), which keeps
+what it received.
+
+```
+MAIN world (hook, AudioWorklet) ─MessagePort─▶ ISOLATED world ─runtime port─▶ background ─WebSocket─▶ app /live
+                                               Chrome offscreen (tab capture) ─runtime port─▶ background
+```
+
+- **MAIN-world hook** (`src/content/main-world.ts`, `document_start`): wraps
+  the `RTCPeerConnection` constructor (a `Proxy`: `track` events = remote
+  audio), `addTrack` / `addTransceiver` / `addStream` / `removeTrack` /
+  `close`, `RTCRtpSender.replaceTrack`, rescans senders/receivers after
+  `set{Local,Remote}Description`, and observes the page's `getUserMedia`.
+  Several peer connections and tracks added, replaced or ended mid-call
+  are followed (`src/content/registry.ts` picks the tracks). It only
+  *observes* until armed: no audio graph, nothing leaves the page.
+- **Channels** match the app (`api/protocol.rs`): `0` = `mic` (what the page
+  sends, else its `getUserMedia` track), `1` = `remote` (every received
+  track, mixed). One `AudioContext` at the device rate → a mono bus per
+  channel → an AudioWorklet that posts 2048-sample i16 blocks for both
+  channels together (silence for a channel with no track), so `seq` stays
+  gap-free and the channels aligned. Frames: `[u8 channel][u32 seq LE][i16…]`.
+  The page's tracks are never cloned, stopped or muted.
+- **Fallbacks**: with no peer connection in the page, the audio of playing
+  `<audio>`/`<video>` elements (their `srcObject` tracks, else
+  `captureStream()`) is the remote channel, and only then, if no mic was
+  seen, the hook asks `getUserMedia` itself — **this can show a second
+  microphone prompt** (a one-time grant in Chrome, a temporary one in
+  Firefox). Last, on **Chrome only**, if 4 s after Start the page still shows
+  no remote audio (e.g. a client that plays WebAssembly-decoded audio
+  through WebAudio), the background captures the tab's audio with
+  `tabCapture` through an offscreen document (`offscreen.html`) and plays
+  it back so the tab stays audible. Firefox has no `tabCapture`. The
+  worklet loads from a Blob URL, else a data: URL, else a ScriptProcessor
+  runs instead (strict page CSPs).
+- **MAIN ↔ ISOLATED** (`src/shared/handshake.ts`): a private MessageChannel
+  handed over with a handshake that works whichever script the browser
+  injects first (Firefox may run MAIN first) and hides the offers from the
+  page. Page buffers are copied with `structuredClone` in the ISOLATED world
+  (Firefox Xray wrappers refuse `new Uint8Array(buffer)`). A watchdog
+  disarms the hook if the extension side goes quiet.
+- **ISOLATED → background**: a runtime port. Chrome ≥ 148 carries
+  `ArrayBuffer`s thanks to `"message_serialization": "structured_clone"`
+  (Firefox always does); both ends negotiate with a probe buffer and fall
+  back to base64 on older Chromium engines (`src/shared/transport.ts`).
+- **Background** (`src/background/`): per-tab session (`session.ts`, a pure
+  state machine): checks the app with `GET /app/version`, arms the page,
+  opens `ws://127.0.0.1:<port>/live?token=…`, sends `start {title, url,
+  platform, rate, channels: 2}`, numbers `seq` per connection, buffers up
+  to ~30 s while (re)connecting, reconnects with capped exponential backoff
+  (a reconnect is a new `start`, i.e. a new item), stops retrying on a
+  wrong token / meetings off / other protocol, and sends `ping` after 10 s
+  without audio. `platform` is `meet`, `teams`, `zoom` (else `other`).
+- The Firefox manifest sets its own `content_security_policy`: Firefox's
+  MV3 default includes `upgrade-insecure-requests`, which breaks
+  `ws://127.0.0.1` (spike #104).
+- Scope: the top frame only (no `all_frames`); if a platform runs its call
+  in an iframe, that shows up in the manual checks (#184).
+
 ## Layout
 
 | Path | What it is |
 |---|---|
 | `manifest.chrome.json` | Chrome/Edge/Brave, MV3: service-worker background, `side_panel` |
 | `manifest.firefox.json` | Firefox ≥ 128, MV3: `background.scripts`, `sidebar_action` |
-| `src/background/` | background worker (WebSocket to the app, from #128) |
+| `src/background/` | background worker: per-tab session, WebSocket to the app, badge, Chrome tab capture |
 | `src/content/main-world.ts` | MAIN-world content script (the `RTCPeerConnection` hook, E4) |
 | `src/content/isolated-world.ts` | ISOLATED-world content script (relay to the background) |
+| `src/offscreen/`, `offscreen.html` | Chrome only: tab-capture fallback |
+| `e2e/` | capture harness (Playwright + a fake app) |
 | `src/sidepanel/`, `sidepanel.html` | side panel (Chrome) / sidebar (Firefox) |
 | `src/options/`, `options.html` | options page: pairing with the app, Test connection (#127) |
 | `src/shared/` | helpers shared by the entry points (`pairing.ts`: storage keys and URLs; `connection.ts`: the connection test) |
 | `scripts/build.ts` | the build: pages + scripts + manifest + icons + zip |
 
-Permissions stay minimal: `storage` (plus `sidePanel` on Chrome), and host
-access only to the meeting pages and to `http://127.0.0.1/*` (the local app).
-No `<all_urls>`. The unit tests check this.
+Permissions stay minimal: `storage` (plus, on Chrome, `sidePanel` and the
+tab-capture fallback's `tabCapture` and `offscreen`), and host access only
+to the meeting pages and to `http://127.0.0.1/*` (the local app). No
+`<all_urls>`. The unit tests check this.
 
 Transcript components are shared with the app. They live in
 `sussurro/src/transcript/` and are imported as `@sussurro/transcript` (a
@@ -76,7 +146,32 @@ npm test                 # vitest (pure helpers, manifest checks)
 npm run lint             # web-ext lint on dist/firefox (run after build:firefox)
 ```
 
-CI (`.github/workflows/test.yml`, `extension` job) runs all of the above. The
+CI (`.github/workflows/test.yml`, `extension` job) runs all of the above,
+plus the capture harness.
+
+### Capture harness
+
+`e2e/run.ts` loads the built extension into real browsers (Playwright's
+Chromium and Firefox), opens a local two-peer WebRTC call (the user's side
+sends the browser's fake microphone — 440 Hz in Chromium, 1 kHz in Firefox —
+the other side a 300 Hz tone) and a fake Sussurro app (`/app/version` and
+`/live` with the app's Origin and token checks). Per configuration it
+presses Start in the side panel and checks: no socket before Start, the
+`start` message, both channels arriving with their own tone, `seq` from 0
+without gaps, the call unaffected both ways, Stop, and `stop` when the tab
+closes. Configurations: `chromium` (binary messaging, Meet-like
+`replaceTrack`), `chromium-json` (the manifest key removed: base64, as on
+Chrome < 148) and `firefox` (installed as a temporary add-on and driven
+over the remote debugging protocol, which Playwright lacks for Firefox
+extensions). About 30 s headless.
+
+```bash
+npx playwright install chromium firefox   # once (PLAYWRIGHT_BROWSERS_PATH to choose where)
+npm run build && npm run test:e2e         # or: npm run test:e2e -- firefox
+HEADED=1 npm run test:e2e -- chromium     # watch it
+```
+
+Temporary profiles go under `$E2E_TMPDIR` (default: the OS temp folder). The
 release workflow attaches both zips to the GitHub release.
 
 `web-ext lint` passes with a few expected warnings. `innerHTML` comes from
