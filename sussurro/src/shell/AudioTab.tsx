@@ -28,6 +28,9 @@ import type { Item } from "../lib/types";
 
 /** The URL scheme served by archive::playback (backend). */
 const SCHEME = "sussurro-audio";
+/** Clock period while playing: 25 updates a second is smooth enough for a
+ *  word highlight, and a span overshoots its end by at most this much. */
+const TICK_MS = 40;
 
 export function AudioTab({ item, speakers }: { item: Item; speakers?: TranscriptSpeaker[] }) {
   const files = (item.audio ?? []).map((f) => f.name);
@@ -131,21 +134,21 @@ function Player({ item, files, speakers }: { item: Item; files: string[]; speake
     [],
   );
 
-  // One frame loop while playing: advance past span ends, move the clock.
+  // The clock while playing: advance past span ends, move the highlight. A
+  // timer, not requestAnimationFrame: frames stop in a minimized or hidden
+  // window, and the audio would then run past a span into someone else's
+  // lines. A timer keeps firing there (throttled, but it fires).
   useEffect(() => {
     if (!playing) return;
-    let raf = 0;
-    const loop = () => {
+    const t = window.setInterval(() => {
       const p = playerRef.current;
       if (!p) return;
       const still = p.tick();
       setNow(p.now());
       setVNow(p.virtualNow());
-      if (still) raf = requestAnimationFrame(loop);
-      else setPlaying(false);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+      if (!still) setPlaying(false);
+    }, TICK_MS);
+    return () => window.clearInterval(t);
   }, [playing]);
 
   const act = (f: (p: ReplayPlayer) => void) => {

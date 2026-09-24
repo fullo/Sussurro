@@ -6,7 +6,7 @@
      others are paused. The "master" is the longest-running of them and
      gives the clock; the others are nudged back in sync when they drift
      more than SYNC_TOLERANCE_S (two channel files of one call).
-   - tick() is called on every animation frame while playing: at the end
+   - tick() is called on a short timer while playing: at the end
      of a span it seeks to the next one (skipping everything between), at
      the end of the playlist it stops. */
 
@@ -24,7 +24,7 @@ export interface MediaLike {
 }
 
 const SYNC_TOLERANCE_S = 0.15;
-/** A span is over this close to its end (one frame at 60 Hz is ~17 ms). */
+/** A span counts as over this close to its end. */
 const END_EPSILON_MS = 20;
 
 export class ReplayPlayer {
@@ -186,7 +186,7 @@ export class ReplayPlayer {
     this.cue(at.index, at.ms);
   }
 
-  /** Once per frame while playing: advance past span ends, keep channels
+  /** On each clock tick while playing: advance past span ends, keep channels
    *  in sync. Returns whether it is still playing. */
   tick(): boolean {
     if (!this.playing) return false;
