@@ -70,6 +70,8 @@ pub struct AppState {
     pub mic_test: std::sync::atomic::AtomicBool,
     /// Streaming-injection progress for the recording in flight.
     pub stream: Mutex<StreamState>,
+    /// Long-form engine sessions (mic and file, #113).
+    pub engine: crate::engine::session::Sessions,
 }
 
 /// What streaming injection has already done for the current recording.

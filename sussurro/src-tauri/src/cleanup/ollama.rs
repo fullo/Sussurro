@@ -16,7 +16,33 @@ pub fn cleanup(
     let Some(messages) = build_messages(settings, style, transcript) else {
         return transcript.to_string();
     };
-    match chat(settings, &messages) {
+    run_cleanup(settings, &messages, transcript)
+}
+
+/// Chunked cleanup for the long-form engine (#113): clean one segment with
+/// the previous segment as read-only context. Same guarantees as
+/// [`cleanup`] — never fails, falls back to the raw segment.
+pub fn cleanup_with_context(
+    settings: &crate::settings::Settings,
+    previous: Option<&str>,
+    transcript: &str,
+) -> String {
+    let Some(messages) =
+        crate::cleanup::prompt::build_messages_with_context(settings, previous, transcript)
+    else {
+        return transcript.to_string();
+    };
+    run_cleanup(settings, &messages, transcript)
+}
+
+/// Send the messages and apply the fallbacks shared by every cleanup: any
+/// error, an empty reply or a hallucinated one returns `transcript`.
+fn run_cleanup(
+    settings: &crate::settings::Settings,
+    messages: &[Value],
+    transcript: &str,
+) -> String {
+    match chat(settings, messages) {
         Ok(text) if !text.trim().is_empty() => {
             let cleaned = text.trim().to_string();
             // Small models sometimes ANSWER short dictations instead of
@@ -193,6 +219,14 @@ mod tests {
         // Discard port: connection refused instantly.
         let out = cleanup(&cfg(CleanupLevel::Light, "http://127.0.0.1:9"), None, "um raw text");
         assert_eq!(out, "um raw text");
+    }
+
+    #[test]
+    fn chunked_cleanup_falls_back_to_the_raw_segment() {
+        let s = cfg(CleanupLevel::Light, "http://127.0.0.1:9");
+        assert_eq!(cleanup_with_context(&s, Some("before"), "um segment"), "um segment");
+        let none = cfg(CleanupLevel::None, "http://0.0.0.0:1");
+        assert_eq!(cleanup_with_context(&none, None, "um segment"), "um segment");
     }
 
     #[test]

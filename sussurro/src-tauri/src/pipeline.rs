@@ -173,7 +173,8 @@ fn prepare_samples(
 }
 
 /// Lazy-load the configured STT engine into AppState (load takes seconds; do it once).
-fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) -> anyhow::Result<()> {
+/// Also used by the long-form engine, which shares the same transcriber.
+pub(crate) fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) -> anyhow::Result<()> {
     let models_dir = crate::state::resolve_models_dir(&state.paths, settings);
     let mut guard = state.transcriber.lock().unwrap();
     if guard.is_none() {
@@ -211,16 +212,16 @@ fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) ->
 const TRANSCRIBER_IDLE_UNLOAD: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// Periodic idle check, called from the background thread spawned at setup.
-/// Never blocks dictation: an active recording counts as in use, and try_lock
-/// skips the round when a transcription holds the transcriber.
+/// Never blocks dictation: an active recording or a running long-form
+/// session (mic or file, #113) counts as in use, and try_lock skips the
+/// round when a transcription holds the transcriber.
 pub fn unload_transcriber_if_idle(state: &AppState) -> bool {
-    if state.recorder.lock().unwrap().is_recording() {
-        return false;
-    }
+    let in_use = state.recorder.lock().unwrap().is_recording() || state.engine.is_active();
     let unloaded = unload_if_idle(
         &state.transcriber,
         &state.transcriber_last_used,
         TRANSCRIBER_IDLE_UNLOAD,
+        in_use,
     );
     if unloaded {
         eprintln!(
@@ -239,7 +240,13 @@ fn unload_if_idle<T>(
     slot: &std::sync::Mutex<Option<T>>,
     last_used: &std::sync::Mutex<Option<std::time::Instant>>,
     threshold: std::time::Duration,
+    in_use: bool,
 ) -> bool {
+    // A recording or an engine session between segments holds no lock but
+    // will need the model again in a moment — never idle.
+    if in_use {
+        return false;
+    }
     let Ok(mut guard) = slot.try_lock() else {
         return false; // busy transcribing — obviously not idle
     };
@@ -303,8 +310,9 @@ fn record_stats(state: &AppState, cleaned: &str) {
 }
 
 /// Transcribe a batch of 16 kHz mono samples and clean the result, using the
-/// current settings. Appends a history entry. Used for audio-file import (no
-/// injection, no per-app style). Returns (raw, cleaned).
+/// current settings. Appends a history entry. Used by the local HTTP API's
+/// `POST /transcribe` (no injection, no per-app style); files picked in the
+/// app go through the long-form engine instead (#113). Returns (raw, cleaned).
 pub fn transcribe_batch(state: &AppState, samples: &[f32]) -> anyhow::Result<(String, String)> {
     let settings = state.settings.lock().unwrap().clone();
     ensure_transcriber(state, &settings)?;
@@ -608,7 +616,7 @@ mod tests {
         let last = std::sync::Mutex::new(
             std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
         );
-        assert!(unload_if_idle(&slot, &last, std::time::Duration::from_secs(1)));
+        assert!(unload_if_idle(&slot, &last, std::time::Duration::from_secs(1), false));
         assert!(slot.lock().unwrap().is_none());
         assert!(last.lock().unwrap().is_none());
     }
@@ -617,7 +625,7 @@ mod tests {
     fn idle_unload_keeps_a_recently_used_slot() {
         let slot = std::sync::Mutex::new(Some(1u8));
         let last = std::sync::Mutex::new(Some(std::time::Instant::now()));
-        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(60)));
+        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(60), false));
         assert!(slot.lock().unwrap().is_some());
     }
 
@@ -627,12 +635,12 @@ mod tests {
         let stale = std::sync::Mutex::new(
             std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
         );
-        assert!(!unload_if_idle(&empty, &stale, std::time::Duration::from_secs(1)));
+        assert!(!unload_if_idle(&empty, &stale, std::time::Duration::from_secs(1), false));
 
         // Loaded but the clock was never set: leave it alone.
         let slot = std::sync::Mutex::new(Some(1u8));
         let never = std::sync::Mutex::new(None);
-        assert!(!unload_if_idle(&slot, &never, std::time::Duration::from_secs(1)));
+        assert!(!unload_if_idle(&slot, &never, std::time::Duration::from_secs(1), false));
         assert!(slot.lock().unwrap().is_some());
     }
 
@@ -643,7 +651,39 @@ mod tests {
             std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
         );
         let held = slot.lock().unwrap(); // a transcription in flight
-        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(1)));
+        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(1), false));
         assert!(held.is_some());
+    }
+
+    #[test]
+    fn idle_unload_keeps_an_expired_slot_while_a_session_is_active() {
+        // A long-form session between two segments holds no lock and may not
+        // have touched the clock for a while (a long pause on the mic), yet
+        // needs the model for the next segment.
+        let slot = std::sync::Mutex::new(Some(1u8));
+        let last = std::sync::Mutex::new(
+            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
+        );
+        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(1), true));
+        assert!(slot.lock().unwrap().is_some());
+        assert!(last.lock().unwrap().is_some(), "the clock is left alone too");
+        // The session ends: the next idle round unloads.
+        assert!(unload_if_idle(&slot, &last, std::time::Duration::from_secs(1), false));
+        assert!(slot.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn idle_unload_follows_the_engine_session_registry() {
+        // The flag the real unloader passes: `Sessions::is_active`.
+        let sessions = crate::engine::session::Sessions::default();
+        let slot = std::sync::Mutex::new(Some(1u8));
+        let last = std::sync::Mutex::new(
+            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
+        );
+        let (id, _) = sessions.begin();
+        let t = std::time::Duration::from_secs(1);
+        assert!(!unload_if_idle(&slot, &last, t, sessions.is_active()));
+        sessions.end(id);
+        assert!(unload_if_idle(&slot, &last, t, sessions.is_active()));
     }
 }

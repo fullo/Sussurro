@@ -3,7 +3,7 @@ use crate::hotkey;
 use crate::settings::Settings;
 use crate::state::AppState;
 use crate::stt::models;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
 #[tauri::command]
@@ -285,28 +285,102 @@ pub fn import_config(state: State<'_, AppState>, path: String) -> Result<String,
     Ok(format!("Imported {w} words, {sn} snippets, {st} app styles"))
 }
 
-/// Transcribe an audio file's bytes (from a file input) and clean the result
-/// with the current settings. Appends a history entry; returns (raw, cleaned).
+// ---- Long-form engine (0.7, #113): mic sessions and files → archive items ----
+
+/// What a finished engine run produced (also sent as `engine-done`).
+#[derive(serde::Serialize)]
+pub struct EngineResult {
+    pub item_id: String,
+    pub item_type: crate::archive::ItemType,
+    pub title: String,
+    /// The cleaned transcript as plain text.
+    pub text: String,
+    pub segments: usize,
+    pub duration_s: f64,
+}
+
+/// Transcribe an audio file from its path (streamed decode, VAD segments,
+/// chunked cleanup) into an archive item of the chosen type — note by
+/// default, or transcription (P10). Resolves when the item is written;
+/// progress arrives as `engine-progress` / `engine-segment` events.
 #[tauri::command]
-pub async fn transcribe_audio_file(
+pub async fn transcribe_file(
     app: AppHandle,
-    bytes: Vec<u8>,
-    ext: String,
-) -> Result<HistoryEntry, String> {
+    path: String,
+    item_type: Option<crate::archive::ItemType>,
+    title: Option<String>,
+) -> Result<EngineResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let samples = crate::audio::decode::decode_bytes_16k_mono(bytes, &ext)
-            .map_err(|e| format!("{e:#}"))?;
-        let state = app.state::<AppState>();
-        let (raw, cleaned) =
-            crate::pipeline::transcribe_batch(&state, &samples).map_err(|e| format!("{e:#}"))?;
-        Ok(HistoryEntry {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            raw,
-            cleaned,
+        let r = crate::engine::session::transcribe_file(
+            &app,
+            std::path::Path::new(&path),
+            item_type.unwrap_or_default(),
+            title.unwrap_or_default(),
+        )
+        .map_err(|e| format!("{e:#}"))?;
+        Ok(EngineResult {
+            item_id: r.item_id,
+            item_type: r.meta.item_type,
+            title: r.meta.title,
+            text: r.text,
+            segments: r.segments,
+            duration_s: r.duration_ms as f64 / 1000.0,
         })
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Start a long microphone session (independent of the dictation hotkey).
+/// Returns the session id; the item arrives as `engine-done` after
+/// `engine_stop_mic`. `defer`: transcribe only after the stop, for slow
+/// machines.
+#[tauri::command]
+pub fn engine_start_mic(
+    app: AppHandle,
+    item_type: Option<crate::archive::ItemType>,
+    title: Option<String>,
+    defer: Option<bool>,
+) -> Result<u64, String> {
+    crate::engine::session::start_mic(
+        &app,
+        item_type.unwrap_or_default(),
+        title.unwrap_or_default(),
+        defer.unwrap_or(false),
+    )
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// Stop recording the mic session; the queued segments are still
+/// transcribed and the item written. Returns the session id.
+#[tauri::command]
+pub fn engine_stop_mic(state: State<'_, AppState>) -> Result<u64, String> {
+    state
+        .engine
+        .stop_mic()
+        .ok_or_else(|| "no microphone session is running".to_string())
+}
+
+/// Abort a session (mic or file): nothing is written. False if unknown.
+#[tauri::command]
+pub fn engine_cancel(state: State<'_, AppState>, session_id: u64) -> bool {
+    state.engine.cancel(session_id)
+}
+
+#[derive(serde::Serialize)]
+pub struct EngineStatus {
+    /// Sessions running (mic + files).
+    pub active: usize,
+    /// The running mic session, if any.
+    pub mic_session: Option<u64>,
+}
+
+#[tauri::command]
+pub fn engine_status(state: State<'_, AppState>) -> EngineStatus {
+    EngineStatus {
+        active: state.engine.active_count(),
+        mic_session: state.engine.mic_session(),
+    }
 }
 
 /// One-off translation of a past history entry. Starts from the RAW
