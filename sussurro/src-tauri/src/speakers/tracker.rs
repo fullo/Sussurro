@@ -80,7 +80,7 @@ pub fn windows(len: usize, max: usize, min: usize) -> Vec<Range<usize>> {
 }
 
 fn ms_to_samples(ms: u64) -> usize {
-    (ms * crate::engine::segmenter::RATE as u64 / 1000) as usize
+    (ms * crate::engine::segmenter::RATE / 1000) as usize
 }
 
 /// Per-session speaker state (lives on the engine's worker thread).
@@ -205,8 +205,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::speakers::cluster::tests::{sample, voices, Lcg};
 
-    /// Fake embedder: the first sample's value picks the voice (1.0 →
-    /// voice 0, 2.0 → voice 1, …), plus noise.
+    /// Fake embedder: the window's peak level picks the voice (0.2 →
+    /// voice 0, 0.4 → voice 1, …), plus noise.
     pub(crate) struct FakeEmbedder {
         pub voices: Vec<Vec<f32>>,
         pub rng: Lcg,
@@ -215,24 +215,39 @@ pub(crate) mod tests {
 
     impl SpeakerEmbedder for FakeEmbedder {
         fn embed(&mut self, samples: &[f32]) -> Result<Vec<f32>> {
-            self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let v = (samples[0].round() as usize).saturating_sub(1);
-            Ok(sample(&mut self.rng, &self.voices[v % self.voices.len()], 0.9))
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
+            let v = ((peak * 5.0).round() as usize).saturating_sub(1);
+            Ok(sample(
+                &mut self.rng,
+                &self.voices[v % self.voices.len()],
+                0.9,
+            ))
         }
     }
 
-    pub(crate) fn fake_loader(seed: u64) -> (EmbedderLoader, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    pub(crate) fn fake_loader(
+        seed: u64,
+    ) -> (
+        EmbedderLoader,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let c = calls.clone();
         let loader: EmbedderLoader = Box::new(move || {
             let (rng, voices) = voices(3, seed);
-            Ok(Box::new(FakeEmbedder { voices, rng, calls: c }) as Box<dyn SpeakerEmbedder>)
+            Ok(Box::new(FakeEmbedder {
+                voices,
+                rng,
+                calls: c,
+            }) as Box<dyn SpeakerEmbedder>)
         });
         (loader, calls)
     }
 
     fn audio(voice: usize, ms: u64) -> Vec<f32> {
-        vec![voice as f32 + 1.0; ms_to_samples(ms)]
+        vec![(voice as f32 + 1.0) * 0.2; ms_to_samples(ms)]
     }
 
     #[test]
@@ -255,14 +270,22 @@ pub(crate) mod tests {
             .iter()
             .map(|&v| t.label(Channel::Mic, &audio(v, 4000)))
             .collect();
-        let ids: Vec<&str> = got.iter().map(|l| l.speaker_id.as_deref().unwrap()).collect();
-        assert_eq!(ids, ["voice:1", "voice:2", "voice:1", "voice:2", "voice:3", "voice:1"]);
+        let ids: Vec<&str> = got
+            .iter()
+            .map(|l| l.speaker_id.as_deref().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            ["voice:1", "voice:2", "voice:1", "voice:2", "voice:3", "voice:1"]
+        );
         let new: Vec<&str> = got
             .iter()
             .filter_map(|l| l.new_speaker.as_ref().map(|s| s.id.as_str()))
             .collect();
         assert_eq!(new, ["voice:1", "voice:2", "voice:3"]);
-        assert!(got.iter().all(|l| l.embedding.as_ref().is_some_and(|e| e.len() == 256)));
+        assert!(got
+            .iter()
+            .all(|l| l.embedding.as_ref().is_some_and(|e| e.len() == 256)));
         // 4 s = two 2 s windows per segment.
         assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 12);
     }
@@ -271,11 +294,17 @@ pub(crate) mod tests {
     fn short_segments_and_other_channels_get_no_voice() {
         let (load, calls) = fake_loader(1);
         let mut t = Tracker::new(SpeakerOptions::clustering(&[Channel::Remote]), load);
-        assert_eq!(t.label(Channel::Remote, &audio(0, 900)), Labelled::default());
+        assert_eq!(
+            t.label(Channel::Remote, &audio(0, 900)),
+            Labelled::default()
+        );
         assert_eq!(t.label(Channel::Mic, &audio(0, 4000)), Labelled::default());
         // Nothing needed the model: it was never loaded.
         assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 0);
-        assert!(t.label(Channel::Remote, &audio(0, 1000)).speaker_id.is_some());
+        assert!(t
+            .label(Channel::Remote, &audio(0, 1000))
+            .speaker_id
+            .is_some());
     }
 
     #[test]
@@ -292,9 +321,17 @@ pub(crate) mod tests {
         assert_eq!(a.new_speaker, Some(you_speaker()));
         assert!(a.embedding.is_none());
         let b = t.label(Channel::Mic, &audio(1, 4000));
-        assert_eq!((b.speaker_id.as_deref(), b.new_speaker), (Some("you"), None));
+        assert_eq!(
+            (b.speaker_id.as_deref(), b.new_speaker),
+            (Some("you"), None)
+        );
         assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 0);
-        assert_eq!(t.label(Channel::Remote, &audio(1, 4000)).speaker_id.as_deref(), Some("voice:1"));
+        assert_eq!(
+            t.label(Channel::Remote, &audio(1, 4000))
+                .speaker_id
+                .as_deref(),
+            Some("voice:1")
+        );
     }
 
     #[test]

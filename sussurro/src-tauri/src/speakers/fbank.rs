@@ -75,7 +75,11 @@ impl Fbank {
                     let m = mel_scale(width * i as f64);
                     if m > l && m < r {
                         first.get_or_insert(i);
-                        let w = if m <= c { (m - l) / (c - l) } else { (r - m) / (r - c) };
+                        let w = if m <= c {
+                            (m - l) / (c - l)
+                        } else {
+                            (r - m) / (r - c)
+                        };
                         weights.push(w as f32);
                     }
                 }
@@ -104,7 +108,11 @@ impl Fbank {
             }
             fr[0] -= PREEMPH * fr[0];
             for (i, b) in buf.iter_mut().enumerate() {
-                let v = if i < FRAME_LEN { fr[i] * self.window[i] } else { 0.0 };
+                let v = if i < FRAME_LEN {
+                    fr[i] * self.window[i]
+                } else {
+                    0.0
+                };
                 *b = Complex32::new(v, 0.0);
             }
             self.fft.process_with_scratch(&mut buf, &mut scratch);

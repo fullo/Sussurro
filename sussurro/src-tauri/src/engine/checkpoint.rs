@@ -226,6 +226,26 @@ impl LiveItem {
         self.file.segments.iter().any(|s| !s.text.trim().is_empty())
     }
 
+    /// List a speaker the next checkpoint writes (#130); one already
+    /// listed is left as is.
+    pub fn add_speaker(&mut self, speaker: crate::archive::DocSpeaker) {
+        if !self.file.speakers.iter().any(|s| s.id == speaker.id) {
+            self.file.speakers.push(speaker);
+        }
+    }
+
+    /// Fold the session's tiny voices into the nearest ones and number
+    /// them 1, 2, … ([`crate::speakers::doc::finalize_live`]); written by
+    /// [`Self::finish`].
+    pub fn finalize_voices(&mut self) {
+        crate::speakers::doc::finalize_live(&mut self.file);
+    }
+
+    /// The speakers listed so far.
+    pub fn speakers(&self) -> &[crate::archive::DocSpeaker] {
+        &self.file.speakers
+    }
+
     /// Add a finished segment and checkpoint it to disk.
     pub fn push(&mut self, segment: Segment) {
         self.file.segments.push(segment);

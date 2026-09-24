@@ -145,7 +145,10 @@ impl SpeakerEmbedder for WeSpeaker {
             .try_extract_tensor::<f32>()
             .map_err(|e| anyhow!("speaker model output: {e}"))?;
         if data.len() != EMBEDDING_DIM {
-            bail!("speaker model returned {} values, expected {EMBEDDING_DIM}", data.len());
+            bail!(
+                "speaker model returned {} values, expected {EMBEDDING_DIM}",
+                data.len()
+            );
         }
         Ok(super::cluster::l2_normalize(data.to_vec()))
     }
@@ -196,7 +199,10 @@ mod tests {
 
     #[test]
     fn model_is_pinned_to_the_phase0_file() {
-        assert_eq!(MODEL_SHA256, "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068");
+        assert_eq!(
+            MODEL_SHA256,
+            "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068"
+        );
         assert!(MODEL_URL.starts_with("https://huggingface.co/Wespeaker/"));
         assert!(MODEL_URL.ends_with("/voxceleb_resnet34_LM.onnx"));
         assert!(crate::stt::models::validate_model_name(MODEL_FILE).is_ok());

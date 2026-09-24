@@ -250,6 +250,10 @@ pub struct Job {
     /// then fails or is cancelled is still marked. `None` = cleanup stays
     /// on this machine (or sends nothing).
     pub external_cleanup: Option<archive::external::ExternalSend>,
+    /// Speaker labels (#130): the channels clustered into "Voice N" and
+    /// the embedder, loaded when the first segment needs it. `None` (the
+    /// default) = no speakers, no embeddings.
+    pub speakers: Option<crate::speakers::Tracker>,
 }
 
 /// A [`Cleaner`] whose first call records the run's external send in the
@@ -390,6 +394,7 @@ fn run_inner(
         journal,
         meta,
         external_cleanup,
+        mut speakers,
     } = job;
     let reindex = |id: &str| {
         if let Some(db) = &index_db {
@@ -441,6 +446,7 @@ fn run_inner(
         voice_commands,
         stt,
         cleaner,
+        speakers.as_mut(),
         &sink,
         &mut item,
     );
@@ -473,6 +479,11 @@ fn run_inner(
         return (Err(e), kept);
     }
 
+    if speakers.is_some() {
+        // The online clustering over-splits: tiny voices fold into the
+        // nearest one before the item is finalized (#107).
+        item.finalize_voices();
+    }
     let duration_ms =
         samples_to_ms(ingested).max(item.segments().last().map(|s| s.end_ms).unwrap_or(0));
     let text = transcript_text(item.segments());
@@ -531,6 +542,7 @@ fn capture(
     voice_commands: bool,
     stt: &mut dyn SegmentStt,
     cleaner: &dyn Cleaner,
+    speakers: Option<&mut crate::speakers::Tracker>,
     sink: &Arc<dyn EngineSink>,
     item: &mut checkpoint::LiveItem,
 ) -> Captured {
@@ -563,6 +575,7 @@ fn capture(
         &shared,
         stt,
         cleaner,
+        speakers,
         &**sink,
         session_id,
         channel,
@@ -675,6 +688,7 @@ fn work(
     shared: &Shared,
     stt: &mut dyn SegmentStt,
     cleaner: &dyn Cleaner,
+    mut speakers: Option<&mut crate::speakers::Tracker>,
     sink: &dyn EngineSink,
     session_id: u64,
     channel: Channel,
@@ -737,10 +751,25 @@ fn work(
                 Some(segment)
             }
         };
-        if let Some(segment) = built {
+        if let Some(mut segment) = built {
+            if let Some(tracker) = speakers.as_deref_mut() {
+                if segment.stt_error.is_none() {
+                    let labelled = tracker.label(channel, &audio.samples);
+                    if let Some(sp) = labelled.new_speaker {
+                        item.add_speaker(sp);
+                    }
+                    segment.speaker_id = labelled.speaker_id;
+                    segment.embedding = labelled.embedding;
+                }
+            }
+            // The UI gets the line without its embedding (256 floats only
+            // the backend uses).
             let event = EngineEvent::Segment(SegmentPayload {
                 session_id,
-                segment: segment.clone(),
+                segment: Segment {
+                    embedding: None,
+                    ..segment.clone()
+                },
             });
             // On disk before the UI hears about it.
             item.push(segment);

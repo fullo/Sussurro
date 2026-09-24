@@ -127,6 +127,7 @@ fn job(dir: &std::path::Path, audio: Vec<f32>, policy: Policy) -> Job {
         index_db: Some(dir.join("index.sqlite")),
         journal: Some(dir.join(checkpoint::JOURNAL_FILE)),
         external_cleanup: None,
+        speakers: None,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: "file:test.wav".into(),
@@ -1020,6 +1021,7 @@ fn engine_end_to_end_with_a_real_model() {
         index_db: Some(dir.path().join("index.sqlite")),
         journal: None,
         external_cleanup: None,
+        speakers: None,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(&input),
@@ -1113,6 +1115,7 @@ fn engine_long_file_streams_with_bounded_memory() {
         index_db: None,
         journal: None,
         external_cleanup: None,
+        speakers: None,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(path),
@@ -1720,4 +1723,128 @@ fn external_cleanup_marks_the_item_only_when_it_was_sent() {
     assert!(run_with("", None).is_empty(), "no opt-in: nothing sent, nothing recorded");
     assert!(run_with("other.example", None).is_empty(), "an opt-in for another host doesn't count");
     assert!(run_with("api.example.com", Some(CleanupLevel::None)).is_empty(), "cleanup None sends nothing");
+}
+
+// ---- speakers (#130) -------------------------------------------------------
+
+/// Bursts of a tone at a voice's level (0.2 → voice 0, 0.4 → voice 1, as
+/// the fake embedder reads it) separated by silence (`None`).
+fn voiced(pattern: &[(Option<usize>, f32)]) -> Vec<f32> {
+    let mut out = Vec::new();
+    for &(voice, secs) in pattern {
+        let n = (secs * 16_000.0) as usize;
+        let amp = voice.map_or(0.0, |v| 0.2 * (v as f32 + 1.0));
+        out.extend((0..n).map(|i| amp * ((i as f32) * 0.07).sin()));
+    }
+    out
+}
+
+#[test]
+fn a_run_with_speakers_labels_voices_and_stores_embeddings() {
+    use crate::speakers::{tracker::tests::fake_loader, SpeakerOptions, Tracker};
+    let dir = tempfile::tempdir().unwrap();
+    let audio = voiced(&[
+        (None, 1.0),
+        (Some(0), 6.0),
+        (None, 3.0),
+        (Some(1), 6.0),
+        (None, 3.0),
+        (Some(0), 6.0),
+        (None, 3.0),
+        (Some(1), 6.0),
+        (None, 1.0),
+    ]);
+    let mut j = job(dir.path(), audio, Policy::Block { max_queued: 1 });
+    j.meta.item_type = ItemType::Meeting;
+    let (load, calls) = fake_loader(5);
+    j.speakers = Some(Tracker::new(SpeakerOptions::clustering(&[Channel::File]), load));
+    let sink = Arc::new(VecSink::default());
+    let mut stt = FakeStt {
+        calls: 0,
+        fail_on: None,
+    };
+    let r = run(j, &mut stt, &FakeCleaner::default(), sink.clone()).unwrap();
+    assert!(calls.load(Ordering::Relaxed) > 0);
+
+    let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+    let who: Vec<&str> = item
+        .segments
+        .segments
+        .iter()
+        .map(|s| s.speaker_id.as_deref().unwrap())
+        .collect();
+    assert_eq!(who, ["voice:1", "voice:2", "voice:1", "voice:2"]);
+    let ids: Vec<&str> = item.segments.speakers.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["voice:1", "voice:2"]);
+    assert_eq!(item.embedded_segments, 4);
+    assert!(item.body.contains("] Voice 2:**"), "{}", item.body);
+
+    // Live events carry the speaker but not the embedding.
+    let events = sink.0.lock().unwrap();
+    let segs: Vec<&Segment> = events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::Segment(p) => Some(&p.segment),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(segs.len(), 4);
+    assert!(segs.iter().all(|s| s.embedding.is_none() && s.speaker_id.is_some()));
+}
+
+#[test]
+fn a_run_without_speakers_stores_no_voices() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = voiced(&[(None, 1.0), (Some(0), 3.0), (None, 3.0), (Some(1), 3.0), (None, 1.0)]);
+    let mut stt = FakeStt {
+        calls: 0,
+        fail_on: None,
+    };
+    let r = run(
+        job(dir.path(), audio, Policy::Block { max_queued: 1 }),
+        &mut stt,
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
+    let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+    assert!(item.segments.speakers.is_empty());
+    assert_eq!(item.embedded_segments, 0);
+    assert!(item.segments.segments.iter().all(|s| s.speaker_id.is_none()));
+}
+
+#[test]
+fn a_short_voice_folds_into_its_neighbour_at_the_end_of_the_run() {
+    use crate::speakers::{tracker::tests::fake_loader, SpeakerOptions, Tracker};
+    let dir = tempfile::tempdir().unwrap();
+    // Voice 2 (level 0.6) speaks 3 s only: at the end it folds into the
+    // nearest of the two real voices, and nothing is numbered 3.
+    let audio = voiced(&[
+        (None, 1.0),
+        (Some(0), 12.0),
+        (None, 3.0),
+        (Some(2), 3.0),
+        (None, 3.0),
+        (Some(1), 12.0),
+        (None, 1.0),
+    ]);
+    let mut j = job(dir.path(), audio, Policy::Block { max_queued: 1 });
+    let (load, _) = fake_loader(5);
+    j.speakers = Some(Tracker::new(SpeakerOptions::clustering(&[Channel::File]), load));
+    let mut stt = FakeStt {
+        calls: 0,
+        fail_on: None,
+    };
+    let r = run(j, &mut stt, &FakeCleaner::default(), Arc::new(VecSink::default())).unwrap();
+    let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+    let ids: Vec<&str> = item.segments.speakers.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["voice:1", "voice:2"]);
+    let who: Vec<&str> = item
+        .segments
+        .segments
+        .iter()
+        .map(|s| s.speaker_id.as_deref().unwrap())
+        .collect();
+    assert_eq!(who.first(), Some(&"voice:1"));
+    assert_eq!(who.last(), Some(&"voice:2"));
 }

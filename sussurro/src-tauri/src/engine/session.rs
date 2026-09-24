@@ -436,6 +436,8 @@ where
     let prepared = (|| -> Result<Job> {
         let archive_dir = crate::state::resolve_archive_dir(paths, &settings)?;
         let models_dir = crate::state::resolve_models_dir(paths, &settings);
+        let speakers = speaker_options(&settings, req.item_type, req.source.channel())
+            .map(|o| crate::speakers::Tracker::new(o, embedder_loader(models_dir.clone())));
         Ok(Job {
             session_id: req.id,
             source: req.source,
@@ -463,6 +465,7 @@ where
             index_db: Some(paths.archive_index.clone()),
             journal: Some(app_data_file(paths, super::checkpoint::JOURNAL_FILE)),
             external_cleanup: external_cleanup_entry(&settings),
+            speakers,
             meta: start_meta(
                 &settings,
                 req.item_type,
@@ -484,6 +487,31 @@ where
         }
     };
     super::run(job, &mut stt, &cleaner, sink)
+}
+
+/// Which channels a run labels with "Voice N" (#130). Behind the 0.9
+/// preview flag (`meetings_enabled`, E12): a meeting's single channel —
+/// the in-room case, one mic for everyone — is clustered; notes never
+/// are, and transcriptions wait for their "Identify voices" toggle
+/// (#134). Two-channel sessions (browser, system audio) set the channel
+/// rule themselves. Pure.
+pub(crate) fn speaker_options(
+    settings: &Settings,
+    item_type: ItemType,
+    channel: crate::archive::Channel,
+) -> Option<crate::speakers::SpeakerOptions> {
+    (settings.meetings_enabled && item_type == ItemType::Meeting)
+        .then(|| crate::speakers::SpeakerOptions::clustering(&[channel]))
+}
+
+/// Loads the speaker model when a run first needs it: downloaded into the
+/// models folder on first use and verified against its pinned SHA-256.
+fn embedder_loader(models_dir: std::path::PathBuf) -> crate::speakers::tracker::EmbedderLoader {
+    Box::new(move || {
+        let path = crate::speakers::model::ensure_model(&models_dir)?;
+        let model = crate::speakers::model::WeSpeaker::load(&path)?;
+        Ok(Box::new(model) as Box<dyn crate::speakers::model::SpeakerEmbedder>)
+    })
 }
 
 /// The external-send entry of a run whose cleanup goes to an external
@@ -893,6 +921,22 @@ mod tests {
         assert!(ensure_not_live(&journal, &archive, "2026/09/other").is_ok());
         assert!(live.discard().is_none());
         assert!(ensure_not_live(&journal, &archive, &id).is_ok());
+    }
+
+    /// #130: voices only for meetings, and only with the 0.9 preview on.
+    #[test]
+    fn speaker_labels_need_the_preview_and_a_meeting() {
+        use crate::archive::Channel;
+        let off = Settings::default();
+        let on = Settings {
+            meetings_enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(speaker_options(&off, ItemType::Meeting, Channel::Mic), None);
+        assert_eq!(speaker_options(&on, ItemType::Note, Channel::Mic), None);
+        assert_eq!(speaker_options(&on, ItemType::Transcription, Channel::File), None);
+        let o = speaker_options(&on, ItemType::Meeting, Channel::Mic).unwrap();
+        assert!(o.clusters(Channel::Mic) && !o.two_channel);
     }
 
     #[test]

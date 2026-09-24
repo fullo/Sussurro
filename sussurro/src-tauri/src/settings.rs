@@ -148,6 +148,10 @@ pub struct Settings {
     /// Preview of the 0.7 workspace UI (left rail: New, Library, Models,
     /// Settings). Off = today's single-column window. Removed when 0.7 ships.
     pub ui_v2: bool,
+    /// Preview of the 0.9 meeting features (E12): meetings, speaker labels
+    /// ("Voice N") and the speaker panel. Off by default; removed when 0.9
+    /// ships (#138).
+    pub meetings_enabled: bool,
 }
 
 impl Default for Settings {
@@ -185,6 +189,7 @@ impl Default for Settings {
             output_file: String::new(),
             archive_dir: String::new(),
             ui_v2: false,
+            meetings_enabled: false,
         }
     }
 }
@@ -495,6 +500,16 @@ mod tests {
         assert!(!Settings::default().ui_v2);
         let on: Settings = serde_json::from_str(r#"{"ui_v2":true}"#).unwrap();
         assert!(on.ui_v2);
+    }
+
+    /// The 0.9 meeting preview (#130, E12) is off unless switched on.
+    #[test]
+    fn meetings_preview_is_off_by_default() {
+        let s: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert!(!s.meetings_enabled);
+        assert!(!Settings::default().meetings_enabled);
+        let on: Settings = serde_json::from_str(r#"{"meetings_enabled":true}"#).unwrap();
+        assert!(on.meetings_enabled);
     }
 
     /// A settings.json exactly as 0.6.3 writes it (every field, pretty

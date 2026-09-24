@@ -63,7 +63,10 @@ mod tests {
         use super::cluster::{agglomerative, fold_small, OnlineClusterer};
         use super::model::{SpeakerEmbedder, WeSpeaker, MODEL_SHA256};
         let model = std::path::PathBuf::from(std::env::var("SUSSURRO_SPEAKER_MODEL").unwrap());
-        assert_eq!(crate::stt::models::sha256_hex(&model).unwrap(), MODEL_SHA256);
+        assert_eq!(
+            crate::stt::models::sha256_hex(&model).unwrap(),
+            MODEL_SHA256
+        );
         let wav = std::env::var("SUSSURRO_SPEAKER_WAV").unwrap();
         let bytes = std::fs::read(wav).unwrap();
         // Minimal WAV reader: find the "data" chunk, 16-bit mono 16 kHz.

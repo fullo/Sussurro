@@ -32,7 +32,10 @@ pub fn voice_id(n: u32) -> String {
 
 /// The number of a `voice:<n>` id (`n ≥ 1`).
 pub fn voice_number(id: &str) -> Option<u32> {
-    id.strip_prefix(VOICE_PREFIX)?.parse().ok().filter(|n| *n > 0)
+    id.strip_prefix(VOICE_PREFIX)?
+        .parse()
+        .ok()
+        .filter(|n| *n > 0)
 }
 
 pub fn voice_label(n: u32) -> String {
@@ -149,7 +152,9 @@ fn redetect_candidates(file: &SegmentsFile) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, s)| {
-            s.embedding.as_ref().is_some_and(|e| e.len() == dim && dim > 0)
+            s.embedding
+                .as_ref()
+                .is_some_and(|e| e.len() == dim && dim > 0)
                 && (s.speaker_id.is_none() || is_voice(s.speaker_id.as_deref()))
         })
         .map(|(i, _)| i)
@@ -181,14 +186,22 @@ pub fn redetect(file: &mut SegmentsFile) -> Result<Redetected> {
         .collect();
     let durs: Vec<u64> = idx.iter().map(|&i| duration(&file.segments[i])).collect();
     let labels = agglomerative(&embs, REDETECT_THRESHOLD);
-    let labels = renumber_by_first_appearance(&fold_small(&embs, &durs, &labels, MIN_VOICE_SPEECH_MS));
+    let labels =
+        renumber_by_first_appearance(&fold_small(&embs, &durs, &labels, MIN_VOICE_SPEECH_MS));
     let nc = labels.iter().max().map_or(0, |m| m + 1);
 
     // Speech each new cluster shares with each current voice.
     let mut overlap: Vec<(u64, usize, u32)> = Vec::new();
     for (k, &i) in idx.iter().enumerate() {
-        if let Some(n) = file.segments[i].speaker_id.as_deref().and_then(voice_number) {
-            match overlap.iter_mut().find(|(_, c, v)| *c == labels[k] && *v == n) {
+        if let Some(n) = file.segments[i]
+            .speaker_id
+            .as_deref()
+            .and_then(voice_number)
+        {
+            match overlap
+                .iter_mut()
+                .find(|(_, c, v)| *c == labels[k] && *v == n)
+            {
                 Some(o) => o.0 += durs[k],
                 None => overlap.push((durs[k], labels[k], n)),
             }
@@ -281,12 +294,21 @@ pub fn finalize_live(file: &mut SegmentsFile) {
     let durs: Vec<u64> = idx.iter().map(|&i| duration(&file.segments[i])).collect();
     let numbers: Vec<u32> = idx
         .iter()
-        .map(|&i| file.segments[i].speaker_id.as_deref().and_then(voice_number).unwrap_or(1))
+        .map(|&i| {
+            file.segments[i]
+                .speaker_id
+                .as_deref()
+                .and_then(voice_number)
+                .unwrap_or(1)
+        })
         .collect();
     let labels: Vec<usize> = numbers.iter().map(|n| *n as usize - 1).collect();
     let folded = fold_small(&embs, &durs, &labels, MIN_VOICE_SPEECH_MS);
     let compact = renumber_by_first_appearance(&folded);
-    let unchanged = compact.iter().zip(&numbers).all(|(c, n)| *c as u32 + 1 == *n);
+    let unchanged = compact
+        .iter()
+        .zip(&numbers)
+        .all(|(c, n)| *c as u32 + 1 == *n);
     if unchanged {
         return;
     }
@@ -325,10 +347,17 @@ mod tests {
             .enumerate()
             .map(|(i, (&t, l))| {
                 let id = l.map(voice_id);
-                seg(i as u32, i as u64 * 5000, 4000, id.as_deref(), Some(sample(&mut rng, &v[t], 0.9)))
+                seg(
+                    i as u32,
+                    i as u64 * 5000,
+                    4000,
+                    id.as_deref(),
+                    Some(sample(&mut rng, &v[t], 0.9)),
+                )
             })
             .collect();
-        let mut speakers: Vec<DocSpeaker> = labels.iter().flatten().map(|n| voice_speaker(*n)).collect();
+        let mut speakers: Vec<DocSpeaker> =
+            labels.iter().flatten().map(|n| voice_speaker(*n)).collect();
         speakers.sort_by(|a, b| a.id.cmp(&b.id));
         speakers.dedup();
         SegmentsFile {
@@ -346,7 +375,14 @@ mod tests {
     fn ids_labels_and_colours() {
         assert_eq!(voice_id(3), "voice:3");
         assert_eq!(voice_number("voice:12"), Some(12));
-        for bad in ["voice:0", "voice:", "voice:x", "you", "meet:Anna", NEW_VOICE] {
+        for bad in [
+            "voice:0",
+            "voice:",
+            "voice:x",
+            "you",
+            "meet:Anna",
+            NEW_VOICE,
+        ] {
             assert_eq!(voice_number(bad), None, "{bad}");
         }
         let v = voice_speaker(2);
@@ -360,8 +396,17 @@ mod tests {
         let truth = [0, 1, 0, 2, 1, 2, 0, 1, 2, 0];
         let mut f = doc(&truth, &[None; 10], 5);
         let r = redetect(&mut f).unwrap();
-        assert_eq!(r, Redetected { voices: 3, changed: 10 });
-        let want: Vec<Option<String>> = truth.iter().map(|t| Some(voice_id(*t as u32 + 1))).collect();
+        assert_eq!(
+            r,
+            Redetected {
+                voices: 3,
+                changed: 10
+            }
+        );
+        let want: Vec<Option<String>> = truth
+            .iter()
+            .map(|t| Some(voice_id(*t as u32 + 1)))
+            .collect();
         assert_eq!(speaker_of(&f), want);
         let ids: Vec<&str> = f.speakers.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["voice:1", "voice:2", "voice:3"]);
@@ -372,7 +417,16 @@ mod tests {
         let truth = [0, 1, 0, 1, 1, 0, 0, 1];
         // Live labels over-split speaker 1 into voices 2 and 3; voice 2
         // was renamed "Anna" by the user.
-        let live = [Some(1), Some(2), Some(1), Some(3), Some(2), Some(1), Some(1), Some(3)];
+        let live = [
+            Some(1),
+            Some(2),
+            Some(1),
+            Some(3),
+            Some(2),
+            Some(1),
+            Some(1),
+            Some(3),
+        ];
         let mut f = doc(&truth, &live, 9);
         rename_speaker(&mut f, "voice:2", "Anna").unwrap();
         let r = redetect(&mut f).unwrap();
@@ -417,14 +471,25 @@ mod tests {
                 seg(0, 0, 4000, Some("you"), Some(sample(&mut rng, &v[0], 0.9))),
                 seg(1, 5000, 4000, None, Some(sample(&mut rng, &v[1], 0.9))),
                 seg(2, 10000, 500, None, None),
-                seg(3, 11000, 4000, Some("meet:Anna"), Some(sample(&mut rng, &v[1], 0.9))),
+                seg(
+                    3,
+                    11000,
+                    4000,
+                    Some("meet:Anna"),
+                    Some(sample(&mut rng, &v[1], 0.9)),
+                ),
             ],
             ..Default::default()
         };
         redetect(&mut f).unwrap();
         assert_eq!(
             speaker_of(&f),
-            [Some("you".into()), Some("voice:1".into()), None, Some("meet:Anna".into())]
+            [
+                Some("you".into()),
+                Some("voice:1".into()),
+                None,
+                Some("meet:Anna".into())
+            ]
         );
         assert_eq!(f.speakers[0], you_speaker());
 
@@ -432,7 +497,10 @@ mod tests {
             segments: vec![seg(0, 0, 4000, None, None)],
             ..Default::default()
         };
-        assert!(redetect(&mut empty).unwrap_err().to_string().contains("no voice data"));
+        assert!(redetect(&mut empty)
+            .unwrap_err()
+            .to_string()
+            .contains("no voice data"));
     }
 
     #[test]
@@ -469,7 +537,15 @@ mod tests {
     fn finalize_live_folds_strays_and_compacts_numbers() {
         // Voice 2 is a 4 s stray of speaker 0; voices 1 and 3 are real.
         let truth = [0, 1, 0, 0, 1, 1, 0];
-        let live = [Some(1), Some(3), Some(1), Some(2), Some(3), Some(3), Some(1)];
+        let live = [
+            Some(1),
+            Some(3),
+            Some(1),
+            Some(2),
+            Some(3),
+            Some(3),
+            Some(1),
+        ];
         let mut f = doc(&truth, &live, 13);
         finalize_live(&mut f);
         let want: Vec<Option<String>> = truth
