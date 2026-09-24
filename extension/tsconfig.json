@@ -23,6 +23,7 @@
        node_modules may not be installed (CI builds the extension alone). */
     "paths": {
       "@sussurro/transcript": ["../sussurro/src/transcript/index.ts"],
+      "@sussurro/pairing": ["../sussurro/src/lib/pairingCode.ts"],
       "react": ["./node_modules/@types/react/index.d.ts"],
       "react/*": ["./node_modules/@types/react/*"]
     },

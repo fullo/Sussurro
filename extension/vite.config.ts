@@ -17,6 +17,9 @@ export function baseConfig(target: Target): UserConfig {
         // Transcript components shared with the app (plan E11): the same
         // alias the app declares in sussurro/vite.config.ts.
         "@sussurro/transcript": here("../sussurro/src/transcript/index.ts"),
+        // The pairing-code format (#127): one definition for the app, which
+        // encodes it, and the options page, which parses it.
+        "@sussurro/pairing": here("../sussurro/src/lib/pairingCode.ts"),
       },
       // The shared components live under sussurro/: without this, their
       // `react` import would resolve to sussurro/node_modules (a second React,

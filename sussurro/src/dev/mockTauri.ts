@@ -949,6 +949,9 @@ function handle(cmd: string, a: Args): unknown {
     case "extension_token_regenerate":
       settings.extension_token = fakeToken();
       return settings.extension_token;
+    case "local_api_status":
+      // As if Sussurro started with the current settings.
+      return settings.api_enabled ? { state: "listening", port: settings.api_port } : { state: "off" };
     case "engine_status":
       return {
         active: (mic ? 1 : 0) + (fileRun ? 1 : 0) + (linkRun ? 1 : 0),
