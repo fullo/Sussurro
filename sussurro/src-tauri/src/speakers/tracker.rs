@@ -3,12 +3,22 @@
 //! and assigned by the online clusterer, and the segment takes the voice
 //! holding most of its windows. The segment keeps the mean of its window
 //! embeddings (P8: stored for "Re-detect" and later voice recognition).
+//!
+//! A browser meeting's remote channel also has the page's names (#131,
+//! [`super::names`]): a line the page attributes to a name is `meet:<name>`
+//! instead of a voice (it still gets its embedding); the others keep their
+//! "Voice N". At the end of the run [`Tracker::finish_names`] redoes the
+//! attribution with every event the page sent (a name learned late applies
+//! to the earlier lines too).
 
 use super::cluster::{mean_embedding, OnlineClusterer};
-use super::doc::{voice_speaker, you_speaker, YOU_ID};
+use super::doc::{
+    is_meet, meet_id, meet_speaker, sync_named_speakers, voice_speaker, you_speaker, YOU_ID,
+};
 use super::model::SpeakerEmbedder;
+use super::names::{Attribution, SharedNames};
 use super::{LIVE_WINDOW_MS, MIN_EMBED_MS, ONLINE_THRESHOLD};
-use crate::archive::{Channel, DocSpeaker};
+use crate::archive::{Channel, DocSpeaker, SegmentsFile};
 use anyhow::Result;
 use std::ops::Range;
 
@@ -22,6 +32,9 @@ pub struct SpeakerOptions {
     /// (browser, system audio): the mic is always "You" and never
     /// clustered.
     pub two_channel: bool,
+    /// The meeting page's speaker timeline (browser meetings, #131): names
+    /// for the remote channel's lines, before the voices.
+    pub names: Option<SharedNames>,
 }
 
 impl SpeakerOptions {
@@ -29,13 +42,19 @@ impl SpeakerOptions {
     pub fn clustering(channels: &[Channel]) -> Self {
         Self {
             cluster: channels.to_vec(),
-            two_channel: false,
+            ..Default::default()
         }
     }
 
     /// Whether segments of `channel` are clustered.
     pub fn clusters(&self, channel: Channel) -> bool {
         !(self.two_channel && channel == Channel::Mic) && self.cluster.contains(&channel)
+    }
+
+    /// Whether segments of `channel` can take a name from the page: the
+    /// remote side of a two-channel (browser) session with a timeline.
+    pub fn names_on(&self, channel: Channel) -> bool {
+        self.names.is_some() && self.two_channel && channel == Channel::Remote
     }
 
     /// Whether the options do anything at all.
@@ -92,6 +111,12 @@ pub struct Tracker {
     channels: Vec<(Channel, OnlineClusterer, Vec<Option<u32>>)>,
     next_voice: u32,
     you_listed: bool,
+    /// Names from the page listed so far (`meet:<name>` ids).
+    names_listed: Vec<String>,
+    /// The cluster of each line that could take a name — `(channel, start
+    /// ms) → (channel index, cluster)` — so the end-of-run pass can give a
+    /// line the page no longer names its voice back.
+    clustered: Vec<(Channel, u64, usize, usize)>,
 }
 
 impl Tracker {
@@ -102,6 +127,8 @@ impl Tracker {
             channels: Vec::new(),
             next_voice: 1,
             you_listed: false,
+            names_listed: Vec::new(),
+            clustered: Vec::new(),
         }
     }
 
@@ -124,6 +151,18 @@ impl Tracker {
 
     /// Speaker and embedding of one finished segment (16 kHz mono).
     pub fn label(&mut self, channel: Channel, samples: &[f32]) -> Labelled {
+        self.label_at(channel, None, samples)
+    }
+
+    /// [`Self::label`] for a segment at `span` (start, end ms on the
+    /// session clock): on a channel with the page's names, a line the page
+    /// attributes to a name gets it instead of a voice.
+    pub fn label_at(
+        &mut self,
+        channel: Channel,
+        span: Option<(u64, u64)>,
+        samples: &[f32],
+    ) -> Labelled {
         if self.options.two_channel && channel == Channel::Mic {
             let new_speaker = (!self.you_listed).then(you_speaker);
             self.you_listed = true;
@@ -136,17 +175,82 @@ impl Tracker {
         if !self.options.clusters(channel) {
             return Labelled::default();
         }
+        let name = match (span, &self.options.names) {
+            (Some((s, e)), Some(names)) if self.options.names_on(channel) => {
+                match names.attribute(s, e) {
+                    Attribution::Named(n) => Some(n),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let clustered = self.cluster(channel, samples);
+        if let (Some((s, _)), Some((pos, c, _))) = (span, &clustered) {
+            if self.options.names_on(channel) {
+                self.clustered.push((channel, s, *pos, *c));
+            }
+        }
+        if let Some(name) = name {
+            let (id, new_speaker) = self.name_speaker(&name);
+            return Labelled {
+                speaker_id: Some(id),
+                embedding: clustered.map(|c| c.2),
+                new_speaker,
+            };
+        }
+        let Some((pos, cluster, embedding)) = clustered else {
+            return Labelled::default();
+        };
+        let (number, new_speaker) = self.voice_of(pos, cluster);
+        Labelled {
+            speaker_id: Some(super::doc::voice_id(number)),
+            embedding: Some(embedding),
+            new_speaker,
+        }
+    }
+
+    /// The `meet:` id of a page name, and its entry the first time.
+    fn name_speaker(&mut self, name: &str) -> (String, Option<DocSpeaker>) {
+        let id = meet_id(name);
+        if self.names_listed.contains(&id) {
+            return (id, None);
+        }
+        let sp = meet_speaker(name, self.names_listed.len());
+        self.names_listed.push(id.clone());
+        (id, Some(sp))
+    }
+
+    /// The voice number of `cluster` on channel index `pos` (numbered the
+    /// first time a line is labelled with it) and its new entry, if new.
+    fn voice_of(&mut self, pos: usize, cluster: usize) -> (u32, Option<DocSpeaker>) {
+        let numbers = &mut self.channels[pos].2;
+        if numbers.len() <= cluster {
+            numbers.resize(cluster + 1, None);
+        }
+        match numbers[cluster] {
+            Some(n) => (n, None),
+            None => {
+                let n = self.next_voice;
+                self.next_voice += 1;
+                numbers[cluster] = Some(n);
+                (n, Some(voice_speaker(n)))
+            }
+        }
+    }
+
+    /// Embed the segment and assign its cluster: `(channel index,
+    /// cluster, mean embedding)`, or `None` when it is too short or there
+    /// is no model.
+    fn cluster(&mut self, channel: Channel, samples: &[f32]) -> Option<(usize, usize, Vec<f32>)> {
         let pieces = windows(
             samples.len(),
             ms_to_samples(LIVE_WINDOW_MS),
             ms_to_samples(MIN_EMBED_MS),
         );
         if pieces.is_empty() {
-            return Labelled::default();
+            return None;
         }
-        let Some(embedder) = self.embedder() else {
-            return Labelled::default();
-        };
+        let embedder = self.embedder()?;
         let mut embedded: Vec<(Range<usize>, Vec<f32>)> = Vec::new();
         for r in pieces {
             match embedder.embed(&samples[r.clone()]) {
@@ -154,11 +258,8 @@ impl Tracker {
                 Err(e) => eprintln!("speakers: window not embedded ({e:#})"),
             }
         }
-        let Some(embedding) =
-            mean_embedding(embedded.iter().map(|(r, e)| (e.as_slice(), r.len() as f32)))
-        else {
-            return Labelled::default();
-        };
+        let embedding =
+            mean_embedding(embedded.iter().map(|(r, e)| (e.as_slice(), r.len() as f32)))?;
 
         let pos = match self.channels.iter().position(|c| c.0 == channel) {
             Some(p) => p,
@@ -183,20 +284,59 @@ impl Tracker {
             .iter()
             .fold(share[0], |best, s| if s.1 > best.1 { *s } else { best })
             .0;
-        let (number, new_speaker) = match numbers[cluster] {
-            Some(n) => (n, None),
-            None => {
-                let n = self.next_voice;
-                self.next_voice += 1;
-                numbers[cluster] = Some(n);
-                (n, Some(voice_speaker(n)))
-            }
+        Some((pos, cluster, embedding))
+    }
+
+    /// Names the page gave during the meeting (participants and named
+    /// speakers), for the item's participants; empty without a timeline.
+    pub fn participants(&self) -> Vec<String> {
+        self.options
+            .names
+            .as_ref()
+            .map(SharedNames::participants)
+            .unwrap_or_default()
+    }
+
+    /// End of the run, before the voices are folded: attribute every line
+    /// of the named channel again with all the page's events (a name
+    /// learned late, a lag the live pass could not see yet). A line the
+    /// page now names takes the name; a named line it no longer names
+    /// goes back to its voice (or to no speaker, if it had no voice data);
+    /// voice lines the page does not name keep their voice. Then the
+    /// speaker list follows the lines. Returns how many lines changed.
+    pub fn finish_names(&mut self, file: &mut SegmentsFile) -> usize {
+        let Some(names) = self.options.names.clone() else {
+            return 0;
         };
-        Labelled {
-            speaker_id: Some(super::doc::voice_id(number)),
-            embedding: Some(embedding),
-            new_speaker,
+        let mut changed = 0;
+        for i in 0..file.segments.len() {
+            let seg = &file.segments[i];
+            if !self.options.names_on(seg.channel) || seg.stt_error.is_some() {
+                continue;
+            }
+            let want = match names.attribute(seg.start_ms, seg.end_ms) {
+                Attribution::Named(n) => Some(meet_id(&n)),
+                _ => match seg.speaker_id.as_deref() {
+                    Some(id) if is_meet(id) => {
+                        let (channel, start) = (seg.channel, seg.start_ms);
+                        self.clustered
+                            .iter()
+                            .find(|c| c.0 == channel && c.1 == start)
+                            .map(|&(_, _, pos, cluster)| (pos, cluster))
+                            .map(|(pos, cluster)| {
+                                super::doc::voice_id(self.voice_of(pos, cluster).0)
+                            })
+                    }
+                    other => other.map(str::to_string),
+                },
+            };
+            if file.segments[i].speaker_id != want {
+                file.segments[i].speaker_id = want;
+                changed += 1;
+            }
         }
+        sync_named_speakers(file);
+        changed
     }
 }
 
@@ -313,6 +453,7 @@ pub(crate) mod tests {
         let opts = SpeakerOptions {
             cluster: vec![Channel::Mic, Channel::Remote],
             two_channel: true,
+            names: None,
         };
         assert!(!opts.clusters(Channel::Mic) && opts.clusters(Channel::Remote));
         let mut t = Tracker::new(opts, load);
@@ -349,5 +490,157 @@ pub(crate) mod tests {
         assert_eq!(t.label(Channel::Mic, &audio(0, 4000)), Labelled::default());
         assert_eq!(tries.load(std::sync::atomic::Ordering::Relaxed), 1);
         assert!(!SpeakerOptions::default().is_active());
+    }
+
+    mod names {
+        use super::*;
+        use crate::archive::meeting::{MeetingEvent, NameSource};
+        use crate::archive::Segment;
+        use crate::speakers::names::{AttributionParams, SharedNames};
+
+        fn browser(names: &SharedNames) -> SpeakerOptions {
+            SpeakerOptions {
+                cluster: vec![Channel::Remote],
+                two_channel: true,
+                names: Some(names.clone()),
+            }
+        }
+
+        fn rtp(names: &SharedNames, id: &str, from: u64, to: u64) {
+            names.push(&MeetingEvent::SpeakerActive {
+                at_ms: from,
+                t_ms: from,
+                name: None,
+                id: Some(id.into()),
+                source: NameSource::Rtp,
+            });
+            names.push(&MeetingEvent::SpeakerIdle {
+                at_ms: to,
+                t_ms: to,
+                name: None,
+                id: Some(id.into()),
+            });
+        }
+
+        fn bind(names: &SharedNames, id: &str, name: Option<&str>) {
+            names.push(&MeetingEvent::SpeakerName {
+                at_ms: 0,
+                id: id.into(),
+                name: name.map(str::to_string),
+            });
+        }
+
+        fn line(start: u64, end: u64, l: &Labelled) -> Segment {
+            Segment {
+                channel: Channel::Remote,
+                start_ms: start,
+                end_ms: end,
+                text: "x".into(),
+                speaker_id: l.speaker_id.clone(),
+                embedding: l.embedding.clone(),
+                ..Default::default()
+            }
+        }
+
+        #[test]
+        fn named_lines_take_the_page_name_and_the_rest_keep_voices() {
+            let names = SharedNames::new(AttributionParams::default());
+            bind(&names, "csrc:1", Some("Anna"));
+            rtp(&names, "csrc:1", 0, 4_000);
+            let (load, _) = fake_loader(3);
+            let mut t = Tracker::new(browser(&names), load);
+
+            let a = t.label_at(Channel::Remote, Some((0, 4_000)), &audio(0, 4_000));
+            assert_eq!(a.speaker_id.as_deref(), Some("meet:Anna"));
+            assert_eq!(
+                a.new_speaker.as_ref().map(|s| s.label.as_str()),
+                Some("Anna")
+            );
+            assert!(a.embedding.is_some(), "a named line keeps its voice data");
+            // Nobody on the page: a voice, numbered from 1 (the named line
+            // did not use up a number).
+            let b = t.label_at(Channel::Remote, Some((5_000, 9_000)), &audio(1, 4_000));
+            assert_eq!(b.speaker_id.as_deref(), Some("voice:1"));
+            // A short line gets the name even without an embedding.
+            rtp(&names, "csrc:1", 20_000, 20_800);
+            let c = t.label_at(Channel::Remote, Some((20_000, 20_800)), &audio(0, 800));
+            assert_eq!(
+                (c.speaker_id.as_deref(), c.new_speaker, c.embedding),
+                (Some("meet:Anna"), None, None)
+            );
+            // Without a span (or on the mic) the page is never asked.
+            assert_eq!(
+                t.label(Channel::Remote, &audio(1, 4_000))
+                    .speaker_id
+                    .as_deref(),
+                Some("voice:1")
+            );
+            assert_eq!(
+                t.label_at(Channel::Mic, Some((0, 4_000)), &audio(0, 4_000))
+                    .speaker_id
+                    .as_deref(),
+                Some("you")
+            );
+        }
+
+        #[test]
+        fn the_end_of_run_pass_applies_late_names_and_gives_voices_back() {
+            let names = SharedNames::new(AttributionParams::default());
+            bind(&names, "csrc:1", Some("Anna"));
+            rtp(&names, "csrc:1", 0, 4_000);
+            let (load, _) = fake_loader(5);
+            let mut t = Tracker::new(browser(&names), load);
+            let spans = [(0, 4_000, 0), (5_000, 9_000, 1), (10_000, 14_000, 1)];
+            let mut file = SegmentsFile::default();
+            for (s, e, v) in spans {
+                let l = t.label_at(Channel::Remote, Some((s, e)), &audio(v, 4_000));
+                if let Some(sp) = l.new_speaker.clone() {
+                    file.speakers.push(sp);
+                }
+                file.segments.push(line(s, e, &l));
+            }
+            let ids = |f: &SegmentsFile| -> Vec<Option<String>> {
+                f.segments.iter().map(|s| s.speaker_id.clone()).collect()
+            };
+            assert_eq!(
+                ids(&file),
+                [
+                    Some("meet:Anna".into()),
+                    Some("voice:1".into()),
+                    Some("voice:1".into())
+                ]
+            );
+
+            // Later the page learned who spoke at 10 s, and took Anna back.
+            rtp(&names, "csrc:2", 10_000, 14_000);
+            bind(&names, "csrc:2", Some("Bo"));
+            bind(&names, "csrc:1", None);
+            assert_eq!(t.finish_names(&mut file), 2);
+            assert_eq!(
+                ids(&file),
+                [
+                    Some("voice:2".into()),
+                    Some("voice:1".into()),
+                    Some("meet:Bo".into())
+                ]
+            );
+            let listed: Vec<&str> = file.speakers.iter().map(|s| s.id.as_str()).collect();
+            assert_eq!(listed, ["meet:Bo", "voice:1", "voice:2"]);
+            assert_eq!(t.participants(), ["Bo"]);
+            // Idempotent.
+            assert_eq!(t.finish_names(&mut file), 0);
+        }
+
+        #[test]
+        fn without_names_the_end_of_run_pass_does_nothing() {
+            let (load, _) = fake_loader(1);
+            let mut t = Tracker::new(SpeakerOptions::clustering(&[Channel::Remote]), load);
+            let l = t.label_at(Channel::Remote, Some((0, 4_000)), &audio(0, 4_000));
+            let mut file = SegmentsFile::default();
+            file.segments.push(line(0, 4_000, &l));
+            assert_eq!(t.finish_names(&mut file), 0);
+            assert!(file.speakers.is_empty());
+            assert!(t.participants().is_empty());
+        }
     }
 }

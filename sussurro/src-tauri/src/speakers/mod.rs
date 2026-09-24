@@ -11,11 +11,14 @@
 //!   fold (pure)
 //! - [`tracker`]: live labels for a running session (engine option)
 //! - [`doc`]: a document's speakers — move a line, rename, "Re-detect"
+//! - [`names`]: names from the meeting page (layer 2, #131): the page's
+//!   speaker timeline and majority-overlap attribution of remote lines
 
 pub mod cluster;
 pub mod doc;
 pub mod fbank;
 pub mod model;
+pub mod names;
 pub mod tracker;
 
 pub use tracker::{SpeakerOptions, Tracker};

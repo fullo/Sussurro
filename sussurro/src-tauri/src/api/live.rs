@@ -17,8 +17,11 @@
 //! **Session.** `start` creates a [`BrowserSource`] and asks the [`Host`]
 //! to run the long-form engine on it as a `meeting` item
 //! (`source: browser:<host>`). Audio frames go through the [`ChannelMux`]
-//! into the source; `speaker_active` / `participants` are appended to the
-//! item's meeting events (for speaker attribution, #131). A connection that
+//! into the source; the page's events (`speaker_active`, `speaker_idle`,
+//! `speaker_name`, `participants`, `observer_health`) are appended to the
+//! item's meeting events and fed to the run's name timeline
+//! ([`SharedNames`], speaker attribution #131). The first segment of each
+//! speaker is preceded by a `speaker {id, label}`. A connection that
 //! drops without `stop` ends the session the same way — the recording is
 //! kept, never discarded. Nothing here logs payloads or the token.
 
@@ -27,6 +30,7 @@ use super::Host;
 use crate::archive::meeting::{self, MeetingEvent};
 use crate::engine::{EngineEvent, EngineSink};
 use crate::sources::browser::{BrowserSource, ChannelMux, Chunk};
+use crate::speakers::names::{AttributionParams, SharedNames};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
@@ -43,6 +47,9 @@ pub struct MeetingStart {
     pub start: protocol::Start,
     pub source: BrowserSource,
     pub sink: Arc<dyn EngineSink>,
+    /// The page's speaker timeline, filled by this connection as events
+    /// arrive and read by the run to name remote lines (#131).
+    pub names: SharedNames,
 }
 
 /// Engine events for this connection.
@@ -79,10 +86,13 @@ struct Live {
     item_id: Option<String>,
     /// Events received before the item id was known.
     pending: Vec<MeetingEvent>,
+    /// The same events, for the run's attribution (#131).
+    names: SharedNames,
 }
 
 impl Live {
     fn record(&mut self, event: MeetingEvent) {
+        self.names.push(&event);
         self.pending.push(event);
         self.flush_events();
     }
@@ -112,6 +122,8 @@ struct Conn<'a> {
     /// The run finished (done or error).
     ended: bool,
     warnings: usize,
+    /// Speakers already announced to the client (`speaker`, #131).
+    announced: Vec<String>,
 }
 
 impl<'a> Conn<'a> {
@@ -125,6 +137,7 @@ impl<'a> Conn<'a> {
             stopping: false,
             ended: false,
             warnings: 0,
+            announced: Vec::new(),
         }
     }
 
@@ -189,10 +202,12 @@ impl<'a> Conn<'a> {
                 let mux = ChannelMux::new(start.rate);
                 let archive = self.host.archive_dir().ok();
                 let sink: Arc<dyn EngineSink> = Arc::new(ChannelSink(Mutex::new(events_tx)));
+                let names = SharedNames::new(AttributionParams::default());
                 match self.host.start_meeting(MeetingStart {
                     start,
                     source,
                     sink,
+                    names: names.clone(),
                 }) {
                     Ok(session_id) => {
                         self.live = Some(Live {
@@ -202,6 +217,7 @@ impl<'a> Conn<'a> {
                             archive,
                             item_id: None,
                             pending: Vec::new(),
+                            names,
                         });
                     }
                     Err(e) => out.push(ServerMessage::Status(Status::message(
@@ -211,19 +227,82 @@ impl<'a> Conn<'a> {
                 }
                 Flow::Continue
             }
-            ClientMessage::SpeakerActive { name, t } => {
+            ClientMessage::SpeakerActive { name, id, t, source } => {
                 let Some(live) = self.live.as_mut() else {
                     self.warn(out, "speaker_active before start");
                     return Flow::Continue;
                 };
-                match (protocol::validate_t(t), protocol::clean_name(&name)) {
-                    (Ok(t_ms), Some(name)) => {
+                match (
+                    protocol::validate_t(t),
+                    protocol::clean_speaker(id.as_deref(), name.as_deref()),
+                ) {
+                    (Ok(t_ms), Ok((id, name))) => {
                         let at_ms = live.mux.position_ms();
-                        live.record(MeetingEvent::SpeakerActive { at_ms, t_ms, name });
+                        live.record(MeetingEvent::SpeakerActive {
+                            at_ms,
+                            t_ms,
+                            name,
+                            id,
+                            source: protocol::clean_source(source.as_deref()),
+                        });
                     }
-                    (Err(e), _) => self.warn(out, e.to_string()),
-                    (_, None) => self.warn(out, "speaker_active without a name"),
+                    (Err(e), _) | (_, Err(e)) => self.warn(out, format!("speaker_active: {e}")),
                 }
+                Flow::Continue
+            }
+            ClientMessage::SpeakerIdle { name, id, t } => {
+                let Some(live) = self.live.as_mut() else {
+                    self.warn(out, "speaker_idle before start");
+                    return Flow::Continue;
+                };
+                match (
+                    protocol::validate_t(t),
+                    protocol::clean_speaker(id.as_deref(), name.as_deref()),
+                ) {
+                    (Ok(t_ms), Ok((id, name))) => {
+                        let at_ms = live.mux.position_ms();
+                        live.record(MeetingEvent::SpeakerIdle {
+                            at_ms,
+                            t_ms,
+                            name,
+                            id,
+                        });
+                    }
+                    (Err(e), _) | (_, Err(e)) => self.warn(out, format!("speaker_idle: {e}")),
+                }
+                Flow::Continue
+            }
+            ClientMessage::SpeakerName { id, name } => {
+                let Some(live) = self.live.as_mut() else {
+                    self.warn(out, "speaker_name before start");
+                    return Flow::Continue;
+                };
+                match protocol::clean_id(&id) {
+                    Some(id) => {
+                        let at_ms = live.mux.position_ms();
+                        live.record(MeetingEvent::SpeakerName {
+                            at_ms,
+                            id,
+                            name: name.as_deref().and_then(protocol::clean_name),
+                        });
+                    }
+                    None => self.warn(out, "speaker_name: bad speaker id"),
+                }
+                Flow::Continue
+            }
+            ClientMessage::ObserverHealth { state, set, hooks } => {
+                let Some(live) = self.live.as_mut() else {
+                    self.warn(out, "observer_health before start");
+                    return Flow::Continue;
+                };
+                let (state, set, hooks) = protocol::clean_health(&state, set.as_deref(), &hooks);
+                let at_ms = live.mux.position_ms();
+                live.record(MeetingEvent::ObserverHealth {
+                    at_ms,
+                    state,
+                    set,
+                    hooks,
+                });
                 Flow::Continue
             }
             ClientMessage::Participants { names } => {
@@ -294,12 +373,33 @@ impl<'a> Conn<'a> {
         let mut next = Some(first);
         while let Some(event) = next {
             self.on_engine(&event);
+            if let Some(m) = self.announce(&event) {
+                out.push(m);
+            }
             if let Some(m) = protocol::from_engine(&event, self.stopping) {
                 out.push(m);
             }
             next = self.events_rx.try_recv().ok();
         }
         Some(out)
+    }
+
+    /// `speaker {id, label}` the first time a segment names a speaker:
+    /// "You", a name from the page, or "Voice N" (#131).
+    fn announce(&mut self, event: &EngineEvent) -> Option<ServerMessage> {
+        let EngineEvent::Segment(p) = event else {
+            return None;
+        };
+        let id = p.segment.speaker_id.as_deref()?;
+        if self.announced.iter().any(|a| a == id) {
+            return None;
+        }
+        let label = crate::speakers::doc::default_label(id)?;
+        self.announced.push(id.to_string());
+        Some(ServerMessage::Speaker {
+            id: id.to_string(),
+            label,
+        })
     }
 
     fn on_engine(&mut self, event: &EngineEvent) {

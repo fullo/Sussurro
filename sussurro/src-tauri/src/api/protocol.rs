@@ -7,8 +7,23 @@
 //!     `rate` is the browser's sample rate (8–192 kHz), `channels` how many
 //!     logical channels the client will send (1 or 2: `mic`, `remote`).
 //!   - `speaker_active {name, t}` — the meeting page shows `name` speaking;
-//!     `t` is milliseconds since `start` on the client's audio clock.
+//!     `t` is milliseconds since `start` on the client's audio clock
+//!     (the position in the audio it sent on this connection). From
+//!     protocol 2 (#131): `speaker_active {t, id?, name?, source?}` — `id`
+//!     is a participant key stable for the call (on Meet the RTP
+//!     contributing source, `csrc:<n>`), `name` the display name when
+//!     known, `source` what saw it (`rtp`, `dom`, `caption`; default
+//!     `dom`). At least one of `id` / `name`. Without an `id` the speaker
+//!     stays active until another name-only `speaker_active` (a single
+//!     "who is speaking" indicator, protocol 1); with an `id` until its
+//!     `speaker_idle`.
+//!   - `speaker_idle {t, id?, name?}` (2) — that speaker stopped.
+//!   - `speaker_name {id, name}` (2) — the display name of participant
+//!     `id` (`null`: not known after all). The last one applies to the
+//!     whole call: the key is stable, the name can be learned late.
 //!   - `participants {names}` — the current participant list.
+//!   - `observer_health {state, set?, hooks?}` (2) — how the page observer
+//!     is doing (`ok`, `names_unavailable`, `off`); stored, not acted on.
 //!   - `stop` — end the meeting: the app transcribes what is left, writes
 //!     the item and closes the socket.
 //!   - `ping` — no audio to send right now; the app answers with a
@@ -35,9 +50,19 @@
 use crate::archive::{Channel, Segment};
 use serde::{Deserialize, Serialize};
 
-/// Bumped on any incompatible change; the extension refuses to run against
-/// another protocol (`GET /app/version`).
-pub const PROTOCOL_VERSION: u32 = 1;
+/// The protocol this app speaks, reported by `GET /app/version` (with
+/// [`MIN_PROTOCOL`]) and in `ready`. Bumped on every change to the
+/// messages; the extension runs when its own version is within
+/// `MIN_PROTOCOL..=PROTOCOL_VERSION`.
+///
+/// - 1 (#126): `start`, `speaker_active {name, t}`, `participants`, `stop`,
+///   `ping`, audio frames.
+/// - 2 (#131): `speaker_active` with `id` / `source`, `speaker_idle`,
+///   `speaker_name`, `observer_health`. Additive: every protocol 1
+///   message still means the same.
+pub const PROTOCOL_VERSION: u32 = 2;
+/// Oldest client protocol this app still accepts.
+pub const MIN_PROTOCOL: u32 = 1;
 /// Largest WebSocket message accepted (1 s of 48 kHz audio is 96 KB).
 pub const MAX_MESSAGE_BYTES: usize = 512 * 1024;
 /// Bytes before the PCM in an audio frame.
@@ -50,6 +75,10 @@ pub const MAX_TITLE_CHARS: usize = 200;
 pub const MAX_NAME_CHARS: usize = 120;
 /// Most participants kept from one `participants` message.
 pub const MAX_PARTICIPANTS: usize = 500;
+/// Longest participant id kept (characters).
+pub const MAX_ID_CHARS: usize = 64;
+/// Most hooks kept from one `observer_health`.
+pub const MAX_HEALTH_HOOKS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProtocolError(pub String);
@@ -105,8 +134,37 @@ impl Start {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     Start(StartInfo),
-    SpeakerActive { name: String, t: f64 },
-    Participants { names: Vec<String> },
+    SpeakerActive {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        id: Option<String>,
+        t: f64,
+        #[serde(default)]
+        source: Option<String>,
+    },
+    SpeakerIdle {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        id: Option<String>,
+        t: f64,
+    },
+    SpeakerName {
+        id: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    Participants {
+        names: Vec<String>,
+    },
+    ObserverHealth {
+        state: String,
+        #[serde(default)]
+        set: Option<String>,
+        #[serde(default)]
+        hooks: std::collections::BTreeMap<String, String>,
+    },
     Stop,
     Ping,
 }
@@ -147,6 +205,76 @@ pub fn clean_names(names: &[String]) -> Vec<String> {
         }
     }
     out
+}
+
+/// A participant id from the page (`csrc:12345`, `tile:abc`): letters,
+/// digits and `:_.-` only, at most [`MAX_ID_CHARS`]; `None` otherwise.
+pub fn clean_id(id: &str) -> Option<String> {
+    let id = id.trim();
+    let ok = !id.is_empty()
+        && id.chars().count() <= MAX_ID_CHARS
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '.' | '-'));
+    ok.then(|| id.to_string())
+}
+
+/// What saw a speaker: `rtp` (the audio's contributing sources), `dom`
+/// (the page's speaking indicator — also every protocol 1 event), or
+/// `caption` (the page's live captions). Anything else reads as `dom`.
+pub fn clean_source(source: Option<&str>) -> crate::archive::meeting::NameSource {
+    use crate::archive::meeting::NameSource;
+    match source.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("rtp") => NameSource::Rtp,
+        Some("caption") => NameSource::Caption,
+        _ => NameSource::Dom,
+    }
+}
+
+/// A validated `speaker_active` / `speaker_idle` speaker: a cleaned id
+/// and/or name, at least one of them.
+pub fn clean_speaker(
+    id: Option<&str>,
+    name: Option<&str>,
+) -> Result<(Option<String>, Option<String>), ProtocolError> {
+    let id = match id {
+        Some(raw) => Some(clean_id(raw).ok_or_else(|| bad("bad speaker id"))?),
+        None => None,
+    };
+    let name = name.and_then(clean_name);
+    if id.is_none() && name.is_none() {
+        return Err(bad("speaker without a name or id"));
+    }
+    Ok((id, name))
+}
+
+/// `observer_health`, bounded: the state one of `ok`,
+/// `names_unavailable`, `off` (else `unknown`), hooks as `name → state`
+/// with short ASCII names and one of `ok`, `missing`, `broken`, `unknown`.
+pub fn clean_health(
+    state: &str,
+    set: Option<&str>,
+    hooks: &std::collections::BTreeMap<String, String>,
+) -> (String, Option<String>, std::collections::BTreeMap<String, String>) {
+    let state = match state.trim() {
+        s @ ("ok" | "names_unavailable" | "off") => s.to_string(),
+        _ => "unknown".to_string(),
+    };
+    let hooks = hooks
+        .iter()
+        .filter(|(k, _)| {
+            !k.is_empty() && k.len() <= 32 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+        .take(MAX_HEALTH_HOOKS)
+        .map(|(k, v)| {
+            let v = match v.trim() {
+                s @ ("ok" | "missing" | "broken") => s,
+                _ => "unknown",
+            };
+            (k.clone(), v.to_string())
+        })
+        .collect();
+    (state, set.and_then(clean_id), hooks)
 }
 
 /// Host of an `http(s)://` page URL: lowercase letters, digits, dots and
@@ -443,8 +571,10 @@ mod tests {
         assert_eq!(
             parse_control(r#"{"type":"speaker_active","name":"Anna","t":1250.5}"#).unwrap(),
             ClientMessage::SpeakerActive {
-                name: "Anna".into(),
-                t: 1250.5
+                name: Some("Anna".into()),
+                id: None,
+                t: 1250.5,
+                source: None,
             }
         );
         assert_eq!(
@@ -458,6 +588,78 @@ mod tests {
     }
 
     #[test]
+    fn protocol_two_messages_parse_and_protocol_one_still_does() {
+        assert_eq!((MIN_PROTOCOL, PROTOCOL_VERSION), (1, 2));
+        assert_eq!(
+            parse_control(r#"{"type":"speaker_active","id":"csrc:12","t":10,"source":"rtp"}"#).unwrap(),
+            ClientMessage::SpeakerActive {
+                name: None,
+                id: Some("csrc:12".into()),
+                t: 10.0,
+                source: Some("rtp".into()),
+            }
+        );
+        assert_eq!(
+            parse_control(r#"{"type":"speaker_idle","id":"csrc:12","t":900}"#).unwrap(),
+            ClientMessage::SpeakerIdle {
+                name: None,
+                id: Some("csrc:12".into()),
+                t: 900.0,
+            }
+        );
+        assert_eq!(
+            parse_control(r#"{"type":"speaker_name","id":"csrc:12","name":null}"#).unwrap(),
+            ClientMessage::SpeakerName {
+                id: "csrc:12".into(),
+                name: None,
+            }
+        );
+        let ClientMessage::ObserverHealth { state, set, hooks } = parse_control(
+            r#"{"type":"observer_health","state":"ok","set":"meet-2026-09a","hooks":{"tile":"ok"}}"#,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert_eq!((state.as_str(), set.as_deref(), hooks.len()), ("ok", Some("meet-2026-09a"), 1));
+        // A protocol 1 message is exactly what it was.
+        assert!(matches!(
+            parse_control(r#"{"type":"speaker_active","name":"Anna","t":1}"#).unwrap(),
+            ClientMessage::SpeakerActive { name: Some(_), id: None, source: None, .. }
+        ));
+    }
+
+    #[test]
+    fn speakers_ids_sources_and_health_are_cleaned() {
+        assert_eq!(clean_id(" csrc:4242 "), Some("csrc:4242".into()));
+        assert_eq!(clean_id("tile:spaces/abc"), None, "no slashes");
+        assert_eq!(clean_id(""), None);
+        assert_eq!(clean_id(&"a".repeat(MAX_ID_CHARS + 1)), None);
+        use crate::archive::meeting::NameSource;
+        assert_eq!(clean_source(Some("RTP")), NameSource::Rtp);
+        assert_eq!(clean_source(Some("caption")), NameSource::Caption);
+        assert_eq!(clean_source(Some("glow")), NameSource::Dom);
+        assert_eq!(clean_source(None), NameSource::Dom);
+        assert_eq!(
+            clean_speaker(Some("csrc:1"), Some("  Anna\n")),
+            Ok((Some("csrc:1".into()), Some("Anna".into())))
+        );
+        assert_eq!(clean_speaker(None, Some("Bo")), Ok((None, Some("Bo".into()))));
+        assert_eq!(clean_speaker(Some("csrc:1"), Some(" ")), Ok((Some("csrc:1".into()), None)));
+        assert!(clean_speaker(None, Some(" ")).is_err());
+        assert!(clean_speaker(None, None).is_err());
+        assert!(clean_speaker(Some("bad id!"), Some("Anna")).is_err());
+        let mut hooks = std::collections::BTreeMap::new();
+        hooks.insert("speaking".to_string(), "broken".to_string());
+        hooks.insert("tileName".to_string(), "weird".to_string());
+        hooks.insert("no spaces".to_string(), "ok".to_string());
+        let (state, set, hooks) = clean_health("panic", Some("x/y"), &hooks);
+        assert_eq!((state.as_str(), set), ("unknown", None));
+        assert_eq!(hooks.get("speaking").map(String::as_str), Some("broken"));
+        assert_eq!(hooks.get("tileName").map(String::as_str), Some("unknown"));
+        assert_eq!(hooks.len(), 2);
+    }
+
+    #[test]
     fn bad_control_messages_are_errors() {
         for bad in [
             "",
@@ -467,6 +669,9 @@ mod tests {
             r#"{"type":"start","rate":48000}"#,
             r#"{"type":"speaker_active","name":"x"}"#,
             r#"{"type":"participants","names":"Anna"}"#,
+            r#"{"type":"speaker_idle","id":"csrc:1"}"#,
+            r#"{"type":"speaker_name","name":"Anna"}"#,
+            r#"{"type":"observer_health"}"#,
         ] {
             assert!(parse_control(bad).is_err(), "{bad}");
         }

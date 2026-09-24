@@ -498,18 +498,33 @@ fn run_inner(
         return (Err(e), kept);
     }
 
-    if speakers.is_some() {
+    let mut participants = Vec::new();
+    if let Some(tracker) = speakers.as_mut() {
+        // Names from the meeting page, with every event it sent (#131).
+        item.edit_file(|f| {
+            tracker.finish_names(f);
+        });
+        participants = tracker.participants();
         // The online clustering over-splits: tiny voices fold into the
         // nearest one before the item is finalized (#107).
         item.finalize_voices();
     }
+    // People emails for the page's participants (P5); an unreadable
+    // registry links nothing.
+    let people = if participants.is_empty() {
+        Vec::new()
+    } else {
+        archive::people::read_people(&archive_dir)
+    };
     let duration_ms =
         samples_to_ms(ingested).max(item.segments().last().map(|s| s.end_ms).unwrap_or(0));
     let text = transcript_text(item.segments());
     let n = item.segments().len();
     let placeholder_id = item.id().to_string();
     let finished = item.finish(&meta, |m| {
-        finalize_meta_with_text(m, &text, duration_ms, detected.as_deref())
+        let mut m = finalize_meta_with_text(m, &text, duration_ms, detected.as_deref());
+        crate::speakers::names::merge_participants(&mut m, &participants, &people);
+        m
     });
     let (item_id, meta) = match finished {
         Ok(done) => done,
@@ -841,7 +856,11 @@ fn work(
         if let Some(mut segment) = built {
             if let Some(tracker) = speakers.as_deref_mut() {
                 if segment.stt_error.is_none() {
-                    let labelled = tracker.label(channel, &audio.samples);
+                    let labelled = tracker.label_at(
+                        channel,
+                        Some((segment.start_ms, segment.end_ms)),
+                        &audio.samples,
+                    );
                     if let Some(sp) = labelled.new_speaker {
                         item.add_speaker(sp);
                     }

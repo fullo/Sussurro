@@ -1520,6 +1520,7 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
             defer: false,
             item_type: ItemType::Note,
             title: "Opzioni".into(),
+            names: None,
             source_label: "file:test.wav".into(),
             options,
         };
@@ -1746,6 +1747,7 @@ fn external_cleanup_marks_the_item_only_when_it_was_sent() {
             defer: false,
             item_type: ItemType::Transcription,
             title: "Esterno".into(),
+            names: None,
             source_label: "file:test.wav".into(),
             options: RunOptions {
                 cleanup_level: level,
@@ -2042,6 +2044,7 @@ fn identify_voices_run_option_reaches_the_engine() {
             defer: false,
             item_type,
             title: "Voci".into(),
+            names: None,
             source_label: "file:voci.wav".into(),
             options: RunOptions {
                 identify_voices: identify,

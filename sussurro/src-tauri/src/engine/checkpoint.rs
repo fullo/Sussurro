@@ -241,6 +241,12 @@ impl LiveItem {
         crate::speakers::doc::finalize_live(&mut self.file);
     }
 
+    /// Change the lines and speakers in memory (the end-of-run speaker
+    /// passes, #131); written by [`Self::finish`].
+    pub fn edit_file(&mut self, edit: impl FnOnce(&mut SegmentsFile)) {
+        edit(&mut self.file);
+    }
+
     /// The speakers listed so far.
     pub fn speakers(&self) -> &[crate::archive::DocSpeaker] {
         &self.file.speakers
