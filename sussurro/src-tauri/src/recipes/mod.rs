@@ -8,7 +8,10 @@
 //! - [`engine`]: map-reduce orchestration over a [`engine::ChatModel`]
 //! - [`run`]: one run on an archive item — privacy refusal, input,
 //!   engine, companion document with provenance
+//! - [`answer`]: Ask panel answers (#121) — free questions as transient
+//!   answer recipes, pending answers, "Save as document"
 
+pub mod answer;
 pub mod chunk;
 pub mod engine;
 pub mod prompt;
@@ -103,7 +106,9 @@ pub fn find_recipe(user: &[Recipe], id: &str) -> Option<Recipe> {
 /// recipe with an empty prompt is kept for the user to finish. Idempotent.
 pub fn normalize_user_recipes(recipes: &mut [Recipe]) {
     use std::collections::HashSet;
-    let builtin: HashSet<String> = builtin_recipes().into_iter().map(|r| r.id).collect();
+    // Built-in ids and the free-question id (#121) are reserved.
+    let mut builtin: HashSet<String> = builtin_recipes().into_iter().map(|r| r.id).collect();
+    builtin.insert(answer::QUESTION_RECIPE_ID.to_string());
     let all: HashSet<String> = recipes.iter().map(|r| r.id.trim().to_string()).collect();
     let mut seen = HashSet::new();
     let mut next = 1;
@@ -177,10 +182,11 @@ mod tests {
             Recipe { id: "q".into(), name: " Q ".into(), ..Default::default() },
             Recipe { id: "q".into(), name: "".into(), ..Default::default() },
             Recipe { id: "recipe-1".into(), name: "R".into(), ..Default::default() },
+            Recipe { id: "question".into(), name: "Mine too".into(), ..Default::default() },
         ];
         normalize_user_recipes(&mut r);
         let ids: Vec<_> = r.iter().map(|x| x.id.as_str()).collect();
-        assert_eq!(ids, ["recipe-2", "q", "recipe-3", "recipe-1"]);
+        assert_eq!(ids, ["recipe-2", "q", "recipe-3", "recipe-1", "recipe-4"]);
         assert!(r.iter().all(|x| !x.builtin));
         assert_eq!(r[1].name, "Q");
         assert_eq!(r[2].name, "Untitled recipe");

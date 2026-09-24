@@ -91,6 +91,13 @@ describe("companion files", () => {
     expect(companionLabel(doc("document.md", "formatted-document"), BUILTINS)).toBe("Formatted document");
     expect(companionLabel(doc("document-2.md", "formatted-document"), BUILTINS)).toBe("Formatted document (2)");
     expect(companionLabel(doc("notes.md", ""), BUILTINS)).toBe("notes");
+    // A saved Ask answer (#121) is labelled by its question.
+    const answer = (question: string) => {
+      const d = doc("who-sends-the-file.md", "question");
+      return { ...d, meta: { ...d.meta, kind: "answer", question } };
+    };
+    expect(companionLabel(answer("Who sends the file?"), BUILTINS)).toBe("Who sends the file?");
+    expect(companionLabel(answer("x".repeat(40)), BUILTINS)).toBe(`${"x".repeat(32)}…`);
   });
 
   it("provenance from generated_by, else the separate keys", () => {

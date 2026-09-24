@@ -14,7 +14,7 @@ export const FORMATTED_DOCUMENT_ID = "formatted-document";
 
 /** Lowercase ASCII slug, at most `max` characters, cut on a `-` when that
  *  keeps at least half (as archive::paths::slugify). */
-function slug(name: string, max = 40): string {
+export function slug(name: string, max = 40): string {
   const s = name
     .toLowerCase()
     .normalize("NFKD")
@@ -129,8 +129,14 @@ export function progressFraction(step: RecipeStep | null): number {
   }
 }
 
-/** Tab label of a companion: its recipe's name when known, else the file. */
+/** Tab label of a companion: the question of a saved Ask answer (#121),
+ *  else its recipe's name when known, else the file. */
 export function companionLabel(doc: CompanionDoc, recipes: Recipe[]): string {
+  const q = doc.meta.kind === "answer" && typeof doc.meta.question === "string" ? doc.meta.question.trim() : "";
+  if (q) {
+    const chars = Array.from(q);
+    return chars.length > 32 ? `${chars.slice(0, 32).join("").trimEnd()}…` : q;
+  }
   const r = recipes.find((x) => x.id === doc.meta.recipe);
   const base = r?.name ?? doc.file.replace(/\.md$/i, "");
   const variant = /-(\d+)\.md$/i.exec(doc.file);

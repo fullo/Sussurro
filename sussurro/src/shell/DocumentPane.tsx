@@ -6,6 +6,7 @@ import { fileManagerName, formatDurationLabel, formatLongDate, parseDuration } f
 import { TYPE_LABEL } from "../lib/library";
 import type { Item, ItemMeta } from "../lib/types";
 import { ChipEditor } from "./ChipEditor";
+import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
 import { DocumentTab } from "./DocumentTab";
 import { languageLabel } from "./labels";
 
@@ -36,6 +37,14 @@ export function DocumentPane({
   const [tab, setTab] = useState<"transcript" | "document">("transcript");
   /** Companion documents of the item (#120); null until counted. */
   const [docCount, setDocCount] = useState<number | null>(null);
+  /** Bumped when the context pane writes a companion document. */
+  const [docsVersion, setDocsVersion] = useState(0);
+  /** Document the Document tab should show (opened from the context pane). */
+  const [openDoc, setOpenDoc] = useState<{ file: string; n: number } | null>(null);
+  const drawer = useDrawerLayout();
+  const [ctxOpen, setCtxOpen] = useState(false);
+  const [ctxStatus, setCtxStatus] = useState<ContextStatus>("idle");
+  const ctxToggleRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -60,7 +69,7 @@ export function DocumentPane({
     invoke<unknown[]>("recipe_documents", { id })
       .then((d) => setDocCount(d.length))
       .catch(() => setDocCount(0));
-  }, [id]);
+  }, [id, docsVersion]);
 
   // A live item (#153) grows while its session records: follow it.
   const recording = !!item?.recording;
@@ -140,7 +149,19 @@ export function DocumentPane({
     meta.engine,
   ].filter(Boolean);
 
+  const closeCtx = () => {
+    setCtxOpen(false);
+    ctxToggleRef.current?.focus();
+  };
+
+  const openDocument = (file: string) => {
+    setOpenDoc((o) => ({ file, n: (o?.n ?? 0) + 1 }));
+    setTab("document");
+    if (drawer) setCtxOpen(false);
+  };
+
   return (
+    <div className="doc-split">
     <article className="doc" aria-label={meta.title}>
       <header className="doc-head">
         <div className="doc-title-row">
@@ -171,6 +192,26 @@ export function DocumentPane({
           <button type="button" className="btn-ghost sh-btn" onClick={() => setConfirmDelete(true)} disabled={!!item.recording}>
             Delete…
           </button>
+          {drawer && (
+            <button
+              ref={ctxToggleRef}
+              type="button"
+              className="btn-ghost sh-btn ctx-toggle"
+              aria-expanded={ctxOpen}
+              aria-controls="ctx-pane"
+              onClick={() => setCtxOpen((o) => !o)}
+            >
+              Ask · Export
+              {ctxStatus !== "idle" && (
+                <span
+                  className={`ctx-dot ${ctxStatus}`}
+                  role="img"
+                  aria-label={ctxStatus === "running" ? "(running)" : "(answer ready)"}
+                />
+              )}
+              <span aria-hidden="true">{ctxOpen ? "▸" : "◂"}</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -204,7 +245,14 @@ export function DocumentPane({
       </div>
 
       {tab === "document" ? (
-        <DocumentTab ctl={ctl} item={item} onCount={setDocCount} onChanged={onChanged} />
+        <DocumentTab
+          ctl={ctl}
+          item={item}
+          onCount={setDocCount}
+          onChanged={onChanged}
+          select={openDoc}
+          version={docsVersion}
+        />
       ) : (
       <>
       {item.recording && (
@@ -286,5 +334,20 @@ export function DocumentPane({
         </div>
       )}
     </article>
+    {drawer && ctxOpen && <div className="ctx-scrim" aria-hidden="true" onClick={closeCtx} />}
+    <ContextPane
+      ctl={ctl}
+      item={item}
+      drawer={drawer}
+      open={ctxOpen}
+      onClose={closeCtx}
+      onStatus={setCtxStatus}
+      onDocsChanged={() => {
+        setDocsVersion((v) => v + 1);
+        onChanged();
+      }}
+      onOpenDocument={openDocument}
+    />
+    </div>
   );
 }

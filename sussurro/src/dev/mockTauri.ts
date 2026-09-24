@@ -30,6 +30,13 @@ const settings: Settings = {
       target: "companion_document",
       builtin: false,
     },
+    {
+      id: "chi-ha-detto-cosa",
+      name: "Chi ha detto cosa",
+      prompt: "Per ogni partecipante, riassumi in una riga cosa ha detto.",
+      target: "answer",
+      builtin: false,
+    },
   ],
   cleanup_level: "light",
   output_language: "",
@@ -387,21 +394,75 @@ function fakeResult(r: Recipe, item: Stored): string {
 }
 
 /** Recipe runs in flight, by item id. */
-const recipeRuns: Record<string, { recipe: Recipe; cancelled: boolean; step: { phase: string; done: number; total: number } | null }> = {};
+const recipeRuns: Record<string, { recipe: Recipe; question: string | null; cancelled: boolean; step: { phase: string; done: number; total: number } | null }> = {};
 
-async function runRecipe(id: string, recipeId: string, profileId: string | null) {
+/** Ask panel answers not saved yet (#121), by answer id. */
+interface PendingAnswer {
+  itemId: string;
+  recipe: Recipe;
+  question: string | null;
+  profile: LlmProfile;
+  text: string;
+  date: string;
+}
+const answers: Record<number, PendingAnswer> = {};
+let nextAnswer = 1;
+
+function fakeAnswer(question: string | null, item: Stored): string {
+  const text = item.segments.map((s) => s.text).filter(Boolean);
+  if (!question) return text.slice(0, 3).map((t) => `- ${t}`).join("\n") || "Nessun contenuto.";
+  if (/chi|who/i.test(question)) return `Secondo la trascrizione: **${text[0] ?? "nessuno lo dice"}**\n\n- ${text[1] ?? "—"}`;
+  return `${text[0] ?? "La trascrizione non ne parla."}\n\n${text.slice(1, 3).map((t) => `- ${t}`).join("\n")}`;
+}
+
+function answerFile(a: PendingAnswer): string {
+  const s = slugOf(a.question ?? a.recipe.name) || "untitled";
+  return s === "transcript" || s === "document" ? `${a.question ? "question" : "recipe"}-${s}.md` : `${s}.md`;
+}
+
+function slugOf(s: string): string {
+  return s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
+}
+
+function saveAnswer(id: string, answerId: number): string {
+  const a = answers[answerId];
+  if (!a || a.itemId !== id) throw "this answer is no longer available — ask again to save it";
+  const item = find(id)!;
+  const list = (docs[id] ??= []);
+  const base = answerFile(a);
+  let file = base;
+  for (let n = 2; list.some((d) => d.file === file); n++) file = base.replace(/\.md$/, `-${n}.md`);
+  const doc = companion(item, a.recipe, a.profile, a.question ? `> **Question:** ${a.question}\n\n${a.text}` : a.text, a.date);
+  doc.file = file;
+  doc.meta.title = `${item.meta.title} — ${a.question ?? a.recipe.name}`;
+  doc.meta.kind = "answer";
+  if (a.question) doc.meta.question = a.question;
+  list.push(doc);
+  list.sort((x, y) => Number(x.file !== "document.md") - Number(y.file !== "document.md") || x.file.localeCompare(y.file));
+  delete answers[answerId];
+  return file;
+}
+
+const QUESTION: Recipe = { id: "question", name: "Question", prompt: "", target: "answer", builtin: true };
+
+async function runRecipe(id: string, recipeId: string, profileId: string | null, question: string | null = null) {
   const item = find(id);
   if (!item) throw `no archive item '${id}'`;
-  const r = allRecipes().find((x) => x.id === recipeId);
+  const r = question !== null ? QUESTION : allRecipes().find((x) => x.id === recipeId);
   if (!r) throw `no recipe '${recipeId}'`;
+  if (question !== null) {
+    question = question.split(/\s+/).filter(Boolean).join(" ");
+    if (!question) throw "write a question first";
+  }
   const p = settings.llm_profiles.find((x) => x.id === profileId) ?? settings.llm_profiles[0];
   if (p.external)
     throw `“${p.name}” is an external profile: the transcript would leave this machine. Recipes on external profiles need a confirmation for each run, which arrives in a later update — pick a local profile for now.`;
   if (item.recording) throw `'${id}' is still being recorded — run recipes when the session ends`;
   if (recipeRuns[id]) throw `“${recipeRuns[id].recipe.name}” is already running on this item — wait for it or cancel it`;
-  const run = { recipe: r, cancelled: false, step: null as { phase: string; done: number; total: number } | null };
+  const run = { recipe: r, question, cancelled: false, step: null as { phase: string; done: number; total: number } | null };
   recipeRuns[id] = run;
-  const base = { item_id: id, recipe_id: r.id, recipe_name: r.name };
+  const base = { item_id: id, recipe_id: r.id, recipe_name: r.name, question };
+  const prov = { profile: p.name, model: p.model, external: p.external, answer_id: null as number | null };
   // Long items (transcriptions, meetings) go through map-reduce.
   const parts = item.meta.type === "note" ? 0 : Math.max(2, Math.ceil(item.segments.length / 3));
   const steps = parts ? [...Array.from({ length: parts + 1 }, (_, i) => ({ phase: "map", done: i, total: parts })), { phase: "reduce", done: 0, total: 1 }, { phase: "reduce", done: 1, total: 1 }] : [{ phase: "single", done: 0, total: 1 }, { phase: "single", done: 1, total: 1 }];
@@ -414,7 +475,12 @@ async function runRecipe(id: string, recipeId: string, profileId: string | null)
   }
   delete recipeRuns[id];
   if (run.cancelled) {
-    finished = { ...base, file: null, answer: null, error: null, cancelled: true };
+    finished = { ...base, ...prov, file: null, answer: null, error: null, cancelled: true };
+  } else if (r.target === "answer") {
+    const text = fakeAnswer(question, item);
+    const answerId = nextAnswer++;
+    answers[answerId] = { itemId: id, recipe: r, question, profile: p, text, date: new Date().toISOString() };
+    finished = { ...base, ...prov, answer_id: answerId, file: null, answer: text, error: null, cancelled: false };
   } else {
     const doc = companion(item, r, p, fakeResult(r, item));
     const list = (docs[id] ??= []);
@@ -422,7 +488,7 @@ async function runRecipe(id: string, recipeId: string, profileId: string | null)
     if (idx >= 0) list[idx] = doc;
     else list.push(doc);
     list.sort((a, b) => Number(a.file !== "document.md") - Number(b.file !== "document.md") || a.file.localeCompare(b.file));
-    finished = { ...base, file: doc.file, answer: null, error: null, cancelled: false };
+    finished = { ...base, ...prov, file: doc.file, answer: null, error: null, cancelled: false };
   }
   ev("recipe-finished", finished);
   return finished;
@@ -541,13 +607,22 @@ function handle(cmd: string, a: Args): unknown {
       return (docs[String(a.id)] ?? []).map((d) => ({ ...d, meta: { ...d.meta } }));
     case "recipe_run":
       return runRecipe(String(a.id), String(a.recipeId), (a.profileId as string | null) ?? null);
+    case "recipe_ask":
+      return runRecipe(String(a.id), "question", (a.profileId as string | null) ?? null, String(a.question ?? ""));
+    case "recipe_save_answer":
+      return saveAnswer(String(a.id), Number(a.answerId));
+    case "recipe_dismiss_answer": {
+      const known = !!answers[Number(a.answerId)];
+      delete answers[Number(a.answerId)];
+      return known;
+    }
     case "recipe_cancel": {
       const run = recipeRuns[String(a.id)];
       if (run) run.cancelled = true;
       return !!run;
     }
     case "recipe_status":
-      return Object.entries(recipeRuns).map(([item_id, r]) => ({ item_id, recipe_id: r.recipe.id, recipe_name: r.recipe.name, progress: r.step }));
+      return Object.entries(recipeRuns).map(([item_id, r]) => ({ item_id, recipe_id: r.recipe.id, recipe_name: r.recipe.name, question: r.question, progress: r.step }));
     case "recipe_reveal_document":
       console.info("[mock] reveal document", a.id, a.file);
       return null;

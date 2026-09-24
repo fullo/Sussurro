@@ -780,6 +780,7 @@ mod tests {
             engine: Default::default(),
             dictation: Default::default(),
             recipe_runs: Default::default(),
+            recipe_answers: Default::default(),
         }
     }
 

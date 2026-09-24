@@ -614,6 +614,63 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
 .prof-actions { margin-top: 12px; }
 .profile-line { color: var(--c-text-light); font-size: 0.85rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ---------- Context pane: Ask · Export (#121; Speakers in 0.9) ---------- */
+
+.doc-split { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) clamp(240px, 22vw, 300px); position: relative; }
+.doc-split > .doc { min-height: 0; }
+.ctx {
+  border-left: 1px solid var(--border);
+  background: var(--c-bg);
+  padding: 12px 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
+}
+.ctx:focus { outline: none; }
+.ctx-sect h3 { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--c-text-light); margin: 0 0 8px; }
+.ctx-recipes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.ctx-recipes .sh-btn { justify-content: center; text-align: center; font-size: 12px; line-height: 1.2; padding: 6px 8px; white-space: normal; min-width: 0; }
+.ctx-ans-mark { margin-left: 4px; color: var(--c-text-light); }
+.ctx-ask { display: flex; align-items: flex-end; gap: 6px; margin-top: 8px; }
+.ctx-ask textarea { flex: 1; min-width: 0; min-height: 44px; resize: vertical; font-family: var(--f-sans); font-size: 12.5px; line-height: 1.35; }
+.ctx-ask .btn-dark { padding: 0 0.9rem; }
+.ctx-profiles { margin: 10px 0 0; padding: 0 0 2px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--c-surface); min-width: 0; }
+.ctx-profiles legend { font-size: 11px; color: var(--c-text-light); padding: 0 4px; margin-left: 6px; }
+.ctx-prof { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 5px 9px; font-size: 12px; cursor: pointer; }
+.ctx-prof + .ctx-prof { border-top: 1px solid var(--border); }
+.ctx-prof.on { background: var(--c-surface-alt); }
+.ctx-prof:focus-within { box-shadow: var(--focus-ring); }
+.ctx-prof input { flex: none; margin: 0; min-height: 0; accent-color: var(--c-dark); }
+.ctx-prof-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ctx-prof-text b { font-weight: 600; color: var(--c-dark); }
+.ctx-prof-text small { font-size: 11px; color: var(--c-text-light); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-profiles:disabled .ctx-prof { cursor: default; opacity: 0.7; }
+.ctx-note { margin: 6px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--c-text-light); }
+.ctx-note.warn { color: var(--warn); }
+.ctx-run { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.ctx-run .rc-progress { min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.ctx-msg { margin-top: 10px; padding: 7px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--c-surface-alt); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.ctx-msg.warn { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-border); }
+.ctx-answer { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--c-surface); }
+.ctx-answer-q { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--c-dark); overflow-wrap: anywhere; }
+.ctx-answer-body { max-height: 46vh; overflow-y: auto; }
+.ctx-answer-body .md { font-size: 13.5px; }
+.ctx-answer-prov { margin: 8px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 11px; color: var(--c-text-light); }
+.ctx-answer-prov .sh-muted { font-size: 11px; }
+.ctx-answer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.ctx-answer-actions .btn-dark { min-height: 36px; padding: 0 0.8rem; font-size: 12.5px; }
+.ctx-saved { font-size: 12px; overflow-wrap: anywhere; }
+.ctx-exports { display: flex; flex-wrap: wrap; gap: 6px; }
+.ctx-exports .sh-btn { font-size: 12px; }
+.ctx-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.ctx-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c-dark); }
+.ctx-dot.running { animation: daruma-pulse 1.2s ease-in-out infinite; }
+.ctx-dot.answer { background: #166534; }
+.ctx-drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: -8px; font-size: 13px; font-weight: 600; color: var(--c-dark); }
+
 /* ---------- Narrow windows ---------- */
 
 @media (max-width: 1000px) {
@@ -627,5 +684,10 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
   .new-grid { grid-template-columns: minmax(0, 1fr); }
   .set-body { grid-template-columns: 160px minmax(0, 1fr); }
   .doc-head { grid-template-columns: minmax(0, 1fr); }
-  .doc-actions { grid-column: 1; grid-row: auto; }
+  .doc-actions { grid-column: 1; grid-row: auto; flex-wrap: wrap; }
+  /* The context pane becomes a drawer over the document (plan §9). */
+  .doc-split { grid-template-columns: minmax(0, 1fr); }
+  .ctx.drawer { display: none; position: absolute; top: 0; right: 0; bottom: 0; z-index: 20; width: min(320px, 92%); box-shadow: -8px 0 24px rgba(0, 0, 0, 0.14); }
+  .ctx.drawer.open { display: flex; }
+  .ctx-scrim { position: absolute; inset: 0; z-index: 19; background: rgba(0, 0, 0, 0.12); }
 }

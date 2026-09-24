@@ -123,6 +123,7 @@ pub fn run() {
                 engine: Default::default(),
                 dictation: Default::default(),
                 recipe_runs: Default::default(),
+                recipe_answers: Default::default(),
             });
             // Long-form sessions the last run never finished (crash, forced
             // quit): keep their items as "interrupted" (#153). Off the main
@@ -210,6 +211,9 @@ pub fn run() {
             commands::recipes_list,
             commands::recipe_documents,
             commands::recipe_run,
+            commands::recipe_ask,
+            commands::recipe_save_answer,
+            commands::recipe_dismiss_answer,
             commands::recipe_cancel,
             commands::recipe_status,
             commands::recipe_reveal_document

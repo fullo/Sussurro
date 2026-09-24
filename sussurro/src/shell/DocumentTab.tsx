@@ -10,6 +10,7 @@ import {
   progressLabel,
   provenance,
 } from "../lib/recipes";
+import { isAnswerRun, runName } from "../lib/ask";
 import type {
   CompanionDoc,
   Item,
@@ -50,12 +51,18 @@ export function DocumentTab({
   item,
   onCount,
   onChanged,
+  select = null,
+  version = 0,
 }: {
   ctl: Ctl;
   item: Item;
   /** How many documents the item has (for the tab label). */
   onCount: (n: number) => void;
   onChanged: () => void;
+  /** Show this document (a new `n` asks again for the same file). */
+  select?: { file: string; n: number } | null;
+  /** Bumped when a document was written elsewhere (the Ask panel). */
+  version?: number;
 }) {
   const { settings } = ctl;
   const id = item.id;
@@ -70,6 +77,9 @@ export function DocumentTab({
   const [error, setError] = useState("");
   const idRef = useRef(id);
   idRef.current = id;
+  const recipesRef = useRef<Recipe[]>([]);
+  recipesRef.current = recipes;
+  const mounted = useRef({ select: false, version: false });
 
   const loadDocs = async (select?: string | null) => {
     try {
@@ -99,12 +109,12 @@ export function DocumentTab({
     setDocs(null);
     setRun(null);
     setError("");
-    loadDocs(null);
+    loadDocs(select?.file ?? null);
     // A run on this item may already be going (started before a reload).
     invoke<RecipeRunStatus[]>("recipe_status")
       .then((all) => {
         const mine = all.find((r) => r.item_id === id);
-        if (mine && idRef.current === id) setRun({ recipeName: mine.recipe_name, step: mine.progress, cancelling: false });
+        if (mine && idRef.current === id) setRun({ recipeName: runName(mine.recipe_name, mine.question), step: mine.progress, cancelling: false });
       })
       .catch(() => {});
     const subs = [
@@ -112,7 +122,7 @@ export function DocumentTab({
         const p = e.payload;
         if (p.item_id !== idRef.current) return;
         setRun((r) => ({
-          recipeName: p.recipe_name,
+          recipeName: runName(p.recipe_name, p.question),
           step: { phase: p.phase, done: p.done, total: p.total },
           cancelling: r?.cancelling ?? false,
         }));
@@ -121,8 +131,10 @@ export function DocumentTab({
         const f = e.payload;
         if (f.item_id !== idRef.current) return;
         setRun(null);
-        if (f.error) setError(`${f.recipe_name} failed: ${f.error}`);
-        else if (f.cancelled) ctl.flash(`${f.recipe_name} cancelled — nothing was written.`);
+        // The Ask panel reports its own answers, errors and cancels.
+        const answerRun = isAnswerRun(f.recipe_id, recipesRef.current);
+        if (f.error && !answerRun) setError(`${f.recipe_name} failed: ${f.error}`);
+        else if (f.cancelled && !answerRun) ctl.flash(`${f.recipe_name} cancelled — nothing was written.`);
         if (f.file) {
           loadDocs(f.file);
           onChanged();
@@ -134,6 +146,25 @@ export function DocumentTab({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // The Ask panel opened a document, or wrote one: reload (the mount
+  // already loaded, so the first run of each is skipped).
+  useEffect(() => {
+    if (!mounted.current.select) {
+      mounted.current.select = true;
+      return;
+    }
+    if (select) loadDocs(select.file);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [select?.n]);
+  useEffect(() => {
+    if (!mounted.current.version) {
+      mounted.current.version = true;
+      return;
+    }
+    loadDocs(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version]);
 
   const docRecipes = useMemo(() => recipes.filter((r) => r.target === "companion_document"), [recipes]);
   const recipe = docRecipes.find((r) => r.id === recipeId) ?? docRecipes[0] ?? null;
