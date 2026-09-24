@@ -6,7 +6,7 @@
  * capture sends `stop`. The side panel (#129) shows the fake app's live
  * lines with their speaker chips and backlog, and its Open in Sussurro /
  * Copy as text / Create .srt reach the app's item routes. On a fake Meet
- * page (Chromium), the Meet name observer (#131) sends the contributing-
+ * page, the Meet name observer (#131) sends the contributing-
  * source timeline, the bound names, the participants and its health.
  *
  *   npm run build && npm run test:e2e            (all configurations)
@@ -201,21 +201,31 @@ async function launchFirefox(config: Config): Promise<Launched> {
   const target = (part: string): Promise<string> => until(`the ${part} document`, () => [...targets].find(([url]) => url.includes(part))?.[1] ?? "");
   // Looked up per call: Firefox may suspend and restart the event page.
   const bg = async (code: string) => rdpc.evaluate(await target("background"), code);
+  // The value of a promise-valued expression: RDP's evaluation returns at
+  // once, so the result is parked under a key of its own and polled.
+  let parked = 0;
+  const bgAwait = async (expr: string): Promise<unknown> => {
+    const key = `__e2e${++parked}`;
+    await bg(`Promise.resolve().then(() => ${expr}).then((v) => { globalThis.${key} = JSON.stringify({ v: v ?? null }); }, (e) => { globalThis.${key} = JSON.stringify({ e: String(e) }); }); 0`);
+    const r = JSON.parse(String(await until(`the background to answer ${expr}`, () => bg(`globalThis.${key} ?? ""`)))) as { v?: unknown; e?: string };
+    if (r.e !== undefined) throw new Error(`background: ${r.e}`);
+    return r.v;
+  };
   return {
     ctx,
     micTone: 1000,
     async pair(port, token) {
       await bg(`browser.storage.local.set(${JSON.stringify({ port, token })}); 0`);
-      await until("the pairing to be stored", async () => (await bg("browser.storage.local.get('token').then(r => globalThis.__e2eToken = r.token); globalThis.__e2eToken")) === token);
+      await until("the pairing to be stored", async () => (await bgAwait("browser.storage.local.get('token').then((r) => r.token)")) === token);
     },
     async tabIdOf(part) {
-      const code = `browser.tabs.query({}).then(ts => globalThis.__e2eTab = (ts.find(t => (t.url || "").includes(${JSON.stringify(part)})) || {}).id); globalThis.__e2eTab`;
-      return (await until("the tab id", async () => (await bg(code)) as number)) as number;
+      const code = `browser.tabs.query({}).then((ts) => (ts.find((t) => (t.url || "").includes(${JSON.stringify(part)})) || {}).id)`;
+      return (await until("the tab id", async () => (await bgAwait(code)) as number)) as number;
     },
     async openPanel(tabId) {
       // Playwright doesn't see moz-extension:// tabs: script the panel over RDP.
       await bg(`browser.tabs.create({ url: browser.runtime.getURL("sidepanel.html?tabId=${tabId}") }); 0`);
-      const c = await target("sidepanel.html");
+      const c = await target(`sidepanel.html?tabId=${tabId}`);
       const js = (code: string) => rdpc.evaluate(c, code);
       const q = (id: string) => `document.querySelector('[data-testid="${id}"]')`;
       return {
@@ -370,11 +380,9 @@ async function runConfig(config: Config): Promise<Check[]> {
     await B.close();
 
     // 4. Meet names (#131): a fake Meet page (served at meet.google.com by
-    //    a route) with tiles and faked contributing sources. Chromium only:
-    //    Firefox does not run the temporary add-on's content scripts in a
-    //    page Playwright fulfils from a route (the observer's logic is
-    //    browser-independent and unit tested).
-    if (config !== "firefox") await meetNames();
+    //    a route, so the shipped content-script patterns match it) with
+    //    tiles and faked contributing sources, in every browser.
+    await meetNames();
   } catch (e) {
     const shown = shownPanel ? await shownPanel.text().catch(() => "") : "";
     check("harness ran", false, `${String(e instanceof Error ? e.stack : e)}\n    side panel: ${shown.replace(/\s+/g, " ")}`);
