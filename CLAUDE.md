@@ -138,6 +138,14 @@ project decisions here, not in per-machine memory.**
   diagnostics, and in the portable config export only when the user ticks
   "Include People" for that export. An unreadable file reads as empty for
   linking but is never overwritten.
+- **Extension pairing (0.9, #127)**: the pairing code is
+  `sussurro:<port>:<token>`, defined once in `sussurro/src/lib/pairingCode.ts`
+  and imported by the extension as `@sussurro/pairing`. The extension keeps
+  it in `storage.local` under `port` / `token`, only through
+  `extension/src/shared/pairing.ts` (also `PROTOCOL_VERSION`, `liveUrl`).
+  Settings → Browser extension never shows the token (Copy puts the code on
+  the clipboard) and reads `local_api_status` (the API's settings apply at
+  startup) to say when a restart is needed.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`

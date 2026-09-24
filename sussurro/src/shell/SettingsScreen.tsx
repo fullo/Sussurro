@@ -8,6 +8,7 @@ import type { SubtitlesMode } from "../lib/types";
 import { BehaviorCard } from "../settings/BehaviorCard";
 import { CleanupCard } from "../settings/CleanupCard";
 import { DictationCard } from "../settings/DictationCard";
+import { ExtensionCard } from "../settings/ExtensionCard";
 import { HistoryCard } from "../settings/HistoryCard";
 import { PersonalizationCard } from "../settings/PersonalizationCard";
 import { SetupBanner } from "../settings/SetupBanner";
@@ -22,6 +23,7 @@ export type SectionId =
   | "behavior"
   | "history"
   | "archive"
+  | "extension"
   | "about";
 
 const SECTIONS: { id: SectionId; label: string }[] = [
@@ -32,6 +34,7 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "behavior", label: "Behavior" },
   { id: "history", label: "Dictation history" },
   { id: "archive", label: "Archive" },
+  { id: "extension", label: "Browser extension" },
   { id: "about", label: "About" },
 ];
 
@@ -109,6 +112,7 @@ export function SettingsScreen({
           {section === "behavior" && <BehaviorCard ctl={ctl} collapsible={false} />}
           {section === "history" && <HistoryCard ctl={ctl} collapsible={false} />}
           {section === "archive" && <ArchiveCard ctl={ctl} />}
+          {section === "extension" && <ExtensionCard ctl={ctl} collapsible={false} />}
           {section === "about" && <AboutCard ctl={ctl} onAbout={onAbout} />}
         </div>
       </div>
