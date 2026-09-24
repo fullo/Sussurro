@@ -1,0 +1,192 @@
+import { describe, expect, it } from "vitest";
+import {
+  canStart,
+  describeProgress,
+  initialRuns,
+  routeEvent,
+  runsReducer,
+  wasCancelled,
+  type RunsAction,
+  type RunsState,
+} from "./engineRuns";
+import type { EngineProgress } from "./types";
+
+const progress = (session_id: number, over: Partial<EngineProgress> = {}): EngineProgress => ({
+  session_id,
+  processed_s: 10,
+  ingested_s: 12,
+  total_s: 40,
+  backlog_s: 2,
+  queue_len: 1,
+  segments_done: 1,
+  ...over,
+});
+
+const seg = (session_id: number, id: number, start_ms: number, text = `line ${id}`) => ({
+  type: "segment" as const,
+  payload: { session_id, segment: { id, start_ms, end_ms: start_ms + 900, raw: text, text, words: [{ w: "x", start_ms: 0, end_ms: 1 }] } },
+});
+
+const run = (actions: RunsAction[], from: RunsState = initialRuns) => actions.reduce(runsReducer, from);
+
+describe("runsReducer routing", () => {
+  it("routes by session id: a mic session's progress never lands on the file", () => {
+    const s = run([
+      { type: "started", kind: "mic", sessionId: 7, label: "", now: 0 },
+      { type: "started", kind: "file", sessionId: null, label: "call.wav", now: 0 },
+      { type: "progress", payload: progress(7, { processed_s: 99 }) },
+    ]);
+    expect(s.mic?.progress?.processed_s).toBe(99);
+    expect(s.file?.progress).toBeNull();
+    expect(s.file?.sessionId).toBeNull(); // the mic's id was not claimed
+  });
+
+  it("lets a running file claim the first unknown session id, then only that one", () => {
+    const s = run([
+      { type: "started", kind: "file", sessionId: null, label: "call.wav", now: 0 },
+      { type: "progress", payload: progress(3) },
+      { type: "progress", payload: progress(4, { processed_s: 1 }) }, // someone else's
+    ]);
+    expect(s.file?.sessionId).toBe(3);
+    expect(s.file?.progress?.session_id).toBe(3);
+    expect(routeEvent(s, 4)).toBeNull();
+  });
+
+  it("ignores events when nothing is running", () => {
+    expect(run([{ type: "progress", payload: progress(1) }])).toEqual(initialRuns);
+  });
+
+  it("collects segments in time order, dedups by id, drops word timings", () => {
+    const s = run([
+      { type: "started", kind: "mic", sessionId: 1, label: "", now: 0 },
+      seg(1, 1, 5000),
+      seg(1, 0, 0),
+      seg(1, 1, 5000, "line 1 again"),
+    ]);
+    expect(s.mic?.segments.map((x) => x.text)).toEqual(["line 0", "line 1 again"]);
+    expect(s.mic?.segments[0]).not.toHaveProperty("words");
+  });
+
+  it("finishes on done and keeps the result", () => {
+    const s = run([
+      { type: "started", kind: "mic", sessionId: 1, label: "", now: 0 },
+      { type: "stopping", kind: "mic" },
+      {
+        type: "done",
+        payload: { session_id: 1, item_id: "2026/09/x", item_type: "note", title: "x", text: "t", segments: 1, duration_s: 3 },
+      },
+    ]);
+    expect(s.mic?.status).toBe("done");
+    expect(s.mic?.result?.item_id).toBe("2026/09/x");
+  });
+
+  it("marks errors and cancellations", () => {
+    const s = run([
+      { type: "started", kind: "file", sessionId: null, label: "a.wav", now: 0 },
+      { type: "progress", payload: progress(2) },
+      { type: "error", payload: { session_id: 2, error: "cancelled" } },
+      { type: "failed", kind: "file", error: "transcribe_file: cancelled" },
+    ]);
+    expect(s.file?.status).toBe("error");
+    expect(s.file?.error).toBe("cancelled"); // the event's message wins
+    expect(wasCancelled(s.file!)).toBe(true);
+  });
+
+  it("uses transcribe_file's result when no event was routed", () => {
+    const s = run([
+      { type: "started", kind: "file", sessionId: null, label: "a.wav", now: 0 },
+      { type: "resolved", kind: "file", result: { item_id: "i", item_type: "transcription", title: "a", text: "", segments: 0, duration_s: 0 } },
+    ]);
+    expect(s.file?.status).toBe("done");
+    expect(s.file?.result?.item_type).toBe("transcription");
+  });
+
+  it("dismisses only finished runs", () => {
+    const live = run([{ type: "started", kind: "mic", sessionId: 1, label: "", now: 0 }]);
+    expect(run([{ type: "dismiss", kind: "mic" }], live).mic).not.toBeNull();
+    const done = run([{ type: "error", payload: { session_id: 1, error: "boom" } }, { type: "dismiss", kind: "mic" }], live);
+    expect(done.mic).toBeNull();
+  });
+});
+
+describe("runsReducer with the #153 events", () => {
+  const started = (session_id: number, item_id: string) => ({
+    type: "engine-started" as const,
+    payload: { session_id, item_id, item_type: "note" as const, title: "", source: "mic" },
+  });
+
+  it("claims the file's id on engine-started and tracks the item", () => {
+    const s = run([
+      { type: "started", kind: "file", sessionId: null, label: "a.wav", now: 0 },
+      started(9, "2026/09/2026-09-24-a"),
+    ]);
+    expect(s.file?.sessionId).toBe(9);
+    expect(s.file?.itemId).toBe("2026/09/2026-09-24-a");
+  });
+
+  it("follows an untitled item's rename at the end", () => {
+    const s = run([
+      { type: "started", kind: "mic", sessionId: 1, label: "", now: 0 },
+      started(1, "2026/09/2026-09-24-untitled"),
+      {
+        type: "done",
+        payload: { session_id: 1, item_id: "2026/09/2026-09-24-idee", item_type: "note", title: "Idee", text: "", segments: 2, duration_s: 9 },
+      },
+    ]);
+    expect(s.mic?.itemId).toBe("2026/09/2026-09-24-idee");
+    expect(s.mic?.previousItemId).toBe("2026/09/2026-09-24-untitled");
+  });
+
+  it("keeps the interrupted item a failed run left behind", () => {
+    const s = run([
+      { type: "started", kind: "mic", sessionId: 1, label: "", now: 0 },
+      started(1, "x/untitled"),
+      { type: "error", payload: { session_id: 1, error: "device lost", item_id: "x/untitled" } },
+    ]);
+    expect(s.mic?.status).toBe("error");
+    expect(s.mic?.itemId).toBe("x/untitled");
+    const cancelled = run([
+      { type: "started", kind: "mic", sessionId: 1, label: "", now: 0 },
+      started(1, "x/untitled"),
+      { type: "error", payload: { session_id: 1, error: "cancelled" } },
+    ]);
+    expect(cancelled.mic?.itemId).toBeNull();
+  });
+
+  it("keeps the stt_error marker of a failed segment", () => {
+    const s = run([
+      { type: "started", kind: "mic", sessionId: 1, label: "", now: 0 },
+      {
+        type: "segment",
+        payload: { session_id: 1, segment: { id: 0, start_ms: 0, end_ms: 900, raw: "", text: "", stt_error: "model crashed" } },
+      },
+    ]);
+    expect(s.mic?.segments[0].stt_error).toBe("model crashed");
+  });
+});
+
+describe("canStart", () => {
+  it("allows one run per kind and holds the mic until the file has an id", () => {
+    expect(canStart(initialRuns, "mic")).toBe(true);
+    const fileStarting = run([{ type: "started", kind: "file", sessionId: null, label: "a", now: 0 }]);
+    expect(canStart(fileStarting, "file")).toBe(false);
+    expect(canStart(fileStarting, "mic")).toBe(false);
+    const fileClaimed = run([{ type: "progress", payload: progress(5) }], fileStarting);
+    expect(canStart(fileClaimed, "mic")).toBe(true);
+  });
+});
+
+describe("describeProgress", () => {
+  it("reports backlog and queue", () => {
+    const s = run([
+      { type: "started", kind: "mic", sessionId: 1, label: "", now: 0 },
+    ]);
+    expect(describeProgress(s.mic!)).toBe("Listening…");
+    const behind = run([{ type: "progress", payload: progress(1, { backlog_s: 2.4, queue_len: 2 }) }], s);
+    expect(describeProgress(behind.mic!)).toBe("Transcribing · 2 s behind · 2 queued");
+    const caught = run([{ type: "progress", payload: progress(1, { backlog_s: 0.2, queue_len: 0 }) }], s);
+    expect(describeProgress(caught.mic!)).toBe("Up to date");
+    const stopping = run([{ type: "stopping", kind: "mic" }], behind);
+    expect(describeProgress(stopping.mic!)).toBe("Finishing · 2 s of audio left");
+  });
+});

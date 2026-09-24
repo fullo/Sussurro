@@ -576,6 +576,97 @@ fn rerender_if_unchanged_with(
     Ok(true)
 }
 
+/// A change to one transcript line, made from the app's line editor.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SegmentEdit {
+    /// Replace the cleaned text (the raw STT text is kept for reference).
+    Text(String),
+    /// Remove the segment.
+    Delete,
+}
+
+/// Returned when a line edit is refused because `transcript.md` changed
+/// outside the app: the markdown wins and the app does not overwrite it.
+pub const EDITED_OUTSIDE_ERROR: &str = "edited outside Sussurro";
+
+/// Edit or delete one segment and regenerate `transcript.md`. Refused when
+/// the transcript was edited outside the app (the content-hash rule): the
+/// markdown wins, so a line edit that could never reach it is not saved
+/// either. Returns the updated item.
+pub fn edit_segment(archive: &Path, id: &str, segment_id: u32, edit: SegmentEdit) -> Result<Item> {
+    edit_segment_with(archive, id, segment_id, edit, &|_| {})
+}
+
+/// [`edit_segment`] with the [`commit_transcript`] test hook.
+fn edit_segment_with(
+    archive: &Path,
+    id: &str,
+    segment_id: u32,
+    edit: SegmentEdit,
+    before_commit: &dyn Fn(&Path),
+) -> Result<Item> {
+    // Same lock as the engine's checkpoints and update_meta: the check and
+    // the write must not interleave with another writer of this item.
+    let _lock = lock_items();
+    let dir = existing_item_dir(archive, id)?;
+    let path = transcript_path(&dir);
+    let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    if is_edited_externally(&dir, &bytes) {
+        bail!(
+            "'{id}' was {EDITED_OUTSIDE_ERROR}: its transcript.md is kept as is — edit it there"
+        );
+    }
+    let (meta, _) = frontmatter::parse(&String::from_utf8_lossy(&bytes))?;
+    // A live item is still being written by its capture session (#153).
+    if meta.session_state() == Some(SessionState::Recording) {
+        bail!("'{id}' is still being recorded — edit it when the session ends");
+    }
+    let original = read_segments(&dir)?;
+    let mut segments = original.clone();
+    let pos = segments
+        .segments
+        .iter()
+        .position(|s| s.id == segment_id)
+        .with_context(|| format!("no line {segment_id} in '{id}'"))?;
+    match edit {
+        SegmentEdit::Text(text) => {
+            let text = text.trim();
+            if text.is_empty() {
+                bail!("a line can't be empty — delete it instead");
+            }
+            let seg = &mut segments.segments[pos];
+            if seg.text != text {
+                seg.text = text.to_string();
+                seg.edited = true;
+                // Typed in by hand over a stretch STT could not transcribe.
+                seg.stt_error = None;
+            }
+        }
+        SegmentEdit::Delete => {
+            segments.segments.remove(pos);
+        }
+    }
+    // Rendered from the very bytes checked above, and replaced only if the
+    // file still holds them (#155): an external save that lands meanwhile
+    // wins, and the line edit is undone in segments.json too — it could
+    // never reach the markdown, so it is not kept anywhere.
+    let doc = render_transcript(&meta, &segments)?;
+    write_segments(&dir, &segments)?;
+    if let Err(e) = commit_transcript(
+        &dir,
+        doc.as_bytes(),
+        &sha256_hex(&bytes),
+        true,
+        before_commit,
+    ) {
+        if let Err(undo) = write_segments(&dir, &original) {
+            return Err(e.context(format!("segments.json could not be restored ({undo:#})")));
+        }
+        return Err(e);
+    }
+    read_item_at(id, &dir)
+}
+
 /// Move an item folder to the OS trash (never a hard delete).
 pub fn delete_item(archive: &Path, id: &str) -> Result<()> {
     delete_item_with(archive, id, move_to_trash)
@@ -799,6 +890,121 @@ mod tests {
         );
         // And the app still refuses to regenerate it.
         assert!(!save_segments(archive, &id, &segs(&["X."])).unwrap());
+    }
+
+    #[test]
+    fn edit_segment_updates_text_marks_edited_and_regenerates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let mut m = meta("Riunione", DATE);
+        m.item_type = ItemType::Transcription;
+        let id = create_item(archive, &m, &segs(&["Uno.", "Due.", "Tre."])).unwrap();
+
+        let item = edit_segment(archive, &id, 1, SegmentEdit::Text("  Due, corretto. ".into()))
+            .unwrap();
+        let s = &item.segments.segments[1];
+        assert_eq!(s.text, "Due, corretto.");
+        assert_eq!(s.raw, "Due."); // raw STT kept
+        assert!(s.edited);
+        assert!(!item.segments.segments[0].edited);
+        assert!(item.body.contains("[00:00:01] Due, corretto."), "{}", item.body);
+        assert!(!item.edited_externally); // still app-owned
+
+        // Same text again: nothing changes, not flagged as a new edit.
+        let again = edit_segment(archive, &id, 0, SegmentEdit::Text("Uno.".into())).unwrap();
+        assert!(!again.segments.segments[0].edited);
+
+        let item = edit_segment(archive, &id, 0, SegmentEdit::Delete).unwrap();
+        let ids: Vec<u32> = item.segments.segments.iter().map(|s| s.id).collect();
+        assert_eq!(ids, vec![1, 2]);
+        assert!(!item.body.contains("Uno."));
+
+        // Unknown line, empty text and non-items are refused.
+        assert!(edit_segment(archive, &id, 42, SegmentEdit::Delete).is_err());
+        assert!(edit_segment(archive, &id, 1, SegmentEdit::Text("  ".into())).is_err());
+        assert!(edit_segment(archive, "2026", 1, SegmentEdit::Delete).is_err());
+    }
+
+    #[test]
+    fn edit_segment_refuses_live_items_and_clears_stt_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let mut live = meta("Live", DATE);
+        live.set_session_state(Some(SessionState::Recording));
+        let id = create_item(archive, &live, &segs(&["Uno."])).unwrap();
+        let err = edit_segment(archive, &id, 0, SegmentEdit::Delete).unwrap_err();
+        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
+
+        let mut failed = segs(&["", "Due."]);
+        failed.segments[0].stt_error = Some("model crashed".into());
+        let id = create_item(archive, &meta("Buco", DATE), &failed).unwrap();
+        let item =
+            edit_segment(archive, &id, 0, SegmentEdit::Text("Uno, a mano.".into())).unwrap();
+        let s = &item.segments.segments[0];
+        assert_eq!(s.text, "Uno, a mano.");
+        assert!(s.stt_error.is_none() && s.edited);
+    }
+
+    #[test]
+    fn edit_segment_refuses_items_edited_outside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = create_item(archive, &meta("Nota", DATE), &segs(&["Uno.", "Due."])).unwrap();
+        let path = archive.join(&id).join("transcript.md");
+        let edited = std::fs::read_to_string(&path).unwrap().replace("Due.", "Due!");
+        std::fs::write(&path, &edited).unwrap();
+        let before = std::fs::read(archive.join(&id).join(".sussurro/segments.json")).unwrap();
+
+        let err = edit_segment(archive, &id, 0, SegmentEdit::Delete).unwrap_err();
+        assert!(format!("{err:#}").contains(EDITED_OUTSIDE_ERROR), "{err:#}");
+        // Neither file was touched.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+        let after = std::fs::read(archive.join(&id).join(".sussurro/segments.json")).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn edit_segment_does_not_overwrite_a_concurrent_external_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = create_item(archive, &meta("Gara", DATE), &segs(&["Uno.", "Due."])).unwrap();
+        let path = archive.join(&id).join("transcript.md");
+        let seg_path = archive.join(&id).join(".sussurro/segments.json");
+        let before = std::fs::read(&seg_path).unwrap();
+        // Obsidian saves the file between the line edit's check and its write.
+        let external = "---\ntitle: Gara\n---\nRiscritto a mano.\n";
+        let err = edit_segment_with(
+            archive,
+            &id,
+            1,
+            SegmentEdit::Text("Due, corretto.".into()),
+            &|p| std::fs::write(p, external).unwrap(),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("changed on disk"), "{err:#}");
+        // The markdown wins, and the line edit is not kept in segments.json.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
+        assert_eq!(std::fs::read(&seg_path).unwrap(), before);
+        assert!(temp_leftovers(&archive.join(&id)).is_empty());
+        assert!(read_item(archive, &id).unwrap().edited_externally);
+    }
+
+    #[test]
+    fn edit_segment_waits_for_a_live_session_to_finish() {
+        use crate::archive::live;
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = live::begin_session(archive, &meta("Live", DATE)).unwrap();
+        live::checkpoint(archive, &id, &segs(&["Uno.", "Due."]), true).unwrap();
+        let err = edit_segment(archive, &id, 0, SegmentEdit::Delete).unwrap_err();
+        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
+        assert_eq!(read_item(archive, &id).unwrap().segments.segments.len(), 2);
+
+        let fallback = meta("Live", DATE);
+        live::finish_session(archive, &id, &segs(&["Uno.", "Due."]), &fallback, |m| m).unwrap();
+        let item = edit_segment(archive, &id, 0, SegmentEdit::Text("Uno!".into())).unwrap();
+        assert!(!item.recording && !item.edited_externally);
+        assert!(item.body.contains("Uno!"), "{}", item.body);
     }
 
     #[test]

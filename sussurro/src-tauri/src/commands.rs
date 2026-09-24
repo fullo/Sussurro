@@ -33,8 +33,17 @@ pub fn set_settings(
     settings
         .save(&state.paths.settings_file)
         .map_err(|e| e.to_string())?;
+    // Only the settings lock (never held long) is read here: the workspace
+    // layout follows a ui_v2 toggle (#114).
+    let workspace = {
+        let current = state.settings.lock().unwrap();
+        (current.ui_v2 != settings.ui_v2).then_some(settings.ui_v2)
+    };
     // Main thread: must never wait for the transcriber (#154).
     crate::pipeline::swap_settings(&state, settings);
+    if let Some(on) = workspace {
+        crate::apply_main_window_layout(&app, on);
+    }
     Ok(())
 }
 
@@ -723,6 +732,44 @@ pub async fn archive_update_meta(
     .await
 }
 
+/// Line editor: replace the text of one segment; returns the updated item.
+/// Refused when `transcript.md` was edited outside the app.
+#[tauri::command]
+pub async fn archive_update_segment(
+    state: State<'_, AppState>,
+    id: String,
+    segment_id: u32,
+    text: String,
+) -> Result<Item, String> {
+    edit_segment_command(&state, id, segment_id, archive::SegmentEdit::Text(text)).await
+}
+
+/// Line editor: delete one segment; returns the updated item. Refused when
+/// `transcript.md` was edited outside the app.
+#[tauri::command]
+pub async fn archive_delete_segment(
+    state: State<'_, AppState>,
+    id: String,
+    segment_id: u32,
+) -> Result<Item, String> {
+    edit_segment_command(&state, id, segment_id, archive::SegmentEdit::Delete).await
+}
+
+async fn edit_segment_command(
+    state: &AppState,
+    id: String,
+    segment_id: u32,
+    edit: archive::SegmentEdit,
+) -> Result<Item, String> {
+    let (dir, db) = archive_paths(state)?;
+    blocking(move || {
+        let item = archive::edit_segment(&dir, &id, segment_id, edit)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        Ok(item)
+    })
+    .await
+}
+
 /// Move an item folder to the OS trash (never a hard delete).
 #[tauri::command]
 pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
@@ -735,17 +782,33 @@ pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<()
     .await
 }
 
-/// Open the item's folder in the OS file manager.
+/// Open the item's folder in the OS file manager — or, without an id, the
+/// archive folder itself (created if missing, so the empty Library can show
+/// the user where items will go).
 #[tauri::command]
-pub fn archive_reveal(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub fn archive_reveal(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: Option<String>,
+) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let (dir, _) = archive_paths(&state)?;
-    let item = archive::paths::item_dir(&dir, &id).map_err(|e| format!("{e:#}"))?;
-    if !item.is_dir() {
-        return Err(format!("no archive item '{id}'"));
-    }
+    let target = match id {
+        Some(id) => {
+            let item = archive::paths::item_dir(&dir, &id).map_err(|e| format!("{e:#}"))?;
+            if !item.is_dir() {
+                return Err(format!("no archive item '{id}'"));
+            }
+            item
+        }
+        None => {
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| format!("creating {}: {e}", dir.display()))?;
+            dir
+        }
+    };
     app.opener()
-        .open_path(item.display().to_string(), None::<&str>)
+        .open_path(target.display().to_string(), None::<&str>)
         .map_err(|e| e.to_string())
 }
 
