@@ -17,6 +17,7 @@
 pub mod cluster;
 pub mod doc;
 pub mod fbank;
+pub mod map;
 pub mod model;
 pub mod names;
 pub mod tracker;
