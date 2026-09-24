@@ -14,10 +14,12 @@
 //! - [`meeting`]: what the meeting page said during a browser session (#126)
 //! - [`subtitles`]: SRT/WebVTT writers (pure, #133)
 //! - [`index`]: search index (rebuildable)
+//! - [`facets`]: the Library's facet filters and counts (#135)
 
 pub mod companion;
 pub mod export;
 pub mod external;
+pub mod facets;
 pub mod frontmatter;
 pub mod index;
 pub mod live;

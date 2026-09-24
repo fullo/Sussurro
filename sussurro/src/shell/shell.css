@@ -447,6 +447,74 @@ button.pchip-name:hover { text-decoration: underline; }
 .lib-snippet mark { background: var(--warn-soft); color: var(--c-dark); border-radius: 2px; }
 .lib-count { padding: 8px 12px; font-size: 11.5px; color: var(--c-text-light); border-top: 1px solid var(--border); min-height: 34px; }
 
+/* ---------- Library facets (#135): Tag · Category · Participant · Date ---------- */
+
+.fchip-n { margin-left: 5px; font-size: 11px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+.facets { position: relative; }
+.facet-trigger { display: inline-flex; }
+.fchip.facet { border-style: dashed; }
+.fchip.facet.set { border-style: solid; background: var(--c-surface-alt); color: var(--c-text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.fchip.facet.open { border-color: var(--c-dark); color: var(--c-dark); }
+.facet-trigger .fchip.facet.set { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.fchip.facet-x { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 0 8px; background: var(--c-surface-alt); color: var(--c-text); }
+.fchip.facet-clear { border-color: transparent; background: transparent; text-decoration: underline; text-underline-offset: 2px; }
+.fchip:disabled { opacity: 0.5; }
+.facet-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 220px;
+  z-index: 30;
+  padding: 10px 10px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-md);
+}
+.facet-pop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 13px; color: var(--c-dark); }
+.facet-pop-head h3 { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--c-text-light); margin: 0; }
+.facet-link { font: inherit; font-size: 12px; min-height: 30px; padding: 0 4px; border: 0; background: none; color: var(--c-text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.facet-link:hover { color: var(--c-dark); }
+.facet-find { width: 100%; font-size: 12.5px; margin-bottom: 6px; }
+.facet-values { list-style: none; margin: 0 -3px; padding: 3px; max-height: 264px; overflow-y: auto; display: flex; flex-direction: column; }
+.facet-opt { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 2px 6px; border-radius: 6px; font-size: 12.5px; cursor: pointer; }
+.facet-opt:hover { background: var(--c-surface-alt); }
+.facet-opt:focus-within { box-shadow: var(--focus-ring); }
+.facet-opt.on { color: var(--c-dark); font-weight: 600; }
+.facet-opt.zero { color: var(--c-text-light); }
+.facet-opt input { flex: none; margin: 0; min-height: 0; accent-color: var(--c-dark); }
+.facet-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facet-person { color: var(--c-text-light); font-size: 9px; vertical-align: middle; }
+.facet-n { flex: none; font-size: 11.5px; color: var(--c-text-light); font-variant-numeric: tabular-nums; font-weight: 400; }
+.facet-range { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px 6px 2px; }
+.facet-range label { display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; color: var(--c-text-light); min-width: 0; }
+.facet-range input { font: inherit; font-size: 12px; min-width: 0; width: 100%; }
+.facet-range .facet-empty { grid-column: 1 / -1; }
+.facet-empty { margin: 4px 6px; font-size: 12px; color: var(--c-text-light); }
+.facet-hint { margin: 6px 2px 0; font-size: 11px; color: var(--c-text-light); }
+/* Narrow windows: one "Filters" button opening a drawer over the list. */
+.facet-scrim { position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.12); }
+.facet-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: var(--rail-w, 60px);
+  z-index: 30;
+  width: min(340px, calc(100vw - var(--rail-w, 60px)));
+  padding: 12px 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  background: var(--c-bg);
+  border-right: 1px solid var(--border);
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.14);
+}
+.facet-drawer .facet-values { max-height: none; }
+.facet-sect { padding-top: 10px; border-top: 1px solid var(--border); }
+.sh-note.pad p { margin: 0 0 8px; }
+
 .doc-wrap { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--c-surface); }
 .empty-state { margin: auto; max-width: 460px; padding: 28px; text-align: center; }
 .empty-state h2 { font-size: 18px; color: var(--c-dark); margin: 0 0 8px; }

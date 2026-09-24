@@ -161,6 +161,17 @@ project decisions here, not in per-machine memory.**
   Settings → Browser extension never shows the token (Copy puts the code on
   the clipboard) and reads `local_api_status` (the API's settings apply at
   startup) to say when a restart is needed.
+- **Library facets (0.9, #135)** (`archive/facets.rs`, `archive_facets`):
+  not behind `meetings_enabled`. OR within a facet, AND across facets and
+  with the text query; counts are disjunctive (a facet ignores its own
+  selection). Tags/categories group case-insensitively (accents kept);
+  participants group by People person (same rule as the People screen's
+  counts), else by normalized name — the key is stored in the index and
+  recomputed when `people.json` changes. Date buckets are cumulative
+  (today / week from Monday / month / year / older) on the item's
+  frontmatter day vs. the viewer's local today sent by the UI; the date
+  facet takes one bucket or one custom range. Index schema v2 (rebuilt
+  automatically). Selection is kept in localStorage (`libraryFacets`).
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`

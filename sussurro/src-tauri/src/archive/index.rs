@@ -12,6 +12,8 @@
 //! transaction with a busy timeout, so parallel commands (searches, the
 //! engine indexing a new item, a rebuild) queue instead of failing.
 
+use super::facets::{self, DateBounds, DateBucket, FacetedSearch};
+use super::people::{people_path, read_people, PeopleMatcher};
 use super::store::{scan_item_dirs, summary_at, ItemSummary};
 use super::types::{ItemMeta, ItemType};
 use anyhow::{Context, Result};
@@ -22,7 +24,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 /// Bump when the schema changes: an index with another version is rebuilt.
-const SCHEMA_VERSION: i64 = 1;
+/// v2 (#135): facet keys on tags, categories and participants.
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -35,21 +38,30 @@ CREATE TABLE items (
     edited      INTEGER NOT NULL,
     meta_json   TEXT NOT NULL
 );
-CREATE TABLE item_tags (id TEXT NOT NULL, tag TEXT NOT NULL);
-CREATE TABLE item_categories (id TEXT NOT NULL, category TEXT NOT NULL);
-CREATE TABLE item_participants (id TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL);
+-- *_key columns: facet grouping keys (#135, see facets.rs). pkey is the
+-- participant's People person (person:<id>) or normalized name
+-- (name:<key>); recomputed when people.json changes (meta 'people').
+CREATE TABLE item_tags (id TEXT NOT NULL, tag TEXT NOT NULL, tag_key TEXT NOT NULL);
+CREATE TABLE item_categories (id TEXT NOT NULL, category TEXT NOT NULL, category_key TEXT NOT NULL);
+CREATE TABLE item_participants (id TEXT NOT NULL, name TEXT NOT NULL, email TEXT NOT NULL, pkey TEXT NOT NULL);
 CREATE INDEX item_tags_tag ON item_tags (tag COLLATE NOCASE);
 CREATE INDEX item_tags_id ON item_tags (id);
+CREATE INDEX item_tags_key ON item_tags (tag_key, id);
 CREATE INDEX item_categories_category ON item_categories (category COLLATE NOCASE);
 CREATE INDEX item_categories_id ON item_categories (id);
+CREATE INDEX item_categories_key ON item_categories (category_key, id);
 CREATE INDEX item_participants_id ON item_participants (id);
+CREATE INDEX item_participants_pkey ON item_participants (pkey, id);
+CREATE INDEX items_day ON items (day);
+CREATE INDEX items_type ON items (item_type);
 CREATE VIRTUAL TABLE items_fts USING fts5(
     title, body, tags, categories, participants,
     tokenize = 'unicode61 remove_diacritics 2'
 );
 ";
 
-/// Search facets; every set field must match (AND).
+/// Search filters. Every set field must match (AND); the values of one
+/// list are alternatives (OR). See [`facets`] for the Library's facets.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SearchFilters {
@@ -65,6 +77,19 @@ pub struct SearchFilters {
     pub date_from: Option<String>,
     /// Inclusive upper bound, `YYYY-MM-DD`.
     pub date_to: Option<String>,
+    /// Item types, any of (#135).
+    pub types: Vec<ItemType>,
+    /// Tags, any of, compared by [`facets::value_key`] (case-insensitive).
+    pub tags: Vec<String>,
+    /// Categories, any of, compared like tags.
+    pub categories: Vec<String>,
+    /// Participant facet keys, any of: `person:<id>` or `name:<name key>`.
+    pub participants: Vec<String>,
+    /// A date bucket relative to [`SearchFilters::today`].
+    pub date_bucket: Option<DateBucket>,
+    /// The viewer's local date (`YYYY-MM-DD`) for the date buckets;
+    /// default: this computer's local date.
+    pub today: Option<String>,
 }
 
 /// A handle on the search index of one archive folder.
@@ -316,7 +341,8 @@ impl Index {
         let dir = super::paths::item_dir(&self.archive, id)?;
         self.with_conn(|conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            index_at(&tx, id, &dir, &fingerprint(&dir))?;
+            let matcher = refresh_people(&tx, &self.archive)?;
+            index_at(&tx, id, &dir, &fingerprint(&dir), &matcher)?;
             tx.commit()?;
             Ok(())
         })
@@ -341,6 +367,22 @@ impl Index {
         let rows = self.with_conn(|conn| search_conn(conn, query, filters))?;
         Ok(rows.into_iter().map(|s| s.with_external_hosts(&self.archive)).collect())
     }
+
+    /// [`Index::search`] plus the Library's facet counts (#135), from the
+    /// same snapshot of the index.
+    pub fn search_faceted(&self, query: &str, filters: &SearchFilters) -> Result<FacetedSearch> {
+        let people = read_people(&self.archive);
+        let (rows, facets) = self.with_conn(|conn| {
+            Ok((
+                search_conn(conn, query, filters)?,
+                facets::facets_conn(conn, query, filters, &people)?,
+            ))
+        })?;
+        Ok(FacetedSearch {
+            items: rows.into_iter().map(|s| s.with_external_hosts(&self.archive)).collect(),
+            facets,
+        })
+    }
 }
 
 impl Index {
@@ -356,6 +398,18 @@ impl Index {
     }
 }
 
+#[cfg(test)]
+impl Index {
+    /// Raw access for tests that seed the index directly (the facet
+    /// performance smoke test).
+    pub(super) fn with_conn_for_tests<T>(
+        &self,
+        f: impl FnOnce(&mut Connection) -> Result<T>,
+    ) -> Result<T> {
+        self.with_conn(f)
+    }
+}
+
 fn sync_conn(conn: &mut Connection, archive: &Path) -> Result<usize> {
     let on_disk = scan_item_dirs(archive);
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -364,6 +418,7 @@ fn sync_conn(conn: &mut Connection, archive: &Path) -> Result<usize> {
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect::<rusqlite::Result<_>>()?
     };
+    let matcher = refresh_people(&tx, archive)?;
     let mut count = 0;
     for (id, dir) in &on_disk {
         let fp = fingerprint(dir);
@@ -371,7 +426,7 @@ fn sync_conn(conn: &mut Connection, archive: &Path) -> Result<usize> {
             count += 1;
             continue;
         }
-        match index_at(&tx, id, dir, &fp) {
+        match index_at(&tx, id, dir, &fp, &matcher) {
             Ok(()) => count += 1,
             Err(e) => {
                 eprintln!("archive index: skipping broken item {id}: {e:#}");
@@ -391,53 +446,16 @@ fn search_conn(
     query: &str,
     filters: &SearchFilters,
 ) -> Result<Vec<ItemSummary>> {
-    let fts = fts_query(query);
+    let bounds = DateBounds::new(facets::resolve_today(&filters.today)?);
+    let m = facets::matching(query, filters, &bounds, None)?;
     let mut sql = String::from("SELECT i.id, i.meta_json, i.edited, ");
-    let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if let Some(q) = &fts {
-        sql.push_str(
-            "snippet(items_fts, 1, '**', '**', '…', 16) \
-             FROM items_fts JOIN items i ON i.rowid = items_fts.rowid \
-             WHERE items_fts MATCH ?",
-        );
-        args.push(Box::new(q.clone()));
+    sql.push_str(if m.fts {
+        "snippet(items_fts, 1, '**', '**', '…', 16) "
     } else {
-        sql.push_str("NULL FROM items i WHERE 1");
-    }
-    if let Some(t) = filters.item_type {
-        sql.push_str(" AND i.item_type = ?");
-        args.push(Box::new(t.as_str()));
-    }
-    if let Some(tag) = nonempty(&filters.tag) {
-        sql.push_str(
-            " AND EXISTS (SELECT 1 FROM item_tags t WHERE t.id = i.id AND t.tag = ? COLLATE NOCASE)",
-        );
-        args.push(Box::new(tag));
-    }
-    if let Some(cat) = nonempty(&filters.category) {
-        sql.push_str(
-            " AND EXISTS (SELECT 1 FROM item_categories c WHERE c.id = i.id \
-             AND c.category = ? COLLATE NOCASE)",
-        );
-        args.push(Box::new(cat));
-    }
-    if let Some(p) = nonempty(&filters.participant) {
-        sql.push_str(
-            " AND EXISTS (SELECT 1 FROM item_participants p WHERE p.id = i.id \
-             AND (p.name = ? COLLATE NOCASE OR p.email = ? COLLATE NOCASE))",
-        );
-        args.push(Box::new(p.clone()));
-        args.push(Box::new(p));
-    }
-    if let Some(from) = day_bound(&filters.date_from)? {
-        sql.push_str(" AND i.day >= ?");
-        args.push(Box::new(from));
-    }
-    if let Some(to) = day_bound(&filters.date_to)? {
-        sql.push_str(" AND i.day <= ?");
-        args.push(Box::new(to));
-    }
-    if fts.is_some() {
+        "NULL "
+    });
+    sql.push_str(&m.from_where);
+    if m.fts {
         sql.push_str(" ORDER BY bm25(items_fts, 10.0, 1.0, 5.0, 5.0, 5.0), ");
     } else {
         sql.push_str(" ORDER BY ");
@@ -445,8 +463,7 @@ fn search_conn(
     sql.push_str("i.sort_ts IS NULL, i.sort_ts DESC, i.id DESC");
 
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
-    let rows = stmt.query_map(params.as_slice(), |r| {
+    let rows = stmt.query_map(rusqlite::params_from_iter(m.args.iter()), |r| {
         Ok((
             r.get::<_, String>(0)?,
             r.get::<_, String>(1)?,
@@ -467,6 +484,41 @@ fn search_conn(
         ));
     }
     Ok(out)
+}
+
+/// The People registry's matcher, after making sure every participant row
+/// is grouped by the registry as it is now: when `people.json` changed
+/// since the last time (fingerprint in `meta`), each row's `pkey` is
+/// recomputed. The fingerprint is read before the file, so a change in
+/// between only causes one more refresh later.
+fn refresh_people(conn: &Connection, archive: &Path) -> Result<PeopleMatcher> {
+    let fp = mtime_ns(&people_path(archive));
+    let matcher = PeopleMatcher::new(&read_people(archive));
+    let stored: Option<String> = conn
+        .query_row("SELECT value FROM meta WHERE key = 'people'", [], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    if stored.as_deref() != Some(fp.as_str()) {
+        let rows: Vec<(i64, String, String, String)> = {
+            let mut stmt =
+                conn.prepare("SELECT rowid, name, email, pkey FROM item_participants")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut update = conn.prepare("UPDATE item_participants SET pkey = ?1 WHERE rowid = ?2")?;
+        for (rowid, name, email, old) in rows {
+            let key = facets::participant_key(&matcher, &name, &email);
+            if key != old {
+                update.execute(params![key, rowid])?;
+            }
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('people', ?1)",
+            params![fp],
+        )?;
+    }
+    Ok(matcher)
 }
 
 /// Empty the index and rebuild it from the archive folder. Returns the
@@ -513,24 +565,6 @@ fn is_corruption(e: &anyhow::Error) -> bool {
                 )
         )
     })
-}
-
-fn nonempty(v: &Option<String>) -> Option<String> {
-    v.as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-}
-
-/// Normalize a date filter to `YYYY-MM-DD`.
-fn day_bound(v: &Option<String>) -> Result<Option<String>> {
-    let Some(s) = nonempty(v) else {
-        return Ok(None);
-    };
-    let day = s.get(..10).unwrap_or(&s);
-    chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")
-        .with_context(|| format!("invalid date filter '{s}' (expected YYYY-MM-DD)"))?;
-    Ok(Some(day.to_string()))
 }
 
 /// Turn free user text into a safe FTS5 query: each word becomes a quoted
@@ -586,7 +620,13 @@ fn delete_rows(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-fn index_at(conn: &Connection, id: &str, dir: &Path, fp: &str) -> Result<()> {
+fn index_at(
+    conn: &Connection,
+    id: &str,
+    dir: &Path,
+    fp: &str,
+    people: &PeopleMatcher,
+) -> Result<()> {
     let (summary, body) = summary_at(id, dir)?;
     let meta = &summary.meta;
     let parsed = chrono::DateTime::parse_from_rfc3339(meta.date.trim()).ok();
@@ -626,20 +666,26 @@ fn index_at(conn: &Connection, id: &str, dir: &Path, fp: &str) -> Result<()> {
     )?;
     for tag in &meta.tags {
         conn.execute(
-            "INSERT INTO item_tags (id, tag) VALUES (?1, ?2)",
-            params![id, tag],
+            "INSERT INTO item_tags (id, tag, tag_key) VALUES (?1, ?2, ?3)",
+            params![id, tag, facets::value_key(tag)],
         )?;
     }
     for c in &meta.categories {
         conn.execute(
-            "INSERT INTO item_categories (id, category) VALUES (?1, ?2)",
-            params![id, c],
+            "INSERT INTO item_categories (id, category, category_key) VALUES (?1, ?2, ?3)",
+            params![id, c, facets::value_key(c)],
         )?;
     }
     for p in &meta.participants {
+        let email = p.email.as_deref().unwrap_or("");
         conn.execute(
-            "INSERT INTO item_participants (id, name, email) VALUES (?1, ?2, ?3)",
-            params![id, p.name, p.email.as_deref().unwrap_or("")],
+            "INSERT INTO item_participants (id, name, email, pkey) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                id,
+                p.name,
+                email,
+                facets::participant_key(people, &p.name, email)
+            ],
         )?;
     }
     Ok(())
