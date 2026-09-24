@@ -734,9 +734,15 @@ sussurro-file /data/link-downloads/link-1-2.m4a
         assert_eq!(find_in(Some(&path_var), &[]), Some(fake.clone()));
         // Not on PATH, but in a known install folder (e.g. Homebrew).
         let only_empty = std::env::join_paths([&empty]).unwrap();
-        assert_eq!(find_in(Some(&only_empty), std::slice::from_ref(&brew)), None);
+        assert_eq!(
+            find_in(Some(&only_empty), std::slice::from_ref(&brew)),
+            None
+        );
         let in_brew = fake_bin(&brew, "#!/bin/sh\necho 2025.09.26\n");
-        assert_eq!(find_in(Some(&only_empty), std::slice::from_ref(&brew)), Some(in_brew));
+        assert_eq!(
+            find_in(Some(&only_empty), std::slice::from_ref(&brew)),
+            Some(in_brew)
+        );
         assert_eq!(find_in(None, &[]), None);
         // Relative PATH entries are ignored.
         assert_eq!(find_in(Some(OsStr::new("bin")), &[]), None);

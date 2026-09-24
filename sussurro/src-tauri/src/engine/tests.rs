@@ -816,6 +816,16 @@ fn event_names_and_payloads() {
         source: "mic".into(),
     });
     assert_eq!(started.name(), "engine-started");
+    let dl = EngineEvent::Download(DownloadPayload {
+        session_id: 4,
+        via: crate::sources::url::Via::YtDlp,
+        downloaded_bytes: 10,
+        total_bytes: None,
+        title: Some("T".into()),
+    });
+    assert_eq!(dl.name(), "engine-download");
+    assert_eq!(dl.payload()["via"], "yt-dlp");
+    assert_eq!(dl.payload()["total_bytes"], serde_json::Value::Null);
     assert_eq!(started.payload()["session_id"], 3);
     assert_eq!(started.payload()["item_type"], "note");
 }
@@ -1379,4 +1389,137 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
     assert_eq!(langs, ["it", "it"]);
     assert_eq!(levels, [CleanupLevel::Light, CleanupLevel::Light]);
     assert_eq!(recorded, "it");
+}
+
+/// #123: a link run through the real `session::run_link_with` — the WAV is
+/// downloaded from a local test server (allowed explicitly), transcribed
+/// into a `transcription` item whose source is the link and whose title
+/// comes from the link, and the temporary download is gone afterwards.
+/// Refused links (a local host not allowed, a platform link without
+/// yt-dlp) end in `engine-error` with nothing in the archive.
+#[test]
+fn a_link_run_downloads_transcribes_and_cleans_up() {
+    use crate::settings::Settings;
+    use crate::sources::url::direct::tests::serve;
+    use crate::sources::url::{self, Via};
+    use crate::state::AppPaths;
+    use session::{link_temp_dir, run_link_with, LinkRequest, RunOptions};
+
+    let audio_dir = tempfile::tempdir().unwrap();
+    let wav_path = audio_dir.path().join("talk.wav");
+    crate::audio::decode::write_wav_i16(
+        &wav_path,
+        16_000,
+        1,
+        &bursts(&[(true, 2.0), (false, 2.5), (true, 2.0), (false, 1.0)]),
+    );
+    let wav = std::fs::read(&wav_path).unwrap();
+    let srv = serve(vec![(
+        "/talks/Keynote%202026.wav",
+        (200, vec![("Content-Type", "audio/wav".into())], wav),
+    )]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("appdata");
+    let paths = AppPaths {
+        settings_file: dir.path().join("settings.json"),
+        models_dir: data.join("models"),
+        history_file: data.join("history.jsonl"),
+        stats_file: data.join("stats.json"),
+        archive_index: data.join("index.sqlite"),
+        documents_dir: Some(dir.path().join("Documents")),
+        home_dir: Some(dir.path().to_path_buf()),
+    };
+    let shared = Mutex::new(Settings::default());
+    let archive_dir = dir.path().join("Documents").join("Sussurro");
+    let count_items = || archive::list_items(&archive_dir).len();
+    let run = |input: &str, allow_local: bool, sink: Arc<VecSink>| {
+        let req = LinkRequest {
+            id: 11,
+            cancel: Arc::new(AtomicBool::new(false)),
+            link: url::parse_link(input).unwrap(),
+            allow_local,
+            title: String::new(),
+            options: RunOptions::default(),
+        };
+        run_link_with(
+            &shared,
+            &paths,
+            req,
+            url::MAX_DOWNLOAD_BYTES,
+            &|| None,
+            |samples: &[f32], _lang: &str| -> Result<TimedTranscript> {
+                Ok(TimedTranscript {
+                    text: format!("parole {}", samples.len()),
+                    ..Default::default()
+                })
+            },
+            |_: &crate::settings::Settings, _: Option<&str>, raw: &str| raw.to_string(),
+            |_| Box::new(EnergyDetector::default()),
+            sink,
+        )
+    };
+
+    let link = format!("{}/talks/Keynote%202026.wav", srv.base);
+    let sink = Arc::new(VecSink::default());
+    let r = run(&link, true, sink.clone()).unwrap();
+    assert_eq!(r.segments, 2);
+    let item = archive::read_item(&archive_dir, &r.item_id).unwrap();
+    assert_eq!(item.meta.item_type, ItemType::Transcription);
+    assert_eq!(item.meta.source, format!("url:{link}"));
+    assert_eq!(item.meta.title, "Keynote 2026");
+    let events = sink.0.lock().unwrap().clone();
+    let first_started = events
+        .iter()
+        .position(|e| matches!(e, EngineEvent::Started(_)))
+        .unwrap();
+    let downloads: Vec<&DownloadPayload> = events
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::Download(d) => Some(d),
+            _ => None,
+        })
+        .collect();
+    assert!(!downloads.is_empty());
+    assert!(downloads
+        .iter()
+        .all(|d| d.via == Via::Direct && d.session_id == 11));
+    let last_download = events
+        .iter()
+        .rposition(|e| matches!(e, EngineEvent::Download(_)))
+        .unwrap();
+    assert!(
+        last_download < first_started,
+        "download, then transcription"
+    );
+    assert!(matches!(events.last(), Some(EngineEvent::Done(_))));
+    let temp = link_temp_dir(&paths);
+    assert_eq!(
+        std::fs::read_dir(&temp).unwrap().count(),
+        0,
+        "temp file removed"
+    );
+    let items = count_items();
+    assert_eq!(items, 1);
+
+    // Local host not allowed: an error event, nothing written.
+    let sink = Arc::new(VecSink::default());
+    let e = run(&link, false, sink.clone()).unwrap_err().to_string();
+    assert!(e.contains("Allow local network addresses"), "{e}");
+    let events = sink.0.lock().unwrap().clone();
+    assert!(
+        matches!(events.last(), Some(EngineEvent::Error(p)) if p.session_id == 11 && p.item_id.is_none())
+            && !events.iter().any(|e| matches!(e, EngineEvent::Started(_))),
+        "{events:?}"
+    );
+    assert_eq!(count_items(), items);
+
+    // A video platform without yt-dlp: install instructions.
+    let sink = Arc::new(VecSink::default());
+    let e = run("https://www.youtube.com/watch?v=abc", false, sink)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("yt-dlp") && e.contains("Install"), "{e}");
+    assert_eq!(count_items(), items);
+    assert_eq!(std::fs::read_dir(&temp).unwrap().count(), 0);
 }

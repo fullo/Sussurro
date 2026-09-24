@@ -1,6 +1,6 @@
 //! App glue for the long-form engine: session bookkeeping in `AppState`, the
-//! shared transcriber, the cleanup client, Tauri events, and the two entry
-//! points behind the Tauri commands (mic session, file path).
+//! shared transcriber, the cleanup client, Tauri events, and the entry
+//! points behind the Tauri commands (mic session, file path, link).
 
 use super::queue::Policy;
 use super::segmenter::{EnergyDetector, SegmenterParams, SpeechDetector};
@@ -22,11 +22,20 @@ struct MicSession {
     stop: Arc<AtomicBool>,
 }
 
+/// What a session captures, with the label `engine_status` reports.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionKind {
+    Mic,
+    /// A file transcription: the file's name.
+    File(String),
+    /// A link transcription (#123): the link, shortened for display.
+    Link(String),
+}
+
 /// One running session's bookkeeping.
 struct Running {
     cancel: Arc<AtomicBool>,
-    /// The file's name for a file transcription; `None` for the mic.
-    file_label: Option<String>,
+    kind: SessionKind,
 }
 
 /// Running engine sessions. Lives in `AppState`.
@@ -48,16 +57,15 @@ impl Sessions {
         self.active.load(Ordering::SeqCst)
     }
 
-    /// Register a new session — a file transcription when `file_label` (the
-    /// file's name) is given, else the mic; returns its id and cancel flag.
-    pub fn begin(&self, file_label: Option<String>) -> (u64, Arc<AtomicBool>) {
+    /// Register a new session; returns its id and cancel flag.
+    pub fn begin(&self, kind: SessionKind) -> (u64, Arc<AtomicBool>) {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let cancel = Arc::new(AtomicBool::new(false));
         self.running.lock().unwrap().insert(
             id,
             Running {
                 cancel: cancel.clone(),
-                file_label,
+                kind,
             },
         );
         self.active.fetch_add(1, Ordering::SeqCst);
@@ -90,15 +98,31 @@ impl Sessions {
     /// first. Reported by `engine_status` so a UI mounted mid-run (a window
     /// reload, `ui_v2` switched) can show and cancel them (#158).
     pub fn file_sessions(&self) -> Vec<(u64, String)> {
-        let mut files: Vec<(u64, String)> = self
+        self.sessions_where(|k| match k {
+            SessionKind::File(l) => Some(l.clone()),
+            _ => None,
+        })
+    }
+
+    /// Running link transcriptions (#123): `(session id, link label)`,
+    /// oldest first — adopted by a UI mounted mid-run like the files.
+    pub fn link_sessions(&self) -> Vec<(u64, String)> {
+        self.sessions_where(|k| match k {
+            SessionKind::Link(l) => Some(l.clone()),
+            _ => None,
+        })
+    }
+
+    fn sessions_where(&self, label: impl Fn(&SessionKind) -> Option<String>) -> Vec<(u64, String)> {
+        let mut out: Vec<(u64, String)> = self
             .running
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|(id, r)| r.file_label.clone().map(|l| (*id, l)))
+            .filter_map(|(id, r)| label(&r.kind).map(|l| (*id, l)))
             .collect();
-        files.sort();
-        files
+        out.sort();
+        out
     }
 
     /// Id of the running mic session, if any.
@@ -316,9 +340,15 @@ pub fn ensure_not_live(journal: &Path, archive: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Folder of the link runs' temporary downloads (#123), in the app data dir.
+pub(crate) fn link_temp_dir(paths: &AppPaths) -> std::path::PathBuf {
+    app_data_file(paths, crate::sources::url::TEMP_DIR)
+}
+
 /// At app start, before the user can begin a session: items of sessions
 /// the previous run never finished become `interrupted` (and are indexed),
-/// stale mic spools are removed (#153). Touches the archive folder only
+/// stale mic spools are removed (#153), and so are the downloads of link
+/// runs a crash left behind (#123). Touches the archive folder only
 /// when the journal names an item, so a normal start never does.
 pub fn recover_after_crash(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -338,6 +368,11 @@ pub fn recover_after_crash(app: &AppHandle) {
             r.interrupted.len(),
             r.spools_removed
         );
+    }
+    let downloads =
+        crate::sources::url::sweep_stale(&link_temp_dir(&state.paths), std::process::id());
+    if downloads > 0 {
+        eprintln!("engine: removed {downloads} leftover link download(s)");
     }
 }
 
@@ -471,7 +506,7 @@ pub fn start_mic(
     let stop = Arc::new(AtomicBool::new(false));
     let source = crate::sources::mic::MicSource::start(&device, stop.clone())
         .context("could not start the microphone")?;
-    let (id, cancel) = state.engine.begin(None);
+    let (id, cancel) = state.engine.begin(SessionKind::Mic);
     *mic = Some(MicSession { id, stop });
     drop(mic);
 
@@ -518,7 +553,7 @@ pub fn transcribe_file(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let (id, cancel) = state.engine.begin(Some(file_name));
+    let (id, cancel) = state.engine.begin(SessionKind::File(file_name));
     let _guard = SessionGuard {
         app: app.clone(),
         id,
@@ -548,6 +583,191 @@ pub fn transcribe_file(
     )
 }
 
+/// One link run to start (#123).
+pub(crate) struct LinkRequest {
+    pub id: u64,
+    pub cancel: Arc<AtomicBool>,
+    pub link: crate::sources::url::Link,
+    /// The user ticked "Allow local network addresses" for this run.
+    pub allow_local: bool,
+    /// As typed; empty = the platform's title, else one from the link.
+    pub title: String,
+    pub options: RunOptions,
+}
+
+/// Minimum wall time between two `engine-download` events.
+const DOWNLOAD_EVENTS_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// A link run: fetch the audio to a temporary file (emitting
+/// `engine-download`), then transcribe it like a file into a
+/// `transcription` item whose source is `url:<link>` (P10). The temporary
+/// file is removed when this returns, whatever the outcome; a failure
+/// before the transcription starts is reported as `engine-error`. The
+/// app's pieces are passed in so tests drive the real path.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_link_with<T, C>(
+    shared: &Mutex<Settings>,
+    paths: &AppPaths,
+    req: LinkRequest,
+    max_bytes: u64,
+    find_yt_dlp: &dyn Fn() -> Option<std::path::PathBuf>,
+    transcribe: T,
+    clean: C,
+    detector: impl FnOnce(&Path) -> Box<dyn SpeechDetector>,
+    sink: Arc<dyn EngineSink>,
+) -> Result<RunResult>
+where
+    T: FnMut(&[f32], &str) -> Result<TimedTranscript> + Send,
+    C: Fn(&Settings, Option<&str>, &str) -> String + Send,
+{
+    use crate::sources::url;
+    let LinkRequest {
+        id,
+        cancel,
+        link,
+        allow_local,
+        title,
+        options,
+    } = req;
+    let fail = |e: anyhow::Error| {
+        sink.emit(&EngineEvent::Error(super::ErrorPayload {
+            session_id: id,
+            error: format!("{e:#}"),
+            item_id: None,
+        }));
+        Err(e)
+    };
+    let temp = match url::TempDownload::create(&link_temp_dir(paths), id) {
+        Ok(t) => t,
+        Err(e) => return fail(e),
+    };
+    let mut last: Option<(std::time::Instant, url::Via, Option<String>)> = None;
+    let mut on_progress = |via: url::Via, p: &url::Progress| {
+        // Throttled, except when the way or the title changes.
+        let due = match &last {
+            None => true,
+            Some((at, v, t)) => *v != via || *t != p.title || at.elapsed() >= DOWNLOAD_EVENTS_EVERY,
+        };
+        if due {
+            last = Some((std::time::Instant::now(), via, p.title.clone()));
+            sink.emit(&EngineEvent::Download(super::DownloadPayload {
+                session_id: id,
+                via,
+                downloaded_bytes: p.downloaded,
+                total_bytes: p.total,
+                title: p.title.clone(),
+            }));
+        }
+    };
+    let fetched = url::fetch(
+        &link,
+        allow_local,
+        max_bytes,
+        &temp,
+        &cancel,
+        find_yt_dlp,
+        &mut on_progress,
+    );
+    let fetched = match fetched {
+        Ok(f) => f,
+        Err(e) => return fail(e),
+    };
+    let source = match crate::sources::file::FileSource::open(&fetched.path) {
+        Ok(s) => s,
+        Err(e) => {
+            return fail(url::undecodable(
+                &fetched.path,
+                fetched.via == url::Via::YtDlp,
+                &e,
+            ))
+        }
+    };
+    let title = if !title.trim().is_empty() {
+        title
+    } else {
+        fetched
+            .title
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| url::title_from_url(&link.url))
+    };
+    let result = run_request_with(
+        shared,
+        paths,
+        Request {
+            id,
+            cancel,
+            source: Box::new(source),
+            policy: Policy::Block {
+                max_queued: super::FILE_MAX_QUEUED,
+            },
+            defer: false,
+            // Audio recorded by others (P10).
+            item_type: ItemType::Transcription,
+            title,
+            source_label: url::source_label(&link.url),
+            options,
+        },
+        transcribe,
+        clean,
+        detector,
+        sink,
+    );
+    drop(temp);
+    result
+}
+
+/// Start transcribing a link (#123). Validation, the yt-dlp check and the
+/// archive check fail at once; otherwise returns the session id and runs
+/// in the background (`engine-download`, then the usual `engine-*`).
+pub fn start_link(
+    app: &AppHandle,
+    input: &str,
+    title: String,
+    allow_local: bool,
+    options: RunOptions,
+) -> Result<u64> {
+    use crate::sources::url;
+    let link = url::parse_link(input)?;
+    if link.kind == url::LinkKind::Platform && url::ytdlp::find().is_none() {
+        return Err(url::ytdlp::missing_error());
+    }
+    let state = app.state::<AppState>();
+    ensure_archive_writable(&state)?;
+    let (id, cancel) = state
+        .engine
+        .begin(SessionKind::Link(url::display_label(&link.url)));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _guard = SessionGuard {
+            app: app.clone(),
+            id,
+        };
+        let state = app.state::<AppState>();
+        let req = LinkRequest {
+            id,
+            cancel: cancel.clone(),
+            link,
+            allow_local,
+            title,
+            options,
+        };
+        if let Err(e) = run_link_with(
+            &state.settings,
+            &state.paths,
+            req,
+            url::MAX_DOWNLOAD_BYTES,
+            &url::ytdlp::find,
+            app_transcriber(app.clone(), cancel),
+            crate::cleanup::ollama::cleanup_with_context,
+            load_detector,
+            Arc::new(TauriSink { app: app.clone() }),
+        ) {
+            eprintln!("link session {id} failed: {e:#}");
+        }
+    });
+    Ok(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,12 +776,21 @@ mod tests {
     fn sessions_count_active_runs_and_forget_ended_ones() {
         let s = Sessions::default();
         assert!(!s.is_active());
-        let (a, cancel_a) = s.begin(None);
-        let (b, _) = s.begin(Some("call.wav".into()));
+        let (a, cancel_a) = s.begin(SessionKind::Mic);
+        let (b, _) = s.begin(SessionKind::File("call.wav".into()));
+        let (c, _) = s.begin(SessionKind::Link("youtube.com/watch?v=x".into()));
         assert_ne!(a, b);
-        assert_eq!(s.active_count(), 2);
-        // #158: a UI mounted mid-run learns about the file transcription.
+        assert_eq!(s.active_count(), 3);
+        // #158: a UI mounted mid-run learns about the file transcription,
+        // and (#123) about the link.
         assert_eq!(s.file_sessions(), [(b, "call.wav".to_string())]);
+        assert_eq!(
+            s.link_sessions(),
+            [(c, "youtube.com/watch?v=x".to_string())]
+        );
+        s.end(c);
+        assert_eq!(s.active_count(), 2);
+        assert!(s.link_sessions().is_empty());
         assert!(s.cancel(a));
         assert!(cancel_a.load(Ordering::Relaxed));
         s.end(a);
@@ -577,7 +806,7 @@ mod tests {
     fn mic_session_stop_and_end() {
         let s = Sessions::default();
         assert_eq!(s.stop_mic(), None);
-        let (id, _) = s.begin(None);
+        let (id, _) = s.begin(SessionKind::Mic);
         let stop = Arc::new(AtomicBool::new(false));
         *s.mic.lock().unwrap() = Some(MicSession {
             id,

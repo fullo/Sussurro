@@ -209,7 +209,10 @@ pub fn is_local_ip(ip: IpAddr) -> bool {
 
 /// The URL's host as an IP address, when it is a literal. Pure.
 fn literal_ip(url: &Url) -> Option<IpAddr> {
-    let host = url.host_str()?;
+    literal_host(url.host_str()?)
+}
+
+fn literal_host(host: &str) -> Option<IpAddr> {
     let host = host
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
@@ -229,7 +232,10 @@ pub fn is_visibly_local(url: &Url) -> bool {
 }
 
 fn local_refused(host: &str, ip: Option<IpAddr>) -> anyhow::Error {
-    let at = ip.map(|ip| format!(" ({ip})")).unwrap_or_default();
+    let at = ip
+        .filter(|ip| literal_host(host) != Some(*ip))
+        .map(|ip| format!(" ({ip})"))
+        .unwrap_or_default();
     anyhow!(
         "{host} is on this computer or the local network{at} — tick “Allow local network \
          addresses” to transcribe from it"

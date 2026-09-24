@@ -139,12 +139,25 @@ pub struct StartedPayload {
     pub item_type: ItemType,
     /// As given by the caller; may be empty (filled at the end).
     pub title: String,
-    /// `mic` | `file:<name>`.
+    /// `mic` | `file:<name>` | `url:<link>`.
     pub source: String,
+}
+
+/// `engine-download`: a link run (#123) is fetching its audio, before
+/// `engine-started`. `via` is `direct` or `yt-dlp`; `total_bytes` is absent
+/// when the server does not say; `title` is the platform's, once known.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DownloadPayload {
+    pub session_id: u64,
+    pub via: crate::sources::url::Via,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineEvent {
+    Download(DownloadPayload),
     Started(StartedPayload),
     Progress(ProgressPayload),
     Segment(SegmentPayload),
@@ -156,6 +169,7 @@ impl EngineEvent {
     /// The Tauri event name.
     pub fn name(&self) -> &'static str {
         match self {
+            EngineEvent::Download(_) => "engine-download",
             EngineEvent::Started(_) => "engine-started",
             EngineEvent::Progress(_) => "engine-progress",
             EngineEvent::Segment(_) => "engine-segment",
@@ -167,6 +181,7 @@ impl EngineEvent {
     /// The JSON payload sent with [`Self::name`].
     pub fn payload(&self) -> serde_json::Value {
         let v = match self {
+            EngineEvent::Download(p) => serde_json::to_value(p),
             EngineEvent::Started(p) => serde_json::to_value(p),
             EngineEvent::Progress(p) => serde_json::to_value(p),
             EngineEvent::Segment(p) => serde_json::to_value(p),

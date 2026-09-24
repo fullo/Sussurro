@@ -406,6 +406,98 @@ pub fn engine_start_mic(
     .map_err(|e| format!("{e:#}"))
 }
 
+/// Transcribe a link (#123): a direct audio/video file, or a video
+/// platform through yt-dlp found on PATH. Returns the session id at once;
+/// `engine-download` events report the download, then the usual `engine-*`
+/// events the transcription into a `transcription` item (`source:
+/// url:<link>`). `allow_local`: this run may reach hosts on this computer
+/// or the local network (refused by default). An invalid link, a missing
+/// yt-dlp or an unwritable archive fail here, before any download.
+#[tauri::command]
+pub fn engine_start_link(
+    app: AppHandle,
+    url: String,
+    title: Option<String>,
+    allow_local: Option<bool>,
+    language: Option<String>,
+    cleanup_level: Option<crate::settings::CleanupLevel>,
+) -> Result<u64, String> {
+    crate::engine::session::start_link(
+        &app,
+        &url,
+        title.unwrap_or_default(),
+        allow_local.unwrap_or(false),
+        crate::engine::session::RunOptions {
+            language,
+            cleanup_level,
+        },
+    )
+    .map_err(|e| format!("{e:#}"))
+}
+
+/// What the Link tab shows while the user types (#123). Pure: no network,
+/// no process.
+#[derive(serde::Serialize)]
+pub struct LinkInfo {
+    /// `direct` | `platform`; absent when the link is invalid.
+    pub kind: Option<crate::sources::url::LinkKind>,
+    /// Why the link can't be used, if so.
+    pub error: Option<String>,
+    /// The host is visibly this computer or the local network (an IP
+    /// literal or localhost): the run needs "Allow local network addresses".
+    pub local: bool,
+    /// Short form for display.
+    pub label: String,
+}
+
+#[tauri::command]
+pub fn link_inspect(url: String) -> LinkInfo {
+    match crate::sources::url::parse_link(&url) {
+        Ok(link) => LinkInfo {
+            kind: Some(link.kind),
+            error: None,
+            local: crate::sources::url::is_visibly_local(&link.url),
+            label: crate::sources::url::display_label(&link.url),
+        },
+        Err(e) => LinkInfo {
+            kind: None,
+            error: Some(format!("{e:#}")),
+            local: false,
+            label: String::new(),
+        },
+    }
+}
+
+/// Whether yt-dlp is installed (#123), for the Link tab.
+#[derive(serde::Serialize)]
+pub struct YtDlpStatus {
+    pub found: bool,
+    pub path: Option<String>,
+    /// `yt-dlp --version`, when it answered.
+    pub version: Option<String>,
+    /// How to install it on this OS.
+    pub install_help: String,
+}
+
+#[tauri::command]
+pub async fn yt_dlp_status() -> Result<YtDlpStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        use crate::sources::url::ytdlp;
+        let path = ytdlp::find();
+        let version = path
+            .as_deref()
+            .and_then(|p| ytdlp::version(p, std::time::Duration::from_secs(10)).ok());
+        YtDlpStatus {
+            found: path.is_some(),
+            path: path.map(|p| p.to_string_lossy().into_owned()),
+            version,
+            install_help: ytdlp::install_instructions(),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Stop recording the mic session; the queued segments are still
 /// transcribed and the item written. Returns the session id.
 #[tauri::command]
@@ -432,6 +524,8 @@ pub struct EngineStatus {
     /// mid-run (window reload, `ui_v2` switched) adopts them, so a file
     /// started from the other UI can still be followed and cancelled.
     pub file_sessions: Vec<FileSessionStatus>,
+    /// Running link transcriptions, oldest first (#123), adopted likewise.
+    pub link_sessions: Vec<FileSessionStatus>,
 }
 
 #[derive(serde::Serialize)]
@@ -449,6 +543,12 @@ pub fn engine_status(state: State<'_, AppState>) -> EngineStatus {
         file_sessions: state
             .engine
             .file_sessions()
+            .into_iter()
+            .map(|(session_id, label)| FileSessionStatus { session_id, label })
+            .collect(),
+        link_sessions: state
+            .engine
+            .link_sessions()
             .into_iter()
             .map(|(session_id, label)| FileSessionStatus { session_id, label })
             .collect(),
