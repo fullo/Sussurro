@@ -36,8 +36,9 @@ export type RunArgs = {
 const NO_OPTIONS: RunArgs = { language: null, cleanupLevel: null };
 
 /** A System audio + mic session's devices (#139). `mic` null = the
- *  dictation's input device. */
-export type SystemDevices = { mic: string | null; system: string };
+ *  dictation's input device; `native` = the OS's own capture of the
+ *  computer's sound instead of the `system` device (#140). */
+export type SystemDevices = { mic: string | null; system: string; native?: boolean };
 
 /** The long-form engine's runs (one mic or system-audio session, one file,
  *  one link), fed
@@ -107,7 +108,8 @@ export function useEngineRuns() {
     setSystemStarting(true);
     try {
       const id = await invoke<number>("engine_start_system", {
-        systemDevice: devices.system,
+        systemDevice: devices.native ? "" : devices.system,
+        native: !!devices.native,
         micDevice: devices.mic,
         title: title.trim() || null,
         language: options.language,

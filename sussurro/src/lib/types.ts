@@ -405,12 +405,28 @@ export interface InputDeviceInfo {
   loopback: boolean;
 }
 
+/** "This computer's sound (built-in)" (#140): the OS's own capture of the
+ *  output — WASAPI loopback, a Core Audio process tap (macOS 14.2+), the
+ *  default sink's monitor (PulseAudio/PipeWire). */
+export interface NativeLoopback {
+  available: boolean;
+  backend: "wasapi" | "coreaudio-tap" | "pulse-monitor" | "none";
+  /** What it records, when known: the output device, or the monitor. */
+  detail: string | null;
+  /** Why it is unavailable (the device picker is the fallback). */
+  reason: string | null;
+  /** The OS asks for a permission on first use (macOS). */
+  needs_permission: boolean;
+}
+
 /** `list_system_audio_devices` (#139). */
 export interface SystemAudioDevices {
   /** What an empty microphone choice records. */
   default_input: string | null;
   /** Every input device, loopback-looking ones first. */
   devices: InputDeviceInfo[];
+  /** The native choice (#140); absent = not offered. */
+  native?: NativeLoopback;
 }
 
 export interface EngineStatus {

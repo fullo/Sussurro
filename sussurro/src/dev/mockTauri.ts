@@ -488,6 +488,19 @@ const SYSTEM_DEVICES = {
     { name: "MacBook Pro Microphone", loopback: false },
     { name: "USB Audio Device", loopback: false },
   ],
+  // #140: a Mac on 14.2+ (process taps); `?native=off` shows the fallback
+  // to the device picker (a Mac below 14.2).
+  native:
+    params.get("native") === "off"
+      ? {
+          available: false,
+          backend: "coreaudio-tap",
+          detail: null,
+          reason:
+            "recording the computer's sound directly needs macOS 14.2 or later (this Mac runs 13.6) — use a loopback device such as BlackHole",
+          needs_permission: false,
+        }
+      : { available: true, backend: "coreaudio-tap", detail: "MacBook Pro Speakers", reason: null, needs_permission: true },
 };
 const FAKE_LINES = [
   "Allora, provo a registrare una nota lunga dal microfono.",
@@ -541,7 +554,10 @@ function startMic(title: string | null, language: string, saveAudio = false): nu
 function startSystem(a: Args, language: string): number {
   if (!settings.meetings_enabled) throw "recording system audio is part of the meetings preview — turn it on in Settings → Browser extension";
   if (mic) throw mic.system ? "a system audio session is already running" : "a microphone session is running — stop it first";
-  const device = String(a.systemDevice ?? "");
+  const native = !!a.native;
+  if (native && !SYSTEM_DEVICES.native.available)
+    throw `This computer's sound (built-in) is unavailable: ${SYSTEM_DEVICES.native.reason}`;
+  const device = native ? "This computer's sound (built-in)" : String(a.systemDevice ?? "");
   const micDevice = (a.micDevice as string | null) || settings.input_device || SYSTEM_DEVICES.default_input;
   if (!device) throw "choose the system audio device";
   if (device === micDevice) throw "the system audio device is the microphone — choose a different device for one of them";

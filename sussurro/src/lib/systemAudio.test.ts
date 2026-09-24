@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  choiceStillValid,
   deviceLabel,
   devicesProblem,
+  ECHO_NOTE,
   initialSystemDevice,
   micName,
+  NATIVE,
+  nativeAvailable,
+  nativeFallbackNote,
+  nativeNote,
+  nativeOptionLabel,
   osOf,
   SETUP_HELP,
   systemTabVisible,
 } from "./systemAudio";
-import type { SystemAudioDevices } from "./types";
+import type { NativeLoopback, SystemAudioDevices } from "./types";
 
 const list: SystemAudioDevices = {
   default_input: "MacBook Pro Microphone",
@@ -58,5 +65,66 @@ describe("system audio tab (#139)", () => {
     for (const os of ["mac", "windows", "linux"] as const) {
       expect(SETUP_HELP[os].steps.length).toBeGreaterThan(1);
     }
+  });
+});
+
+const tap: NativeLoopback = {
+  available: true,
+  backend: "coreaudio-tap",
+  detail: "MacBook Pro Speakers",
+  reason: null,
+  needs_permission: true,
+};
+const tooOld: NativeLoopback = {
+  available: false,
+  backend: "coreaudio-tap",
+  detail: null,
+  reason: "recording the computer's sound directly needs macOS 14.2 or later (this Mac runs 13.6) — use a loopback device such as BlackHole",
+  needs_permission: false,
+};
+
+describe("this computer's sound, built-in (#140)", () => {
+  const withNative = { ...list, native: tap };
+  const withoutNative = { ...list, native: tooOld };
+
+  it("is preselected when available, unless another device was chosen before", () => {
+    expect(initialSystemDevice(withNative, null, "")).toBe(NATIVE);
+    expect(initialSystemDevice(withNative, NATIVE, "")).toBe(NATIVE);
+    expect(initialSystemDevice(withNative, "Loopback Audio", "")).toBe("Loopback Audio");
+    expect(initialSystemDevice(withNative, "Gone Device", "")).toBe(NATIVE);
+  });
+
+  it("falls back to the device picker when unavailable", () => {
+    expect(nativeAvailable(withoutNative)).toBe(false);
+    expect(nativeAvailable(list)).toBe(false);
+    expect(initialSystemDevice(withoutNative, NATIVE, "")).toBe("BlackHole 2ch");
+    expect(choiceStillValid(withoutNative, NATIVE)).toBe(false);
+    expect(choiceStillValid(withNative, NATIVE)).toBe(true);
+    expect(choiceStillValid(withNative, "BlackHole 2ch")).toBe(true);
+    expect(choiceStillValid(withNative, "Gone Device")).toBe(false);
+    expect(choiceStillValid(withNative, "")).toBe(false);
+  });
+
+  it("says why it is not offered", () => {
+    expect(nativeFallbackNote(withoutNative)).toMatch(/not available here: .*14\.2/);
+    expect(nativeFallbackNote(withNative)).toBeNull();
+    expect(nativeFallbackNote(list)).toBeNull();
+    expect(nativeFallbackNote(null)).toBeNull();
+    expect(devicesProblem("", NATIVE, "Built-in", tap)).toBeNull();
+    expect(devicesProblem("", NATIVE, "Built-in", tooOld)).toMatch(/14\.2/);
+    expect(devicesProblem("", NATIVE, "Built-in", null)).toMatch(/not available/);
+  });
+
+  it("names what it records and what to know per OS", () => {
+    expect(nativeOptionLabel(tap)).toBe("This computer's sound (built-in) · MacBook Pro Speakers");
+    expect(nativeOptionLabel({ ...tap, detail: null })).toBe("This computer's sound (built-in)");
+    expect(nativeNote(tap)).toMatch(/System Audio Recording/);
+    expect(nativeNote({ ...tap, backend: "wasapi" })).toMatch(/default output/);
+    expect(nativeNote({ ...tap, backend: "pulse-monitor" })).toMatch(/monitor/);
+  });
+
+  it("suggests headphones instead of echo cancellation", () => {
+    expect(ECHO_NOTE).toMatch(/headphones/);
+    expect(ECHO_NOTE).toMatch(/does not cancel echo/);
   });
 });

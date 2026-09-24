@@ -19,11 +19,18 @@ import { baseName, formatClock, progressPercent } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
 import type { ItemType, LinkInfo, SystemAudioDevices, YtDlpStatus } from "../lib/types";
 import {
+  ECHO_NOTE,
+  NATIVE,
   SETUP_HELP,
+  choiceStillValid,
   deviceLabel,
   devicesProblem,
   initialSystemDevice,
   loadSystemDevice,
+  nativeAvailable,
+  nativeFallbackNote,
+  nativeNote,
+  nativeOptionLabel,
   osOf,
   saveSystemDevice,
   systemTabVisible,
@@ -562,9 +569,7 @@ function SystemPanel({
         if (!alive) return;
         setList(l);
         setListError(null);
-        setSystem((current) =>
-          current && l.devices.some((d) => d.name === current) ? current : initialSystemDevice(l, loadSystemDevice(), mic),
-        );
+        setSystem((current) => (choiceStillValid(l, current) ? current : initialSystemDevice(l, loadSystemDevice(), mic)));
       })
       .catch((e) => alive && setListError(String(e)));
     return () => {
@@ -590,8 +595,12 @@ function SystemPanel({
 
   const defaultInput = list?.default_input ?? null;
   const settingsMic = ctl.settings.input_device || defaultInput || "system default";
-  const problem = list ? devicesProblem(mic || ctl.settings.input_device || "", system, defaultInput) : null;
-  const noLoopback = !!list && !list.devices.some((d) => d.loopback);
+  const native = list?.native ?? null;
+  const hasNative = nativeAvailable(list);
+  const isNative = system === NATIVE;
+  const problem = list ? devicesProblem(mic || ctl.settings.input_device || "", system, defaultInput, native) : null;
+  const noLoopback = !!list && !hasNative && !list.devices.some((d) => d.loopback);
+  const fallback = nativeFallbackNote(list);
   return (
     <div className="stack">
       <div className="mic-start">
@@ -616,20 +625,28 @@ function SystemPanel({
 
         <label className="field-stack">
           <span className="opt-k">
-            System audio device{" "}
+            Computer's sound{" "}
             <button type="button" className="link-btn" onClick={() => setRefresh((n) => n + 1)}>
               refresh
             </button>
           </span>
           <select value={system} onChange={(e) => setSystem(e.target.value)} aria-invalid={!!problem && !!system}>
-            <option value="">Choose the device that carries the computer's sound…</option>
-            {list?.devices.map((d) => (
-              <option key={d.name} value={d.name}>{deviceLabel(d, defaultInput)}</option>
-            ))}
+            <option value="">Choose what carries the computer's sound…</option>
+            {hasNative && native && <option value={NATIVE}>{nativeOptionLabel(native)}</option>}
+            {list?.devices.length ? (
+              <optgroup label={hasNative ? "Or an input device" : "Input devices"}>
+                {list.devices.map((d) => (
+                  <option key={d.name} value={d.name}>{deviceLabel(d, defaultInput)}</option>
+                ))}
+              </optgroup>
+            ) : null}
           </select>
         </label>
         {listError && <p className="link-notice">Could not list the audio devices: {listError}</p>}
         {problem && system && <p className="link-notice">{problem}</p>}
+        {isNative && native && <p className="sh-muted">{nativeNote(native)}</p>}
+        {fallback && <p className="sh-muted">{fallback}</p>}
+        <p className="sh-muted">{ECHO_NOTE}</p>
         {noLoopback && (
           <p className="link-notice">
             No loopback device found. Install {help.devices} (see below), then press refresh — or pick any input that
@@ -638,16 +655,15 @@ function SystemPanel({
         )}
 
         <details className="sys-help" open={noLoopback}>
-          <summary>How to route the computer's sound into an input device ({help.devices})</summary>
+          <summary>
+            {hasNative ? "Or route the computer's sound through a virtual device" : "How to route the computer's sound into an input device"} ({help.devices})
+          </summary>
           <ol>
             {help.steps.map((s) => (
               <li key={s}>{s}</li>
             ))}
           </ol>
-          <p className="sh-muted">
-            Headphones help: with speakers, your microphone also picks up the others. Sussurro only reads the two
-            devices you choose — nothing leaves the computer.
-          </p>
+          <p className="sh-muted">Sussurro only reads what you choose here — nothing leaves the computer.</p>
         </details>
 
         <label className="field-stack">
@@ -671,7 +687,7 @@ function SystemPanel({
               // It records other people (#136).
               if (!(await confirmNotice())) return;
               onRunStart("system");
-              const err = await engine.startSystem({ mic: mic || null, system }, title, options);
+              const err = await engine.startSystem({ mic: mic || null, system, native: isNative }, title, options);
               if (err) ctl.setBusy(err);
               else {
                 saveSystemDevice(system);
