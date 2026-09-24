@@ -10,6 +10,7 @@
 //! - [`render`]: `transcript.md` rendering
 //! - [`store`]: create / read / list / update / delete items
 //! - [`live`]: items written while a session runs (checkpoints, #153)
+//! - [`meeting`]: what the meeting page said during a browser session (#126)
 //! - [`index`]: search index (rebuildable)
 
 pub mod companion;
@@ -17,6 +18,7 @@ pub mod external;
 pub mod frontmatter;
 pub mod index;
 pub mod live;
+pub mod meeting;
 pub mod paths;
 pub mod render;
 pub mod store;
