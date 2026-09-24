@@ -12,9 +12,11 @@
 //!
 //! The same content-hash rule as the transcript (plan §4.4): the app
 //! replaces a companion only while it is byte-identical to what the app
-//! last wrote. A companion edited by the user (or of unknown provenance)
-//! is never overwritten — the new output goes to the first free
-//! `<stem>-2.md`, `<stem>-3.md`… instead.
+//! last wrote *and* it is the output of the same recipe (a saved Ask answer
+//! that happens to share the name is not). A companion edited by the user
+//! (or of unknown provenance) is never overwritten — the new output goes to
+//! the first free `<stem>-2.md`, `<stem>-3.md`… instead. Saved answers
+//! ([`write_companion_new`], #121) never replace anything.
 
 use super::frontmatter;
 use super::store::{existing_item_dir, lock_items, sha256_hex, write_atomic, META_DIR, TRANSCRIPT_FILE};
@@ -208,6 +210,44 @@ pub fn write_companion(
     meta: &CompanionMeta,
     body: &str,
 ) -> Result<String> {
+    write_with(archive, id, base, meta, body, true)
+}
+
+/// Frontmatter key that marks a companion as a saved Ask answer (#121).
+pub const KIND_KEY: &str = "kind";
+/// [`KIND_KEY`] value of a saved answer.
+pub const KIND_ANSWER: &str = "answer";
+
+/// [`write_companion`] that never replaces an existing file, not even the
+/// app's own output: the document goes to the first free name. For saved
+/// Ask answers (#121) — two answers saved under one name are two files.
+pub fn write_companion_new(
+    archive: &Path,
+    id: &str,
+    base: &str,
+    meta: &CompanionMeta,
+    body: &str,
+) -> Result<String> {
+    write_with(archive, id, base, meta, body, false)
+}
+
+/// Whether an existing app-written companion (`current`) is an earlier
+/// output of what `meta` describes: same recipe and same kind, so a
+/// regeneration replaces its own document but never a saved answer that
+/// happens to share the name.
+fn same_output(current: &[u8], meta: &CompanionMeta) -> bool {
+    let (old, _) = parse_companion(&String::from_utf8_lossy(current));
+    old.recipe == meta.recipe && old.extra.get(KIND_KEY) == meta.extra.get(KIND_KEY)
+}
+
+fn write_with(
+    archive: &Path,
+    id: &str,
+    base: &str,
+    meta: &CompanionMeta,
+    body: &str,
+    replace_own: bool,
+) -> Result<String> {
     validate_companion_name(base)?;
     let doc = render_companion(meta, body)?;
     let _lock = lock_items();
@@ -235,7 +275,7 @@ pub fn write_companion(
                 let ours = hashes
                     .get(&name)
                     .is_some_and(|h| *h == sha256_hex(&current));
-                if ours {
+                if replace_own && ours && same_output(&current, meta) {
                     chosen = Some(name);
                     break;
                 }
@@ -411,6 +451,43 @@ mod tests {
         assert_eq!(files, ["document.md", "document-2.md"]);
         assert!(docs[0].edited_externally);
         assert!(!docs[1].edited_externally && docs[1].body.contains("v4"));
+    }
+
+    #[test]
+    fn a_regeneration_only_replaces_its_own_recipe_and_never_a_saved_answer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let id = item(&archive);
+        let mut answer = meta();
+        answer.recipe = "question".into();
+        answer.extra.insert(KIND_KEY.into(), KIND_ANSWER.into());
+        // A saved answer that took the name summary.md…
+        assert_eq!(write_companion_new(&archive, &id, "summary.md", &answer, "a").unwrap(), "summary.md");
+        // …is not replaced by the Summary recipe, which writes next to it…
+        let mut summary = meta();
+        summary.recipe = "summary".into();
+        assert_eq!(write_companion(&archive, &id, "summary.md", &summary, "s1").unwrap(), "summary-2.md");
+        // …and then regenerates its own file in place.
+        assert_eq!(write_companion(&archive, &id, "summary.md", &summary, "s2").unwrap(), "summary-2.md");
+        let saved = std::fs::read_to_string(archive.join(&id).join("summary.md")).unwrap();
+        let (m, body) = parse_companion(&saved);
+        assert_eq!(m.extra[KIND_KEY], "answer");
+        assert_eq!(body.trim_start().lines().next(), Some("a"));
+    }
+
+    #[test]
+    fn saved_answers_never_replace_anything() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let id = item(&archive);
+        let mut answer = meta();
+        answer.extra.insert(KIND_KEY.into(), KIND_ANSWER.into());
+        let names: Vec<_> = (0..3)
+            .map(|i| write_companion_new(&archive, &id, "who.md", &answer, &format!("a{i}")).unwrap())
+            .collect();
+        assert_eq!(names, ["who.md", "who-2.md", "who-3.md"]);
+        let docs = list_companions(&archive, &id).unwrap();
+        assert!(docs.iter().all(|d| !d.edited_externally), "saved answers are the app's own files");
     }
 
     #[test]
