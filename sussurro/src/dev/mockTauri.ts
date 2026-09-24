@@ -223,6 +223,47 @@ let items: Stored[] = params.get("empty")
           segments: lines.map((l, i) => ({ ...l, speaker_id: i === 5 ? "voice:2" : truth[i] })),
           speakers: [voice(1), { ...voice(2), label: "Anna" }, voice(3)],
           voiceOf: Object.fromEntries(truth.map((v, i) => [i, v])),
+          // One channel, saved (#141): the Audio tab's "Play only" (#142).
+          audio: mockAudio(12 * 60 + 40),
+        } as Stored;
+      })(),
+      (() => {
+        // A browser meeting with both channels saved (#141/#142): "You" on
+        // the mic file, Meet names and a voice on the remote one, with
+        // word timings and one overlap across channels.
+        const turns: [string, "mic" | "remote", number, number, string][] = [
+          ["you", "mic", 1000, 5200, "Buongiorno a tutti, iniziamo con lo stato della release."],
+          ["meet:Anna Rossi", "remote", 5600, 10_400, "La build per macOS è pronta, manca solo la firma."],
+          ["meet:Anna Rossi", "remote", 10_600, 13_800, "Windows invece è ancora in coda."],
+          ["you", "mic", 13_500, 16_000, "Perfetto, grazie Anna."],
+          ["voice:1", "remote", 17_000, 22_500, "Io ho una domanda sul formato dei file audio salvati."],
+          ["you", "mic", 23_000, 28_400, "Sono WAV mono a sedici kilohertz, uno per canale."],
+          ["meet:Anna Rossi", "remote", 29_000, 33_000, "E si possono riascoltare per persona?"],
+          ["you", "mic", 33_500, 38_000, "Sì, dalla scheda Audio, scegliendo chi ascoltare."],
+        ];
+        const timed = (text: string, start: number, end: number) => {
+          const ws = text.split(/\s+/);
+          const step = (end - start) / ws.length;
+          return ws.map((w, i) => ({ w, start_ms: Math.round(start + i * step), end_ms: Math.round(start + (i + 0.85) * step) }));
+        };
+        return {
+          id: "2026/09/weekly-sync-release",
+          meta: meta("Weekly sync — release", "meeting", at(0, 9, 30), "00:00:40", "browser:meet.google.com", {
+            categories: ["team"],
+            participants: [{ name: "Anna Rossi", email: "anna@example.com" }, { name: "Voice 1" }],
+          }),
+          segments: turns.map(([speaker_id, channel, start_ms, end_ms, text], id) => ({
+            id, channel, start_ms, end_ms, speaker_id, raw: text, text,
+            // Line 3 was rewritten by cleanup: no word highlighting there.
+            ...(id === 3 ? { text: "Perfetto, grazie mille Anna." } : {}),
+            words: timed(text, start_ms, end_ms),
+          })),
+          speakers: [
+            { id: "you", label: "You", color: "#1a1a1a" },
+            { id: "meet:Anna Rossi", label: "Anna Rossi", color: VOICE_COLORS[VOICE_COLORS.length - 1] },
+            voice(1),
+          ],
+          audio: mockAudio(40, ["audio-mic.wav", "audio-remote.wav"]),
         } as Stored;
       })(),
       {
@@ -1330,8 +1371,58 @@ function handle(cmd: string, a: Args): unknown {
   }
 }
 
+/* ---------- Saved audio for the Audio tab (#142) ---------- */
+
+/** What the backend's sussurro-audio: scheme would serve: here a
+ *  synthesized WAV (8 kHz, a hum per speaker pulsing like syllables on each
+ *  of the channel's lines, silence between) as a blob: URL, cached. Only as
+ *  long as the lines (max 5 min), whatever the frontmatter duration says. */
+const audioUrls = new Map<string, string>();
+function mockAudioUrl(path: string): string {
+  const cached = audioUrls.get(path);
+  if (cached) return cached;
+  const cut = path.lastIndexOf("/");
+  const s = find(path.slice(0, cut));
+  const file = path.slice(cut + 1);
+  const rate = 8000;
+  const lines = (s?.segments ?? []).filter((x) => file === "audio.wav" || file === `audio-${x.channel ?? "mic"}.wav`);
+  const endMs = Math.min(5 * 60_000, Math.max(2000, ...(s?.segments ?? []).map((x) => x.end_ms + 1000)));
+  const n = Math.round((endMs / 1000) * rate);
+  const buf = new DataView(new ArrayBuffer(44 + n * 2));
+  const str = (o: number, t: string) => [...t].forEach((c, i) => buf.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF");
+  buf.setUint32(4, 36 + n * 2, true);
+  str(8, "WAVEfmt ");
+  buf.setUint32(16, 16, true);
+  buf.setUint16(20, 1, true);
+  buf.setUint16(22, 1, true);
+  buf.setUint32(24, rate, true);
+  buf.setUint32(28, rate * 2, true);
+  buf.setUint16(32, 2, true);
+  buf.setUint16(34, 16, true);
+  str(36, "data");
+  buf.setUint32(40, n * 2, true);
+  const pitch = (id?: string) => 140 + (([...(id ?? "")].reduce((a, c) => a + c.charCodeAt(0), 0) % 7) * 35);
+  for (const l of lines) {
+    const f = pitch(l.speaker_id);
+    for (let i = Math.round((l.start_ms / 1000) * rate); i < Math.min(n, Math.round((l.end_ms / 1000) * rate)); i++) {
+      const t = i / rate;
+      const env = 0.5 + 0.5 * Math.sin(2 * Math.PI * 4 * t);
+      const v = 0.25 * env * (Math.sin(2 * Math.PI * f * t) + 0.4 * Math.sin(4 * Math.PI * f * t));
+      buf.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 32767, true);
+    }
+  }
+  const url = URL.createObjectURL(new Blob([buf.buffer], { type: "audio/wav" }));
+  audioUrls.set(path, url);
+  return url;
+}
+
 export function installMockTauri(): void {
   mockWindows("main");
   mockIPC((cmd, args) => handle(cmd, (args ?? {}) as Args), { shouldMockEvents: true });
+  (window as unknown as { __TAURI_INTERNALS__: { convertFileSrc: (p: string, protocol?: string) => string } }).__TAURI_INTERNALS__.convertFileSrc = (
+    p: string,
+    protocol = "asset",
+  ) => (protocol === "sussurro-audio" ? mockAudioUrl(p) : `${protocol}://localhost/${encodeURIComponent(p)}`);
   console.info("[dev] Tauri backend mocked — browser preview only");
 }

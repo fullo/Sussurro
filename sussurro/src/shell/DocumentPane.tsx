@@ -11,6 +11,7 @@ import { usePeople } from "../hooks/usePeople";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import type { Item, ItemMeta, Participant } from "../lib/types";
 import { AudioBar } from "./AudioBar";
+import { AudioTab } from "./AudioTab";
 import { ChipEditor } from "./ChipEditor";
 import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
 import { DocumentTab } from "./DocumentTab";
@@ -42,7 +43,7 @@ export function DocumentPane({
   const [error, setError] = useState("");
   const [title, setTitle] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [tab, setTab] = useState<"transcript" | "document">("transcript");
+  const [tab, setTab] = useState<"transcript" | "document" | "audio">("transcript");
   /** Companion documents of the item (#120); null until counted. */
   const [docCount, setDocCount] = useState<number | null>(null);
   /** Bumped when the context pane writes a companion document. */
@@ -254,7 +255,7 @@ export function DocumentPane({
       </header>
 
       <div className="doc-tabs" role="tablist" aria-label="Document views">
-        {(["transcript", "document"] as const).map((t) => (
+        {(["transcript", "document", "audio"] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -263,8 +264,11 @@ export function DocumentPane({
             className={`doc-tab${tab === t ? " active" : ""}`}
             onClick={() => setTab(t)}
           >
-            {t === "transcript" ? "Transcript" : "Document"}
+            {t === "transcript" ? "Transcript" : t === "document" ? "Document" : "Audio"}
             {t === "document" && docCount ? <small className="doc-tab-n">{docCount}</small> : null}
+            {t === "audio" && (item.audio?.length ?? 0) > 0 ? (
+              <small className="doc-tab-n" aria-label="(saved)">♪</small>
+            ) : null}
           </button>
         ))}
       </div>
@@ -306,7 +310,9 @@ export function DocumentPane({
         }}
       />
 
-      {tab === "document" ? (
+      {tab === "audio" ? (
+        <AudioTab item={item} speakers={docSpeakers && docSpeakers.length > 0 ? docSpeakers : undefined} />
+      ) : tab === "document" ? (
         <DocumentTab
           ctl={ctl}
           item={item}
