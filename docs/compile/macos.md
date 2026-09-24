@@ -75,14 +75,36 @@ If you run a downloaded, unsigned build (e.g. a CI artifact) and macOS
 reports it as damaged, clear the quarantine flag:
 `xattr -cr /Applications/sussurro.app`.
 
-### System audio + mic: a loopback device
+### System audio + mic: this computer's sound
 
 *New → System audio + mic* (meetings preview, Settings → Browser extension)
 records a call from a desktop app — Zoom, Teams, anything that plays through
 the computer — as two channels: your microphone ("You") and a second input
-device that carries the computer's sound (the others, told apart as
-"Voice 1, Voice 2…"). Sussurro reads any input device; the OS needs a
-virtual device that turns the output into an input.
+source that carries the computer's sound (the others, told apart as
+"Voice 1, Voice 2…").
+
+**macOS 14.2 or later: nothing to install.** Choose **This computer's sound
+(built-in)** (preselected). Sussurro opens a Core Audio *process tap* on
+every app's output except its own, read through a private aggregate device
+clocked by the current output — no virtual device, no change to your sound
+setup, and you keep hearing the call as usual. The first time, macOS asks
+to allow Sussurro to record system audio (`NSAudioCaptureUsageDescription`
+in the app's `Info.plist`); the switch lives in System Settings → Privacy &
+Security → **Screen & System Audio Recording** (*System Audio Recording
+Only*). If it is off, the tap records silence — Sussurro says so after 20 s
+of digital silence. The app still runs on macOS 11: below 14.2 the choice
+is hidden with the reason, and the loopback device below is the way.
+
+Dev builds (`npm run tauri dev`, `cargo test`) run unbundled, so the
+permission is asked for (and granted to) the terminal, and without the
+`Info.plist` key the tap may deliver only silence — check the capture
+with a bundled build. Manual check:
+`cargo test tap_delivers_audio -- --ignored --nocapture` while something
+plays.
+
+**Before 14.2 (or to use a device anyway): a loopback device.** Sussurro
+reads any input device; the OS needs a virtual device that turns the output
+into an input.
 
 1. Install [BlackHole](https://github.com/ExistentialAudio/BlackHole)
    (`brew install blackhole-2ch`, free) or Rogue Amoeba's Loopback.
@@ -98,3 +120,7 @@ virtual device that turns the output into an input.
 Microphone permission covers both devices. The two devices have separate
 clocks: Sussurro realigns them when they drift more than 200 ms apart and
 says so in the session.
+
+**Use headphones.** On speakers your microphone hears the others too, so
+their words can also land on your channel ("You"); Sussurro does not cancel
+echo.

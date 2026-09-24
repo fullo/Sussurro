@@ -120,18 +120,35 @@ the tray, `enigo` and the Secret Service keyring below all link it.
 - Audio uses ALSA (`libasound2`); PipeWire and PulseAudio expose ALSA
   compatibility by default.
 
-### System audio + mic: a monitor source
+### System audio + mic: this computer's sound
 
 *New → System audio + mic* (meetings preview, Settings → Browser extension)
 records a call from a desktop app — Zoom, Teams, anything that plays through
 the computer — as two channels: your microphone ("You") and a second input
-device that carries the computer's sound (the others, told apart as
-"Voice 1, Voice 2…"). Sussurro reads any input device; the OS needs a
-virtual device that turns the output into an input.
+source that carries the computer's sound (the others, told apart as
+"Voice 1, Voice 2…").
 
-On PulseAudio and PipeWire every output already has a **monitor source**
-(`pactl list short sources | grep monitor`). Sussurro captures through ALSA,
-so expose the monitor as an ALSA device with a `hint` (so it is listed) in
+**Built-in: the default output's monitor.** On PulseAudio and PipeWire
+(through `pipewire-pulse`) every output has a **monitor source** that
+carries what it plays. Choose **This computer's sound (built-in)**
+(preselected): Sussurro finds the default sink with `pactl
+get-default-sink` (or `pactl info` on PulseAudio < 15), picks its
+`<sink>.monitor` from `pactl list short sources`, and records it with
+`parec` as 16 kHz mono — no `~/.asoundrc`, nothing linked at build time.
+Both tools come from **`pulseaudio-utils`** (`sudo apt install
+pulseaudio-utils`; installed with most desktops, also on PipeWire). When
+they are missing, no sound server answers, or the output has no monitor,
+the choice is hidden and the reason shown; the device picker below is the
+fallback. It follows the output that was the default at the start: if you
+switch outputs mid-call, start a new recording. Manual check:
+`cargo test native_capture_hears_the_computer -- --ignored --nocapture`
+while something plays.
+
+**Or a monitor exposed as an ALSA device.** Sussurro reads any input
+device (through ALSA, where monitors are not listed).
+
+List the monitors with `pactl list short sources | grep monitor` and
+expose one as an ALSA device with a `hint` (so it is listed) in
 `~/.asoundrc`, using the pulse plugin (`libasound2-plugins`; on PipeWire it
 goes through `pipewire-pulse`):
 
@@ -150,3 +167,7 @@ Restart Sussurro and choose **system_monitor** as the system audio device.
 Alternative without the file: choose the `pulse` (or `pipewire`) device and,
 while recording, route that stream to *Monitor of …* in `pavucontrol` →
 Recording.
+
+**Use headphones.** On speakers your microphone hears the others too, so
+their words can also land on your channel ("You"); Sussurro does not cancel
+echo.

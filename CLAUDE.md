@@ -160,6 +160,35 @@ project decisions here, not in per-machine memory.**
   ever delivering = error. It shares the mic slot in `Sessions` (never
   next to a mic session); `engine_status.system_session`, RunKind
   `system` in the UI. Native loopback without a virtual device is #140.
+- **Native system audio (0.10 step 2, #140)** (`sources/loopback/`):
+  "This computer's sound (built-in)", preselected when available
+  (`list_system_audio_devices.native` = probe + reason;
+  `engine_start_system { native: true }`), the step-1 device picker is the
+  fallback with the reason shown. **Windows**: WASAPI loopback through
+  cpal 0.16 as is (input stream on the default *output* device →
+  `AUDCLNT_STREAMFLAGS_LOOPBACK`, `Recorder::start_output_loopback`) — no
+  `windows` crate code, cpal stays pinned; untested on hardware (no Windows
+  cargo check in CI: whisper's Vulkan build needs the SDK), the code is
+  portable cpal so every build type-checks it. **macOS 14.2+**: a global
+  process tap excluding our own process + private aggregate device clocked
+  by the default output + IOProc (`objc2-core-audio`, already in the
+  tree); `CATapDescription`/`AudioHardwareCreateProcessTap` are looked up
+  at run time (`AnyClass::get`/`dlsym`) so the minimum stays 11.0;
+  `NSAudioCaptureUsageDescription` in `Info.plist`. A denied/undetermined
+  permission gives digital silence, not an error → one hint after 20 s of
+  exact zeros. Verified on macOS 27.0 (2026-09-25): tap + aggregate + IO
+  run (48 kHz, continuous cycles, correct 16 kHz count) but only silence
+  from the unbundled test binary (TCC AudioCapture undetermined) — real
+  audio still needs a check in a bundled build. **Linux**: default sink
+  (`pactl get-default-sink`, else `pactl info` in C locale) →
+  `<sink>.monitor` from `pactl list short sources` → `parec` 16 kHz mono
+  f32 on stdout (`pulseaudio-utils`; works on PipeWire via
+  pipewire-pulse); cpal/ALSA can't open monitors by name. Captures that
+  deliver *nothing* while nothing plays (WASAPI, parec) are `gapless`:
+  `ChannelSync` fills silence after 1 s idle and places resumed audio at
+  the wall clock (never "lost"/"drifted" for being quiet). The tap
+  delivers zeros continuously, so it keeps the stall check. No AEC — the
+  tab suggests headphones.
 - **People registry (0.9, #132)** (`archive/people.rs`): lives in the
   archive at `<archive>/.sussurro/people.json` so it travels with it; not
   behind `meetings_enabled` (transcriptions have participants too). Names

@@ -104,13 +104,27 @@ first time it runs.
 - WebView2 is preinstalled on Windows 11; on older Windows 10 install the
   [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 
-### System audio + mic: a virtual cable
+### System audio + mic: this computer's sound
 
 *New → System audio + mic* (meetings preview, Settings → Browser extension)
 records a call from a desktop app — Zoom, Teams, anything that plays through
 the computer — as two channels: your microphone ("You") and a second input
-device that carries the computer's sound (the others, told apart as
-"Voice 1, Voice 2…"). Sussurro reads any input device; the OS needs a
+source that carries the computer's sound (the others, told apart as
+"Voice 1, Voice 2…").
+
+**Nothing to install: WASAPI loopback.** Choose **This computer's sound
+(built-in)** (preselected). Sussurro records what plays on the **default
+output device** — cpal 0.16 opens an input stream on an output device in
+WASAPI loopback mode — with no virtual cable and no change to your sound
+setup. Loopback delivers nothing while nothing plays; Sussurro counts that
+as silence, not as a lost device. It follows the output that was the
+default when the recording started: if you switch to other headphones
+mid-call, start a new recording (a device that is unplugged ends that
+channel with a warning). *Not yet verified on real Windows hardware* —
+manual check: `cargo test native_capture_hears_the_computer -- --ignored
+--nocapture` while something plays, then a Zoom/Teams call.
+
+**Or a virtual cable.** Sussurro reads any input device; the OS needs a
 virtual device that turns the output into an input.
 
 1. Install [VB-Cable](https://vb-audio.com/Cable/) (free; Voicemeeter
@@ -123,4 +137,6 @@ virtual device that turns the output into an input.
    system audio device. Some sound cards also offer **Stereo Mix**, which
    works without installing anything.
 
-Native WASAPI loopback (no virtual cable) is planned (#140).
+**Use headphones.** On speakers your microphone hears the others too, so
+their words can also land on your channel ("You"); Sussurro does not cancel
+echo.
