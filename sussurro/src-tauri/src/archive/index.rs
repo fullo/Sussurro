@@ -887,6 +887,66 @@ mod tests {
     }
 
     #[test]
+    fn participants_edited_on_a_transcription_are_searchable() {
+        let f = fixture();
+        let mut idx = Index::open(&f.archive, &f.db).unwrap();
+        idx.sync().unwrap();
+        let mut meta = crate::archive::store::read_item(&f.archive, &f.podcast)
+            .unwrap()
+            .meta;
+        meta.participants = vec![
+            Participant {
+                name: "Giulia Verdi".into(),
+                email: Some("giulia.verdi@studio.example".into()),
+            },
+            Participant {
+                name: "Ospite misterioso".into(),
+                email: None,
+            },
+        ];
+        update_meta(&f.archive, &f.podcast, &meta).unwrap();
+        idx.index_item(&f.podcast).unwrap();
+
+        let text = |idx: &Index, q: &str| ids(idx.search(q, &Default::default()).unwrap());
+        let facet = |idx: &Index, p: &str| {
+            ids(idx
+                .search(
+                    "",
+                    &SearchFilters {
+                        participant: Some(p.into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap())
+        };
+        // Full text: names, the whole email, and a part of it.
+        assert_eq!(text(&idx, "giulia"), vec![f.podcast.clone()]);
+        assert_eq!(text(&idx, "misterioso"), vec![f.podcast.clone()]);
+        assert_eq!(
+            text(&idx, "giulia.verdi@studio.example"),
+            vec![f.podcast.clone()]
+        );
+        assert_eq!(text(&idx, "studio"), vec![f.podcast.clone()]);
+        // Facet: exact name or email, any case.
+        assert_eq!(facet(&idx, "GIULIA VERDI"), vec![f.podcast.clone()]);
+        assert_eq!(
+            facet(&idx, "Giulia.Verdi@studio.example"),
+            vec![f.podcast.clone()]
+        );
+        assert_eq!(facet(&idx, "Ospite misterioso"), vec![f.podcast.clone()]);
+
+        // Removing a participant removes it from the index too.
+        meta.participants.truncate(1);
+        meta.participants[0].email = None;
+        update_meta(&f.archive, &f.podcast, &meta).unwrap();
+        idx.index_item(&f.podcast).unwrap();
+        assert!(text(&idx, "misterioso").is_empty());
+        assert!(text(&idx, "studio").is_empty());
+        assert!(facet(&idx, "giulia.verdi@studio.example").is_empty());
+        assert_eq!(facet(&idx, "Giulia Verdi"), vec![f.podcast.clone()]);
+    }
+
+    #[test]
     fn corrupt_missing_or_foreign_index_is_rebuilt() {
         let f = fixture();
         // Garbage file where the db should be.
