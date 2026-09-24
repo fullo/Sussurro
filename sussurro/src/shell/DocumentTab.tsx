@@ -6,13 +6,16 @@ import { fileManagerName, formatLongDate } from "../lib/format";
 import {
   companionLabel,
   defaultRecipeProfile,
+  participantEmails,
   progressFraction,
   progressLabel,
   provenance,
+  recipesFor,
 } from "../lib/recipes";
 import { isAnswerRun, runName } from "../lib/ask";
 import { profileHostOf } from "../lib/privacy";
 import { useExternalConsent } from "./ConsentDialog";
+import { EmailOptIn } from "./EmailOptIn";
 import type {
   CompanionDoc,
   Item,
@@ -77,6 +80,8 @@ export function DocumentTab({
   );
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState("");
+  /** Send participant emails with the next run (#143); never remembered. */
+  const [emails, setEmails] = useState(false);
   const idRef = useRef(id);
   idRef.current = id;
   const recipesRef = useRef<Recipe[]>([]);
@@ -112,6 +117,7 @@ export function DocumentTab({
     setDocs(null);
     setRun(null);
     setError("");
+    setEmails(false);
     loadDocs(select?.file ?? null);
     // A run on this item may already be going (started before a reload).
     invoke<RecipeRunStatus[]>("recipe_status")
@@ -169,7 +175,12 @@ export function DocumentTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version]);
 
-  const docRecipes = useMemo(() => recipes.filter((r) => r.target === "companion_document"), [recipes]);
+  // Meeting recipes only where the transcript names its speakers (#143).
+  const docRecipes = useMemo(
+    () => recipesFor(recipes, settings, item).filter((r) => r.target === "companion_document"),
+    [recipes, settings, item],
+  );
+  const emailCount = participantEmails(item);
   const recipe = docRecipes.find((r) => r.id === recipeId) ?? docRecipes[0] ?? null;
   // An external profile is used only when the user picked it here; the
   // default is always a local one (no silent fallback, #122).
@@ -180,10 +191,12 @@ export function DocumentTab({
   const start = async (r: Recipe | null = recipe) => {
     if (!r || !profile || asking) return;
     setError("");
+    // Participant emails go along only when ticked for this run (#143).
+    const includeEmails = emails && emailCount > 0;
     // An external profile asks first, every time (#122); Cancel sends nothing.
     let consent: string | null = null;
     try {
-      const got = await consentFor(profile, { id, recipeId: r.id, question: null, profileId: profile.id });
+      const got = await consentFor(profile, { id, recipeId: r.id, question: null, profileId: profile.id, includeEmails });
       if (!got) {
         ctl.flash(`${r.name} not run — nothing was sent to ${profileHostOf(profile) || profile.name}.`);
         return;
@@ -194,10 +207,11 @@ export function DocumentTab({
       return;
     }
     setRun({ recipeName: r.name, step: null, cancelling: false });
+    setEmails(false);
     try {
       // Progress and the end arrive as events; the reply only matters for
       // refusals, which happen before anything is sent.
-      await invoke<RecipeFinished>("recipe_run", { id, recipeId: r.id, profileId: profile.id, consent });
+      await invoke<RecipeFinished>("recipe_run", { id, recipeId: r.id, profileId: profile.id, consent, includeEmails });
     } catch (e) {
       setRun(null);
       setError(String(e));
@@ -276,6 +290,7 @@ export function DocumentTab({
           </>
         )}
       </div>
+      {!run && !blocked && <EmailOptIn count={emailCount} checked={emails} onChange={setEmails} />}
       {blocked && !run && <p className="rc-note" role="note">{blocked}</p>}
       {extNote && !blocked && !run && <p className="rc-note warn" role="note">{extNote}</p>}
       {dialog}

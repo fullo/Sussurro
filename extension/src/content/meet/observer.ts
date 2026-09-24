@@ -31,7 +31,7 @@ import { assess, sameReport } from "./health";
 import { nameKey } from "./names";
 import { MEET_SETS } from "./selectors";
 import type { SelectorSet } from "./selectors/types";
-import type { HealthReport } from "../../shared/speakers";
+import type { HealthReport } from "../../shared/speakerEvents";
 
 export interface ReceiverLike {
   getContributingSources?: () => ArrayLike<{ source: number; timestamp: number; audioLevel?: number }>;

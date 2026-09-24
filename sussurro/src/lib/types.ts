@@ -71,6 +71,14 @@ export interface ExternalRunPreview {
   chars: number;
   approx_tokens: number;
   external: boolean;
+  /** Speaker names sent with the transcript (#143). */
+  speakers?: string[];
+  /** Participants whose names are sent. */
+  participants?: number;
+  /** Participant emails the item has, and how many this run sends (0
+   *  unless the user ticked them for this run). */
+  emails_available?: number;
+  emails_sent?: number;
 }
 
 /** `prepare_external_run`: the one-time token a confirmed run needs. */
@@ -90,6 +98,9 @@ export interface Recipe {
   prompt: string;
   target: RecipeTarget;
   builtin: boolean;
+  /** Only for meetings and transcriptions whose transcript names its
+   *  speakers (#143: Meeting minutes, Who said what). */
+  speakers_only?: boolean;
 }
 
 export interface Settings {
@@ -136,6 +147,9 @@ export interface Settings {
   /** Browser-extension pairing token (#126); set only by the backend
    *  (`extension_token_get` / `extension_token_regenerate`). */
   extension_token: string;
+  /** "Save audio" preselected in New (P9, #141). Off by default: WAV is
+   *  saved only on request. Absent in settings from before 0.10. */
+  save_audio?: boolean;
 }
 
 export type SubtitlesMode = "on_request" | "always";
@@ -279,6 +293,17 @@ export interface Item {
   /** Lines with voice data (#130): "Re-detect speakers" needs some. The
    *  embeddings themselves stay in the backend. */
   embedded_segments?: number;
+  /** Saved audio in the item folder (#141): `audio.wav`, or one file per
+   *  channel (`audio-mic.wav`, `audio-remote.wav`…). Empty = none. */
+  audio?: AudioFile[];
+  /** Size of the item folder on disk, audio included (#141). */
+  folder_bytes?: number;
+}
+
+/** One saved audio file of an item (#141). */
+export interface AudioFile {
+  name: string;
+  bytes: number;
 }
 
 /** Whether "Identify voices" can run on a transcription (#134,
@@ -301,6 +326,8 @@ export interface ItemSummary {
   interrupted?: boolean;
   /** See Item.external_hosts (the Library's "sent externally" marker). */
   external_hosts?: string[];
+  /** Bytes of saved audio in the item folder (#141); 0 = none. */
+  audio_bytes?: number;
 }
 
 /* ---------- Long-form engine (engine/mod.rs, commands.rs) ---------- */
@@ -358,11 +385,36 @@ export interface EngineError {
   item_id?: string;
 }
 
+/** `engine-warning` payload (#139): the run goes on, but the user should
+ *  know — a device of a System audio + mic session was lost, or the two
+ *  device clocks were realigned. */
+export interface EngineWarning {
+  session_id: number;
+  message: string;
+}
+
+/** An input device in New → System audio + mic (#139). */
+export interface InputDeviceInfo {
+  name: string;
+  /** The name looks like a loopback/virtual device — a hint only. */
+  loopback: boolean;
+}
+
+/** `list_system_audio_devices` (#139). */
+export interface SystemAudioDevices {
+  /** What an empty microphone choice records. */
+  default_input: string | null;
+  /** Every input device, loopback-looking ones first. */
+  devices: InputDeviceInfo[];
+}
+
 export interface EngineStatus {
   active: number;
   mic_session: number | null;
   /** The browser meeting being recorded (#126). */
   meeting_session?: number | null;
+  /** The System audio + mic session (#139). */
+  system_session?: number | null;
   /** Running file transcriptions, oldest first (#158). */
   file_sessions: { session_id: number; label: string }[];
   /** Running link transcriptions, oldest first (#123). */

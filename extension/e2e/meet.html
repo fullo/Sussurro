@@ -1,0 +1,87 @@
+<!doctype html>
+<!-- A fake Meet page for the capture harness (#131), served by the harness at
+     https://meet.google.com/e2e-fake (Playwright route), so the content
+     scripts treat it as Meet. Synthetic: the structure the provisional
+     selector set expects (participant tiles with ids, a self marker, a name
+     leaf, an audio-level attribute), not Meet's markup. A loopback call
+     inside the page gives it a remote audio receiver; its contributing
+     sources are faked on RTCRtpReceiver.prototype on a script:
+     Bo speaks (CSRC 1001), a pause, Cy speaks (CSRC 1002), repeat. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>e2e meet</title>
+  </head>
+  <body>
+    <button id="join">Join</button>
+    <div id="grid">
+      <div data-participant-id="spaces/e2e/devices/1" data-self-name="Ada E2e">
+        <span class="notranslate">Ada E2e</span>
+        <div data-audio-level="0"></div>
+      </div>
+      <div data-participant-id="spaces/e2e/devices/2">
+        <span class="notranslate">Bo E2e</span>
+        <div class="lvl" data-audio-level="0"></div>
+      </div>
+      <div data-participant-id="spaces/e2e/devices/3">
+        <span class="notranslate">Cy E2e</span>
+        <div class="lvl" data-audio-level="0"></div>
+      </div>
+    </div>
+    <audio id="out" autoplay></audio>
+    <script>
+      // Who speaks now: 0–3 s Bo, 3–4 s nobody, 4–7 s Cy, then again.
+      const SCRIPT = [
+        [3000, 1001, 1],
+        [1000, 0, -1],
+        [3000, 1002, 2],
+        [1000, 0, -1],
+      ];
+      const t0 = performance.now();
+      function current() {
+        let t = (performance.now() - t0) % 8000;
+        for (const [len, csrc, tile] of SCRIPT) {
+          if (t < len) return { csrc, tile };
+          t -= len;
+        }
+        return { csrc: 0, tile: -1 };
+      }
+      RTCRtpReceiver.prototype.getContributingSources = function () {
+        // Only the receiver that really gets the audio (the sending side's
+        // idle receiver has none; a CSRC on two receivers is a mirror).
+        if (!this.track || this.track.id !== window.remoteTrackId) return [];
+        const { csrc } = current();
+        return csrc ? [{ source: csrc, timestamp: performance.now() - 20, audioLevel: 0.5, rtpTimestamp: 0 }] : [];
+      };
+      const lvls = document.querySelectorAll(".lvl");
+      setInterval(() => {
+        const { tile } = current();
+        lvls.forEach((el, i) => el.setAttribute("data-audio-level", i + 1 === tile ? "0.7" : "0"));
+      }, 100);
+
+      window.callState = () => ({ joined: !!window.pcs });
+      document.getElementById("join").onclick = async () => {
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        osc.frequency.value = 300;
+        const dst = ctx.createMediaStreamDestination();
+        osc.connect(dst);
+        osc.start();
+        const a = new RTCPeerConnection();
+        const b = new RTCPeerConnection();
+        a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
+        b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
+        b.ontrack = (e) => {
+          window.remoteTrackId = e.track.id;
+          document.getElementById("out").srcObject = e.streams[0] || new MediaStream([e.track]);
+        };
+        a.addTrack(dst.stream.getAudioTracks()[0], dst.stream);
+        await a.setLocalDescription(await a.createOffer());
+        await b.setRemoteDescription(a.localDescription);
+        await b.setLocalDescription(await b.createAnswer());
+        await a.setRemoteDescription(b.localDescription);
+        window.pcs = [a, b];
+      };
+    </script>
+  </body>
+</html>

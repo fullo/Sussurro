@@ -1,7 +1,9 @@
 /* Local server for the capture harness: the two-peer call page, its
- * WebSocket signalling, and a fake Sussurro app — `GET /app/version` and
- * `WS /live` with the app's checks (extension Origin, token) — that parses
- * the audio frames and measures each channel. Loopback only. */
+ * WebSocket signalling, and a fake Sussurro app — `GET /app/version`,
+ * `POST /items/{id}/open`, `GET /items/{id}/export` and `WS /live` with the
+ * app's checks (extension Origin, token) — that parses the audio frames and
+ * measures each channel, and answers `start` with a scripted transcript
+ * (`LIVE_SCRIPT`) for the side panel (#129). Loopback only. */
 import http from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -36,6 +38,26 @@ export interface LiveSession {
   closed: boolean;
 }
 
+/** What the fake app "transcribes" after each `start` (the app's `/live`
+ *  messages, protocol.rs): a named speaker (#131), a line on the mic
+ *  channel (no speaker: the panel shows "You"), a correction, a "Voice 2"
+ *  and a backlog. */
+export const LIVE_SCRIPT: object[] = [
+  { type: "speaker", id: "meet:Anna", label: "Anna" },
+  { type: "segment", kind: "new", segment: { id: 0, channel: "remote", start_ms: 1000, end_ms: 2400, text: "Hello from the far side.", speaker_id: "meet:Anna" } },
+  { type: "segment", kind: "new", segment: { id: 1, channel: "mic", start_ms: 2600, end_ms: 3500, text: "Hi Anna, loud and clear." } },
+  { type: "segment", kind: "updated", segment: { id: 0, channel: "remote", start_ms: 1000, end_ms: 2400, text: "Hello from the far side, corrected.", speaker_id: "meet:Anna" } },
+  { type: "segment", kind: "new", segment: { id: 2, channel: "remote", start_ms: 3700, end_ms: 5000, text: "A third voice joins.", speaker_id: "voice:2" } },
+  { type: "status", state: "recording", backlog_s: 7.2, processed_s: 5, queue_len: 1 },
+];
+
+/** A request to the item routes. */
+export interface ItemRequest {
+  method: string;
+  path: string;
+  format: string | null;
+}
+
 const isExtensionOrigin = (o: string | undefined) => !!o && /^(chrome-extension|moz-extension):\/\/[A-Za-z0-9-]+$/.test(o);
 
 function reject(socket: Duplex, status: number) {
@@ -45,12 +67,14 @@ function reject(socket: Duplex, status: number) {
 
 export async function startServer(token: string) {
   const sessions: LiveSession[] = [];
+  const items: ItemRequest[] = [];
   const rooms = new Map<string, Set<WebSocket>>();
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const origin = req.headers.origin;
-    if (url.pathname === "/app/version") {
+    const item = /^\/items\/(.+)\/(open|export)$/.exec(url.pathname);
+    if (url.pathname === "/app/version" || item) {
       if (origin && !isExtensionOrigin(origin)) return void res.writeHead(403).end();
       const cors = isExtensionOrigin(origin) ? { "Access-Control-Allow-Origin": origin!, Vary: "Origin" } : {};
       if (req.method === "OPTIONS") {
@@ -59,7 +83,19 @@ export async function startServer(token: string) {
           .end();
       }
       if (req.headers.authorization !== `Bearer ${token}`) return void res.writeHead(401, cors).end();
-      return void res.writeHead(200, { ...cors, "Content-Type": "application/json" }).end(JSON.stringify({ app: "e2e", protocol: 2, protocol_min: 1 }));
+      const json = (status: number, body: object) => void res.writeHead(status, { ...cors, "Content-Type": "application/json" }).end(JSON.stringify(body));
+      if (!item) return json(200, { app: "e2e", protocol: 2, protocol_min: 1, subtitles: "on_request" });
+      const [, id, action] = item;
+      items.push({ method: req.method ?? "", path: url.pathname, format: url.searchParams.get("format") });
+      if (!/^e2e-\d+$/.test(decodeURIComponent(id))) return json(404, { error: "no such item" });
+      if (action === "open" && req.method === "POST") return json(200, { ok: true });
+      if (action === "export" && req.method === "GET") {
+        const format = url.searchParams.get("format");
+        const body =
+          format === "srt" ? "1\n00:00:01,000 --> 00:00:02,400\nHello from the far side, corrected.\n" : "[00:00:01] Hello from the far side, corrected.\n";
+        return void res.writeHead(200, { ...cors, "Content-Type": "text/plain; charset=utf-8" }).end(body);
+      }
+      return json(404, { error: "unknown endpoint" });
     }
     const file = STATIC[url.pathname];
     if (!file) return void res.writeHead(404).end();
@@ -102,6 +138,7 @@ export async function startServer(token: string) {
         if (m.type === "start") {
           s.start = m;
           reply({ state: "started", item_id: `e2e-${sessions.length}` });
+          for (const msg of LIVE_SCRIPT) ws.send(JSON.stringify(msg));
         } else if (m.type === "stop") {
           s.stopped = true;
           reply({ state: "done", item_id: `e2e-${sessions.length}` });
@@ -147,6 +184,7 @@ export async function startServer(token: string) {
   return {
     port,
     sessions,
+    items,
     close: () =>
       new Promise<void>((r) => {
         for (const c of wss.clients) c.terminate();

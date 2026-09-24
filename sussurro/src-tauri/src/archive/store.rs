@@ -58,6 +58,11 @@ pub struct Item {
     /// has something to work on when this is not zero. Counted before
     /// [`Item::without_embeddings`] strips them for the UI.
     pub embedded_segments: usize,
+    /// Saved audio in the item folder (#141): `audio.wav`, or one file per
+    /// channel. Empty when no audio was saved (or it was deleted).
+    pub audio: Vec<super::audio::AudioFile>,
+    /// Size of the item folder on disk, audio included.
+    pub folder_bytes: u64,
 }
 
 impl Item {
@@ -86,6 +91,8 @@ pub struct ItemSummary {
     pub interrupted: bool,
     /// See [`Item::external_hosts`] (the Library's "sent externally" marker).
     pub external_hosts: Vec<String>,
+    /// Bytes of saved audio in the item folder (#141); 0 = none.
+    pub audio_bytes: u64,
 }
 
 impl ItemSummary {
@@ -104,16 +111,26 @@ impl ItemSummary {
             recording: state == Some(SessionState::Recording),
             interrupted: state == Some(SessionState::Interrupted),
             external_hosts: Vec::new(),
+            audio_bytes: 0,
         }
     }
 
-    /// Fill [`ItemSummary::external_hosts`] from the item folder (search
-    /// rows come from the index, which doesn't store them).
-    pub(crate) fn with_external_hosts(mut self, archive: &Path) -> Self {
+    /// Fill what lives in the item folder rather than in the frontmatter —
+    /// [`ItemSummary::external_hosts`] and [`ItemSummary::audio_bytes`] —
+    /// (search rows come from the index, which doesn't store them).
+    pub(crate) fn with_folder_details(mut self, archive: &Path) -> Self {
         if let Ok(dir) = item_dir(archive, &self.id) {
-            self.external_hosts = super::external::sent_hosts_at(&dir);
+            self.fill_folder_details(&dir);
         }
         self
+    }
+
+    fn fill_folder_details(&mut self, dir: &Path) {
+        self.external_hosts = super::external::sent_hosts_at(dir);
+        self.audio_bytes = super::audio::files_with_sizes(dir)
+            .iter()
+            .map(|f| f.bytes)
+            .sum();
     }
 }
 
@@ -417,6 +434,8 @@ fn read_item_at(id: &str, dir: &Path) -> Result<Item> {
         recording: state == Some(SessionState::Recording),
         interrupted: state == Some(SessionState::Interrupted),
         external_hosts: super::external::sent_hosts_at(dir),
+        audio: super::audio::files_with_sizes(dir),
+        folder_bytes: super::audio::folder_bytes(dir),
     })
 }
 
@@ -493,7 +512,7 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
         .into_iter()
         .filter_map(|(id, dir)| match summary_at(&id, &dir) {
             Ok((mut s, _)) => {
-                s.external_hosts = super::external::sent_hosts_at(&dir);
+                s.fill_folder_details(&dir);
                 Some(s)
             }
             Err(e) => {
@@ -516,7 +535,9 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
 /// The capture-session marker (`status: recording|interrupted`, #153) is
 /// owned by the engine: a marker value in `meta` is ignored and the file's
 /// marker is kept, so a UI sending back a stale copy can neither resurrect
-/// `recording` on a finished item nor clear it on a live one.
+/// `recording` on a finished item nor clear it on a live one. The list of
+/// saved audio files (`audio:`, #141) is app-owned the same way: only the
+/// engine and "Delete audio" change it.
 ///
 /// Participants are written normalized ([`normalize_participants`]). Notes
 /// never get participants (P10): an update that would add or change them on
@@ -557,6 +578,7 @@ fn update_meta_with(
     if meta.session_state().is_some() {
         meta.extra.remove(SESSION_KEY);
     }
+    meta.extra.remove(super::audio::AUDIO_KEY);
     // Keys the UI doesn't know (e.g. Obsidian's `aliases`) are kept.
     for (k, v) in old.extra {
         meta.extra.entry(k).or_insert(v);
@@ -943,7 +965,11 @@ pub(crate) mod test_trash {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(path.to_path_buf());
-        std::fs::remove_dir_all(path)?;
+        if path.is_dir() {
+            std::fs::remove_dir_all(path)?;
+        } else {
+            std::fs::remove_file(path)?;
+        }
         Ok(())
     }
 

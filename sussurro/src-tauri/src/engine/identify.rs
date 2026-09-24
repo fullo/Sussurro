@@ -521,6 +521,8 @@ mod tests {
             interrupted: false,
             external_hosts: Vec::new(),
             embedded_segments: 0,
+            audio: Vec::new(),
+            folder_bytes: 0,
         }
     }
 

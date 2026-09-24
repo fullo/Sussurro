@@ -25,7 +25,7 @@ import { PROCESSOR_NAME, WORKLET_SOURCE } from "./worklet";
 import { MeetObserver } from "./meet/observer";
 import type { ObserverMsg } from "./meet/messages";
 import { detectPlatform } from "../shared/platform";
-import { perfToFrame, type PageSpeakerMsg } from "../shared/speakers";
+import { perfToFrame, type PageSpeakerMsg } from "../shared/speakerEvents";
 
 type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/no-explicit-any
 

@@ -493,6 +493,9 @@ pub enum ServerMessage {
     Speaker {
         id: String,
         label: String,
+        /// The app's colour for it (#131), so the side panel matches.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
     },
     Status(Status),
 }
@@ -509,7 +512,7 @@ pub fn from_engine(event: &crate::engine::EngineEvent, stopping: bool) -> Option
     use crate::engine::EngineEvent as E;
     let status = |state| Status::new(state);
     Some(match event {
-        E::Download(_) => return None,
+        E::Download(_) | E::Warning(_) => return None,
         E::Started(p) => ServerMessage::Status(Status {
             session_id: Some(p.session_id),
             item_id: Some(p.item_id.clone()),
@@ -776,6 +779,7 @@ mod tests {
         let sp = ServerMessage::Speaker {
             id: "meet:Anna".into(),
             label: "Anna".into(),
+            color: None,
         };
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&sp.to_json()).unwrap()["type"],

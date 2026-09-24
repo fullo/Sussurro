@@ -5,6 +5,15 @@ import type { CleanupLevel, Settings } from "./types";
 export interface RunChoice {
   language?: string | null;
   cleanupLevel?: CleanupLevel | null;
+  /** "Save audio" (P9, #141); null/absent = the per-app default in
+   *  Settings → Archive (off unless the user turned it on). */
+  saveAudio?: boolean | null;
+}
+
+/** Whether the runs started from New save their audio: the choice made
+ *  there, else the per-app default. Never on by itself (P9). */
+export function saveAudioChoice(settings: Settings, choice: RunChoice): boolean {
+  return choice.saveAudio ?? settings.save_audio ?? false;
 }
 
 /** What a run will use: the choice, or the dictation setting. Parakeet

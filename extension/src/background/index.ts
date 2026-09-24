@@ -15,9 +15,12 @@
  * - shows a REC badge on the toolbar button of a tab being captured;
  * - relays the Meet page's speaker events (#131) on the connection's
  *   audio clock, and replays what the page already said to a new
- *   connection (shared/speakers.ts);
+ *   connection (shared/speakerEvents.ts);
  * - (Chrome) falls back to `tabCapture` through an offscreen document for
- *   the remote channel when the page shows no remote audio at all.
+ *   the remote channel when the page shows no remote audio at all;
+ * - keeps each tab's live transcript (the app's `segment` / `speaker` /
+ *   `status` messages, `shared/live.ts`) for the side panel, which takes a
+ *   snapshot and then follows the broadcast changes (#129).
  *
  * Nothing is captured before an explicit Start. */
 import browser, { type Runtime } from "webextension-polyfill";
@@ -28,8 +31,9 @@ import { toAppCheck, type AppCheck } from "../shared/appcheck";
 import { decodePayload, makeProbe, type TransportMode } from "../shared/transport";
 import type { CaptureSnapshot, FromBackground, PageInfo, PanelBroadcast, PanelRequest, PanelState, ToBackground, ToOffscreen, ToPage } from "../shared/messages";
 import type { Platform } from "../shared/platform";
+import { applyLive, initialTranscript, parseAppMessage, type LiveAction, type LiveTranscript } from "../shared/live";
 import { initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
-import { SpeakerRelay, sanitizePageSpeaker } from "../shared/speakers";
+import { SpeakerRelay, sanitizePageSpeaker } from "../shared/speakerEvents";
 
 // ---- toolbar button → panel ----------------------------------------------------
 
@@ -86,7 +90,13 @@ interface Tab {
   removed: boolean;
   /** Meet names (#131): the page's speaker state and clock mapping. */
   speakers: SpeakerRelay;
+  /** What the side panel shows (#129). */
+  transcript: LiveTranscript;
 }
+
+/** Names this background's transcripts: after a restart (Chrome may stop an
+ *  idle service worker) the panel sees another epoch and asks again. */
+const EPOCH = Math.random().toString(36).slice(2, 10);
 
 const tabs = new Map<number, Tab>();
 
@@ -109,6 +119,7 @@ function tabState(tabId: number): Tab {
       tabCaptureTried: false,
       removed: false,
       speakers: new SpeakerRelay(),
+      transcript: initialTranscript(EPOCH),
     };
     tabs.set(tabId, t);
   }
@@ -138,6 +149,8 @@ function dispatch(t: Tab, ev: SessionEvent) {
   const before = t.session.phase;
   const { s, effects } = step(t.session, ev);
   t.session = s;
+  // A new Start is a new meeting: the panel starts from a blank page.
+  if (ev.type === "start" && s.phase === "checking" && before !== "checking") live(t, { kind: "reset" });
   for (const e of effects) run(t, e);
   if (s.phase !== before) updateBadge(t);
   void broadcastState(t);
@@ -236,7 +249,8 @@ async function connect(t: Tab) {
     } catch {
       return;
     }
-    void broadcast({ type: "panel:live", tabId: t.tabId, message: msg });
+    const app = parseAppMessage(msg);
+    if (app) live(t, { kind: "app", msg: app, at: Date.now() });
     if (msg.type === "status") {
       dispatch(t, {
         type: "ws-status",
@@ -531,7 +545,7 @@ async function panelState(t: Tab, info?: PageInfo | null): Promise<PanelState> {
     meetingPage: info === undefined ? !!t.port || !!t.page : !!info,
     platform: info?.platform ?? t.page?.platform ?? null,
     paired,
-    app: check === null ? null : check.ok ? { ok: true, version: check.app } : { ok: false, problem: check.reason },
+    app: check === null ? null : check.ok ? { ok: true, version: check.app, subtitles: check.subtitles } : { ok: false, problem: check.reason },
     phase: s.phase,
     problem: s.problem,
     message: s.message,
@@ -543,6 +557,12 @@ async function panelState(t: Tab, info?: PageInfo | null): Promise<PanelState> {
     transport: t.transport,
     names: t.speakers.lastHealth,
   };
+}
+
+/** Apply a change to the tab's transcript and tell the open panels. */
+function live(t: Tab, action: LiveAction) {
+  t.transcript = applyLive(t.transcript, action);
+  void broadcast({ type: "panel:live", tabId: t.tabId, epoch: t.transcript.epoch, rev: t.transcript.rev, action });
 }
 
 async function broadcastState(t: Tab) {
@@ -563,6 +583,8 @@ browser.runtime.onMessage.addListener((raw: unknown, sender: Runtime.MessageSend
         if (!lastCheck || Date.now() - lastCheck.at > CHECK_TTL_MS) await checkApp();
         return panelState(t, info);
       })();
+    case "panel:transcript":
+      return Promise.resolve(tabs.get(m.tabId)?.transcript ?? initialTranscript(EPOCH));
     case "panel:start":
       dispatch(tabState(m.tabId), { type: "start" });
       return Promise.resolve(true);

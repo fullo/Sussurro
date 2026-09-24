@@ -216,6 +216,7 @@ fn start_server(meetings_enabled: bool) -> Running {
         config: Mutex::new(ApiConfig {
             meetings_enabled,
             extension_token: TOKEN.into(),
+            ..Default::default()
         }),
         settings: Mutex::new(settings),
         paths,
@@ -327,6 +328,17 @@ fn meeting_routes_check_token_origin_and_send_cors() {
     assert_eq!(ok.json()["protocol_min"], protocol::MIN_PROTOCOL);
     assert_eq!(ok.json()["app"], env!("CARGO_PKG_VERSION"));
     assert_eq!(ok.header("Access-Control-Allow-Origin"), Some(EXT));
+    // The subtitles setting, for the side panel's "Create .srt" (#129).
+    assert_eq!(ok.json()["subtitles"], "on_request");
+    r.host.0.config.lock().unwrap().subtitles = crate::settings::SubtitlesMode::Always;
+    let always = http(
+        r.port,
+        "GET",
+        "/app/version",
+        &[("Authorization", &auth), ("Origin", EXT)],
+        "",
+    );
+    assert_eq!(always.json()["subtitles"], "always");
     // A local script: token, no origin.
     let script = http(r.port, "GET", "/app/version", &[("Authorization", &auth)], "");
     assert_eq!(script.status, 200);
@@ -530,6 +542,7 @@ fn a_websocket_meeting_becomes_an_archive_item() {
             Some("speaker") => speakers.push((
                 m["id"].as_str().unwrap_or_default().to_string(),
                 m["label"].as_str().unwrap_or_default().to_string(),
+                m["color"].as_str().unwrap_or_default().to_string(),
             )),
             Some("status") => {
                 let state = m["state"].as_str().unwrap_or_default().to_string();
@@ -582,13 +595,14 @@ fn a_websocket_meeting_becomes_an_archive_item() {
         .map(|s| (s.id.as_str(), s.label.as_str()))
         .collect();
     assert_eq!(listed, [("you", "You"), ("meet:Anna Rossi", "Anna Rossi")]);
-    assert_eq!(
-        speakers,
-        [
-            ("you".to_string(), "You".to_string()),
-            ("meet:Anna Rossi".to_string(), "Anna Rossi".to_string())
-        ]
-    );
+    // Announced with the item's own labels and colours.
+    let item_speakers: Vec<(String, String, String)> = item
+        .segments
+        .speakers
+        .iter()
+        .map(|s| (s.id.clone(), s.label.clone(), s.color.clone()))
+        .collect();
+    assert_eq!(speakers, item_speakers);
     // The page's participants are the item's (emails would come from People).
     let names: Vec<&str> = item.meta.participants.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["Anna Rossi", "Bo"]);

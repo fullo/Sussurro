@@ -142,6 +142,24 @@ project decisions here, not in per-machine memory.**
   A meeting is a two-channel engine run (`mic`, `remote`) into a `meeting`
   item, `source: browser:<host>`; page events go to
   `.sussurro/meeting-events.jsonl` for attribution (#131).
+- **System audio + mic (0.10 step 1, #139)** (`sources/system.rs`):
+  *New → System audio + mic*, behind `meetings_enabled` (it records other
+  people; checked in the backend too). The mic and **any second input
+  device** (BlackHole, VB-Cable, a monitor source — names that look like
+  loopback devices are listed first, a hint only) are two channels of one
+  `meeting` item, `source: system`: mic = "You", system = clustered
+  "Voice N" (`speaker_options`). Each device has its own `Recorder` +
+  `StreamResampler`; the system device opens by exact name
+  (`Recorder::start_exact`, never the default-input fallback). Drift:
+  each channel is timestamped by its own samples from the session start
+  (first chunk at `now − len`), its lag behind the wall clock is smoothed
+  as the min over 2 s, and a channel more than 200 ms behind the other gets
+  that much silence (audio is never dropped) plus an `engine-warning`. A
+  device lost (`DeviceNotAvailable`) or silent 5 s ends its channel with a
+  warning; both lost = the run ends normally and keeps the item; neither
+  ever delivering = error. It shares the mic slot in `Sessions` (never
+  next to a mic session); `engine_status.system_session`, RunKind
+  `system` in the UI. Native loopback without a virtual device is #140.
 - **People registry (0.9, #132)** (`archive/people.rs`): lives in the
   archive at `<archive>/.sussurro/people.json` so it travels with it; not
   behind `meetings_enabled` (transcriptions have participants too). Names
@@ -178,6 +196,44 @@ project decisions here, not in per-machine memory.**
   `content_security_policy` (the MV3 default upgrades `ws://127.0.0.1`).
   `extension/e2e/` (Playwright, runs in CI) proves both channels in
   Chromium + Firefox against a local call; real platforms stay manual (#184).
+- **Extension side panel (0.9, #129)** (`extension/src/sidepanel/`,
+  `extension/src/shared/live.ts`): a live mirror only (E3). The background
+  keeps each tab's transcript (pure reducer over the app's `/live`
+  `segment`/`speaker`/`status`); the panel takes a snapshot and applies the
+  numbered `panel:live` changes (epoch + rev; a gap → new snapshot). A
+  reconnect's new item is a new part under a "connection lost" note; the
+  buttons act on the newest item; a new Start clears it. Chip labels and
+  colours mirror `speakers/doc.rs` (a test compares them); the mic channel
+  without a speaker id shows "You". "Create .srt" appears only with the
+  subtitles setting `on_request`, which `GET /app/version` now reports
+  (`subtitles`, additive), and downloads via a Blob link (no `downloads`
+  permission). The background must never import page code (React,
+  `@sussurro/transcript`): Chrome's service worker has no DOM, and the
+  extension build fails if `background.js` uses `document`.
+- **Meet names (0.9, #131, P8)** (`speakers/names.rs`,
+  `extension/src/content/meet/`): layer 1 mic = "You", layer 2 names on
+  **Meet only** (Teams/Zoom: layers 1 + 3), layer 3 Voice N. The page's
+  identity is the RTP **CSRC** (`getContributingSources()` polled at
+  10 Hz, mirror CSRCs excluded); names come from tiles through
+  **versioned data-only selector sets** (attributes/structure, never
+  obfuscated classes or label text; the shipped `meet-2026-09a` is
+  unverified until #184 — replace values only from our own inspection,
+  with a synthetic fixture) and are bound CSRC → name by voting (5 votes,
+  margin 3, 1:1, drop after 10 contradictions). Health cross-checks
+  against the audio; a broken hook sends `names_unavailable`, never
+  guesses. Without CSRCs the lit tiles become a `dom` timeline. **Protocol
+  2** (additive; `/app/version` reports `protocol_min: 1`, the extension
+  accepts `protocol_min..=protocol`): `speaker_active {t, id?, name?,
+  source?}`, `speaker_idle`, `speaker_name` (last binding applies to the
+  whole call), `observer_health`; `t` = ms on the connection's audio clock
+  (page frames mapped by the background). App: a remote line takes the
+  name covering ≥ 50 % of it and 1.5× the runner-up, after lag
+  compensation (dom 400 ms, caption 1.5 s, rtp 0) and 250 ms edge trim —
+  constants in `AttributionParams`, to re-tune from #184's measurements;
+  else Voice N. An end-of-run pass re-attributes with every event;
+  `meet:<name>` speakers feed the People link suggestion; page
+  participants join the frontmatter with People emails. Captions fallback
+  not built (follow-up).
 - **Library facets (0.9, #135)** (`archive/facets.rs`, `archive_facets`):
   not behind `meetings_enabled`. OR within a facet, AND across facets and
   with the text query; counts are disjunctive (a facet ignores its own
@@ -189,6 +245,35 @@ project decisions here, not in per-machine memory.**
   frontmatter day vs. the viewer's local today sent by the UI; the date
   facet takes one bucket or one custom range. Index schema v2 (rebuilt
   automatically). Selection is kept in localStorage (`libraryFacets`).
+- **Saved audio (0.10, #141, P9)** (`archive/audio.rs`,
+  `engine/audio_out.rs`): only on request — New's "Save audio" per run
+  (`RunOptions.save_audio`), else `Settings.save_audio` (off; also covers
+  extension meetings). **Mono 16-bit 16 kHz WAV per channel**, not stereo:
+  channels arrive independently, so interleaving would need a growing
+  alignment buffer; per-channel files also suit per-speaker replay (#142).
+  Written as `audio-<channel>.wav` from the ingest thread, padded to the
+  run's t = 0 (segment `start_ms` = file position); a lone channel is
+  renamed `audio.wav` at the end. Headers patched every 10 s and on stop;
+  startup recovery (#153, `live::mark_interrupted`) repairs them from the
+  file length. Cap = 32-bit WAV limit (~37 h per channel), then that
+  channel stops being saved — no RF64. Frontmatter `audio: [...]` is
+  app-owned (like `status:`); the UI/delete use the files present that
+  match `audio(-[a-z]+)?.wav`, never names from the frontmatter.
+  "Delete audio" and a cancelled/speechless run with audio go to the OS
+  trash. Toggle off = no `AudioOut` at all (tests assert no `.wav`).
+- **Speaker-aware recipes and Ask (0.10, #143)** (`recipes/`): built-ins
+  *Meeting minutes* and *Who said what* are `speakers_only` — offered and
+  run only on meetings/transcriptions whose transcript names its speakers
+  (UI also follows the `meetings_enabled` gate for meetings, like the
+  speaker panel). Map chunks are cut on speaker turns (an over-long line
+  keeps its `[ts] Name:` prefix on every piece); map/merge/reduce prompts
+  keep each statement with its speaker and never merge speakers; "Voice N"
+  goes as-is with "never guess who they are". **Participants go to the
+  LLM by name only**; emails only with the per-run "Include participant
+  emails" tick (`include_emails`, never remembered), and an external
+  consent token is bound to that choice (`RunTarget.emails`). Fixed corpus:
+  `recipes/testdata/*.txt` (synthetic IT/EN) + `#[ignore]`
+  `live_meeting_recipes_on_ollama` (structural checks).
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`

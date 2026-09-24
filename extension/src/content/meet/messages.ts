@@ -3,7 +3,7 @@
  * frame `pf` (the MAIN world converts). */
 import type { LitTile } from "./binder";
 import type { Tile } from "./dom";
-import type { HealthReport, SpeakerSource } from "../../shared/speakers";
+import type { HealthReport, SpeakerSource } from "../../shared/speakerEvents";
 
 export type ObserverMsg =
   | { type: "speaker_active"; id: string; name?: string; source: SpeakerSource; at: number }

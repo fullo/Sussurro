@@ -10,6 +10,7 @@ import { peopleSuggestions, personFromParticipant } from "../lib/people";
 import { usePeople } from "../hooks/usePeople";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import type { Item, ItemMeta, Participant } from "../lib/types";
+import { AudioBar } from "./AudioBar";
 import { ChipEditor } from "./ChipEditor";
 import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
 import { DocumentTab } from "./DocumentTab";
@@ -19,6 +20,7 @@ import { languageLabel } from "./labels";
 /** Source label for the header: "microphone", "file memo.m4a". */
 function sourceLabel(source: string): string {
   if (source === "mic") return "microphone";
+  if (source === "system") return "system audio + microphone";
   if (source.startsWith("file:")) return `file ${source.slice(5)}`;
   return source;
 }
@@ -294,6 +296,15 @@ export function DocumentPane({
           </>
         )}
       </div>
+
+      <AudioBar
+        ctl={ctl}
+        item={item}
+        onItem={(updated) => {
+          setItem(updated);
+          onChanged();
+        }}
+      />
 
       {tab === "document" ? (
         <DocumentTab

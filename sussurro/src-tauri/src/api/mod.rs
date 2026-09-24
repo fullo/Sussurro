@@ -5,7 +5,10 @@
 //!
 //! 0.9 routes for the browser extension (#126, plan §6), answered only with
 //! `meetings_enabled` on (E12) and the extension token (E6, [`auth`]):
-//! - `GET /app/version` → `{app, protocol}` handshake
+//! - `GET /app/version` → `{app, protocol, subtitles}` handshake; `subtitles`
+//!   is the subtitles setting (`on_request` | `always`, #133), so the side
+//!   panel offers "Create .srt" only when the app doesn't write it itself
+//!   (#129)
 //! - `WS /live?token=` → a meeting session ([`live`], [`protocol`])
 //! - `POST /items/{id}/open` → the app comes to the front on that item
 //! - `GET /items/{id}/export?format=md|txt|srt|vtt` → [`export`]
@@ -48,6 +51,8 @@ pub trait Host: Send + Sync + 'static {
 pub struct ApiConfig {
     pub meetings_enabled: bool,
     pub extension_token: String,
+    /// Told to the extension by `GET /app/version` (#129).
+    pub subtitles: crate::settings::SubtitlesMode,
 }
 
 /// Routes exposed by the local API. Pure mapping — unit tested.
@@ -356,6 +361,7 @@ fn handle_meeting(
                 "app": env!("CARGO_PKG_VERSION"),
                 "protocol": protocol::PROTOCOL_VERSION,
                 "protocol_min": protocol::MIN_PROTOCOL,
+                "subtitles": config.subtitles,
             }),
             &cors,
         ),
@@ -480,6 +486,7 @@ impl Host for AppHost {
         ApiConfig {
             meetings_enabled: s.meetings_enabled,
             extension_token: s.extension_token.clone(),
+            subtitles: s.subtitles,
         }
     }
 

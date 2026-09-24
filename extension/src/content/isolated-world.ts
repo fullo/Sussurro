@@ -18,7 +18,7 @@ import { offerPort } from "../shared/handshake";
 import { detectPlatform } from "../shared/platform";
 import { detectMode, encodePayload, ownBuffer, type TransportMode } from "../shared/transport";
 import type { CaptureSnapshot, FromBackground, FromMain, PageInfo, ToBackground, ToMain, ToPage } from "../shared/messages";
-import type { PageSpeakerMsg } from "../shared/speakers";
+import type { PageSpeakerMsg } from "../shared/speakerEvents";
 
 const platform = detectPlatform(location.href);
 const targetOrigin = location.origin === "null" ? "*" : location.origin;

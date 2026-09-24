@@ -6,7 +6,7 @@
  * stops sending (no guessing) and the state becomes `names_unavailable`:
  * the app keeps "Voice N" for speakers it cannot name, and the side panel
  * can say so. Pure — unit tested. */
-import type { HealthReport, HookState } from "../../shared/speakers";
+import type { HealthReport, HookState } from "../../shared/speakerEvents";
 
 export interface HealthInput {
   now: number;

@@ -4,6 +4,7 @@
 //!
 //! - [`paths`]: location, folder naming, id validation and confinement
 //! - [`types`]: frontmatter and `segments.json` data model
+//! - [`audio`]: saved audio, one WAV per channel, written incrementally (#141)
 //! - [`companion`]: recipe output next to the transcript (`document.md`, #120)
 //! - [`export`]: `.md`/`.txt`/`.srt`/`.vtt` exports and `transcript.srt` (#133)
 //! - [`external`]: what was sent to an external LLM host, per item (#122)
@@ -16,6 +17,7 @@
 //! - [`index`]: search index (rebuildable)
 //! - [`facets`]: the Library's facet filters and counts (#135)
 
+pub mod audio;
 pub mod companion;
 pub mod export;
 pub mod external;

@@ -384,9 +384,12 @@ impl<'a> Conn<'a> {
         Some(out)
     }
 
-    /// `speaker {id, label}` the first time a segment names a speaker:
-    /// "You", a name from the page, or "Voice N" (#131).
+    /// `speaker {id, label, color}` the first time a segment names a
+    /// speaker: "You", a name from the page, or "Voice N" (#131), with the
+    /// colour the item gives it (names are coloured in order of first
+    /// appearance, as the tracker lists them).
     fn announce(&mut self, event: &EngineEvent) -> Option<ServerMessage> {
+        use crate::speakers::doc;
         let EngineEvent::Segment(p) = event else {
             return None;
         };
@@ -394,11 +397,20 @@ impl<'a> Conn<'a> {
         if self.announced.iter().any(|a| a == id) {
             return None;
         }
-        let label = crate::speakers::doc::default_label(id)?;
+        let label = doc::default_label(id)?;
+        let color = if id == doc::YOU_ID {
+            doc::YOU_COLOR.to_string()
+        } else if let Some(n) = doc::voice_number(id) {
+            doc::voice_color(n)
+        } else {
+            let k = self.announced.iter().filter(|a| doc::is_meet(a)).count();
+            doc::meet_speaker(&label, k).color
+        };
         self.announced.push(id.to_string());
         Some(ServerMessage::Speaker {
             id: id.to_string(),
             label,
+            color: Some(color),
         })
     }
 
