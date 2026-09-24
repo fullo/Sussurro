@@ -198,6 +198,7 @@ export function PersonalizationCard({ ctl, collapsible }: CardProps) {
           <span>Portable config <Tip text="Export your dictionary, snippets and app styles to a JSON file, or import one — to move your setup between machines (sync it with a file/Git/Syncthing, no cloud account). Import merges without duplicates; machine-specific settings like hotkeys and models folder are not included." /></span>
           <small>dictionary + snippets + styles</small>
         </div>
+        <div className="field-stack">
         <div className="model-row">
           <button
             className="btn-ghost"
@@ -244,6 +245,7 @@ export function PersonalizationCard({ ctl, collapsible }: CardProps) {
             <small> Names, emails and aliases of other people, from your archive. Off by default: tick it only if the file stays with you.</small>
           </span>
         </label>
+        </div>
       </div>
     </CollapsibleCard>
   );

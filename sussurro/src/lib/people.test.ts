@@ -69,6 +69,8 @@ describe("linking from the chip editor", () => {
     expect(canAddToPeople(people, { name: "Marco" })).toBe(false);
     expect(canAddToPeople(people, { name: "New Name", email: "NICO@example.com" })).toBe(false);
     expect(canAddToPeople(people, { name: "  " })).toBe(false);
+    for (const generic of ["Voice 1", "voice  12", "Voce 3", "Speaker 2", "You"]) expect(canAddToPeople(people, { name: generic }), generic).toBe(false);
+    expect(canAddToPeople(people, { name: "Voice of Reason" })).toBe(true);
     expect(personFromParticipant({ name: " Ospite ", email: " o@example.com " })).toEqual({
       id: "",
       name: "Ospite",

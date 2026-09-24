@@ -58,11 +58,16 @@ export function linkParticipant(list: Participant[], index: number, people: Pers
   return list.map((p, i) => (i === index ? { ...p, email } : p));
 }
 
+/** A generic speaker label ("Voice 2", "You"), not a person's name. */
+export function isGenericSpeaker(name: string): boolean {
+  return /^(voice|voce|speaker)\s*\d+$|^(you|tu)$/.test(nameKey(name));
+}
+
 /** "Add to People" is offered for a participant that is nobody in the
  *  registry yet — neither by email nor by any name or alias (an ambiguous
- *  name is already there, twice). */
+ *  name is already there, twice) — and not a generic "Voice N". */
 export function canAddToPeople(people: Person[], p: Participant): boolean {
-  if (!nameKey(p.name)) return false;
+  if (!nameKey(p.name) || isGenericSpeaker(p.name)) return false;
   if (p.email && people.some((q) => q.email && emailKey(q.email) === emailKey(p.email))) return false;
   return !people.some((q) => personMatches(q, p.name));
 }

@@ -104,7 +104,10 @@ export function PeopleScreen({ ctl }: { ctl: Ctl }) {
             <div className="notice-warn people-dups" role="note">
               <strong>Possible duplicates.</strong>
               <ul>
-                {duplicates.map((g) => (
+                {duplicates.map((group) => {
+                  // Keep the entry used most (then the one with most aliases).
+                  const g = group.slice().sort((a, b) => (usage[b.id] ?? 0) - (usage[a.id] ?? 0) || b.aliases.length - a.aliases.length);
+                  return (
                   <li key={g.map((p) => p.id).join("|")}>
                     {g.map((p) => p.name).join(" · ")}{" "}
                     <button
@@ -115,7 +118,8 @@ export function PeopleScreen({ ctl }: { ctl: Ctl }) {
                       Review and merge
                     </button>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
           )}
