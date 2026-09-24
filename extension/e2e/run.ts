@@ -3,7 +3,9 @@
  * after Start in the side panel both channels reach `/live` separately
  * (each side of the call has its own tone), `seq` is gap-free, the call
  * keeps working both ways, Stop ends the meeting, and closing the tab mid-
- * capture sends `stop`.
+ * capture sends `stop`. The side panel (#129) shows the fake app's live
+ * lines with their speaker chips and backlog, and its Open in Sussurro /
+ * Copy as text / Create .srt reach the app's item routes.
  *
  *   npm run build && npm run test:e2e            (all configurations)
  *   npm run test:e2e -- chromium firefox          (a subset)
@@ -26,7 +28,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Rdp } from "./rdp.ts";
-import { rms, startServer, toneShare, type LiveSession } from "./server.ts";
+import { LIVE_SCRIPT, rms, startServer, toneShare, type LiveSession } from "./server.ts";
 
 const EXT = fileURLToPath(new URL("..", import.meta.url));
 const TOKEN = "e2e0".repeat(16);
@@ -95,6 +97,8 @@ interface Panel {
   status(attr: "phase" | "transport"): Promise<string | null>;
   canClick(testId: string): Promise<boolean>;
   text(): Promise<string>;
+  /** The inner text of every element matching `selector`. */
+  texts(selector: string): Promise<string[]>;
 }
 
 function pagePanel(p: Page): Panel {
@@ -103,6 +107,7 @@ function pagePanel(p: Page): Panel {
     status: (attr) => p.locator('[data-testid="status"]').getAttribute(`data-${attr}`),
     canClick: (id) => p.locator(`[data-testid="${id}"]:not([disabled])`).isVisible(),
     text: () => p.locator("main").innerText(),
+    texts: (selector) => p.locator(selector).allInnerTexts(),
   };
 }
 
@@ -123,6 +128,8 @@ async function launchChromium(config: Config): Promise<Launched> {
   const ctx = await chromium.launchPersistentContext(join(tmpRoot, `profile-${config}`), {
     channel: "chromium",
     headless,
+    // "Create .srt" downloads a file: keep it in the temp dir.
+    downloadsPath: join(tmpRoot, "downloads"),
     permissions: ["microphone"],
     args: [
       `--disable-extensions-except=${ext}`,
@@ -169,6 +176,7 @@ async function launchFirefox(config: Config): Promise<Launched> {
   mkdirSync(home, { recursive: true });
   const ctx = await firefox.launchPersistentContext(join(tmpRoot, `profile-${config}`), {
     headless,
+    downloadsPath: join(tmpRoot, "downloads"),
     args: ["-start-debugger-server", String(rdp)],
     // macOS: Firefox looks for ~/Library/Application Support/Firefox and
     // exits when it can't read it; keep it inside the temp dir.
@@ -216,6 +224,7 @@ async function launchFirefox(config: Config): Promise<Launched> {
         status: async (attr) => ((await js(`${q("status")}?.getAttribute("data-${attr}") ?? null`)) as string | null) ?? null,
         canClick: async (id) => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true,
         text: async () => String(await js(`document.querySelector("main")?.innerText ?? ""`)),
+        texts: async (selector) => JSON.parse(String(await js(`JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.innerText))`))) as string[],
       };
     },
     async close() {
@@ -268,11 +277,41 @@ async function runConfig(config: Config): Promise<Check[]> {
     await until("phase live", async () => (await phase()) === "live", 15_000);
     const transport = await panel.status("transport");
     check(`transport is ${config === "chromium-json" ? "base64" : "binary"}`, transport === (config === "chromium-json" ? "base64" : "binary"), transport);
-    await sleep(CAPTURE_MS);
+    const t0 = Date.now();
+
+    // 2b. The side panel mirrors the fake app's live transcript (#129).
+    const lastLine = (LIVE_SCRIPT[4] as { segment: { text: string } }).segment.text;
+    await until("the live lines in the side panel", async () => (await panel.texts("[data-testid=transcript] .tx-text")).some((x) => x.includes(lastLine)), 10_000);
+    const lines = (await panel.texts("[data-testid=transcript] .tx-text")).map((x) => x.trim());
+    check(
+      "live lines render, the correction replacing the first line",
+      JSON.stringify(lines) === JSON.stringify(["Hello from the far side, corrected.", "Hi Anna, loud and clear.", "A third voice joins."]),
+      lines,
+    );
+    const chips = (await panel.texts("[data-testid=transcript] .tx-chip")).map((x) => x.trim());
+    check("speaker chips: the app's name, You on the mic, Voice N", JSON.stringify(chips) === JSON.stringify(["Anna", "You", "Voice 2"]), chips);
+    const times = (await panel.texts("[data-testid=transcript] .tx-time")).map((x) => x.trim());
+    check("lines carry their timestamps", JSON.stringify(times) === JSON.stringify(["00:00:01", "00:00:02", "00:00:03"]), times);
+    const backlog = (await panel.texts("[data-testid=backlog]"))[0] ?? "";
+    check("the backlog indicator shows the app's status", backlog.includes("7 s behind"), backlog);
+    check("Create .srt waits for the end of the recording", !(await panel.canClick("action-srt")) && (await panel.texts("[data-testid=action-srt]")).length === 1);
+    await panel.click("action-open");
+    const opened = await until("Open in Sussurro", () => server.items.find((r) => r.method === "POST" && r.path === "/items/e2e-1/open"), 5000).catch(() => null);
+    check("Open in Sussurro → POST /items/{id}/open", !!opened, server.items);
+    await panel.click("action-copy");
+    const copied = await until("Copy as text", () => server.items.find((r) => r.path === "/items/e2e-1/export" && r.format === "txt"), 5000).catch(() => null);
+    check("Copy as text → GET /items/{id}/export?format=txt", !!copied, server.items);
+
+    await sleep(Math.max(0, CAPTURE_MS - (Date.now() - t0)));
     const a = await A.evaluate(() => (window as any).callState());
     const bs = await B.evaluate(() => (window as any).callState());
     await panel.click("stop");
     await until("phase done", async () => (await phase()) === "done", 10_000);
+    await panel.click("action-srt");
+    const srt = await until("Create .srt", () => server.items.find((r) => r.path === "/items/e2e-1/export" && r.format === "srt"), 5000).catch(() => null);
+    const note = await until("the .srt note", async () => (await panel.texts("[data-testid=action-note]")).find((x) => x.includes(".srt")) ?? "", 5000).catch(() => "");
+    check("after Stop, Create .srt downloads GET /items/{id}/export?format=srt", !!srt && note.includes("e2e-1.srt"), note || server.items);
+    check("the lines stay after Stop", (await panel.texts("[data-testid=transcript] .tx-text")).length === 3);
 
     const s: LiveSession | undefined = server.sessions[0];
     check("one /live session, from the extension origin", server.sessions.length === 1 && /^(chrome|moz)-extension:\/\//.test(s?.origin ?? ""), s?.origin);
@@ -305,6 +344,10 @@ async function runConfig(config: Config): Promise<Check[]> {
     // 3. Teardown: closing the tab mid-capture ends the meeting.
     await panel.click("start");
     await until("second session live", () => server.sessions[1]?.start && (server.sessions[1].channels.get(0)?.frames ?? 0) > 5, 15_000);
+    // A new Start is a new meeting: the panel shows only its lines (the
+    // script again), not the first meeting's plus a "connection lost" part.
+    const again = await panel.texts("[data-testid=transcript] .tx-text");
+    check("a new Start clears the previous meeting's lines", again.length === 3 && !(await panel.text()).includes("Connection lost"), again);
     await A.close();
     const second = await until("stop after the tab closed", () => (server.sessions[1].stopped ? server.sessions[1] : null), 10_000).catch(() => null);
     check("closing the tab sends stop", !!second);
