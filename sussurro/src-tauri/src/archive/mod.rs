@@ -23,6 +23,7 @@ pub mod index;
 pub mod live;
 pub mod meeting;
 pub mod paths;
+pub mod people;
 pub mod render;
 pub mod store;
 pub mod subtitles;

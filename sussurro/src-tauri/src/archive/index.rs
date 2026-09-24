@@ -343,6 +343,19 @@ impl Index {
     }
 }
 
+impl Index {
+    /// Every participant of every indexed item as `(item id, name, email)`
+    /// (email empty when unknown), for the People screen's "appears in N
+    /// items" (#132). Call [`Index::sync`] first.
+    pub fn participant_rows(&self) -> Result<Vec<(String, String, String)>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT id, name, email FROM item_participants")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        })
+    }
+}
+
 fn sync_conn(conn: &mut Connection, archive: &Path) -> Result<usize> {
     let on_disk = scan_item_dirs(archive);
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -936,6 +949,14 @@ mod tests {
             vec![f.podcast.clone()]
         );
         assert_eq!(facet(&idx, "Ospite misterioso"), vec![f.podcast.clone()]);
+        // The raw rows behind the People screen's counts (#132).
+        let rows = idx.participant_rows().unwrap();
+        assert!(rows.contains(&(
+            f.podcast.clone(),
+            "Giulia Verdi".into(),
+            "giulia.verdi@studio.example".into()
+        )));
+        assert!(rows.contains(&(f.podcast.clone(), "Ospite misterioso".into(), String::new())));
 
         // Removing a participant removes it from the index too.
         meta.participants.truncate(1);
