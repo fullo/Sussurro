@@ -1301,6 +1301,26 @@ pub async fn archive_unlink_speaker(
     edit_speakers_command(&state, id, archive::SpeakerEdit::Unlink { speaker_id }).await
 }
 
+/// Speaker panel, Voice map card (#144): the item's stored speaker
+/// embeddings projected to 2-D (PCA, `speakers::map`), at most
+/// `speakers::map::MAX_POINTS` points. Read-only; the embeddings
+/// themselves never reach the UI. Empty for an item without voice data.
+#[tauri::command]
+pub async fn archive_voice_map(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<crate::speakers::map::VoiceMap, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || {
+        let item = archive::read_item(&dir, &id)?;
+        Ok(crate::speakers::map::voice_map(
+            &item.segments,
+            crate::speakers::map::MAX_POINTS,
+        ))
+    })
+    .await
+}
+
 /// Speaker panel (#134): can "Identify voices" run on this transcription,
 /// and if not, why (its original file is gone, it came from a link…).
 #[tauri::command]

@@ -1230,6 +1230,29 @@ function handle(cmd: string, a: Args): unknown {
       }
       return toItem(s);
     }
+    case "archive_voice_map": {
+      // Mirrors speakers::map::voice_map (#144), faked: each "true" voice is
+      // a cloud around its own spot, with a fixed jitter per line.
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      const truth = s.voiceOf ?? {};
+      const ids = Object.keys(truth).map(Number);
+      const voices = [...new Set(Object.values(truth))].sort();
+      const jitter = (n: number) => ((Math.sin(n * 12.9898) * 43758.5453) % 1) * 0.35;
+      const points = s.segments
+        .filter((x) => ids.includes(x.id))
+        .map((x) => {
+          const k = voices.indexOf(truth[x.id]);
+          const angle = (2 * Math.PI * k) / Math.max(1, voices.length) + 0.4;
+          return {
+            segment_id: x.id,
+            speaker_id: x.speaker_id ?? null,
+            x: Math.cos(angle) + jitter(x.id + 1),
+            y: Math.sin(angle) + jitter(x.id + 101),
+          };
+        });
+      return { points, total: points.length, explained: points.length > 1 ? 0.31 : 0 };
+    }
     case "archive_voice_source": {
       const s = find(String(a.id));
       if (!s) throw `no archive item '${a.id}'`;

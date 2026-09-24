@@ -15,6 +15,8 @@ import {
   speakerSource,
 } from "../lib/speakers";
 import type { DocSpeaker, Item, Person, VoiceSource } from "../lib/types";
+import { voiceMapShown } from "../lib/voiceMap";
+import { VoiceMapCard } from "./VoiceMapCard";
 
 /** The context pane's *Speakers* section (#130): the document's speakers
  *  with colour and share of speech, rename for this document, link to a
@@ -28,6 +30,8 @@ export function SpeakerPanel({
   onItem,
   people = [],
   onPeopleChanged,
+  pickedLine = null,
+  onPickLine,
 }: {
   ctl: Ctl;
   item: Item;
@@ -35,6 +39,9 @@ export function SpeakerPanel({
   /** The People registry (#132): link a speaker to a person. */
   people?: Person[];
   onPeopleChanged?: () => void;
+  /** Voice map (#144): the line picked on the map, and how to pick one. */
+  pickedLine?: number | null;
+  onPickLine?: (segmentId: number) => void;
 }) {
   const [renaming, setRenaming] = useState<{ id: string; label: string } | null>(null);
   /** Speaker whose "Link to person…" picker is open. */
@@ -197,6 +204,9 @@ export function SpeakerPanel({
             </li>
           ))}
         </ul>
+      )}
+      {shares.length > 0 && voiceMapShown(item) && (
+        <VoiceMapCard item={item} selectedId={pickedLine} onPick={onPickLine} />
       )}
       {editable && item.embedded_segments ? (
         confirmRedetect ? (

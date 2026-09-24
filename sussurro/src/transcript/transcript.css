@@ -14,6 +14,8 @@
   align-items: start;
 }
 .tx-line:hover, .tx-line:focus-within, .tx-line.editing { background: var(--c-surface-alt, #f3f2ee); }
+/* Picked on the Voice map (#144): ink, like the Audio tab's playing line. */
+.tx-line.selected { background: var(--c-surface-alt, #f3f2ee); box-shadow: inset 3px 0 0 var(--c-dark, #1a1a1a); }
 
 .tx-time {
   font-family: var(--f-mono, ui-monospace, monospace);

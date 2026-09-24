@@ -321,6 +321,26 @@ export interface VoiceSource {
   file_name: string;
 }
 
+/** One line on the Voice map (#144, `archive_voice_map`). */
+export interface VoiceMapPoint {
+  segment_id: number;
+  /** The line's speaker when the map was computed. */
+  speaker_id?: string | null;
+  x: number;
+  y: number;
+}
+
+/** The Voice map of an item (#144): its stored speaker embeddings projected
+ *  to 2-D (PCA) by the backend. */
+export interface VoiceMap {
+  /** At most 5,000, in line order. */
+  points: VoiceMapPoint[];
+  /** Lines with voice data (more than `points` = downsampled for drawing). */
+  total: number;
+  /** Share of the voice prints' differences the two axes keep, 0–1. */
+  explained: number;
+}
+
 export interface ItemSummary {
   id: string;
   meta: ItemMeta;
