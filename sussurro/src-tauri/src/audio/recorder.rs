@@ -46,7 +46,25 @@ impl Recorder {
         self.start_with(device_name, false)
     }
 
+    /// Record what the default **output** device plays (#140). On Windows
+    /// cpal's WASAPI host opens an input stream on an output device in
+    /// loopback mode (`AUDCLNT_STREAMFLAGS_LOOPBACK`), so this is WASAPI
+    /// loopback with no virtual device. Other hosts refuse an input stream
+    /// on an output device: the error is reported like a device that could
+    /// not be opened. A loopback stream delivers nothing while nothing
+    /// plays.
+    pub fn start_output_loopback(&mut self) -> Result<()> {
+        self.start_target(Target::OutputLoopback)
+    }
+
     fn start_with(&mut self, device_name: &str, fallback: bool) -> Result<()> {
+        self.start_target(Target::Input {
+            name: device_name.to_string(),
+            fallback,
+        })
+    }
+
+    fn start_target(&mut self, target: Target) -> Result<()> {
         if self.is_recording() {
             return Ok(());
         }
@@ -60,9 +78,8 @@ impl Recorder {
         let buffer = self.live.clone();
         let meta = self.meta.clone();
         let failed = self.failed.clone();
-        let device_name = device_name.to_string();
         std::thread::spawn(move || {
-            let r = record_until_stopped(stop_rx, buffer, meta, failed.clone(), &device_name, fallback);
+            let r = record_until_stopped(stop_rx, buffer, meta, failed.clone(), &target);
             if r.is_err() {
                 failed.store(true, Ordering::Relaxed);
             }
@@ -143,30 +160,58 @@ pub fn default_input_device_name() -> Option<String> {
     cpal::default_host().default_input_device().and_then(|d| d.name().ok())
 }
 
+/// Name of the system default output device, if there is one — what
+/// [`Recorder::start_output_loopback`] records.
+pub fn default_output_device_name() -> Option<String> {
+    cpal::default_host().default_output_device().and_then(|d| d.name().ok())
+}
+
+/// What a [`Recorder`] opens.
+enum Target {
+    /// An input device: `name` empty = the default input; a named device
+    /// that is gone falls back to the default only with `fallback`.
+    Input { name: String, fallback: bool },
+    /// The default output device, as a loopback capture (WASAPI).
+    OutputLoopback,
+}
+
 fn record_until_stopped(
     stop_rx: Receiver<()>,
     buffer: Arc<Mutex<Vec<f32>>>,
     meta: Arc<(AtomicU32, AtomicUsize)>,
     failed: Arc<AtomicBool>,
-    device_name: &str,
-    fallback: bool,
+    target: &Target,
 ) -> Result<Vec<f32>> {
     let host = cpal::default_host();
-    let device = if device_name.is_empty() {
-        host.default_input_device()
-    } else {
-        let named = host
-            .input_devices()
-            .ok()
-            .and_then(|mut ds| ds.find(|d| d.name().map(|n| n == device_name).unwrap_or(false)));
-        if named.is_none() && !fallback {
-            return Err(anyhow!("the input device '{device_name}' is not available"));
+    let (device, config) = match target {
+        Target::Input { name, fallback } => {
+            let device = if name.is_empty() {
+                host.default_input_device()
+            } else {
+                let named = host
+                    .input_devices()
+                    .ok()
+                    .and_then(|mut ds| ds.find(|d| d.name().map(|n| n == *name).unwrap_or(false)));
+                if named.is_none() && !fallback {
+                    return Err(anyhow!("the input device '{name}' is not available"));
+                }
+                // Fall back to default if the saved device is gone (unplugged).
+                named.or_else(|| host.default_input_device())
+            }
+            .ok_or_else(|| anyhow!("no input device — check microphone privacy settings"))?;
+            let config = device.default_input_config()?;
+            (device, config)
         }
-        // Fall back to default if the saved device is gone (unplugged).
-        named.or_else(|| host.default_input_device())
-    }
-    .ok_or_else(|| anyhow!("no input device — check microphone privacy settings"))?;
-    let config = device.default_input_config()?;
+        Target::OutputLoopback => {
+            let device = host
+                .default_output_device()
+                .ok_or_else(|| anyhow!("there is no output device to record"))?;
+            // The output's own mix format: WASAPI loopback must be opened in
+            // the format the engine renders in.
+            let config = device.default_output_config()?;
+            (device, config)
+        }
+    };
     let channels = config.channels() as usize;
     let rate = config.sample_rate().0;
     meta.0.store(rate, Ordering::Relaxed);

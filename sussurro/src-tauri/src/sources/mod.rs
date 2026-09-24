@@ -9,10 +9,12 @@
 //! 0.9: [`browser::BrowserSource`] — a meeting from the browser extension,
 //! two channels (`mic`, `remote`) on one clock.
 //! 0.10: [`system::SystemSource`] — the mic plus any second input device
-//! (a virtual loopback device) as two channels (`mic`, `system`), #139.
+//! (a virtual loopback device) as two channels (`mic`, `system`), #139;
+//! [`loopback`] captures the computer's sound natively instead (#140).
 
 pub mod browser;
 pub mod file;
+pub mod loopback;
 pub mod mic;
 pub mod system;
 pub mod url;

@@ -783,17 +783,40 @@ pub(crate) fn system_request(
     }
 }
 
+/// What carries the computer's sound in a *System audio + mic* session.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SystemInput {
+    /// An input device by exact name (BlackHole, VB-Cable, a monitor
+    /// exposed through ALSA…), #139.
+    Device(String),
+    /// The OS's own capture of the output (#140): WASAPI loopback, a Core
+    /// Audio process tap, the default sink's monitor.
+    Native,
+}
+
+impl SystemInput {
+    /// The session's label (engine status, UI).
+    pub fn label(&self) -> String {
+        match self {
+            SystemInput::Device(name) => name.clone(),
+            SystemInput::Native => crate::sources::loopback::NATIVE_LABEL.to_string(),
+        }
+    }
+}
+
 /// Start a *System audio + mic* session (#139): the microphone
-/// (`mic_device`, empty = the dictation's input device) and a second input
-/// device carrying the computer's output (`system_device`, e.g. BlackHole)
-/// as two channels of one meeting. Returns the session id at once; the item
-/// arrives as `engine-done` after [`Sessions::stop_system`]. Refused without
-/// the meetings preview, with the same device twice, or while a mic session
-/// runs (both need the microphone).
+/// (`mic_device`, empty = the dictation's input device) and the computer's
+/// sound — a second input device (`SystemInput::Device`, e.g. BlackHole) or
+/// the OS's native capture (`SystemInput::Native`, #140) — as two channels
+/// of one meeting. Returns the session id at once; the item arrives as
+/// `engine-done` after [`Sessions::stop_system`]. Refused without the
+/// meetings preview, with the same device twice, when the native capture is
+/// unavailable (with the reason), or while a mic session runs (both need
+/// the microphone).
 pub fn start_system(
     app: &AppHandle,
     mic_device: Option<String>,
-    system_device: &str,
+    system: &SystemInput,
     title: String,
     defer: bool,
     options: RunOptions,
@@ -802,16 +825,32 @@ pub fn start_system(
     let settings = state.settings.lock().unwrap().clone();
     ensure_system_audio_allowed(&settings)?;
     let mic_device = mic_device.unwrap_or(settings.input_device);
-    crate::sources::system::validate_devices(
-        &mic_device,
-        system_device,
-        crate::audio::recorder::default_input_device_name().as_deref(),
-    )?;
-    if !crate::audio::recorder::list_input_devices()
-        .iter()
-        .any(|d| d == system_device)
-    {
-        anyhow::bail!("the input device '{system_device}' is not available — is it connected?");
+    match system {
+        SystemInput::Device(system_device) => {
+            crate::sources::system::validate_devices(
+                &mic_device,
+                system_device,
+                crate::audio::recorder::default_input_device_name().as_deref(),
+            )?;
+            if !crate::audio::recorder::list_input_devices()
+                .iter()
+                .any(|d| d == system_device)
+            {
+                anyhow::bail!(
+                    "the input device '{system_device}' is not available — is it connected?"
+                );
+            }
+        }
+        SystemInput::Native => {
+            let probe = crate::sources::loopback::probe();
+            if !probe.available {
+                anyhow::bail!(
+                    "{} is unavailable: {}",
+                    crate::sources::loopback::NATIVE_LABEL,
+                    probe.reason.unwrap_or_default()
+                );
+            }
+        }
     }
     let mut mic = state.engine.mic.lock().unwrap();
     if let Some(m) = mic.as_ref() {
@@ -823,11 +862,16 @@ pub fn start_system(
     }
     ensure_archive_writable(&state)?;
     let stop = Arc::new(AtomicBool::new(false));
-    let source = crate::sources::system::SystemSource::start(&mic_device, system_device, stop.clone())
-        .context("could not start the audio devices")?;
-    let (id, cancel) = state
-        .engine
-        .begin(SessionKind::System(system_device.to_string()));
+    let source = match system {
+        SystemInput::Device(system_device) => {
+            crate::sources::system::SystemSource::start(&mic_device, system_device, stop.clone())
+        }
+        SystemInput::Native => {
+            crate::sources::system::SystemSource::start_native(&mic_device, stop.clone())
+        }
+    }
+    .context("could not start the audio devices")?;
+    let (id, cancel) = state.engine.begin(SessionKind::System(system.label()));
     *mic = Some(MicSession {
         id,
         stop,
@@ -1242,6 +1286,18 @@ mod tests {
         s.end(id);
         assert_eq!(s.mic_session(), None);
         assert!(!s.is_active());
+    }
+
+    #[test]
+    fn the_system_input_names_the_session() {
+        assert_eq!(
+            SystemInput::Device("BlackHole 2ch".into()).label(),
+            "BlackHole 2ch"
+        );
+        assert_eq!(
+            SystemInput::Native.label(),
+            crate::sources::loopback::NATIVE_LABEL
+        );
     }
 
     #[test]

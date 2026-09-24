@@ -257,6 +257,9 @@ pub struct SystemAudioDevices {
     pub default_input: Option<String>,
     /// Every input device, loopback-looking ones first.
     pub devices: Vec<InputDeviceInfo>,
+    /// "This computer's sound (built-in)" (#140): whether the OS's own
+    /// capture of the output can be used here, or why not.
+    pub native: crate::sources::loopback::NativeLoopback,
 }
 
 /// Input devices for the *System audio + mic* tab (#139).
@@ -275,6 +278,7 @@ pub async fn list_system_audio_devices() -> Result<SystemAudioDevices, String> {
         SystemAudioDevices {
             default_input: crate::audio::recorder::default_input_device_name(),
             devices,
+            native: crate::sources::loopback::probe(),
         }
     })
     .await
@@ -561,8 +565,9 @@ pub fn engine_start_mic(
 
 /// Start a *System audio + mic* session (#139, behind `meetings_enabled`):
 /// the microphone (`mic_device`; omitted = the dictation's input device)
-/// and a second input device carrying the computer's output
-/// (`system_device`) recorded as two channels of one `meeting` item
+/// and the computer's output — a second input device (`system_device`), or
+/// with `native: true` the OS's own capture of it (#140; `system_device`
+/// is then ignored) — recorded as two channels of one `meeting` item
 /// (`source: system`). Returns the session id; the item arrives as
 /// `engine-done` after `engine_stop_system`. `engine-warning` events report
 /// a lost device or realigned device clocks while it records.
@@ -571,6 +576,7 @@ pub fn engine_start_mic(
 pub async fn engine_start_system(
     app: AppHandle,
     system_device: String,
+    native: Option<bool>,
     mic_device: Option<String>,
     title: Option<String>,
     defer: Option<bool>,
@@ -579,11 +585,16 @@ pub async fn engine_start_system(
     save_audio: Option<bool>,
 ) -> Result<u64, String> {
     // Off the main thread: it enumerates the audio devices first.
+    let system = if native.unwrap_or(false) {
+        crate::engine::session::SystemInput::Native
+    } else {
+        crate::engine::session::SystemInput::Device(system_device)
+    };
     tauri::async_runtime::spawn_blocking(move || {
         crate::engine::session::start_system(
             &app,
             mic_device,
-            &system_device,
+            &system,
             title.unwrap_or_default(),
             defer.unwrap_or(false),
             crate::engine::session::RunOptions {

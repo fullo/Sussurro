@@ -223,12 +223,17 @@ Current version **0.4.1**. Full detail (and standing decisions) in
   SmartScreen prompt (*More info → Run anyway*). Signing is on the roadmap
   (Windows via SignPath; macOS Developer ID later). The **updater** artifacts
   are always signed with the project's own key, independent of OS signing.
-- **Recording a desktop call needs a virtual audio device** (meetings
-  preview, *New → System audio + mic*): BlackHole or Loopback on macOS,
-  VB-Cable or Voicemeeter on Windows, a PulseAudio/PipeWire monitor source
-  on Linux turn the computer's sound into an input that Sussurro records
-  next to your microphone. Setup per OS is in
-  [`docs/compile/`](docs/compile/); native loopback is planned (#140).
+- **Recording a desktop call** (meetings preview, *New → System audio +
+  mic*) records your microphone and **this computer's sound** with nothing
+  to install: WASAPI loopback on Windows, a Core Audio process tap on
+  macOS 14.2+ (macOS asks once for the System Audio Recording permission),
+  the default output's monitor on Linux (PulseAudio/PipeWire, needs
+  `pactl`/`parec` from `pulseaudio-utils`). Where that is unavailable (macOS
+  before 14.2, no sound server…) the tab says why, and a virtual device —
+  BlackHole or Loopback, VB-Cable or Voicemeeter, a monitor exposed through
+  ALSA — works as before. **Use headphones**: on speakers the microphone
+  hears the others too, and Sussurro does not cancel echo. Setup per OS is
+  in [`docs/compile/`](docs/compile/).
 - **Editing a selection by voice is not built in.** Command mode (a second
   hotkey that applied a spoken instruction to the selected text) was removed
   in 0.7; use your OS voice control instead — Voice Control on macOS, Voice

@@ -7,5 +7,10 @@
 <dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>Sussurro needs the microphone to capture your dictation, which is transcribed locally on this Mac.</string>
+    <!-- macOS 14.2+ asks for this before a Core Audio process tap delivers
+         anything (#140, New → System audio + mic → This computer's sound);
+         without the key the tap only ever records silence. -->
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Sussurro records this computer's sound only when you record a call with System audio + mic; it is transcribed locally on this Mac.</string>
 </dict>
 </plist>
