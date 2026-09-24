@@ -185,24 +185,69 @@ pub fn link_speakers(speakers: &mut [DocSpeaker], people: &[Person]) -> usize {
     linked
 }
 
-/// "Appears in N items": for each person, the number of distinct items
-/// with a participant that is them — same email, or a name matching them
-/// unambiguously. `rows` are `(item id, name, email)` as the index stores
-/// them (email empty when unknown).
-pub fn usage(people: &[Person], rows: &[(String, String, String)]) -> HashMap<String, usize> {
-    let by_email: HashMap<String, &str> = people
-        .iter()
-        .filter_map(|p| p.email.as_deref().map(|e| (email_key(e), p.id.as_str())))
-        .collect();
-    let mut items: HashMap<&str, HashSet<&str>> = HashMap::new();
-    for (item, name, email) in rows {
-        let who = if email.trim().is_empty() {
+/// Resolves many participants to the person they are, without re-folding
+/// every registry name for each one — for the People screen's counts and
+/// the Library's participant facet (#135), which group thousands of rows.
+///
+/// The rule, shared by both: a participant is the person with the same
+/// email (case-insensitive); failing that, the one person its name matches
+/// ([`match_person`]: name or alias, ambiguous = nobody).
+pub struct PeopleMatcher {
+    by_email: HashMap<String, String>,
+    /// Name key → person id; `None` when the key belongs to two people.
+    by_name: HashMap<String, Option<String>>,
+}
+
+impl PeopleMatcher {
+    pub fn new(people: &[Person]) -> Self {
+        let by_email = people
+            .iter()
+            .filter_map(|p| p.email.as_deref().map(|e| (email_key(e), p.id.clone())))
+            .collect();
+        let mut by_name: HashMap<String, Option<String>> = HashMap::new();
+        for p in people {
+            let keys: HashSet<String> = std::iter::once(&p.name)
+                .chain(&p.aliases)
+                .map(|n| name_key(n))
+                .filter(|k| !k.is_empty())
+                .collect();
+            for key in keys {
+                by_name
+                    .entry(key)
+                    .and_modify(|who| {
+                        if who.as_deref() != Some(p.id.as_str()) {
+                            *who = None;
+                        }
+                    })
+                    .or_insert_with(|| Some(p.id.clone()));
+            }
+        }
+        PeopleMatcher { by_email, by_name }
+    }
+
+    /// The id of the person a participant `name` / `email` (empty when
+    /// unknown) is, if any.
+    pub fn person_for(&self, name: &str, email: &str) -> Option<&str> {
+        let by_email = if email.trim().is_empty() {
             None
         } else {
-            by_email.get(&email_key(email)).copied()
-        }
-        .or_else(|| match_person(people, name).map(|p| p.id.as_str()));
-        if let Some(id) = who {
+            self.by_email.get(&email_key(email))
+        };
+        by_email
+            .or_else(|| self.by_name.get(&name_key(name)).and_then(Option::as_ref))
+            .map(String::as_str)
+    }
+}
+
+/// "Appears in N items": for each person, the number of distinct items
+/// with a participant that is them ([`PeopleMatcher`]). `rows` are
+/// `(item id, name, email)` as the index stores them (email empty when
+/// unknown).
+pub fn usage(people: &[Person], rows: &[(String, String, String)]) -> HashMap<String, usize> {
+    let matcher = PeopleMatcher::new(people);
+    let mut items: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for (item, name, email) in rows {
+        if let Some(id) = matcher.person_for(name, email) {
             items.entry(id).or_default().insert(item.as_str());
         }
     }
@@ -829,6 +874,32 @@ mod tests {
         assert_eq!(n[&people[0].id], 3);
         assert_eq!(n[&people[1].id], 1);
         assert_eq!(n[&people[2].id], 0);
+    }
+
+    #[test]
+    fn matcher_agrees_with_match_person() {
+        let people = registry(&[
+            person("Nicolò Rossi", Some("nico@example.com"), &["Nico", "nicolo rossi"]),
+            person("Marco Bianchi", Some("mb@example.com"), &["Marco"]),
+            person("Marco Verdi", None, &["marco"]),
+        ]);
+        let m = PeopleMatcher::new(&people);
+        for name in ["NICOLO  rossi", "nico", "Marco", "marco verdi", "Nobody", "", "  "] {
+            assert_eq!(
+                m.person_for(name, ""),
+                match_person(&people, name).map(|p| p.id.as_str()),
+                "{name}"
+            );
+        }
+        // The email wins over the name; an unknown email falls back to it.
+        assert_eq!(
+            m.person_for("Marco Verdi", " MB@example.com "),
+            Some(people[1].id.as_str())
+        );
+        assert_eq!(
+            m.person_for("Nico", "other@example.com"),
+            Some(people[0].id.as_str())
+        );
     }
 
     #[test]
