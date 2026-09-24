@@ -67,6 +67,8 @@ interface LineProps {
   speakers?: TranscriptSpeaker[];
   /** Move the line to a speaker id (or {@link NEW_VOICE_TARGET}). */
   onMoveSpeaker?: (id: number, speakerId: string) => Promise<void>;
+  /** The line picked elsewhere (the Voice map, #144): marked. */
+  selected?: boolean;
 }
 
 function SpeakerChip({ speaker }: { speaker: TranscriptSpeaker }) {
@@ -78,7 +80,7 @@ function SpeakerChip({ speaker }: { speaker: TranscriptSpeaker }) {
   );
 }
 
-export function TranscriptLine({ line, editable, onEdit, onDelete, speakers, onMoveSpeaker }: LineProps) {
+export function TranscriptLine({ line, editable, onEdit, onDelete, speakers, onMoveSpeaker, selected = false }: LineProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -104,7 +106,11 @@ export function TranscriptLine({ line, editable, onEdit, onDelete, speakers, onM
 
   const editing = draft !== null;
   return (
-    <li className={`tx-line${editing ? " editing" : ""}`}>
+    <li
+      className={`tx-line${editing ? " editing" : ""}${selected ? " selected" : ""}`}
+      data-seg={line.id}
+      aria-current={selected ? "true" : undefined}
+    >
       <span className="tx-time" aria-label={`at ${ts}`}>{ts}</span>
       {editing ? (
         <div className="tx-edit">
@@ -211,6 +217,7 @@ export function TranscriptView({
   follow = false,
   emptyText = "No lines yet.",
   label = "Transcript",
+  selectedId = null,
 }: {
   lines: TranscriptLineData[];
   editable?: boolean;
@@ -223,6 +230,9 @@ export function TranscriptView({
   follow?: boolean;
   emptyText?: string;
   label?: string;
+  /** A line picked elsewhere (the Voice map, #144): marked as current.
+   *  Every line carries `data-seg` so the host can scroll to it. */
+  selectedId?: number | null;
 }) {
   const endRef = useRef<HTMLLIElement>(null);
   useEffect(() => {
@@ -246,6 +256,7 @@ export function TranscriptView({
           onDelete={onDelete}
           speakers={speakers}
           onMoveSpeaker={onMoveSpeaker}
+          selected={l.id === selectedId}
         />
       ))}
       <li ref={endRef} className="tx-end" aria-hidden="true" />

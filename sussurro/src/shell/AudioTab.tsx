@@ -32,7 +32,14 @@ const SCHEME = "sussurro-audio";
  *  word highlight, and a span overshoots its end by at most this much. */
 const TICK_MS = 40;
 
-export function AudioTab({ item, speakers }: { item: Item; speakers?: TranscriptSpeaker[] }) {
+/** A line to move the player to (the Voice map, #144): `n` changes on
+ *  every pick, so picking the same line again seeks again. */
+export interface AudioSeek {
+  id: number;
+  n: number;
+}
+
+export function AudioTab({ item, speakers, seek }: { item: Item; speakers?: TranscriptSpeaker[]; seek?: AudioSeek | null }) {
   const files = (item.audio ?? []).map((f) => f.name);
   if (item.recording) {
     return (
@@ -64,7 +71,7 @@ export function AudioTab({ item, speakers }: { item: Item; speakers?: Transcript
     );
   }
   // Remount on another item or other files (Delete audio, a recovered item).
-  return <Player key={`${item.id}|${files.join(",")}`} item={item} files={files} speakers={speakers} />;
+  return <Player key={`${item.id}|${files.join(",")}`} item={item} files={files} speakers={speakers} seek={seek ?? null} />;
 }
 
 /** Whether a key event belongs to the focused control rather than to the
@@ -79,7 +86,17 @@ function ownsKey(e: KeyboardEvent, key: string): boolean {
   return false;
 }
 
-function Player({ item, files, speakers }: { item: Item; files: string[]; speakers?: TranscriptSpeaker[] }) {
+function Player({
+  item,
+  files,
+  speakers,
+  seek,
+}: {
+  item: Item;
+  files: string[];
+  speakers?: TranscriptSpeaker[];
+  seek: AudioSeek | null;
+}) {
   const segments = item.segments.segments as ReplaySegment[];
   const lines = useMemo(() => sortLines(segments), [segments]);
   const byId = useMemo(() => new Map((speakers ?? []).map((s) => [s.id, s])), [speakers]);
@@ -191,27 +208,39 @@ function Player({ item, files, speakers }: { item: Item; files: string[]; speake
   };
 
   // Clicking a line of someone the filter hides plays everyone from there.
-  const pendingSeek = useRef<number | null>(null);
-  const clickLine = (s: ReplaySegment) => {
+  const pendingSeek = useRef<{ ms: number; play: boolean } | null>(null);
+  /** Move to a line; one of someone the filter hides drops the filter. */
+  const goToLine = (s: ReplaySegment, play: boolean) => {
     if (speakerId !== null && s.speaker_id !== speakerId) {
       setSpeakerId(null);
       // The new playlist is swapped in by the effect; seek once it is.
-      pendingSeek.current = s.start_ms;
+      pendingSeek.current = { ms: s.start_ms, play };
       return;
     }
     seekTo(s.start_ms);
-    if (!playerRef.current?.playing) act((p) => p.play());
+    if (play && !playerRef.current?.playing) act((p) => p.play());
   };
+  const clickLine = (s: ReplaySegment) => goToLine(s, true);
   useEffect(() => {
     if (pendingSeek.current === null || playlist.speakerId !== null) return;
-    const ms = pendingSeek.current;
+    const { ms, play } = pendingSeek.current;
     pendingSeek.current = null;
     act((p) => {
       p.seek(ms);
-      p.play();
+      if (play) p.play();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playlist]);
+
+  // A line picked on the Voice map (#144): the player moves there (and
+  // keeps playing if it was), also when the tab opens after the pick.
+  const seekN = seek?.n;
+  useEffect(() => {
+    if (!seek) return;
+    const s = lines.find((l) => l.id === seek.id);
+    if (s) goToLine(s, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekN]);
 
   const active = activeSegment(lines, now, speakerId);
   const activeId = active?.id ?? null;
