@@ -14,10 +14,10 @@
     "windows": [
       {
         "title": "Sussurro",
-        "width": 700,
-        "height": 860,
-        "minWidth": 560,
-        "minHeight": 640
+        "width": 1120,
+        "height": 740,
+        "minWidth": 800,
+        "minHeight": 560
       },
       {
         "label": "overlay",

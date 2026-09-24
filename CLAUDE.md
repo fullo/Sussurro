@@ -420,6 +420,17 @@ project decisions here, not in per-machine memory.**
   the transcript (`TranscriptView.selectedId`), and the Audio tab's player
   seeks there (no autoplay). Keyboard: the SVG is one listbox, arrows walk
   lines in time order.
+- **Workspace only + onboarding (#115)**: the left-rail workspace is the
+  only UI (the classic window and its preview flag are gone; the old
+  settings key is ignored and dropped on save). The main window opens at
+  1120×740, min 800×560 (`tauri.conf.json`). `Settings.onboarding`: `welcome` = fresh
+  install (no settings file) → guided setup; `whats_new` = a settings file
+  without the key (upgrade from 0.6.x) → one "What's new" screen; `done`.
+  The archive step calls `archive_prepare` (creates + lists the folder) on
+  purpose so macOS asks for Documents there, never when a recording
+  starts; while the onboarding is open no screen behind it mounts. The
+  cleanup step probes only local default ports (Ollama, LM Studio,
+  llama.cpp-server).
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`
@@ -623,7 +634,7 @@ labelled `agent-ready`.
   timings, Qwen3-ASR benchmark). Gates 0.9 and Track E only.
 - **0.7 — Notetaking**: remove command mode; archive core; long-form
   engine for mic + file (streamed decode, VAD segments, chunked cleanup);
-  UI shell A behind `ui_v2` until release.
+  UI shell A (the only UI since #115, with the first-run onboarding).
 - **0.8 — Advanced notetaking + links**: LLM profiles, recipes (formatted
   companion document with tl;dr/headings/tables), Ask panel, URL source
   (`yt-dlp` on PATH).

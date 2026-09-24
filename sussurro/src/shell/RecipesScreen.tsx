@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CollapsibleCard, EndpointNote, Tip } from "../components/ui";
+import { Card, EndpointNote, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import {
   API_LABELS,
@@ -35,10 +35,8 @@ export function RecipesScreen({ ctl }: { ctl: Ctl }) {
       </header>
       <div className="sh-scroll cards-col">
         <RecipesCard ctl={ctl} />
-        <CollapsibleCard
-          storageKey="recipesProfiles"
+        <Card
           title={<>LLM profiles <span className="via">Ollama or OpenAI-compatible</span></>}
-          collapsible={false}
           headerExtra={
             <button
               type="button"
@@ -87,7 +85,7 @@ export function RecipesScreen({ ctl }: { ctl: Ctl }) {
               onDone={() => setEditing(null)}
             />
           )}
-        </CollapsibleCard>
+        </Card>
       </div>
     </div>
   );

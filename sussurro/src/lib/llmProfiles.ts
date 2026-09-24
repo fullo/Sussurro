@@ -144,8 +144,8 @@ export function removeProfile(s: Settings, id: string): Settings | null {
   return { ...s, llm_profiles: rest, cleanup_profile };
 }
 
-/** Patch the cleanup profile in place (the classic window's Server / model /
- *  API key fields edit it this way). */
+/** Patch the cleanup profile in place (the controller adopts an installed
+ *  Ollama model this way). */
 export function patchCleanupProfile(s: Settings, patch: Partial<LlmProfile>): Settings {
   const current = cleanupProfile(s);
   if (!current) return s;

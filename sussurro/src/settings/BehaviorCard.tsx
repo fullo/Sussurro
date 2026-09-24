@@ -1,15 +1,11 @@
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { AdvancedGroup, CollapsibleCard, Switch, Tip } from "../components/ui";
+import { AdvancedGroup, Card, Switch, Tip } from "../components/ui";
 import type { CardProps } from "./DictationCard";
 
-export function BehaviorCard({ ctl, collapsible }: CardProps) {
+export function BehaviorCard({ ctl }: CardProps) {
   const { settings, setSettings, save } = ctl;
   return (
-    <CollapsibleCard
-      storageKey="behaviorOpen"
-      title={<>Behavior <span className="via">feedback & extras</span></>}
-      collapsible={collapsible}
-    >
+    <Card title={<>Behavior <span className="via">feedback & extras</span></>}>
       <div className="field">
         <div className="field-label">
           <span>Live preview <Tip text="While you speak, the overlay shows a rolling partial transcript (re-transcribed every ~1.2s). Costs extra GPU/CPU during recording; the pasted text always comes from the final, full-quality pass." /></span>
@@ -128,19 +124,7 @@ export function BehaviorCard({ ctl, collapsible }: CardProps) {
             />
           </div>
         </div>
-
-        <div className="field">
-          <div className="field-label">
-            <span>New workspace <Tip text="Preview of the Sussurro 0.7 workspace: a left rail with New (microphone and file transcription), Library (your notes and transcriptions, searchable, with a line editor), Models and Settings. Dictation keeps working exactly the same. Switch it off to come back to this window." /></span>
-            <small>{settings.ui_v2 ? "on — preview" : "try the new workspace (preview)"}</small>
-          </div>
-          <Switch
-            checked={settings.ui_v2}
-            onChange={(v) => save({ ...settings, ui_v2: v })}
-            label="Try the new workspace (preview)"
-          />
-        </div>
       </AdvancedGroup>
-    </CollapsibleCard>
+    </Card>
   );
 }

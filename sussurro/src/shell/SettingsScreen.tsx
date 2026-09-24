@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { CollapsibleCard, Switch, Tip } from "../components/ui";
+import { Card, Switch, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, fmtCount } from "../lib/format";
 import type { SubtitlesMode } from "../lib/types";
@@ -38,8 +38,8 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "about", label: "About" },
 ];
 
-/** Settings: every card of the classic window, one section at a time, plus
- *  the Archive folder. The cards are the same components. */
+/** Settings: one section at a time — dictation, speech, cleanup, dictionary,
+ *  behavior, history, archive, browser extension and About. */
 export function SettingsScreen({
   ctl,
   section,
@@ -47,6 +47,7 @@ export function SettingsScreen({
   onOpenModels,
   onOpenRecipes,
   onAbout,
+  onRunSetup,
 }: {
   ctl: Ctl;
   section: SectionId;
@@ -54,6 +55,8 @@ export function SettingsScreen({
   onOpenModels: () => void;
   onOpenRecipes: () => void;
   onAbout: () => void;
+  /** Reopen the first-run setup (#115). */
+  onRunSetup: () => void;
 }) {
   return (
     <div className="sh-screen">
@@ -80,7 +83,6 @@ export function SettingsScreen({
               <SetupBanner ctl={ctl} />
               <DictationCard
                 ctl={ctl}
-                collapsible={false}
                 footer={
                   <div className="card-foot">
                     <p className="card-hint">
@@ -107,13 +109,13 @@ export function SettingsScreen({
               }
             />
           )}
-          {section === "cleanup" && <CleanupCard ctl={ctl} collapsible={false} onEditProfiles={onOpenRecipes} />}
-          {section === "personalization" && <PersonalizationCard ctl={ctl} collapsible={false} />}
-          {section === "behavior" && <BehaviorCard ctl={ctl} collapsible={false} />}
-          {section === "history" && <HistoryCard ctl={ctl} collapsible={false} />}
+          {section === "cleanup" && <CleanupCard ctl={ctl} onEditProfiles={onOpenRecipes} />}
+          {section === "personalization" && <PersonalizationCard ctl={ctl} />}
+          {section === "behavior" && <BehaviorCard ctl={ctl} />}
+          {section === "history" && <HistoryCard ctl={ctl} />}
           {section === "archive" && <ArchiveCard ctl={ctl} />}
-          {section === "extension" && <ExtensionCard ctl={ctl} collapsible={false} />}
-          {section === "about" && <AboutCard ctl={ctl} onAbout={onAbout} />}
+          {section === "extension" && <ExtensionCard ctl={ctl} />}
+          {section === "about" && <AboutCard ctl={ctl} onAbout={onAbout} onRunSetup={onRunSetup} />}
         </div>
       </div>
     </div>
@@ -130,7 +132,7 @@ function ArchiveCard({ ctl }: { ctl: Ctl }) {
   }, [settings.archive_dir]);
 
   return (
-    <CollapsibleCard storageKey="archiveOpen" title="Archive" collapsible={false}>
+    <Card title="Archive">
       <div className="field field-col">
         <div className="field-label">
           <span>Archive folder <Tip text="Notes and transcriptions are saved here as markdown files, one folder per item. Point it at another folder (an Obsidian vault, a synced drive) if you like. Changing it does not move items already saved." /></span>
@@ -215,13 +217,13 @@ function ArchiveCard({ ctl }: { ctl: Ctl }) {
           {rebuilding ? "Rebuilding…" : "Rebuild"}
         </button>
       </div>
-    </CollapsibleCard>
+    </Card>
   );
 }
 
-function AboutCard({ ctl, onAbout }: { ctl: Ctl; onAbout: () => void }) {
+function AboutCard({ ctl, onAbout, onRunSetup }: { ctl: Ctl; onAbout: () => void; onRunSetup: () => void }) {
   return (
-    <CollapsibleCard storageKey="aboutOpen" title={<>Sussurro {ctl.version}</>} collapsible={false}>
+    <Card title={<>Sussurro {ctl.version}</>}>
       <p className="card-hint">Local dictation and transcription. Your voice never leaves this machine.</p>
       <div className="list-actions start">
         <button type="button" className="btn-ghost" onClick={onAbout}>Credits & licenses</button>
@@ -235,13 +237,13 @@ function AboutCard({ ctl, onAbout }: { ctl: Ctl; onAbout: () => void }) {
         </button>
         <button type="button" className="btn-ghost" onClick={ctl.checkForUpdates}>Check for updates</button>
       </div>
-      <p className="card-hint">
-        This is the workspace preview. To go back to the classic window, switch off Behavior → Advanced → New
-        workspace.
-      </p>
-      <button type="button" className="btn-ghost" onClick={() => ctl.save({ ...ctl.settings, ui_v2: false })}>
-        Back to the classic window
-      </button>
-    </CollapsibleCard>
+      <div className="field">
+        <div className="field-label">
+          <span>First-run setup</span>
+          <small>permissions, archive folder, speech model, cleanup and shortcut</small>
+        </div>
+        <button type="button" className="btn-ghost" onClick={onRunSetup}>Run the setup again</button>
+      </div>
+    </Card>
   );
 }

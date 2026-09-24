@@ -208,7 +208,7 @@ describe("canStart", () => {
   });
 });
 
-// #158 finding 7: a UI mounted mid-run (ui_v2 switched, window reloaded)
+// #158 finding 7: a UI mounted mid-run (the window reloaded)
 // adopts what engine_status reports — the file transcription too, so it
 // can be followed and cancelled instead of running unseen.
 describe("adopt", () => {

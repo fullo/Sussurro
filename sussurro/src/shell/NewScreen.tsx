@@ -45,7 +45,7 @@ import {
   viaLabel,
 } from "../lib/links";
 import { CleanupLevelPicker } from "../settings/CleanupCard";
-import { AUDIO_EXTENSIONS, pickAudioFile } from "../settings/AudioFileCard";
+import { AUDIO_EXTENSIONS, pickAudioFile } from "./audioFile";
 import { LANGUAGES } from "../lib/constants";
 import { differsFromDictation, effectiveRun, runArgs, saveAudioChoice, type RunChoice } from "../lib/runOptions";
 import { identifyVoicesArg } from "../lib/speakers";

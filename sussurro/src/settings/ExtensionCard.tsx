@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { CollapsibleCard, Tip } from "../components/ui";
+import { Card, Tip } from "../components/ui";
 import { apiNotice } from "../lib/localApi";
 import { encodePairingCode, maskedPairingCode } from "../lib/pairingCode";
 import { needsMeetingNotice, withNoticeReset } from "../lib/meetingNotice";
@@ -18,7 +18,7 @@ const EXTENSION_README_URL = "https://github.com/fullo/Sussurro#browser-extensio
  *  (`sussurro:<port>:<token>`) into its options page. The token is never
  *  shown: it only goes to the clipboard. Meetings are always available
  *  (#138): there is no switch, only pairing. */
-export function ExtensionCard({ ctl, collapsible }: CardProps) {
+export function ExtensionCard({ ctl }: CardProps) {
   const { settings, save, setBusy, flash } = ctl;
   const [status, setStatus] = useState<ListenState | null>(null);
   const [confirmRegen, setConfirmRegen] = useState(false);
@@ -60,11 +60,7 @@ export function ExtensionCard({ ctl, collapsible }: CardProps) {
   };
 
   return (
-    <CollapsibleCard
-      storageKey="extensionOpen"
-      title={<>Browser extension <span className="via">meetings</span></>}
-      collapsible={collapsible}
-    >
+    <Card title={<>Browser extension <span className="via">meetings</span></>}>
       <p className="card-hint">
         The Sussurro browser extension records web meetings (Google Meet, Microsoft Teams, Zoom in the browser) and
         sends the audio to this app, which transcribes it into your Library. Nothing leaves this computer. It needs the
@@ -174,6 +170,6 @@ export function ExtensionCard({ ctl, collapsible }: CardProps) {
         </a>
         .
       </p>
-    </CollapsibleCard>
+    </Card>
   );
 }
