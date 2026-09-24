@@ -400,6 +400,20 @@ later decision.
 
 Estimates are focused working time for one developer.
 
+Work is tracked as GitHub issues (created 2026-09-24): one milestone per
+release, one epic issue per milestone, agents take issues labelled
+`agent-ready`.
+
+| Milestone | Epic issue |
+|---|---|
+| Phase 0 — Spikes | #147 |
+| 0.7 — Notetaking | #148 |
+| 0.8 — Advanced notetaking + links | #149 |
+| 0.9 — Meeting | #150 |
+| 0.10 — Advanced meeting | #151 |
+| Track E — Qwen3-ASR sidecar | #152 |
+| Future | #146 (single tracking issue, not to implement) |
+
 ### Phase 0 — Spikes and go/no-go (~1 week)
 
 Throwaway code in the session scratchpad; results written into this file.
@@ -408,24 +422,24 @@ Throwaway code in the session scratchpad; results written into this file.
       AudioWorklet sending mic and remote PCM to a local WebSocket echo
       server. Matrix: Meet, Teams web, Zoom web × Chrome, Firefox. Record
       whether both channels arrive, whether the call is unaffected, and
-      which fallback each failure needs.
+      which fallback each failure needs. (#104)
 - [ ] **Meet speaker names**: find stable hooks for the active-speaker
       indicator, the participant list and the caption speaker label; measure
-      the lag between the indicator and the audio.
+      the lag between the indicator and the audio. (#105)
 - [ ] **VAD**: `whisper_vad` with the Silero model on a 16 kHz stream;
-      boundaries and CPU cost.
+      boundaries and CPU cost. (#106)
 - [ ] **Diarization**: two embedding models through `ort` on a 3–4 speaker
       sample (own recording plus a CC-BY AMI/ICSI excerpt): time per 3 s
       segment on CPU (target < 100 ms), cluster purity with a cosine
       threshold; Sortformer v2.1 via `parakeet-rs` on the same sample.
-      Licence check and pinnable SHA-256 for the winner.
+      Licence check and pinnable SHA-256 for the winner. (#107)
 - [ ] **Word timings**: confirm what whisper-rs, transcribe-rs Parakeet and
-      Qwen3-ASR return.
-- [ ] **Engine benchmark** (section 8).
+      Qwen3-ASR return. (#108)
+- [ ] **Engine benchmark** (section 8). (#109)
 - [ ] **Go/no-go**: capture works on at least 2 of 3 platforms in both
       browser families, clustering separates 3 speakers on the sample.
       Otherwise revisit E4 or E8 before 0.9 work starts. 0.7 and 0.8 do not
-      depend on this gate.
+      depend on this gate. (#147)
 
 ### 0.7 — Notetaking (~4–5 weeks)
 
@@ -444,14 +458,14 @@ Throwaway code in the session scratchpad; results written into this file.
       `shortcuts-and-triggers`, `clipboard-injection`, `first-run`,
       `how-the-pipeline-works`, `cleanup-hallucination-guard`, `use-ds4`,
       `voice-commands` and the README. Release note pointing to Voice
-      Control (macOS) and Voice Access (Windows 11).
+      Control (macOS) and Voice Access (Windows 11). (#110)
 - [ ] **PR 2 — Archive core**: `archive/` module with path resolution per OS
       and fallback, item folder naming (date + slug, collision-safe),
       frontmatter read/write (`serde_yaml` or a small hand-written emitter,
       decided in the PR), `segments.json`, markdown rendering, content-hash
       rule, FTS5 index with rebuild, Tauri commands for list, get, update
       metadata, delete, reveal in file manager. Unit tests with `tempfile`
-      for every pure part.
+      for every pure part. (#111)
 - [ ] **PR 3 — Long-form engine for mic and file**: `sources/` mic and
       streamed file; `engine/` VAD segmenter, queue worker, word timings,
       chunked cleanup, raw + cleaned per segment, progress and backlog
@@ -459,18 +473,18 @@ Throwaway code in the session scratchpad; results written into this file.
       transcription now writes an archive item whose type the user picks
       (note by default, or transcription; P10). Integration test marked
       `#[ignore]` feeding a WAV through the engine, also run in
-      `scripts/ci-local.sh`.
+      `scripts/ci-local.sh`. (#113)
 - [ ] **PR 4 — UI shell A** (behind `ui_v2`): split `App.tsx` (1.9k lines)
       into modules; left rail; *New* with Microphone and File; *Library*
       with list, type filter and full-text search; document pane with the
       transcript editor (edit a line, delete a line, metadata header with
       tags and categories); *Models* (today's engine and model choice);
       *Settings* with all current cards, including Dictation, which keeps
-      tray-first behaviour. Responsive collapse below ~1000 px.
+      tray-first behaviour. Responsive collapse below ~1000 px. (#114)
 - [ ] **PR 5 — Onboarding and release**: Documents permission step on macOS,
       first-run pointer to the archive, remove `ui_v2`, README, blog post,
-      `CLAUDE.md` roadmap and standing decisions, version bump, release.
-- [ ] **Before PR 4**: update mock A to the adapted layout (section 9).
+      `CLAUDE.md` roadmap and standing decisions, version bump, release. (#115)
+- [ ] **Before PR 4**: update mock A to the adapted layout (section 9). (#112)
 
 **Track E — Qwen3-ASR sidecar** (~1–1.5 weeks, parallel to 0.7 or 0.8,
 only if the Phase 0 gate passes): see section 8.
@@ -479,77 +493,77 @@ only if the Phase 0 gate passes): see section 8.
 
 - [ ] **LLM profiles**: data model, migration of the four current settings
       into a default "Local" profile with a serde test, profile editor in
-      *Recipes*, profile choice for cleanup.
+      *Recipes*, profile choice for cleanup. (#119)
 - [ ] **Recipes**: engine with map-reduce over segment chunks, built-in
       recipes, user recipes, companion document writing with provenance
-      frontmatter, *Document* tab in the document pane.
+      frontmatter, *Document* tab in the document pane. (#120)
 - [ ] **Ask panel**: run a recipe or a free question on the open document,
       profile selector that marks external profiles, answer saved as a
-      document on request.
+      document on request. (#121)
 - [ ] **Privacy gate**: per-run confirmation for external profiles,
-      "sent externally" marker in the Library, README privacy section.
+      "sent externally" marker in the Library, README privacy section. (#122)
 - [ ] **URL source**: direct media download, `yt-dlp` detection and
       invocation, terms notice, item `type: transcription` with the link in
-      `source`. *New* gains a Link tab.
+      `source`. *New* gains a Link tab. (#123)
 - [ ] Items of type transcription accept participants in the metadata
-      header (optional, P10).
+      header (optional, P10). (#124)
 - [ ] Tests: recipe chunking and prompt assembly are pure and unit-tested;
-      one `#[ignore]` live test against a local Ollama.
+      one `#[ignore]` live test against a local Ollama. (#120)
 
 ### 0.9 — Meeting (~5–6 weeks)
 
 - [ ] **Extension scaffold**: `extension/`, both manifests, build scripts,
       `web-ext lint` in CI, zips attached to the GitHub release (store
-      listings are not on the critical path).
+      listings are not on the critical path). (#125)
 - [ ] **Capture**: content scripts from the spike, hardened (track add and
       remove, frames, teardown, per-tab state); background worker owning the
-      WebSocket with reconnect and backoff; "app not running" detection.
+      WebSocket with reconnect and backoff; "app not running" detection. (#128)
 - [ ] **Pairing**: token generation in *Settings → Browser extension*, copy
-      and paste into the extension options, "Test connection".
+      and paste into the extension options, "Test connection". (#127)
 - [ ] **Side panel** (`chrome.sidePanel` / Firefox `sidebar_action`): live
       lines with speaker chips, Start/Stop, recording badge on the action
       icon, "Open in Sussurro", "Copy as text", "Create .srt" when the
-      subtitles setting is "on request".
+      subtitles setting is "on request". (#129)
 - [ ] **App side**: `/live` WebSocket, token middleware, CORS, `Origin`
       check, meeting items (`type: meeting`), overlay pill shows
-      "recording (meeting)".
+      "recording (meeting)". (#126)
 - [ ] **Speakers**: channel rule; Meet name observer; embeddings,
       clustering, "Re-detect speakers"; speaker panel in the context pane
-      (rename, move a line to another speaker, link to a person).
+      (rename, move a line to another speaker, link to a person). (#130, #131)
 - [ ] **People registry**: *People* screen (add, edit, aliases, email),
-      automatic linking on name match, participants written to frontmatter.
+      automatic linking on name match, participants written to frontmatter. (#132)
 - [ ] **Subtitles**: SRT and VTT writers (pure, tested), subtitles setting
       (P7) in *Settings → Archive*, Export menu; applies to meetings and
-      transcriptions, never to notes (P10, P11).
+      transcriptions, never to notes (P10, P11). (#133)
 - [ ] **Speaker labels on transcriptions** (P11): "Identify voices" toggle,
       off by default, in *New → File* and *New → Link* and in the item's
-      speaker panel, running the same clustering as meetings.
+      speaker panel, running the same clustering as meetings. (#134)
 - [ ] **Library facets**: filters by tag, category, participant and date on
-      top of the index.
+      top of the index. (#135)
 - [ ] **Consent**: a notice on the first meeting recording that other
-      participants may need to be informed.
-- [ ] **Firefox parity** and Edge/Brave smoke on the same Chromium build.
+      participants may need to be informed. (#136)
+- [ ] **Firefox parity** and Edge/Brave smoke on the same Chromium build. (#137)
 - [ ] Remove `meetings_enabled`, docs (README, blog, `docs/development.md`
-      for the extension build), `licenses.json` regenerated, release.
+      for the extension build), `licenses.json` regenerated, release. (#138)
 
 ### 0.10 — Advanced meeting (~2–3 weeks)
 
 - [ ] **System audio, step 1**: second input device in *New → System audio
       + mic*, two-channel recording, "You" on the mic channel, clustering on
-      the system channel.
+      the system channel. (#139)
 - [ ] **System audio, step 2**: native loopback per OS behind version checks
-      and permission prompts; documented in `docs/compile/*` and the blog.
+      and permission prompts; documented in `docs/compile/*` and the blog. (#140)
 - [ ] **Opt-in WAV** (P9): "save audio" per item and as a default in
       *New*; audio written incrementally with the header patched on stop;
-      the location note from section 4.4.
+      the location note from section 4.4. (#141)
 - [ ] **Per-speaker replay**: available while a session's audio is still in
       the temporary cache and afterwards only when audio was saved; player
-      in the *Audio* tab with transcript highlighting from word timings.
+      in the *Audio* tab with transcript highlighting from word timings. (#142)
 - [ ] **Recipes and Ask on meetings**: speaker-aware prompts (who said
-      what), verified on the fixed corpus.
+      what), verified on the fixed corpus. (#143)
 - [ ] **Voice map**: optional card in the context pane (2-D projection of
-      the stored embeddings). Drop it if the maintainer does not want it.
-- [ ] Docs and release.
+      the stored embeddings). Drop it if the maintainer does not want it. (#144)
+- [ ] Docs and release. (#145)
 
 **Total**: about 15–19 weeks of focused work, Phase 0 included, Track E
 included.
@@ -592,19 +606,19 @@ included.
 - [ ] **Benchmark** on the dev Mac (Metal) and a Windows Vulkan machine: a
       fixed 10-minute Italian and English corpus through whisper small,
       medium and large-v3-turbo, Parakeet, Qwen3-ASR 0.6B Q8 and 1.7B Q8.
-      Record error count or WER, real-time factor, RAM and cold start.
+      Record error count or WER, real-time factor, RAM and cold start. (#109)
 - [ ] **Gate**: Qwen3-ASR ships as an optional engine if its real-time
       factor is below 0.5 on GPU and its Italian accuracy is at least that of
       whisper medium. It is never silently the default; it can become the
       suggested default only after a dictation soak, since it has no
       dictionary prompt (dictionary words keep going into the cleanup
-      prompt).
+      prompt). (#152)
 - [ ] Sidecar packaging: pinned llama.cpp release per target (macOS arm64
       Metal, Windows x64 Vulkan, Linux x64 CPU), checksums in the repo, CI
-      download and verification, `licenses.json`, `docs/compile/*`.
+      download and verification, `licenses.json`, `docs/compile/*`. (#116)
 - [ ] `stt/remote.rs` lifecycle and client; output sanitiser (pure, tested);
-      `SttEngine::Qwen3Asr` with model size choice; engine card in *Models*.
-- [ ] Optional: sidecar-backed local LLM profile.
+      `SttEngine::Qwen3Asr` with model size choice; engine card in *Models*. (#117)
+- [ ] Optional: sidecar-backed local LLM profile. (#118)
 
 ---
 

@@ -224,6 +224,12 @@ project decisions here, not in per-machine memory.**
 
 Plan and checklists: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`.
 
+Work is tracked as GitHub issues in milestones `Phase 0 — Spikes`, `0.7 — Notetaking`,
+`0.8 — Advanced notetaking + links`, `0.9 — Meeting`, `0.10 — Advanced meeting`,
+`Track E — Qwen3-ASR sidecar` and `Future`, with one epic issue per milestone
+(#147–#152; Future is the single tracking issue #146); agents take issues
+labelled `agent-ready`.
+
 - **Phase 0** — spikes (browser capture on Meet/Teams/Zoom web, Meet
   speaker names, Silero VAD, speaker embeddings vs Sortformer, word
   timings, Qwen3-ASR benchmark). Gates 0.9 and Track E only.
