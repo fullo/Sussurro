@@ -538,7 +538,7 @@ impl Host for AppHost {
             let _ = w.show();
             let _ = w.set_focus();
         }
-        // The workspace (ui_v2) selects the item in the Library.
+        // The workspace selects the item in the Library.
         let _ = self.app.emit_to("main", "open-item", id.to_string());
         Ok(())
     }

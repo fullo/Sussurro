@@ -57,6 +57,30 @@ pub fn resolve_archive_dir(
     bail!("cannot locate the Documents folder — set an archive folder in Settings")
 }
 
+/// Create the archive folder and list it once (#115). On macOS the first
+/// access to `~/Documents` shows the system's permission prompt: onboarding
+/// calls this on purpose, so the prompt appears there and never when a
+/// recording starts (P4). Elsewhere it just makes sure the folder exists.
+pub fn prepare_archive_dir(dir: &Path) -> Result<()> {
+    let denied = |e: &std::io::Error| e.kind() == std::io::ErrorKind::PermissionDenied;
+    let hint = "allow Sussurro in System Settings → Privacy & Security → Files and Folders, or choose another folder";
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        if denied(&e) && cfg!(target_os = "macos") {
+            bail!("cannot create {}: access was denied — {hint}", dir.display());
+        }
+        return Err(e).with_context(|| format!("cannot create {}", dir.display()));
+    }
+    // The listing is what a denied Documents folder refuses even when the
+    // folder already exists (created before, or by another app).
+    if let Err(e) = std::fs::read_dir(dir) {
+        if denied(&e) && cfg!(target_os = "macos") {
+            bail!("cannot open {}: access was denied — {hint}", dir.display());
+        }
+        return Err(e).with_context(|| format!("cannot open {}", dir.display()));
+    }
+    Ok(())
+}
+
 /// Fold a character to ASCII where a sensible transliteration exists.
 fn fold_char(c: char, out: &mut String) {
     match c {
@@ -240,6 +264,26 @@ mod tests {
     fn resolve_fails_without_any_base() {
         assert!(resolve_archive_dir(None, None, "").is_err());
         assert!(resolve_archive_dir(Some(PathBuf::new()), None, "").is_err());
+    }
+
+    #[test]
+    fn prepare_creates_the_folder_and_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("Documents").join(ARCHIVE_FOLDER);
+        prepare_archive_dir(&dir).unwrap();
+        assert!(dir.is_dir());
+        std::fs::write(dir.join("keep.md"), "x").unwrap();
+        prepare_archive_dir(&dir).unwrap();
+        assert!(dir.join("keep.md").is_file(), "an existing archive is left alone");
+    }
+
+    #[test]
+    fn prepare_fails_when_a_file_is_in_the_way() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(ARCHIVE_FOLDER);
+        std::fs::write(&dir, "not a folder").unwrap();
+        let err = prepare_archive_dir(&dir).unwrap_err();
+        assert!(format!("{err:#}").contains(ARCHIVE_FOLDER), "{err:#}");
     }
 
     #[test]

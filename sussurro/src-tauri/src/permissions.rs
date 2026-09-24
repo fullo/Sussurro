@@ -50,7 +50,8 @@ pub fn check() -> Permissions {
     }
 }
 
-/// Open the OS privacy pane for a permission (`"microphone"` / `"accessibility"`).
+/// Open the OS privacy pane for a permission (`"microphone"` / `"accessibility"`
+/// / `"files"`, the latter macOS only).
 pub fn open_settings(target: &str) -> std::io::Result<()> {
     let url = settings_url(target);
     if url.is_empty() {
@@ -67,6 +68,11 @@ fn settings_url(target: &str) -> &'static str {
         }
         "accessibility" => {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        }
+        // Files and Folders: where a denied Documents folder (the archive,
+        // #115) is allowed again.
+        "files" => {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"
         }
         _ => "",
     }
