@@ -55,6 +55,11 @@ tauri-plugin-dialog = "2.7.1"
 symphonia = { version = "0.5.4", features = ["mp3", "isomp4", "aac"] }
 regex = "1.12.4"
 tiny_http = "0.12.0"
+# 0.9 meetings (#126, E5): the browser extension streams audio over a
+# WebSocket upgraded from tiny_http (no TLS, loopback only), and pairs with
+# a random token (getrandom is already in the tree).
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+getrandom = "0.3"
 # Archive (0.7): YAML frontmatter (pure Rust, maintained — serde_yaml is
 # deprecated), OS trash for deletes (never a hard delete), accent folding for
 # folder slugs, and the SQLite FTS5 search index (bundled SQLite, FTS5 on).

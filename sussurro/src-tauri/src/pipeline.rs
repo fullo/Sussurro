@@ -31,21 +31,50 @@ fn set_status(app: &AppHandle, status: &str) {
     let _ = app.emit("pipeline-status", status.to_string());
 }
 
+/// A dictation is recording or processing (its pill is up).
+static DICTATION_OVERLAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Pure: the pill shows while a dictation records or processes, and for
+/// the whole of a browser meeting (#126, "Recording (meeting)").
+pub fn overlay_visible(dictation_state: &str, meeting_live: bool) -> bool {
+    matches!(dictation_state, "recording" | "processing") || meeting_live
+}
+
+fn meeting_live(app: &AppHandle) -> bool {
+    app.try_state::<AppState>()
+        .is_some_and(|s| s.engine.meeting_session().is_some())
+}
+
 /// The floating pill near the bottom of the screen: visible while recording
-/// or processing, hidden otherwise. Never takes focus (focusable: false).
+/// or processing (or during a meeting), hidden otherwise. Never takes focus
+/// (focusable: false).
 fn update_overlay(app: &AppHandle, state: &str) {
+    DICTATION_OVERLAY.store(
+        overlay_visible(state, false),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    apply_overlay(app, overlay_visible(state, meeting_live(app)));
+}
+
+fn apply_overlay(app: &AppHandle, visible: bool) {
     let Some(w) = app.get_webview_window("overlay") else {
         return;
     };
-    match state {
-        "recording" | "processing" => {
-            position_overlay(&w);
-            let _ = w.show();
-        }
-        _ => {
-            let _ = w.hide();
-        }
+    if visible {
+        position_overlay(&w);
+        let _ = w.show();
+    } else {
+        let _ = w.hide();
     }
+}
+
+/// A browser meeting started or ended: tell the overlay (`meeting-live`)
+/// and show or hide the pill, keeping a dictation's pill up.
+pub fn refresh_overlay(app: &AppHandle) {
+    let live = meeting_live(app);
+    let _ = app.emit("meeting-live", live);
+    let dictation = DICTATION_OVERLAY.load(std::sync::atomic::Ordering::Relaxed);
+    apply_overlay(app, dictation || live);
 }
 
 fn position_overlay(w: &tauri::WebviewWindow) {
@@ -643,6 +672,17 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_shows_for_dictation_and_for_a_live_meeting() {
+        assert!(overlay_visible("recording", false));
+        assert!(overlay_visible("processing", false));
+        assert!(!overlay_visible("idle", false));
+        assert!(!overlay_visible("error", false));
+        // #126: a meeting keeps the pill up after a dictation ends.
+        assert!(overlay_visible("idle", true));
+        assert!(overlay_visible("error", true));
+    }
 
     #[test]
     fn push_to_talk_records_while_held() {

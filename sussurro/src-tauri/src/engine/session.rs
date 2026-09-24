@@ -30,6 +30,8 @@ pub enum SessionKind {
     File(String),
     /// A link transcription (#123): the link, shortened for display.
     Link(String),
+    /// A browser meeting (#126): the meeting page's host.
+    Meeting(String),
 }
 
 /// One running session's bookkeeping.
@@ -44,6 +46,8 @@ pub struct Sessions {
     active: AtomicUsize,
     next_id: AtomicU64,
     mic: Mutex<Option<MicSession>>,
+    /// Id of the browser meeting being recorded (#126): one at a time.
+    meeting: Mutex<Option<u64>>,
     running: Mutex<HashMap<u64, Running>>,
 }
 
@@ -81,6 +85,27 @@ impl Sessions {
         if mic.as_ref().is_some_and(|m| m.id == id) {
             *mic = None;
         }
+        drop(mic);
+        let mut meeting = self.meeting.lock().unwrap();
+        if *meeting == Some(id) {
+            *meeting = None;
+        }
+    }
+
+    /// Id of the browser meeting being recorded, if any (#126).
+    pub fn meeting_session(&self) -> Option<u64> {
+        *self.meeting.lock().unwrap()
+    }
+
+    /// Register a browser meeting; fails while another one runs.
+    pub fn begin_meeting(&self, host: &str) -> Result<(u64, Arc<AtomicBool>)> {
+        let mut meeting = self.meeting.lock().unwrap();
+        if meeting.is_some() {
+            anyhow::bail!("a meeting is already being recorded");
+        }
+        let (id, cancel) = self.begin(SessionKind::Meeting(host.to_string()));
+        *meeting = Some(id);
+        Ok((id, cancel))
     }
 
     /// Abort a running session; false if there is no such session.
@@ -150,6 +175,8 @@ struct SessionGuard {
 impl Drop for SessionGuard {
     fn drop(&mut self) {
         self.app.state::<AppState>().engine.end(self.id);
+        // A meeting that ended takes its overlay pill with it.
+        crate::pipeline::refresh_overlay(&self.app);
     }
 }
 
@@ -556,6 +583,67 @@ pub fn start_mic(
     Ok(id)
 }
 
+/// The run of a browser meeting (#126): a `meeting` item whose source is
+/// `browser:<host>`, fed live (the queue spills like a mic session's).
+pub(crate) fn meeting_request(
+    id: u64,
+    cancel: Arc<AtomicBool>,
+    start: &crate::api::protocol::Start,
+    source: crate::sources::browser::BrowserSource,
+) -> Request {
+    Request {
+        id,
+        cancel: cancel.clone(),
+        source: Box::new(source.with_cancel(cancel)),
+        policy: Policy::Spill {
+            max_in_ram: super::MIC_MAX_IN_RAM,
+        },
+        defer: false,
+        item_type: ItemType::Meeting,
+        title: start.title.clone(),
+        source_label: start.source_label(),
+        options: RunOptions::default(),
+    }
+}
+
+/// Start recording a browser meeting from the `/live` WebSocket (#126).
+/// Returns the session id at once; the run ends when the extension stops
+/// (or goes away) and its events go to the app and to `meeting.sink`. The
+/// overlay pill shows "Recording (meeting)" meanwhile.
+pub fn start_meeting(app: &AppHandle, meeting: crate::api::live::MeetingStart) -> Result<u64> {
+    let state = app.state::<AppState>();
+    ensure_archive_writable(&state)?;
+    let crate::api::live::MeetingStart {
+        start,
+        source,
+        sink,
+    } = meeting;
+    let (id, cancel) = state.engine.begin_meeting(&start.host)?;
+    crate::pipeline::refresh_overlay(app);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _guard = SessionGuard {
+            app: app.clone(),
+            id,
+        };
+        let state = app.state::<AppState>();
+        let req = meeting_request(id, cancel.clone(), &start, source);
+        let sinks: Vec<Arc<dyn EngineSink>> = vec![Arc::new(TauriSink { app: app.clone() }), sink];
+        if let Err(e) = run_request_with(
+            &state.settings,
+            &state.paths,
+            req,
+            app_transcriber(app.clone(), cancel),
+            crate::cleanup::ollama::cleanup_with_context,
+            load_detector,
+            Arc::new(super::TeeSink(sinks)),
+        ) {
+            eprintln!("meeting session {id} failed: {e:#}");
+        }
+    });
+    Ok(id)
+}
+
 /// Transcribe a file from its path, blocking until the item is written.
 /// Progress arrives as events; the session can be cancelled by id.
 /// `options`: this run's language and cleanup level (#157).
@@ -820,6 +908,21 @@ mod tests {
         s.end(b);
         assert!(!s.is_active());
         assert!(s.file_sessions().is_empty());
+    }
+
+    #[test]
+    fn one_meeting_at_a_time() {
+        let s = Sessions::default();
+        assert_eq!(s.meeting_session(), None);
+        let (id, _) = s.begin_meeting("meet.google.com").unwrap();
+        assert_eq!(s.meeting_session(), Some(id));
+        assert!(s.is_active(), "the idle unloader keeps the model");
+        assert!(s.begin_meeting("teams.microsoft.com").is_err());
+        assert!(s.file_sessions().is_empty() && s.link_sessions().is_empty());
+        s.end(id);
+        assert_eq!(s.meeting_session(), None);
+        assert!(!s.is_active());
+        assert!(s.begin_meeting("meet.google.com").is_ok());
     }
 
     #[test]
