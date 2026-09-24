@@ -785,9 +785,12 @@ echo "sussurro-progress 20 20 NA"
 echo "sussurro-file $file"
 "#;
 
+        /// `$SRC` in `script` is a short WAV file, `$ROOT` the run's temp
+        /// folder. With `cancel_on_progress` the run is cancelled from the
+        /// first progress report — an event, never a timer (#187).
         fn run(
             script: &str,
-            cancel_after: Option<Duration>,
+            cancel_on_progress: bool,
         ) -> (
             Result<Fetched>,
             Vec<Progress>,
@@ -797,27 +800,71 @@ echo "sussurro-file $file"
             let root = tempfile::tempdir().unwrap();
             let src = root.path().join("src.wav");
             std::fs::write(&src, crate::sources::url::direct::tests::wav_bytes(0.5)).unwrap();
-            let bin = fake_bin(root.path(), &script.replace("$SRC", &src.to_string_lossy()));
+            let script = script
+                .replace("$SRC", &src.to_string_lossy())
+                .replace("$ROOT", &root.path().to_string_lossy());
+            let bin = fake_bin(root.path(), &script);
             let dest = TempDownload::create(&root.path().join("dl"), 5).unwrap();
-            let cancel = Arc::new(AtomicBool::new(false));
-            if let Some(d) = cancel_after {
-                let c = cancel.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(d);
-                    c.store(true, Ordering::Relaxed);
-                });
-            }
+            let cancel = AtomicBool::new(false);
             let mut seen = Vec::new();
             let url = Url::parse("https://www.youtube.com/watch?v=abc").unwrap();
-            let r = download(&bin, &url, 1 << 30, &dest, &cancel, &mut |p| {
-                seen.push(p.clone())
+            let r = retry_text_file_busy(|| {
+                download(&bin, &url, 1 << 30, &dest, &cancel, &mut |p| {
+                    seen.push(p.clone());
+                    if cancel_on_progress {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                })
             });
             (r, seen, dest, root)
         }
 
+        /// Linux refuses to exec a file some process still holds open for
+        /// writing (ETXTBSY). A test writes its fake yt-dlp and runs it at
+        /// once, while other test threads fork: a child forked in that
+        /// window briefly inherits the write descriptor. The spawn then
+        /// fails before anything ran, so trying again is safe (#187).
+        fn retry_text_file_busy<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
+            let busy = |e: &anyhow::Error| {
+                e.chain().any(|c| {
+                    c.downcast_ref::<std::io::Error>()
+                        .and_then(std::io::Error::raw_os_error)
+                        == Some(libc::ETXTBSY)
+                })
+            };
+            let mut attempts = 0;
+            loop {
+                match f() {
+                    Err(e) if busy(&e) && attempts < 50 => {
+                        attempts += 1;
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    r => return r,
+                }
+            }
+        }
+
+        /// Whether `pid` is still a running process (a zombie is not:
+        /// it has exited and only waits to be reaped by its new parent).
+        fn running(pid: libc::pid_t) -> bool {
+            // SAFETY: signal 0 only checks that the process exists.
+            if unsafe { libc::kill(pid, 0) } != 0 {
+                return false;
+            }
+            match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                // "pid (comm) S ...": the state follows the last ')'.
+                Ok(stat) => stat
+                    .rsplit_once(')')
+                    .map(|(_, rest)| rest.trim_start())
+                    .is_none_or(|rest| !rest.starts_with('Z')),
+                // No procfs (macOS): launchd reaps orphans at once.
+                Err(_) => true,
+            }
+        }
+
         #[test]
         fn a_fake_yt_dlp_downloads_with_title_and_progress() {
-            let (r, seen, dest, _root) = run(FAKE_OK, None);
+            let (r, seen, dest, _root) = run(FAKE_OK, false);
             let f = r.unwrap();
             assert_eq!(f.path, dest.path("wav"));
             assert_eq!(
@@ -827,12 +874,9 @@ echo "sussurro-file $file"
             assert_eq!(seen.last().unwrap().downloaded, 20);
             assert_eq!(seen.last().unwrap().total, Some(20));
             assert!(crate::sources::file::FileSource::open(&f.path).is_ok());
+            let v = fake_bin(_root.path(), "#!/bin/sh\necho 2025.09.26\n");
             assert_eq!(
-                version(
-                    &fake_bin(_root.path(), "#!/bin/sh\necho 2025.09.26\n"),
-                    Duration::from_secs(5)
-                )
-                .unwrap(),
+                retry_text_file_busy(|| version(&v, Duration::from_secs(30))).unwrap(),
                 "2025.09.26"
             );
         }
@@ -840,32 +884,54 @@ echo "sussurro-file $file"
         #[test]
         fn a_failing_yt_dlp_reports_its_error() {
             let script = "#!/bin/sh\necho 'ERROR: [youtube] abc: Video unavailable' >&2\nexit 1\n";
-            let e = run(script, None).0.unwrap_err().to_string();
+            let e = run(script, false).0.unwrap_err().to_string();
             assert!(e.contains("Video unavailable"), "{e}");
         }
 
         #[test]
         fn an_opus_only_video_is_refused_before_downloading() {
-            let script = "#!/bin/sh\necho 'sussurro-format webm opus'\nsleep 30\n";
+            // yt-dlp would run for a minute: the refusal must not wait for
+            // it (the bound is half of that, far above any start-up delay).
+            let script = "#!/bin/sh\necho 'sussurro-format webm opus'\nsleep 60\n";
             let started = Instant::now();
-            let e = run(script, None).0.unwrap_err().to_string();
+            let e = run(script, false).0.unwrap_err().to_string();
             assert!(e.contains("opus") && e.contains("ffmpeg"), "{e}");
-            assert!(started.elapsed() < Duration::from_secs(10));
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "{:?}",
+                started.elapsed()
+            );
         }
 
         #[test]
         fn cancel_kills_yt_dlp_and_its_children() {
-            // The child `sleep` keeps stdout open: only a group kill ends it.
-            let script = "#!/bin/sh\necho 'sussurro-progress 1 100 NA'\nsleep 30\n";
-            let started = Instant::now();
-            let (r, seen, dest, _root) = run(script, Some(Duration::from_millis(300)));
-            assert!(r.unwrap_err().to_string().contains("cancelled"));
-            assert!(
-                started.elapsed() < Duration::from_secs(10),
-                "{:?}",
-                started.elapsed()
-            );
+            // The background `sleep` keeps stdout open: only a group kill
+            // ends it. Both pids are written before the progress line, and
+            // the cancel comes from that line — no timers (#187).
+            let script = "#!/bin/sh\nsleep 60 &\necho $! > \"$ROOT/pids\"\n\
+                          echo $$ >> \"$ROOT/pids\"\necho 'sussurro-progress 1 100 NA'\nwait\n";
+            let (r, seen, dest, root) = run(script, true);
+            let e = r.unwrap_err().to_string();
+            assert!(e.contains("cancelled"), "{e}");
             assert_eq!(seen.len(), 1);
+            let pids: Vec<libc::pid_t> = std::fs::read_to_string(root.path().join("pids"))
+                .unwrap()
+                .lines()
+                .map(|l| l.trim().parse().unwrap())
+                .collect();
+            assert_eq!(pids.len(), 2, "{pids:?}");
+            // yt-dlp itself was reaped by `download`; its orphaned child is
+            // reaped by init/launchd once killed, which may take a moment.
+            let deadline = Instant::now() + Duration::from_secs(30);
+            for pid in pids {
+                while running(pid) {
+                    assert!(
+                        Instant::now() < deadline,
+                        "process {pid} survived the cancel"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
             drop(dest);
         }
     }
