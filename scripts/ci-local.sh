@@ -17,7 +17,7 @@ BRANCH="${1:-main}"
 ORT_VERSION=1.24.2   # keep in sync with test.yml / locked ort-sys
 export DEBIAN_FRONTEND=noninteractive
 
-echo "== [1/7] System dependencies"
+echo "== [1/8] System dependencies"
 apt-get update -qq
 # clang/libclang-dev: preinstalled on GitHub runners, needed by bindgen
 # (whisper-rs-sys). The rest mirrors test.yml's apt list.
@@ -27,14 +27,14 @@ apt-get install -y -qq build-essential cmake pkg-config curl git file \
   librsvg2-dev libasound2-dev libxdo-dev libxkbcommon-dev libssl-dev \
   xvfb xdotool >/dev/null
 
-echo "== [2/7] Node 24 (Vite 7 needs >= 22.12)"
+echo "== [2/8] Node 24 (Vite 7 needs >= 22.12)"
 if ! node --version 2>/dev/null | grep -qE '^v2[4-9]'; then
   curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null 2>&1
   apt-get install -y -qq nodejs >/dev/null
 fi
 node --version
 
-echo "== [3/7] Rust stable + clippy"
+echo "== [3/8] Rust stable + clippy"
 if [ ! -x "$HOME/.cargo/bin/cargo" ]; then
   curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
     | sh -s -- -y --profile minimal -c clippy >/dev/null
@@ -43,7 +43,7 @@ fi
 source "$HOME/.cargo/env"
 rustc --version
 
-echo "== [4/7] ONNX Runtime ${ORT_VERSION} (Microsoft build — pyke CDN 403s)"
+echo "== [4/8] ONNX Runtime ${ORT_VERSION} (Microsoft build — pyke CDN 403s)"
 mkdir -p "$HOME/ci" && cd "$HOME/ci"
 if [ ! -d "onnxruntime-linux-x64-${ORT_VERSION}" ]; then
   curl -fsSL --retry 5 --retry-delay 10 -o ort.tgz \
@@ -54,7 +54,7 @@ export ORT_LIB_LOCATION="$HOME/ci/onnxruntime-linux-x64-${ORT_VERSION}/lib"
 export ORT_PREFER_DYNAMIC_LINK=1
 export LD_LIBRARY_PATH="$ORT_LIB_LOCATION:${LD_LIBRARY_PATH:-}"
 
-echo "== [5/7] Checkout ${BRANCH} from the Windows working copy"
+echo "== [5/8] Checkout ${BRANCH} from the Windows working copy"
 # The Windows repo is owned by a different uid than the WSL user: git refuses
 # it ("dubious ownership") for the repo AND its .git dir. This is a throwaway
 # root-only CI environment, so trust everything.
@@ -63,11 +63,20 @@ rm -rf "$HOME/ci/sussurro"
 git clone -q --branch "$BRANCH" /mnt/f/GitHub/Sussurro "$HOME/ci/sussurro"
 cd "$HOME/ci/sussurro/sussurro"
 
-echo "== [6/7] Frontend build (type-check)"
+echo "== [6/8] Frontend build (type-check)"
 npm ci --no-audit --no-fund >/dev/null
 npm run build
 
-echo "== [7/7] Rust tests + clippy + E2E smoke"
+echo "== [7/8] Browser extension: type-check, tests, build, web-ext lint"
+cd ../extension
+npm ci --no-audit --no-fund >/dev/null
+npm run typecheck
+npm test
+npm run build
+npm run lint
+cd ../sussurro
+
+echo "== [8/8] Rust tests + clippy + E2E smoke"
 # Persistent target dir: the checkout is wiped every run, the build cache
 # must not go with it.
 export CARGO_TARGET_DIR="$HOME/ci/target"
