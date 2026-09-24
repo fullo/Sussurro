@@ -374,11 +374,36 @@ export interface EngineError {
   item_id?: string;
 }
 
+/** `engine-warning` payload (#139): the run goes on, but the user should
+ *  know — a device of a System audio + mic session was lost, or the two
+ *  device clocks were realigned. */
+export interface EngineWarning {
+  session_id: number;
+  message: string;
+}
+
+/** An input device in New → System audio + mic (#139). */
+export interface InputDeviceInfo {
+  name: string;
+  /** The name looks like a loopback/virtual device — a hint only. */
+  loopback: boolean;
+}
+
+/** `list_system_audio_devices` (#139). */
+export interface SystemAudioDevices {
+  /** What an empty microphone choice records. */
+  default_input: string | null;
+  /** Every input device, loopback-looking ones first. */
+  devices: InputDeviceInfo[];
+}
+
 export interface EngineStatus {
   active: number;
   mic_session: number | null;
   /** The browser meeting being recorded (#126). */
   meeting_session?: number | null;
+  /** The System audio + mic session (#139). */
+  system_session?: number | null;
   /** Running file transcriptions, oldest first (#158). */
   file_sessions: { session_id: number; label: string }[];
   /** Running link transcriptions, oldest first (#123). */

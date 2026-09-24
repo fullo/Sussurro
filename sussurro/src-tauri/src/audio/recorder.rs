@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +20,11 @@ pub struct Recorder {
     live: Arc<Mutex<Vec<f32>>>,
     /// (device sample rate, channel count) — 0 until the stream is up.
     meta: Arc<(AtomicU32, AtomicUsize)>,
+    /// The device went away mid-recording (unplugged, removed virtual
+    /// device) or could not be opened: the capture delivers nothing more.
+    /// Read by long sessions (#139) to end that channel; the dictation path
+    /// ignores it (its `stop()` reports the error as before).
+    failed: Arc<AtomicBool>,
 }
 
 impl Recorder {
@@ -27,22 +32,41 @@ impl Recorder {
         self.stop_tx.is_some()
     }
 
-    /// `device_name`: empty = system default input.
+    /// `device_name`: empty = system default input. A named device that is
+    /// gone falls back to the default input.
     pub fn start(&mut self, device_name: &str) -> Result<()> {
+        self.start_with(device_name, true)
+    }
+
+    /// Like [`Self::start`], but a named device that is gone is an error
+    /// (reported through [`Self::has_failed`]) instead of a fallback to the
+    /// default input — the system-audio channel (#139) must never silently
+    /// record the microphone twice.
+    pub fn start_exact(&mut self, device_name: &str) -> Result<()> {
+        self.start_with(device_name, false)
+    }
+
+    fn start_with(&mut self, device_name: &str, fallback: bool) -> Result<()> {
         if self.is_recording() {
             return Ok(());
         }
         self.live.lock().unwrap().clear();
         self.meta.0.store(0, Ordering::Relaxed);
         self.meta.1.store(0, Ordering::Relaxed);
+        self.failed.store(false, Ordering::Relaxed);
 
         let (stop_tx, stop_rx) = channel();
         let (result_tx, result_rx) = channel();
         let buffer = self.live.clone();
         let meta = self.meta.clone();
+        let failed = self.failed.clone();
         let device_name = device_name.to_string();
         std::thread::spawn(move || {
-            let _ = result_tx.send(record_until_stopped(stop_rx, buffer, meta, &device_name));
+            let r = record_until_stopped(stop_rx, buffer, meta, failed.clone(), &device_name, fallback);
+            if r.is_err() {
+                failed.store(true, Ordering::Relaxed);
+            }
+            let _ = result_tx.send(r);
         });
         self.stop_tx = Some(stop_tx);
         self.result_rx = Some(result_rx);
@@ -89,6 +113,12 @@ impl Recorder {
         Some(crate::audio::resample::rms(&buf[buf.len().saturating_sub(window)..]))
     }
 
+    /// The device disappeared while recording, or could not be opened: no
+    /// more audio will come. False when idle.
+    pub fn has_failed(&self) -> bool {
+        self.is_recording() && self.failed.load(Ordering::Relaxed)
+    }
+
     /// Returns 16 kHz mono f32 samples.
     pub fn stop(&mut self) -> Result<Vec<f32>> {
         let stop_tx = self.stop_tx.take().ok_or_else(|| anyhow!("not recording"))?;
@@ -108,21 +138,32 @@ pub fn list_input_devices() -> Vec<String> {
     devices.filter_map(|d| d.name().ok()).collect()
 }
 
+/// Name of the system default input device, if there is one.
+pub fn default_input_device_name() -> Option<String> {
+    cpal::default_host().default_input_device().and_then(|d| d.name().ok())
+}
+
 fn record_until_stopped(
     stop_rx: Receiver<()>,
     buffer: Arc<Mutex<Vec<f32>>>,
     meta: Arc<(AtomicU32, AtomicUsize)>,
+    failed: Arc<AtomicBool>,
     device_name: &str,
+    fallback: bool,
 ) -> Result<Vec<f32>> {
     let host = cpal::default_host();
     let device = if device_name.is_empty() {
         host.default_input_device()
     } else {
-        // Fall back to default if the saved device is gone (unplugged).
-        host.input_devices()
+        let named = host
+            .input_devices()
             .ok()
-            .and_then(|mut ds| ds.find(|d| d.name().map(|n| n == device_name).unwrap_or(false)))
-            .or_else(|| host.default_input_device())
+            .and_then(|mut ds| ds.find(|d| d.name().map(|n| n == device_name).unwrap_or(false)));
+        if named.is_none() && !fallback {
+            return Err(anyhow!("the input device '{device_name}' is not available"));
+        }
+        // Fall back to default if the saved device is gone (unplugged).
+        named.or_else(|| host.default_input_device())
     }
     .ok_or_else(|| anyhow!("no input device — check microphone privacy settings"))?;
     let config = device.default_input_config()?;
@@ -131,7 +172,14 @@ fn record_until_stopped(
     meta.0.store(rate, Ordering::Relaxed);
     meta.1.store(channels, Ordering::Relaxed);
 
-    let err_fn = |e| eprintln!("audio stream error: {e}");
+    // A device that goes away (unplugged, a virtual device removed) ends
+    // the capture; other stream errors (an xrun) are only logged.
+    let err_fn = move |e: cpal::StreamError| {
+        eprintln!("audio stream error: {e}");
+        if matches!(e, cpal::StreamError::DeviceNotAvailable) {
+            failed.store(true, Ordering::Relaxed);
+        }
+    };
 
     // Convert to 16 kHz mono inside the callback so only the converted audio
     // is ever buffered (~64 KB/s instead of the raw device rate). Shared with
@@ -205,6 +253,14 @@ mod tests {
         // Not recording: nothing is drained (and the buffer is left alone).
         assert!(r.take_new_16k().is_empty());
         assert_eq!(r.live.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn has_failed_is_false_when_idle() {
+        let r = Recorder::default();
+        r.failed.store(true, Ordering::Relaxed);
+        // Not recording: a stale flag from an earlier stream means nothing.
+        assert!(!r.has_failed());
     }
 
     #[test]

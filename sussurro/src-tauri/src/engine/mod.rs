@@ -175,6 +175,16 @@ pub struct DownloadPayload {
     pub title: Option<String>,
 }
 
+/// `engine-warning`: something went wrong with the source while the run
+/// goes on (#139): a device of a system-audio session was lost, or the two
+/// device clocks were realigned. Informational — the run's outcome still
+/// arrives as `engine-done` / `engine-error`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct WarningPayload {
+    pub session_id: u64,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineEvent {
     Download(DownloadPayload),
@@ -183,6 +193,7 @@ pub enum EngineEvent {
     Segment(SegmentPayload),
     Done(DonePayload),
     Error(ErrorPayload),
+    Warning(WarningPayload),
 }
 
 impl EngineEvent {
@@ -195,6 +206,7 @@ impl EngineEvent {
             EngineEvent::Segment(_) => "engine-segment",
             EngineEvent::Done(_) => "engine-done",
             EngineEvent::Error(_) => "engine-error",
+            EngineEvent::Warning(_) => "engine-warning",
         }
     }
 
@@ -207,6 +219,7 @@ impl EngineEvent {
             EngineEvent::Segment(p) => serde_json::to_value(p),
             EngineEvent::Done(p) => serde_json::to_value(p),
             EngineEvent::Error(p) => serde_json::to_value(p),
+            EngineEvent::Warning(p) => serde_json::to_value(p),
         };
         v.unwrap_or(serde_json::Value::Null)
     }
@@ -780,6 +793,12 @@ fn ingest(
         if cancel.load(Ordering::Relaxed) {
             anyhow::bail!("cancelled");
         }
+        for message in source.take_warnings() {
+            sink.emit(&EngineEvent::Warning(WarningPayload {
+                session_id,
+                message,
+            }));
+        }
         if let Some(a) = audio.as_deref_mut() {
             a.push(&frame);
         }
@@ -800,6 +819,13 @@ fn ingest(
             last_progress = Instant::now();
             sink.emit(&shared.progress(session_id));
         }
+    }
+    // A source may end right after a warning (both devices lost).
+    for message in source.take_warnings() {
+        sink.emit(&EngineEvent::Warning(WarningPayload {
+            session_id,
+            message,
+        }));
     }
     for lane in &mut lanes {
         if let Some(rest) = lane.aligner.take_rest() {

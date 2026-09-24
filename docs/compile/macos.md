@@ -37,3 +37,27 @@ macOS will prompt for two permissions on first use; both are required:
 If you run a downloaded, unsigned build (e.g. a CI artifact) and macOS
 reports it as damaged, clear the quarantine flag:
 `xattr -cr /Applications/sussurro.app`.
+
+### System audio + mic: a loopback device
+
+*New → System audio + mic* (meetings preview, Settings → Browser extension)
+records a call from a desktop app — Zoom, Teams, anything that plays through
+the computer — as two channels: your microphone ("You") and a second input
+device that carries the computer's sound (the others, told apart as
+"Voice 1, Voice 2…"). Sussurro reads any input device; the OS needs a
+virtual device that turns the output into an input.
+
+1. Install [BlackHole](https://github.com/ExistentialAudio/BlackHole)
+   (`brew install blackhole-2ch`, free) or Rogue Amoeba's Loopback.
+2. Open **Audio MIDI Setup** → **+** → *Create Multi-Output Device*, tick
+   your speakers or headphones **and** BlackHole 2ch (drift correction on
+   BlackHole), and choose it as the sound output (System Settings → Sound,
+   or in the meeting app). You keep hearing the call; BlackHole gets a copy.
+   The volume keys don't work on a Multi-Output Device — set the volume on
+   the real output.
+3. In Sussurro choose **BlackHole 2ch** as the system audio device (devices
+   whose names look like loopback devices are listed first).
+
+Microphone permission covers both devices. The two devices have separate
+clocks: Sussurro realigns them when they drift more than 200 ms apart and
+says so in the session.

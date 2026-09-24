@@ -79,3 +79,24 @@ cd src-tauri; cargo test   # headless test suite
   access your microphone"**.
 - WebView2 is preinstalled on Windows 11; on older Windows 10 install the
   [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
+
+### System audio + mic: a virtual cable
+
+*New → System audio + mic* (meetings preview, Settings → Browser extension)
+records a call from a desktop app — Zoom, Teams, anything that plays through
+the computer — as two channels: your microphone ("You") and a second input
+device that carries the computer's sound (the others, told apart as
+"Voice 1, Voice 2…"). Sussurro reads any input device; the OS needs a
+virtual device that turns the output into an input.
+
+1. Install [VB-Cable](https://vb-audio.com/Cable/) (free; Voicemeeter
+   works too).
+2. Send the call to **CABLE Input**: set it as the meeting app's speaker,
+   or as the Windows output. To keep hearing it, open Sound → Recording →
+   **CABLE Output** → Properties → Listen, tick *Listen to this device* and
+   pick your headphones.
+3. In Sussurro choose **CABLE Output (VB-Audio Virtual Cable)** as the
+   system audio device. Some sound cards also offer **Stereo Mix**, which
+   works without installing anything.
+
+Native WASAPI loopback (no virtual cable) is planned (#140).

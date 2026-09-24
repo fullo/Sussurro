@@ -142,6 +142,24 @@ project decisions here, not in per-machine memory.**
   A meeting is a two-channel engine run (`mic`, `remote`) into a `meeting`
   item, `source: browser:<host>`; page events go to
   `.sussurro/meeting-events.jsonl` for attribution (#131).
+- **System audio + mic (0.10 step 1, #139)** (`sources/system.rs`):
+  *New → System audio + mic*, behind `meetings_enabled` (it records other
+  people; checked in the backend too). The mic and **any second input
+  device** (BlackHole, VB-Cable, a monitor source — names that look like
+  loopback devices are listed first, a hint only) are two channels of one
+  `meeting` item, `source: system`: mic = "You", system = clustered
+  "Voice N" (`speaker_options`). Each device has its own `Recorder` +
+  `StreamResampler`; the system device opens by exact name
+  (`Recorder::start_exact`, never the default-input fallback). Drift:
+  each channel is timestamped by its own samples from the session start
+  (first chunk at `now − len`), its lag behind the wall clock is smoothed
+  as the min over 2 s, and a channel more than 200 ms behind the other gets
+  that much silence (audio is never dropped) plus an `engine-warning`. A
+  device lost (`DeviceNotAvailable`) or silent 5 s ends its channel with a
+  warning; both lost = the run ends normally and keeps the item; neither
+  ever delivering = error. It shares the mic slot in `Sessions` (never
+  next to a mic session); `engine_status.system_session`, RunKind
+  `system` in the UI. Native loopback without a virtual device is #140.
 - **People registry (0.9, #132)** (`archive/people.rs`): lives in the
   archive at `<archive>/.sussurro/people.json` so it travels with it; not
   behind `meetings_enabled` (transcriptions have participants too). Names

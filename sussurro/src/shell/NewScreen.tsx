@@ -16,7 +16,17 @@ import {
 } from "../lib/engineRuns";
 import { baseName, formatClock, progressPercent } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
-import type { ItemType, LinkInfo, YtDlpStatus } from "../lib/types";
+import type { ItemType, LinkInfo, SystemAudioDevices, YtDlpStatus } from "../lib/types";
+import {
+  SETUP_HELP,
+  deviceLabel,
+  devicesProblem,
+  initialSystemDevice,
+  loadSystemDevice,
+  osOf,
+  saveSystemDevice,
+  systemTabVisible,
+} from "../lib/systemAudio";
 import {
   canTranscribeLink,
   describeDownload,
@@ -42,20 +52,23 @@ export interface NewDefaults extends RunChoice {
   categories: string[];
 }
 
-type Tab = "mic" | "file" | "link";
+type Tab = "mic" | "file" | "link" | "system";
 
-const TAB_LABEL: Record<Tab, string> = { mic: "Microphone", file: "File", link: "Link" };
+const TAB_LABEL: Record<Tab, string> = { mic: "Microphone", file: "File", link: "Link", system: "System audio + mic" };
 
-/** The tab New opens on: a running file or link, else the microphone. */
+/** The tab New opens on: a running session, file or link, else the
+ *  microphone. */
 function initialTab(runs: EngineRuns["runs"]): Tab {
   if (isRunning(runs.mic)) return "mic";
+  if (isRunning(runs.system)) return "system";
   if (isRunning(runs.file)) return "file";
   if (isRunning(runs.link)) return "link";
   return "mic";
 }
 
 /** New: every source becomes an item in the Library. Microphone and File
- *  (0.7), Link (0.8, #123); Meeting and System audio arrive later. */
+ *  (0.7), Link (0.8, #123), System audio + mic (0.10, #139 — behind the
+ *  meetings preview, since it records other people). */
 export function NewScreen({
   ctl,
   engine,
@@ -73,6 +86,10 @@ export function NewScreen({
 }) {
   const [tab, setTab] = useState<Tab>(() => initialTab(engine.runs));
   const options: RunArgs = { ...runArgs(ctl.settings, defaults), saveAudio: saveAudioChoice(ctl.settings, defaults) };
+  const showSystem = systemTabVisible(!!ctl.settings.meetings_enabled, isRunning(engine.runs.system));
+  const tabs: Tab[] = showSystem ? ["mic", "file", "link", "system"] : ["mic", "file", "link"];
+  // The preview was switched off while this tab was open.
+  const shown: Tab = tabs.includes(tab) ? tab : "mic";
 
   return (
     <div className="sh-screen">
@@ -82,31 +99,36 @@ export function NewScreen({
       </header>
       <div className="sh-scroll new-body">
         <div className="new-tabs" role="tablist" aria-label="Source">
-          {(["mic", "file", "link"] as const).map((t) => (
+          {tabs.map((t) => (
             <button
               key={t}
               type="button"
               role="tab"
               id={`new-tab-${t}`}
-              aria-selected={tab === t}
+              aria-selected={shown === t}
               aria-controls={`new-panel-${t}`}
-              className={`new-tab${tab === t ? " active" : ""}`}
+              className={`new-tab${shown === t ? " active" : ""}`}
               onClick={() => setTab(t)}
             >
               {TAB_LABEL[t]}
-              {isRunning(engine.runs[t]) && <span className={t === "mic" ? "sh-rec-dot" : "sh-busy-dot"} aria-label="running" />}
+              {isRunning(engine.runs[t]) && (
+                <span className={t === "mic" || t === "system" ? "sh-rec-dot" : "sh-busy-dot"} aria-label="running" />
+              )}
             </button>
           ))}
         </div>
         <div className="new-grid">
-          <section id={`new-panel-${tab}`} role="tabpanel" aria-labelledby={`new-tab-${tab}`} className="new-source">
-            {tab === "mic" && (
+          <section id={`new-panel-${shown}`} role="tabpanel" aria-labelledby={`new-tab-${shown}`} className="new-source">
+            {shown === "mic" && (
               <MicPanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             )}
-            {tab === "file" && (
+            {shown === "file" && (
               <FilePanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             )}
-            {tab === "link" && <LinkPanel engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />}
+            {shown === "link" && <LinkPanel engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />}
+            {shown === "system" && (
+              <SystemPanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
+            )}
           </section>
           <OptionsCard ctl={ctl} defaults={defaults} onChange={onDefaultsChange} />
         </div>
@@ -316,23 +338,6 @@ function MicPanel({
    *  saved as a Meeting with voices labelled "Voice 1, Voice 2…". */
   const [inRoom, setInRoom] = useState(false);
   const meetingOn = !!ctl.settings.meetings_enabled && inRoom;
-  const [now, setNow] = useState(() => Date.now());
-  const live = isRunning(run);
-  const [discard, setDiscard] = useState<DiscardStep>("idle");
-  const confirming = discard === "confirming" && showDiscard(run);
-  const sessionId = run?.sessionId ?? null;
-  // A new session starts with the question closed.
-  useEffect(() => setDiscard("idle"), [sessionId]);
-  const act = (action: DiscardAction) => {
-    const next = discardStep(discard, action);
-    setDiscard(next.step);
-    if (next.cancel) engine.cancel("mic");
-  };
-  useEffect(() => {
-    if (!live) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [live]);
 
   if (!run) {
     return (
@@ -373,7 +378,13 @@ function MicPanel({
               type="button"
               className="btn-rec"
               disabled={!engine.canStartMic}
-              title={engine.canStartMic ? "Start recording" : "Wait for the file to start"}
+              title={
+                engine.canStartMic
+                  ? "Start recording"
+                  : isRunning(engine.runs.system)
+                    ? "A System audio + mic session is using the microphone"
+                    : "Wait for the file to start"
+              }
               onClick={async () => {
                 onRunStart("mic");
                 const err = await engine.startMic(title, meetingOn ? "meeting" : "note", options);
@@ -389,6 +400,59 @@ function MicPanel({
     );
   }
 
+  return (
+    <CaptureLive
+      run={run}
+      onStop={engine.stopMic}
+      onCancel={() => engine.cancel("mic")}
+      onDismiss={() => engine.dismiss("mic")}
+      onOpenItem={onOpenItem}
+      setBusy={ctl.setBusy}
+      againLabel="New recording"
+    />
+  );
+}
+
+/* ---------- a live capture session (mic, system audio + mic) ---------- */
+
+/** A running (or finished) capture session: clock, Stop, Discard with a
+ *  confirmation (#158), the warnings the engine sent (#139), the outcome
+ *  and the live transcript. */
+function CaptureLive({
+  run,
+  onStop,
+  onCancel,
+  onDismiss,
+  onOpenItem,
+  setBusy,
+  againLabel,
+}: {
+  run: Run;
+  onStop: () => Promise<string | null>;
+  onCancel: () => void;
+  onDismiss: () => void;
+  onOpenItem: (id: string) => void;
+  setBusy: (msg: string) => void;
+  againLabel: string;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const live = isRunning(run);
+  const [discard, setDiscard] = useState<DiscardStep>("idle");
+  const confirming = discard === "confirming" && showDiscard(run);
+  const sessionId = run.sessionId;
+  // A new session starts with the question closed.
+  useEffect(() => setDiscard("idle"), [sessionId]);
+  const act = (action: DiscardAction) => {
+    const next = discardStep(discard, action);
+    setDiscard(next.step);
+    if (next.cancel) onCancel();
+  };
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [live]);
+
   const elapsed = live ? (now - run.startedAt) / 1000 : run.result?.duration_s ?? 0;
   const lines = toLines(run.segments);
   return (
@@ -402,8 +466,8 @@ function MicPanel({
           <span className="row-gap push">
             {run.status === "running" && !confirming && (
               <button type="button" className="btn-stop" onClick={async () => {
-                const err = await engine.stopMic();
-                if (err) ctl.setBusy(err);
+                const err = await onStop();
+                if (err) setBusy(err);
               }}>
                 ■ Stop
               </button>
@@ -435,7 +499,14 @@ function MicPanel({
           </span>
         </div>
       )}
-      <RunOutcome run={run} onOpenItem={onOpenItem} onDismiss={() => engine.dismiss("mic")} againLabel="New recording" />
+      {run.warnings.length > 0 && (
+        <div className="link-notice" role="status" aria-live="polite">
+          {run.warnings.map((w, i) => (
+            <p key={i} className="warn-line">{w}</p>
+          ))}
+        </div>
+      )}
+      <RunOutcome run={run} onOpenItem={onOpenItem} onDismiss={onDismiss} againLabel={againLabel} />
       <div className="live-box tx-scroll" aria-label="Live transcript">
         <TranscriptView
           lines={lines}
@@ -443,6 +514,162 @@ function MicPanel({
           label="Live transcript"
           emptyText={live ? "Speak — lines appear here as they are transcribed." : "No speech was transcribed."}
         />
+      </div>
+    </div>
+  );
+}
+
+/* ---------- System audio + mic (#139) ---------- */
+
+function SystemPanel({
+  ctl,
+  engine,
+  options,
+  onRunStart,
+  onOpenItem,
+}: {
+  ctl: Ctl;
+  engine: EngineRuns;
+  options: RunArgs;
+  onRunStart: (kind: RunKind) => void;
+  onOpenItem: (id: string) => void;
+}) {
+  const run = engine.runs.system;
+  const [title, setTitle] = useState("");
+  const [list, setList] = useState<SystemAudioDevices | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  /** "" = the dictation's input device (Settings). */
+  const [mic, setMic] = useState(ctl.settings.input_device ?? "");
+  const [system, setSystem] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  const os = osOf();
+  const help = SETUP_HELP[os];
+
+  useEffect(() => {
+    let alive = true;
+    invoke<SystemAudioDevices>("list_system_audio_devices")
+      .then((l) => {
+        if (!alive) return;
+        setList(l);
+        setListError(null);
+        setSystem((current) =>
+          current && l.devices.some((d) => d.name === current) ? current : initialSystemDevice(l, loadSystemDevice(), mic),
+        );
+      })
+      .catch((e) => alive && setListError(String(e)));
+    return () => {
+      alive = false;
+    };
+    // `mic` only seeds the first choice; a later mic change doesn't reset it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refresh]);
+
+  if (run) {
+    return (
+      <CaptureLive
+        run={run}
+        onStop={engine.stopSystem}
+        onCancel={() => engine.cancel("system")}
+        onDismiss={() => engine.dismiss("system")}
+        onOpenItem={onOpenItem}
+        setBusy={ctl.setBusy}
+        againLabel="New recording"
+      />
+    );
+  }
+
+  const defaultInput = list?.default_input ?? null;
+  const settingsMic = ctl.settings.input_device || defaultInput || "system default";
+  const problem = list ? devicesProblem(mic || ctl.settings.input_device || "", system, defaultInput) : null;
+  const noLoopback = !!list && !list.devices.some((d) => d.loopback);
+  return (
+    <div className="stack">
+      <div className="mic-start">
+        <div>
+          <h2 className="sh-h2">Record a call from a desktop app</h2>
+          <p className="sh-muted">
+            Zoom, Teams or any app that plays through the computer: your microphone and the computer's sound are
+            recorded as two channels and saved as a <strong>Meeting</strong>. You are “You”; the others are told apart
+            as Voice 1, Voice 2… — rename them in the document. Tell the other participants that you are recording.
+          </p>
+        </div>
+
+        <label className="field-stack">
+          <span className="opt-k">Your microphone</span>
+          <select value={mic} onChange={(e) => setMic(e.target.value)}>
+            <option value="">Dictation input ({settingsMic})</option>
+            {list?.devices.map((d) => (
+              <option key={d.name} value={d.name}>{deviceLabel(d, defaultInput)}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="field-stack">
+          <span className="opt-k">
+            System audio device{" "}
+            <button type="button" className="link-btn" onClick={() => setRefresh((n) => n + 1)}>
+              refresh
+            </button>
+          </span>
+          <select value={system} onChange={(e) => setSystem(e.target.value)} aria-invalid={!!problem && !!system}>
+            <option value="">Choose the device that carries the computer's sound…</option>
+            {list?.devices.map((d) => (
+              <option key={d.name} value={d.name}>{deviceLabel(d, defaultInput)}</option>
+            ))}
+          </select>
+        </label>
+        {listError && <p className="link-notice">Could not list the audio devices: {listError}</p>}
+        {problem && system && <p className="link-notice">{problem}</p>}
+        {noLoopback && (
+          <p className="link-notice">
+            No loopback device found. Install {help.devices} (see below), then press refresh — or pick any input that
+            carries the call's sound.
+          </p>
+        )}
+
+        <details className="sys-help" open={noLoopback}>
+          <summary>How to route the computer's sound into an input device ({help.devices})</summary>
+          <ol>
+            {help.steps.map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ol>
+          <p className="sh-muted">
+            Headphones help: with speakers, your microphone also picks up the others. Sussurro only reads the two
+            devices you choose — nothing leaves the computer.
+          </p>
+        </details>
+
+        <label className="field-stack">
+          <span className="opt-k">Title <span className="sh-muted">(optional)</span></span>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="From the first words if empty" spellCheck={false} />
+        </label>
+        <div className="row-gap">
+          <span className="tb meeting" title="Other people's voices: a meeting">Meeting</span>
+          <button
+            type="button"
+            className="btn-rec"
+            disabled={!engine.canStartSystem || !list || !!problem}
+            title={
+              !engine.canStartSystem
+                ? isRunning(engine.runs.mic)
+                  ? "A microphone session is using the microphone"
+                  : "Wait for the file to start"
+                : problem ?? "Start recording"
+            }
+            onClick={async () => {
+              onRunStart("system");
+              const err = await engine.startSystem({ mic: mic || null, system }, title, options);
+              if (err) ctl.setBusy(err);
+              else {
+                saveSystemDevice(system);
+                setTitle("");
+              }
+            }}
+          >
+            <span className="rec-dot" aria-hidden="true" /> {engine.systemStarting ? "Starting…" : "Start recording"}
+          </button>
+        </div>
       </div>
     </div>
   );

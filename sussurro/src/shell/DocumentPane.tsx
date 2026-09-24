@@ -20,6 +20,7 @@ import { languageLabel } from "./labels";
 /** Source label for the header: "microphone", "file memo.m4a". */
 function sourceLabel(source: string): string {
   if (source === "mic") return "microphone";
+  if (source === "system") return "system audio + microphone";
   if (source.startsWith("file:")) return `file ${source.slice(5)}`;
   return source;
 }
