@@ -110,6 +110,18 @@ per-provider LLM adapters.
   Phase 0 by accuracy, size and licence; SHA-256 pinned in code
   (fail-closed, as #90). Sortformer v2.1 via `parakeet-rs` is benchmarked
   against it.
+  **Phase 0 result (#107, 2026-09-24): GO with WeSpeaker ResNet34-LM**
+  (official ONNX, CC-BY-4.0, attribution required, 26.5 MB, SHA-256
+  `7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068`):
+  ~48 ms per 3 s segment on 4 CPU threads (M1 Pro); online threshold 0.275
+  on ≤ 3 s segments (3.3–4.5 % error, almost all extra voices), offline
+  "Re-detect" threshold 0.30 on ≤ 10 s segments (0.0–0.7 %), plus a merge
+  of clusters under 10 s of speech into the nearest voice. Fallback:
+  3D-Speaker ERes2Net English (Apache-2.0, third-party ONNX export).
+  Sortformer v2.1 is comparable in accuracy but rejected as default (492 MB,
+  4-speaker cap, 10 s latency, NVIDIA licence to review; `parakeet-rs`
+  ≤ 0.3.6 only matches our `ort` rc.12). Thresholds were tuned on English
+  AMI clips: re-check on Italian and real meetings before pinning them.
 - **E9 — Extra STT engines run in a bundled `llama-server` sidecar**, not
   in-process: `whisper-rs` and any llama.cpp binding each link their own
   ggml and cannot share one binary. Only the sidecar binary ships in the
@@ -428,7 +440,7 @@ Throwaway code in the session scratchpad; results written into this file.
       the lag between the indicator and the audio. (#105)
 - [ ] **VAD**: `whisper_vad` with the Silero model on a 16 kHz stream;
       boundaries and CPU cost. (#106)
-- [ ] **Diarization**: two embedding models through `ort` on a 3–4 speaker
+- [x] **Diarization**: two embedding models through `ort` on a 3–4 speaker
       sample (own recording plus a CC-BY AMI/ICSI excerpt): time per 3 s
       segment on CPU (target < 100 ms), cluster purity with a cosine
       threshold; Sortformer v2.1 via `parakeet-rs` on the same sample.
