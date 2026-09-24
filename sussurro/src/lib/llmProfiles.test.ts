@@ -4,6 +4,9 @@ import {
   cleanupServerChanged,
   commitProfile,
   inferExternal,
+  keyStorageBadge,
+  keyStorageWarning,
+  mergeKeyStorage,
   modelListed,
   newProfile,
   newProfileId,
@@ -16,7 +19,7 @@ import {
   withApi,
   withBaseUrl,
 } from "./llmProfiles";
-import type { LlmProfile, Settings } from "./types";
+import type { CredentialStoreStatus, LlmProfile, Settings } from "./types";
 
 const local: LlmProfile = {
   id: "local",
@@ -164,5 +167,55 @@ describe("labels", () => {
     expect(modelListed(["llama3.2:latest"], "llama3.2")).toBe(true);
     expect(modelListed(["llama3.2:3b"], "llama3.2:3b")).toBe(true);
     expect(modelListed(["qwen2.5:3b"], "llama3.2")).toBe(false);
+  });
+});
+
+describe("API keys in the credential store (#159)", () => {
+  const ok: CredentialStoreStatus = { available: true, name: "the macOS Keychain", error: "" };
+  const none: CredentialStoreStatus = { available: false, name: "the Secret Service keyring", error: "no D-Bus session" };
+  const inStore: LlmProfile = { ...work, api_key_storage: "keychain" };
+  const inFile: LlmProfile = { ...work, api_key_storage: "file" };
+
+  it("says nothing when the key is, or will be, in the store", () => {
+    expect(keyStorageWarning(inStore, inStore, ok)).toBeNull();
+    expect(keyStorageWarning(inStore, inStore, none)).toBeNull();
+    expect(keyStorageWarning({ ...inStore, api_key: "sk-new" }, inStore, ok)).toBeNull();
+    expect(keyStorageWarning(newProfile([]), null, none)).toBeNull(); // no key typed
+    expect(keyStorageWarning({ ...work, api_key: "sk" }, null, null)).toBeNull(); // status unknown yet
+  });
+
+  it("warns when a new or changed key would land in the settings file", () => {
+    const w = keyStorageWarning({ ...inStore, api_key: "sk-new" }, inStore, none);
+    expect(w).toContain("clear text");
+    expect(w).toContain("no D-Bus session");
+    expect(keyStorageWarning({ ...newProfile([]), api_key: "sk" }, null, none)).toContain("clear text");
+  });
+
+  it("warns about a saved fallback key and an unreadable one", () => {
+    expect(keyStorageWarning(inFile, inFile, ok)).toContain("clear text");
+    const locked: LlmProfile = { ...work, api_key: "", api_key_storage: "unreadable" };
+    expect(keyStorageWarning(locked, locked, ok)).toContain("the macOS Keychain");
+    // Typing a new key replaces the unreadable one: no stale warning.
+    expect(keyStorageWarning({ ...locked, api_key: "sk-new" }, locked, ok)).toBeNull();
+  });
+
+  it("badges the profile list", () => {
+    expect(keyStorageBadge(inStore)).toBeNull();
+    expect(keyStorageBadge(local)).toBeNull();
+    expect(keyStorageBadge(inFile)).toBe("Key in settings file");
+    expect(keyStorageBadge({ ...work, api_key: "", api_key_storage: "unreadable" })).toBe("Key unreadable");
+  });
+
+  it("merges only the storage the backend reports, for unchanged keys", () => {
+    const current = settings({ hotkey: "Alt+Space" });
+    const saved = settings({ llm_profiles: [local, inStore] });
+    const merged = mergeKeyStorage(current, saved);
+    expect(merged.llm_profiles[1].api_key_storage).toBe("keychain");
+    expect(merged.hotkey).toBe("Alt+Space");
+    // The user typed another key meanwhile: that profile is left alone.
+    const retyped = settings({ llm_profiles: [local, { ...work, api_key: "sk-typing" }] });
+    expect(mergeKeyStorage(retyped, saved)).toBe(retyped);
+    // Nothing to change: same object.
+    expect(mergeKeyStorage(merged, saved)).toBe(merged);
   });
 });

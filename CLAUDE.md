@@ -56,8 +56,21 @@ project decisions here, not in per-machine memory.**
   `cleanup_api`/`ollama_url`/`ollama_model`/`api_key` keys are read for the
   migration and **never written again**. Consequence, accepted: downgrading
   to ≤ 0.7 loses a custom cleanup server (the old build falls back to its
-  defaults, Ollama on localhost) — the updater only moves forward. API keys
-  stay in `settings.json` in clear, as before.
+  defaults, Ollama on localhost) — the updater only moves forward.
+- **Profile API keys live in the OS credential store (0.8, #159)**
+  (`secrets.rs`): `keyring-core` + one native store crate per OS (macOS
+  Keychain, Windows Credential Manager, Secret Service over libdbus with
+  pure-Rust crypto — not the zbus store, which would need a tokio context
+  since ashpd enables zbus's tokio feature). Entry: service
+  `com.sussurro.app`, user `llm-profile:<id>`. `settings.json` keeps only
+  `api_key_storage: "keychain"`; `Settings::save` writes a key only when it
+  is not in the store. At startup `load_keys` moves clear-text keys in
+  (after a verified write) and reads stored ones; `set_settings` runs
+  `sync_keys` (write on change, delete on clear or profile deletion; the
+  UI's `api_key_storage` is never trusted). No working store → fallback to
+  clear text (`"file"`) with a warning in the profile editor, retried every
+  start. Keys never go into diagnostics, the portable config export, logs
+  or the dev mock. Downgrading below 0.8 loses stored keys (re-enter them).
 - **Link source rules (0.8, #123)** (`sources/url/`): only `http`/`https`,
   no credentials in the link (it is saved as `source: url:<link>`). Hosts on
   this computer or the local network (loopback, private, link-local incl.

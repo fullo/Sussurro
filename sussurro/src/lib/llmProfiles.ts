@@ -4,7 +4,7 @@
    edits well-formed in the first place. */
 
 import { isLocalEndpoint, parseEndpoint } from "./endpoint";
-import type { LlmApi, LlmProfile, Settings } from "./types";
+import type { CredentialStoreStatus, LlmApi, LlmProfile, Settings } from "./types";
 
 /** Suggested server per API: Ollama's port, llama.cpp-server's default. */
 export const DEFAULT_URLS: Record<LlmApi, string> = {
@@ -178,4 +178,55 @@ export function profileSummary(p: LlmProfile): string {
  *  (`llama3.2` matches `llama3.2:latest`). */
 export function modelListed(models: string[], model: string): boolean {
   return models.some((m) => m === model || m.startsWith(`${model}:`));
+}
+
+/* ---------- API keys in the OS credential store (#159) ---------- */
+
+/** Where keys go, in words, before the backend has said which store. */
+const STORE_FALLBACK_NAME = "the system keychain";
+
+/** What the profile editor says about where the key is, or will be, kept;
+ *  null when it is (or will be) in the OS credential store.
+ *  `saved` is the profile as stored (null for a new one), `store` the
+ *  credential store's status (null while unknown). */
+export function keyStorageWarning(
+  draft: LlmProfile,
+  saved: LlmProfile | null,
+  store: CredentialStoreStatus | null,
+): string | null {
+  const key = draft.api_key.trim();
+  const name = store?.name || STORE_FALLBACK_NAME;
+  if (saved && key === saved.api_key.trim()) {
+    if (saved.api_key_storage === "unreadable" && !key)
+      return `This profile's API key couldn't be read from ${name} (locked, or access was denied). Unlock it and restart Sussurro, or enter the key again.`;
+    if (saved.api_key_storage === "file" && key)
+      return "No credential store was available, so this API key is saved in clear text in Sussurro's settings file.";
+    return null;
+  }
+  if (key && store && !store.available)
+    return `No credential store is available${store.error ? ` (${store.error})` : ""}: this API key will be saved in clear text in Sussurro's settings file.`;
+  return null;
+}
+
+/** Short marker for the profile list; null when the key is fine. */
+export function keyStorageBadge(p: LlmProfile): string | null {
+  if (p.api_key_storage === "file" && p.api_key) return "Key in settings file";
+  if (p.api_key_storage === "unreadable") return "Key unreadable";
+  return null;
+}
+
+/** Take the backend's word on where each key ended up (`set_settings`
+ *  returns the saved settings) without touching anything else the user may
+ *  have edited meanwhile: only `api_key_storage`, and only for profiles
+ *  whose key is still the one that was saved. */
+export function mergeKeyStorage(current: Settings, saved: Settings): Settings {
+  const byId = new Map(saved.llm_profiles.map((p) => [p.id, p]));
+  let changed = false;
+  const llm_profiles = current.llm_profiles.map((p) => {
+    const s = byId.get(p.id);
+    if (!s || s.api_key !== p.api_key || s.api_key_storage === p.api_key_storage) return p;
+    changed = true;
+    return { ...p, api_key_storage: s.api_key_storage };
+  });
+  return changed ? { ...current, llm_profiles } : current;
 }

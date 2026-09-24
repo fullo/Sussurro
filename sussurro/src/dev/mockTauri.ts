@@ -4,7 +4,8 @@
    Tauri, through a dynamic import that production builds drop entirely.
 
    URL switches: ?ui=legacy (classic window), ?empty=1 (empty archive),
-   ?ytdlp=0 (yt-dlp not installed, for the Link tab). */
+   ?ytdlp=0 (yt-dlp not installed, for the Link tab), ?keychain=0 (no OS
+   credential store: the profile editor's clear-text key warning). */
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
@@ -20,7 +21,7 @@ const settings: Settings = {
   llm_profiles: [
     { id: "local", name: "Local", api: "ollama", base_url: "http://localhost:11434", api_key: "", model: "llama3.2:3b", external: false },
     { id: "lm-studio", name: "LM Studio", api: "openai", base_url: "http://localhost:1234/v1", api_key: "", model: "qwen2.5-7b-instruct", external: false, context_tokens: 32768 },
-    { id: "work", name: "Work", api: "openai", base_url: "https://llm.example.com/v1", api_key: "sk-demo", model: "gpt-4o-mini", external: true },
+    { id: "work", name: "Work", api: "openai", base_url: "https://llm.example.com/v1", api_key: "", model: "gpt-4o-mini", external: true },
   ],
   cleanup_profile: "local",
   recipes: [
@@ -678,9 +679,20 @@ function handle(cmd: string, a: Args): unknown {
   switch (cmd) {
     case "get_settings":
       return { ...settings };
-    case "set_settings":
-      Object.assign(settings, a.settings as Settings);
-      return null;
+    case "set_settings": {
+      // Keys "go to the keychain" as with the backend's secrets::sync_keys
+      // (#159). The mock never ships a key of its own: fake data holds no secret.
+      const next = a.settings as Settings;
+      Object.assign(settings, {
+        ...next,
+        llm_profiles: next.llm_profiles.map((p) => ({ ...p, api_key_storage: p.api_key ? "keychain" : "none" })),
+      });
+      return { ...settings };
+    }
+    case "credential_store_status":
+      return params.get("keychain") === "0"
+        ? { available: false, name: "the Secret Service keyring", error: "no D-Bus session bus" }
+        : { available: true, name: "the macOS Keychain", error: "" };
     case "get_history":
       return [
         { timestamp: at(0, 10, 12), raw: "ehm allora mandami il file entro domani", cleaned: "Mandami il file entro domani." },
