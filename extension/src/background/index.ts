@@ -19,7 +19,9 @@
  * Nothing is captured before an explicit Start. */
 import browser, { type Runtime } from "webextension-polyfill";
 import { CHANNEL, SeqCounter, encodeFrame, type ChannelByte } from "../shared/frame";
-import { classifyVersion, liveUrl, parsePairing, versionUrl, PAIRING_KEY, type AppCheck, type Pairing } from "../shared/pairing";
+import { getPairing, liveUrl, onPairingChanged } from "../shared/pairing";
+import { testConnection } from "../shared/connection";
+import { toAppCheck, type AppCheck } from "../shared/appcheck";
 import { decodePayload, makeProbe } from "../shared/transport";
 import type { CaptureSnapshot, FromBackground, PageInfo, PanelBroadcast, PanelRequest, PanelState, ToBackground, ToOffscreen, ToPage } from "../shared/messages";
 import type { Platform } from "../shared/platform";
@@ -106,37 +108,19 @@ function tabState(tabId: number): Tab {
 
 // ---- app check -------------------------------------------------------------------
 
-async function readPairing(): Promise<Pairing | null> {
-  const got = await browser.storage.local.get(PAIRING_KEY);
-  return parsePairing(got[PAIRING_KEY]);
-}
-
 let lastCheck: { at: number; result: AppCheck } | null = null;
 
+/** `GET /app/version` with the stored pairing (#127's testConnection). */
 async function checkApp(): Promise<AppCheck> {
-  const pairing = await readPairing();
-  if (!pairing) return (lastCheck = { at: Date.now(), result: { ok: false, reason: "not-paired" } }).result;
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), CHECK_TIMEOUT_MS);
-  let result: AppCheck;
-  try {
-    const r = await fetch(versionUrl(pairing), { headers: { Authorization: `Bearer ${pairing.token}` }, signal: ctl.signal, cache: "no-store" });
-    const body = r.ok ? await r.json().catch(() => null) : null;
-    result = classifyVersion(r.status, body);
-  } catch {
-    result = classifyVersion(null, null);
-  } finally {
-    clearTimeout(timer);
-  }
+  const pairing = await getPairing().catch(() => null);
+  const result = toAppCheck(pairing ? await testConnection(pairing, { timeoutMs: CHECK_TIMEOUT_MS }) : null);
   lastCheck = { at: Date.now(), result };
   return result;
 }
 
-browser.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && PAIRING_KEY in changes) {
-    lastCheck = null;
-    for (const t of tabs.values()) void broadcastState(t);
-  }
+onPairingChanged(() => {
+  lastCheck = null;
+  for (const t of tabs.values()) void broadcastState(t);
 });
 
 // ---- the state machine's effects ---------------------------------------------------
@@ -214,10 +198,11 @@ async function arm(t: Tab) {
 }
 
 async function connect(t: Tab) {
-  const pairing = await readPairing();
+  const pairing = await getPairing().catch(() => null);
   if (t.session.phase !== "connecting") return;
   if (!pairing) {
-    dispatch(t, { type: "check", result: { ok: false, reason: "not-paired" } });
+    // Unpaired meanwhile: a failed connection; the retry's check says why.
+    dispatch(t, { type: "ws-closed" });
     return;
   }
   closeSocket(t);
@@ -509,7 +494,7 @@ async function pageInfo(tabId: number): Promise<PageInfo | null> {
 }
 
 async function panelState(t: Tab, info?: PageInfo | null): Promise<PanelState> {
-  const paired = !!(await readPairing());
+  const paired = !!(await getPairing().catch(() => null));
   const check = lastCheck?.result ?? null;
   const s = t.session;
   return {

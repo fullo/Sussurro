@@ -266,6 +266,10 @@ function MicPanel({
 }) {
   const run = engine.runs.mic;
   const [title, setTitle] = useState("");
+  /** 0.9 preview (#130): an in-room meeting, one mic for everyone —
+   *  saved as a Meeting with voices labelled "Voice 1, Voice 2…". */
+  const [inRoom, setInRoom] = useState(false);
+  const meetingOn = !!ctl.settings.meetings_enabled && inRoom;
   const [now, setNow] = useState(() => Date.now());
   const live = isRunning(run);
   const [discard, setDiscard] = useState<DiscardStep>("idle");
@@ -289,10 +293,11 @@ function MicPanel({
       <div className="stack">
         <div className="mic-start">
           <div>
-            <h2 className="sh-h2">Record a note</h2>
+            <h2 className="sh-h2">{meetingOn ? "Record a meeting in the room" : "Record a note"}</h2>
             <p className="sh-muted">
               A long microphone session, separate from the dictation hotkey. Sussurro transcribes while you
-              speak and saves a <strong>Note</strong> in your Library when you stop.
+              speak and saves a <strong>{meetingOn ? "Meeting" : "Note"}</strong> in your Library when you stop.
+              {meetingOn && " Voices are told apart as Voice 1, Voice 2… — rename them in the document."}
             </p>
           </div>
           <label className="field-stack">
@@ -304,8 +309,20 @@ function MicPanel({
               spellCheck={false}
             />
           </label>
+          {ctl.settings.meetings_enabled && (
+            <label className="check-row">
+              <input type="checkbox" checked={inRoom} onChange={(e) => setInRoom(e.target.checked)} />
+              <span>
+                Meeting in the room <span className="sh-muted">— several people on this mic, labelled by voice (preview)</span>
+              </span>
+            </label>
+          )}
           <div className="row-gap">
-            <span className="tb note" title="Microphone sessions are your own voice">Note</span>
+            {meetingOn ? (
+              <span className="tb meeting" title="Several people on one microphone">Meeting</span>
+            ) : (
+              <span className="tb note" title="Microphone sessions are your own voice">Note</span>
+            )}
             <button
               type="button"
               className="btn-rec"
@@ -313,7 +330,7 @@ function MicPanel({
               title={engine.canStartMic ? "Start recording" : "Wait for the file to start"}
               onClick={async () => {
                 onRunStart("mic");
-                const err = await engine.startMic(title, "note", options);
+                const err = await engine.startMic(title, meetingOn ? "meeting" : "note", options);
                 if (err) ctl.setBusy(err);
                 else setTitle("");
               }}

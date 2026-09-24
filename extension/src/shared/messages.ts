@@ -7,7 +7,7 @@
  */
 import type { MicVia, RemoteVia } from "../content/registry";
 import type { Platform } from "./platform";
-import type { AppProblem } from "./pairing";
+import type { AppProblem } from "./appcheck";
 import type { Phase } from "../background/session";
 
 /** What the page-side capture reports (about once a second while armed,

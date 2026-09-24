@@ -21,8 +21,6 @@ export const FRAME_HEADER = 5;
 export const FRAME_SAMPLES = 2048;
 /** The app refuses messages above 512 KiB (`MAX_MESSAGE_BYTES`). */
 export const MAX_FRAME_BYTES = 512 * 1024;
-/** The `/live` protocol version this extension speaks (`GET /app/version`). */
-export const PROTOCOL_VERSION = 1;
 
 /** Float sample in [-1, 1] → i16, clamped and rounded. Also inlined into the
  *  AudioWorklet (its `toString()` is), so keep it self-contained. */

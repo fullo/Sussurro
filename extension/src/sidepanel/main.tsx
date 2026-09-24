@@ -1,19 +1,32 @@
 /* Side panel (Chrome) / sidebar (Firefox): the live mirror of a meeting
-   (plan E3: editing happens in the app). #128: pairing/app status and the
-   explicit Start/Stop of capture for the active tab, with channel meters.
-   Live lines, speaker chips and "Open in Sussurro" arrive with #129. */
+   (plan E3: editing happens in the app). Shows whether the extension is
+   paired with the app (#127) and, once paired, the explicit Start/Stop of
+   capture for the active tab with a level meter per channel (#128). Live
+   lines, speaker chips and "Open in Sussurro" arrive with #129. */
 import { StrictMode, useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import browser from "webextension-polyfill";
 import { TranscriptView } from "@sussurro/transcript";
 import { Header } from "../shared/Header";
 import { MEETING_MATCHES } from "../shared/platform";
+import { usePairing } from "../shared/usePairing";
 import type { PanelBroadcast, PanelRequest, PanelState } from "../shared/messages";
 import { panelView, viaText } from "./status";
 import "../shared/page.css";
 
+function PairingNote() {
+  return (
+    <div className="page-note" role="status">
+      Not paired with the Sussurro app.{" "}
+      <button type="button" className="btn link" onClick={() => browser.runtime.openOptionsPage()}>
+        Open options
+      </button>
+    </div>
+  );
+}
+
 /** The tab this panel controls: the active one, or `?tabId=` (a panel
- *  opened as a page, e.g. by the automated harness). */
+ *  opened as a page, e.g. by the automated capture harness). */
 function useTabId(): number | null {
   const [tabId, setTabId] = useState<number | null>(() => {
     const q = new URLSearchParams(location.search).get("tabId");
@@ -48,13 +61,11 @@ function Meter({ label, via, level }: { label: string; via: string; level: numbe
   );
 }
 
-function SidePanel() {
-  const tabId = useTabId();
+function Capture({ tabId }: { tabId: number }) {
   const [state, setState] = useState<PanelState | null>(null);
   const [needsGrant, setNeedsGrant] = useState(false);
 
   const refresh = useCallback(() => {
-    if (tabId === null) return;
     void browser.runtime
       .sendMessage({ type: "panel:get", tabId } satisfies PanelRequest)
       .then((s) => setState(s as PanelState))
@@ -73,20 +84,15 @@ function SidePanel() {
     };
     browser.runtime.onMessage.addListener(onMsg);
     browser.tabs.onUpdated.addListener(onUpdated);
+    // Firefox lets the user withhold MV3 host permissions: offer to grant.
+    void browser.permissions.contains({ origins: [...MEETING_MATCHES] }).then((ok) => setNeedsGrant(!ok));
     return () => {
       browser.runtime.onMessage.removeListener(onMsg);
       browser.tabs.onUpdated.removeListener(onUpdated);
     };
   }, [tabId, refresh]);
 
-  useEffect(() => {
-    // Firefox lets the user withhold MV3 host permissions: offer to grant.
-    void browser.permissions.contains({ origins: [...MEETING_MATCHES] }).then((ok) => setNeedsGrant(!ok));
-  }, [tabId]);
-
-  const send = (type: "panel:start" | "panel:stop") => {
-    if (tabId !== null) void browser.runtime.sendMessage({ type, tabId } satisfies PanelRequest);
-  };
+  const send = (type: "panel:start" | "panel:stop") => void browser.runtime.sendMessage({ type, tabId } satisfies PanelRequest);
   const grant = () => {
     void browser.permissions.request({ origins: [...MEETING_MATCHES] }).then((ok) => {
       setNeedsGrant(!ok);
@@ -96,28 +102,27 @@ function SidePanel() {
 
   const view = panelView(state);
   const cap = state?.capture;
-  const capturing = state && ["arming", "connecting", "live", "reconnecting"].includes(state.phase);
+  const capturing = !!state && ["arming", "connecting", "live", "reconnecting"].includes(state.phase);
   return (
-    <main className="page">
-      <Header title="Sussurro" />
+    <>
       {needsGrant && (
         <p className="page-note">
           Sussurro needs access to the meeting sites to capture them.{" "}
-          <button type="button" onClick={grant}>
+          <button type="button" className="btn link" onClick={grant}>
             Allow access
           </button>
         </p>
       )}
-      <p className={`page-note tone-${view.tone}`} data-testid="status" data-phase={state?.phase ?? ""}>
+      <p className={`page-note tone-${view.tone}`} role="status" data-testid="status" data-phase={state?.phase ?? ""}>
         {view.line}
       </p>
       <div className="capture-controls">
         {view.canStop ? (
-          <button type="button" className="btn-stop" data-testid="stop" onClick={() => send("panel:stop")}>
+          <button type="button" className="btn" data-testid="stop" onClick={() => send("panel:stop")}>
             Stop
           </button>
         ) : (
-          <button type="button" className="btn-start" data-testid="start" disabled={!view.canStart} onClick={() => send("panel:start")}>
+          <button type="button" className="btn primary" data-testid="start" disabled={!view.canStart} onClick={() => send("panel:start")}>
             Start recording
           </button>
         )}
@@ -130,6 +135,18 @@ function SidePanel() {
           {state?.tabCapture === "failed" && <p className="page-note">Could not capture the tab's audio: the other participants may be missing.</p>}
         </div>
       )}
+    </>
+  );
+}
+
+function SidePanel() {
+  const pairing = usePairing();
+  const tabId = useTabId();
+  return (
+    <main className="page">
+      <Header title="Sussurro" />
+      {pairing === null && <PairingNote />}
+      {pairing && tabId !== null && <Capture tabId={tabId} />}
       <div className="tx-scroll">
         <TranscriptView
           lines={[]}

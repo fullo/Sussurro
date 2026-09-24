@@ -67,6 +67,12 @@ serde-saphyr = "1.3"
 trash = "5.2"
 unicode-normalization = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
+# Speakers (0.9, #130): WeSpeaker embeddings through the ONNX Runtime the
+# app already links via transcribe-rs (same pinned version and features —
+# never a second runtime such as sherpa-onnx), and the Kaldi fbank front
+# end over rustfft (also already in the tree via transcribe-rs).
+ort = "=2.0.0-rc.12"
+rustfft = "6.4"
 # LLM profile API keys live in the OS credential store (#159). keyring-core is
 # the API; one native store crate per OS below (all MIT OR Apache-2.0).
 keyring-core = "1"

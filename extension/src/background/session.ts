@@ -14,7 +14,7 @@
  * that closes during a meeting means the app ended that meeting (it keeps
  * what it got); the reconnect sends a new `start`, i.e. a new item. */
 import { backoffDelay } from "../shared/backoff";
-import { isFatal, type AppCheck, type AppProblem } from "../shared/pairing";
+import { isFatal, type AppCheck, type AppProblem } from "../shared/appcheck";
 
 export type Phase = "idle" | "checking" | "arming" | "connecting" | "live" | "reconnecting" | "stopping" | "done" | "error";
 

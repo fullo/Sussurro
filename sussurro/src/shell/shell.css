@@ -386,6 +386,21 @@ button.pchip-name:hover { text-decoration: underline; }
 .pchip-input { width: 240px; max-width: 100%; }
 .pchip-input[aria-invalid="true"] { border-color: var(--warn); }
 .pchip-error { font-size: 11.5px; color: var(--warn); }
+/* People registry actions on a chip (#132): "link", "+ People". */
+.pchip-act {
+  font: inherit;
+  font-size: 11px;
+  flex: none;
+  margin-left: 4px;
+  padding: 0 6px;
+  min-height: 20px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--c-text-light);
+  cursor: pointer;
+}
+.pchip-act:hover { border-style: solid; border-color: var(--c-dark); color: var(--c-dark); }
 
 /* ---------- Library ---------- */
 
@@ -653,6 +668,19 @@ button.pchip-name:hover { text-decoration: underline; }
 .prof-test.error { color: var(--warn); }
 .prof-problems { margin: 4px 0 0; padding-left: 18px; color: var(--warn); font-size: 12.5px; }
 .prof-actions { margin-top: 12px; }
+/* ---------- People (#132) ---------- */
+
+.people-search { margin: 0 0 10px; }
+.people-usage { flex: none; font-size: 12px; color: var(--c-text-light); white-space: nowrap; }
+.people-usage-line { margin: 0 0 4px; font-size: 12.5px; }
+.people-dups { margin: 0 0 12px; }
+.people-dups ul { margin: 4px 0 0; padding-left: 18px; }
+.people-editor { margin: 0 8px 10px; }
+.people-editor textarea { width: 100%; font: inherit; font-size: 13px; resize: vertical; }
+.people-merge { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); }
+@media (max-width: 640px) {
+  .people-usage { display: none; }
+}
 .profile-line { color: var(--c-text-light); font-size: 0.85rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- Context pane: Ask · Export (#121; Speakers in 0.9) ---------- */
@@ -689,6 +717,20 @@ button.pchip-name:hover { text-decoration: underline; }
 .ctx-prof-text b { font-weight: 600; color: var(--c-dark); }
 .ctx-prof-text small { font-size: 11px; color: var(--c-text-light); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx-profiles:disabled .ctx-prof { cursor: default; opacity: 0.7; }
+.ctx-hint { font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 4px; }
+/* Speakers (#130) */
+.spk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.spk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 3px 0; font-size: 12px; min-width: 0; }
+.spk-row .tx-chip { margin: 0; }
+.spk-src { color: var(--c-text-light); font-size: 11px; }
+.spk-pct { margin-left: auto; color: var(--c-text-light); font-size: 11px; font-variant-numeric: tabular-nums; }
+.spk-acts { flex-basis: 100%; display: flex; gap: 10px; padding-left: 4px; font-size: 11.5px; }
+.spk-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+.spk-rename input { flex: 1; min-width: 0; font-size: 12.5px; }
+.spk-rename .ctx-note { flex-basis: 100%; }
+.spk-redetect { margin-top: 8px; font-size: 12px; }
+.spk-confirm { margin-top: 8px; }
+.spk-confirm .ctx-exports { margin-top: 6px; }
 .ctx-note { margin: 6px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--c-text-light); }
 .ctx-note.warn { color: var(--warn); }
 .ctx-run { display: flex; align-items: center; gap: 8px; margin-top: 10px; }

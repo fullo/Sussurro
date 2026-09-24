@@ -16,6 +16,7 @@ pub mod secrets;
 pub mod settings;
 pub mod snippets;
 pub mod sources;
+pub mod speakers;
 pub mod state;
 pub mod stats;
 pub mod stt;
@@ -173,6 +174,7 @@ pub fn run() {
             commands::set_settings,
             commands::extension_token_get,
             commands::extension_token_regenerate,
+            commands::local_api_status,
             commands::get_history,
             commands::search_history,
             commands::clear_history,
@@ -217,9 +219,18 @@ pub fn run() {
             commands::archive_update_meta,
             commands::archive_update_segment,
             commands::archive_delete_segment,
+            commands::archive_move_segment_speaker,
+            commands::archive_rename_speaker,
+            commands::archive_redetect_speakers,
             commands::archive_delete,
             commands::archive_reveal,
             commands::archive_rebuild_index,
+            commands::people_list,
+            commands::people_usage,
+            commands::people_add,
+            commands::people_update,
+            commands::people_delete,
+            commands::people_merge,
             commands::archive_export,
             commands::archive_subtitles_status,
             commands::archive_create_subtitles,

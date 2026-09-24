@@ -94,6 +94,21 @@ project decisions here, not in per-machine memory.**
   takes). No fallback from local to external anywhere. External sends are
   logged per item in `.sussurro/external-log.json` (metadata only, never
   content) and drive the Library's "sent externally" marker.
+- **Speaker labels "Voice N" (0.9, #130)** (`speakers/`): WeSpeaker
+  ResNet34-LM through the app's own `ort` (never sherpa-onnx), downloaded on
+  first use into the models folder, pinned SHA-256 at a pinned HF revision,
+  fail-closed; CC-BY-4.0 attribution in `licenses.json` (static "downloaded
+  models" entry in `scripts/gen-licenses.mjs`). Fbank is Rust over `rustfft`,
+  checked against kaldi-native-fbank. Live: online clustering 0.275 on ≤ 3 s
+  windows; end of run and "Re-detect": voices under 10 s fold into the
+  nearest; Re-detect = agglomerative 0.30 on the per-line embeddings stored
+  in `segments.json` (mean of the line's windows), labels kept stable by
+  speech overlap. Thresholds were tuned on English AMI clips (#107) — check
+  on Italian before calling them final. Engine option `Job.speakers` (off
+  by default); runs turn it on only with `Settings.meetings_enabled` for
+  meetings — one channel is clustered as is; a browser meeting's mic is
+  always "You" and only its remote channel is clustered. Embeddings never
+  go to the UI (`Item::without_embeddings`).
 - **Local API for the browser extension (0.9, #126)** (`api/`): new routes
   (`GET /app/version`, `WS /live`, `POST /items/{id}/open`,
   `GET /items/{id}/export`) exist only with `Settings.meetings_enabled`
@@ -109,6 +124,25 @@ project decisions here, not in per-machine memory.**
   A meeting is a two-channel engine run (`mic`, `remote`) into a `meeting`
   item, `source: browser:<host>`; page events go to
   `.sussurro/meeting-events.jsonl` for attribution (#131).
+- **People registry (0.9, #132)** (`archive/people.rs`): lives in the
+  archive at `<archive>/.sussurro/people.json` so it travels with it; not
+  behind `meetings_enabled` (transcriptions have participants too). Names
+  match case-, accent- and whitespace-insensitively on name or alias; a name
+  matching two people links to nobody. Linking only *adds* an email, and on
+  save only to participants new to the item (a removed email doesn't come
+  back; the chip offers "link" instead). Deleting/editing a person never
+  edits items. It holds other people's emails: never logged, never in
+  diagnostics, and in the portable config export only when the user ticks
+  "Include People" for that export. An unreadable file reads as empty for
+  linking but is never overwritten.
+- **Extension pairing (0.9, #127)**: the pairing code is
+  `sussurro:<port>:<token>`, defined once in `sussurro/src/lib/pairingCode.ts`
+  and imported by the extension as `@sussurro/pairing`. The extension keeps
+  it in `storage.local` under `port` / `token`, only through
+  `extension/src/shared/pairing.ts` (also `PROTOCOL_VERSION`, `liveUrl`).
+  Settings → Browser extension never shows the token (Copy puts the code on
+  the clipboard) and reads `local_api_status` (the API's settings apply at
+  startup) to say when a restart is needed.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`

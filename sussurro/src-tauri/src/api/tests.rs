@@ -376,6 +376,57 @@ fn meeting_routes_check_token_origin_and_send_cors() {
     );
 }
 
+/// #127: Settings → Browser extension → Regenerate token. The API reads the
+/// token on every request, so the old one is refused at once.
+#[test]
+fn a_regenerated_token_replaces_the_old_one_at_once() {
+    let r = start_server(true);
+    let old = bearer();
+    assert_eq!(
+        http(r.port, "GET", "/app/version", &[("Authorization", &old), ("Origin", EXT)], "").status,
+        200
+    );
+    let mut settings = Settings {
+        extension_token: TOKEN.into(),
+        ..Default::default()
+    };
+    let fresh = settings.regenerate_extension_token().unwrap();
+    assert_ne!(fresh, TOKEN);
+    r.host.0.config.lock().unwrap().extension_token = fresh.clone();
+    assert_eq!(
+        http(r.port, "GET", "/app/version", &[("Authorization", &old), ("Origin", EXT)], "").status,
+        401
+    );
+    assert_eq!(ws_connect(r.port, TOKEN, Some(EXT)).err(), Some(401));
+    let new = format!("Bearer {fresh}");
+    let ok = http(r.port, "GET", "/app/version", &[("Authorization", &new), ("Origin", EXT)], "");
+    assert_eq!(ok.status, 200);
+    assert_eq!(ok.json()["protocol"], protocol::PROTOCOL_VERSION);
+}
+
+/// #127: the pairing UI learns whether (and where) the API listens.
+#[test]
+fn bind_records_the_listen_state() {
+    // Taken port: recorded as failed. (The one test touching the global.)
+    let taken = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let port = taken.server_addr().to_ip().unwrap().port();
+    assert!(bind(port).is_none());
+    assert_eq!(listen_state(), ListenState::Failed { port });
+    drop(taken);
+    let server = bind(0).expect("an ephemeral port binds");
+    let actual = server.server_addr().to_ip().unwrap().port();
+    assert_eq!(listen_state(), ListenState::Listening { port: actual });
+    assert_eq!(
+        serde_json::to_value(ListenState::Listening { port: 4525 }).unwrap(),
+        serde_json::json!({"state": "listening", "port": 4525})
+    );
+    assert_eq!(serde_json::to_value(ListenState::Off).unwrap(), serde_json::json!({"state": "off"}));
+    assert_eq!(
+        serde_json::to_value(ListenState::Failed { port: 1 }).unwrap(),
+        serde_json::json!({"state": "failed", "port": 1})
+    );
+}
+
 type Ws = tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<TcpStream>>;
 
 /// Connect to `/live`; `Err(status)` when the upgrade is refused.

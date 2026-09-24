@@ -64,7 +64,9 @@ describe.each(["chrome", "firefox"] as const)("manifest.%s.json", (t) => {
 
   it("is MV3 with minimal permissions and no broad host access", () => {
     expect(m.manifest_version).toBe(3);
-    expect(m.permissions).toEqual(t === "chrome" ? ["storage", "sidePanel"] : ["storage"]);
+    // Chrome adds only what the tab-capture fallback needs (#128): the
+    // `tabCapture` stream id and the offscreen document that opens it.
+    expect(m.permissions).toEqual(t === "chrome" ? ["storage", "sidePanel", "tabCapture", "offscreen"] : ["storage"]);
     expect(m.host_permissions).toEqual([...MEETING_MATCHES, APP_MATCH]);
     expect(JSON.stringify(m)).not.toMatch(/<all_urls>|\*:\/\/\*\/|https?:\/\/\*\//);
   });
@@ -89,10 +91,20 @@ describe.each(["chrome", "firefox"] as const)("manifest.%s.json", (t) => {
       expect(parseInt(gecko.strict_min_version, 10)).toBeGreaterThanOrEqual(128);
       expect(m.background).toEqual({ scripts: ["background.js"] });
     });
+
+    it("sets its own extension CSP: Firefox's MV3 default upgrades ws://127.0.0.1 (spike #104)", () => {
+      const csp = (m.content_security_policy as { extension_pages: string }).extension_pages;
+      expect(csp).toBe("script-src 'self'");
+      expect(csp).not.toMatch(/upgrade-insecure-requests/);
+    });
   } else {
     it("needs Chrome >= 116 (side panel on the toolbar button) and uses a service worker", () => {
       expect(parseInt(m.minimum_chrome_version as string, 10)).toBeGreaterThanOrEqual(116);
       expect(m.background).toEqual({ service_worker: "background.js" });
+    });
+
+    it("asks for structured-clone messaging (binary audio to the background, Chrome >= 148)", () => {
+      expect(m.message_serialization).toBe("structured_clone");
     });
   }
 });

@@ -24,6 +24,8 @@ import { companionFileName, progressFraction, progressLabel } from "../lib/recip
 import type { Item, Recipe, RecipeFinished, RecipeProgress, RecipeRunStatus, SubtitlesStatus } from "../lib/types";
 import { useExternalConsent } from "./ConsentDialog";
 import { Markdown } from "./Markdown";
+import { SpeakerPanel } from "./SpeakerPanel";
+import { speakersEnabled } from "../lib/speakers";
 
 const PROFILE_KEY = "askProfile";
 
@@ -67,8 +69,9 @@ export type ContextStatus = "idle" | "running" | "answer";
 
 const KIND_NOUN: Record<string, string> = { note: "note", meeting: "meeting", transcription: "transcription" };
 
-/** The document pane's context pane (plan §9): *Ask* (#121) and *Export*;
- *  *Speakers* joins in 0.9. Below ~1000 px it is a drawer. */
+/** The document pane's context pane (plan §9): *Speakers* (#130, behind
+ *  the 0.9 preview), *Ask* (#121) and *Export*. Below ~1000 px it is a
+ *  drawer. */
 export function ContextPane({
   ctl,
   item,
@@ -78,9 +81,12 @@ export function ContextPane({
   onStatus,
   onDocsChanged,
   onOpenDocument,
+  onItem,
 }: {
   ctl: Ctl;
   item: Item;
+  /** A speaker edit returned the updated item (#130). */
+  onItem: (item: Item) => void;
   /** Laid out as a drawer (narrow window). */
   drawer: boolean;
   /** The drawer is open (ignored when not a drawer). */
@@ -169,6 +175,7 @@ export function ContextPane({
   const blocked = askBlocked(item, settings.llm_profiles);
   const busy = !!state.run;
   const noun = KIND_NOUN[item.meta.type] ?? "document";
+  const showSpeakers = speakersEnabled(settings, item);
 
   const dropAnswer = () => {
     const a = state.answer;
@@ -295,7 +302,7 @@ export function ContextPane({
       ref={paneRef}
       className={`ctx${drawer ? " drawer" : ""}${drawer && open ? " open" : ""}`}
       id="ctx-pane"
-      aria-label="Ask and export"
+      aria-label={showSpeakers ? "Speakers, ask and export" : "Ask and export"}
       tabIndex={-1}
       onKeyDown={(e) => {
         if (drawer && e.key === "Escape") {
@@ -306,14 +313,14 @@ export function ContextPane({
     >
       {drawer && (
         <div className="ctx-drawer-head">
-          <span>Ask · Export</span>
+          <span>{showSpeakers ? "Speakers · Ask · Export" : "Ask · Export"}</span>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close the panel" title="Close (Esc)">
             ✕
           </button>
         </div>
       )}
 
-      {/* Speakers (0.9) goes above Ask. */}
+      {showSpeakers && <SpeakerPanel ctl={ctl} item={item} onItem={onItem} />}
 
       <section className="ctx-sect" aria-labelledby="ctx-ask-h">
         <h3 id="ctx-ask-h">Ask</h3>

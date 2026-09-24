@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { CHANNEL, FRAME_HEADER, PROTOCOL_VERSION, SeqCounter, decodeFrame, encodeFrame, floatToPcm16, rms16, toPcm16 } from "./frame";
+import { CHANNEL, FRAME_HEADER, SeqCounter, decodeFrame, encodeFrame, floatToPcm16, rms16, toPcm16 } from "./frame";
 
 const protocolRs = readFileSync(fileURLToPath(new URL("../../../sussurro/src-tauri/src/api/protocol.rs", import.meta.url)), "utf8");
 
@@ -12,8 +12,7 @@ describe("the app's /live protocol (sussurro/src-tauri/src/api/protocol.rs)", ()
     expect(protocolRs).toMatch(/1 => Some\(Channel::Remote\)/);
   });
 
-  it("speaks the same protocol version and header size", () => {
-    expect(protocolRs).toContain(`pub const PROTOCOL_VERSION: u32 = ${PROTOCOL_VERSION};`);
+  it("uses the same header size", () => {
     expect(protocolRs).toContain(`pub const FRAME_HEADER: usize = ${FRAME_HEADER};`);
   });
 });

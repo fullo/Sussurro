@@ -1,101 +1,91 @@
-/* Pairing with the local app and the "is the app there?" check. Pure —
- * unit tested; the I/O (storage, fetch) lives in the background.
- *
- * The pairing flow (#127: token generated in the app, pasted into the
- * options page) stores `{port, token}` under `storage.local["pairing"]`.
- * Until then the side panel shows "not paired". */
+/* Pairing with the Sussurro app (#127, E6): where the extension keeps the
+   local API port and the extension token, and how it reaches the app.
 
-import { PROTOCOL_VERSION } from "./frame";
+   Every entry point reads the pairing through this module — the options page
+   writes it, the background worker (#128) and the side panel read it — so the
+   `storage.local` keys are defined only here.
 
-/** `storage.local` key holding the {@link Pairing}. */
-export const PAIRING_KEY = "pairing";
-/** The app's default local API port (`Settings.api_port`). */
+   The token is a secret: never log it, never put it in an error message.
+   It travels only in the `Authorization` header (HTTP) and in the `/live`
+   WebSocket URL (see `liveUrl`), which must not be logged either. */
+import browser from "webextension-polyfill";
+import { normalizeToken, parsePort, type Pairing } from "@sussurro/pairing";
+
+export {
+  encodePairingCode,
+  maskToken,
+  parsePairingCode,
+  validatePairing,
+} from "@sussurro/pairing";
+export type { Pairing, Parsed } from "@sussurro/pairing";
+
+/** `storage.local` keys of the pairing. */
+export const PAIRING_KEYS = { port: "port", token: "token" } as const;
+
+/** The app's default local API port (`Settings::api_port`). */
 export const DEFAULT_PORT = 4525;
 
-export interface Pairing {
-  port: number;
-  /** The extension token (64 hex characters from the app). */
-  token: string;
+/** Protocol spoken with the app (`api::protocol::PROTOCOL_VERSION`, returned
+ *  by `GET /app/version`). The extension refuses to run against another. */
+export const PROTOCOL_VERSION = 1;
+
+/** The subset of `storage.local` used here (injectable for tests). */
+export interface PairingStorage {
+  get(keys: string[]): Promise<Record<string, unknown>>;
+  set(items: Record<string, unknown>): Promise<void>;
+  remove(keys: string[]): Promise<void>;
 }
 
-/** A stored value → a usable pairing, or null (not paired, or garbage). */
-export function parsePairing(raw: unknown): Pairing | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const token = typeof r.token === "string" ? r.token.trim() : "";
-  if (!token || /\s/.test(token)) return null;
-  const port = r.port === undefined ? DEFAULT_PORT : Number(r.port);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
-  return { port, token };
+const local = (): PairingStorage => browser.storage.local;
+
+/** The pairing in stored items, or null when missing or invalid. Pure. */
+export function pairingFromItems(items: Record<string, unknown>): Pairing | null {
+  const rawPort = items[PAIRING_KEYS.port];
+  const rawToken = items[PAIRING_KEYS.token];
+  const port = typeof rawPort === "number" || typeof rawPort === "string" ? parsePort(rawPort) : null;
+  const token = typeof rawToken === "string" ? normalizeToken(rawToken) : null;
+  return port !== null && token !== null ? { port, token } : null;
 }
 
-/** `GET /app/version`: the handshake (needs `Authorization: Bearer`). */
-export function versionUrl(p: Pairing): string {
-  return `http://127.0.0.1:${p.port}/app/version`;
+export async function getPairing(storage: PairingStorage = local()): Promise<Pairing | null> {
+  return pairingFromItems(await storage.get([PAIRING_KEYS.port, PAIRING_KEYS.token]));
 }
 
-/** `WS /live`: browsers can't set headers on a WebSocket, hence `?token=`. */
+/** Save a pairing (validated again: a bad one is refused, never stored). */
+export async function setPairing(p: Pairing, storage: PairingStorage = local()): Promise<Pairing> {
+  const pairing = pairingFromItems({ [PAIRING_KEYS.port]: p.port, [PAIRING_KEYS.token]: p.token });
+  if (!pairing) throw new Error("Invalid pairing: check the port and the token.");
+  await storage.set({ [PAIRING_KEYS.port]: pairing.port, [PAIRING_KEYS.token]: pairing.token });
+  return pairing;
+}
+
+export async function clearPairing(storage: PairingStorage = local()): Promise<void> {
+  await storage.remove([PAIRING_KEYS.port, PAIRING_KEYS.token]);
+}
+
+/** Call `cb` with the new pairing (or null) whenever it changes in
+ *  `storage.local`. Returns the unsubscribe function. */
+export function onPairingChanged(cb: (p: Pairing | null) => void): () => void {
+  const listener = (changes: Record<string, unknown>, area: string) => {
+    if (area !== "local") return;
+    if (!(PAIRING_KEYS.port in changes) && !(PAIRING_KEYS.token in changes)) return;
+    getPairing().then(cb, () => cb(null));
+  };
+  browser.storage.onChanged.addListener(listener);
+  return () => browser.storage.onChanged.removeListener(listener);
+}
+
+/** `http://127.0.0.1:<port><path>` — loopback only, like the app's bind. */
+export function appUrl(port: number, path: string): string {
+  return `http://127.0.0.1:${port}${path}`;
+}
+
+/** The `/live` WebSocket URL (#128). Carries the token: never log it. */
 export function liveUrl(p: Pairing): string {
   return `ws://127.0.0.1:${p.port}/live?token=${encodeURIComponent(p.token)}`;
 }
 
-/** Outcome of the app check, as the side panel words it. */
-export type AppCheck =
-  | { ok: true; app: string }
-  | { ok: false; reason: AppProblem; detail?: string };
-
-export type AppProblem =
-  /** No pairing stored yet. */
-  | "not-paired"
-  /** Nothing answers on the port (connection refused / timeout). */
-  | "not-running"
-  /** 404: the app runs but meetings are off (`meetings_enabled`), or it is too old. */
-  | "meetings-disabled"
-  /** 401: wrong or regenerated token. */
-  | "bad-token"
-  /** 403: the app refused this extension's origin. */
-  | "forbidden"
-  /** Another `/live` protocol version. */
-  | "protocol-mismatch"
-  /** Anything else (5xx, garbage). */
-  | "error";
-
-/** Problems a retry won't fix: stop reconnecting and tell the user. */
-export function isFatal(p: AppProblem): boolean {
-  return p !== "not-running" && p !== "error";
-}
-
-/** Classify a `GET /app/version` result. `status` null = the fetch itself
- *  failed (network error: the app is not running). */
-export function classifyVersion(status: number | null, body: unknown): AppCheck {
-  if (status === null) return { ok: false, reason: "not-running" };
-  if (status === 401) return { ok: false, reason: "bad-token" };
-  if (status === 403) return { ok: false, reason: "forbidden" };
-  if (status === 404) return { ok: false, reason: "meetings-disabled" };
-  if (status !== 200) return { ok: false, reason: "error", detail: `HTTP ${status}` };
-  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
-  if (b.protocol !== PROTOCOL_VERSION) {
-    return { ok: false, reason: "protocol-mismatch", detail: `app speaks protocol ${String(b.protocol)}, extension ${PROTOCOL_VERSION}` };
-  }
-  return { ok: true, app: typeof b.app === "string" ? b.app : "?" };
-}
-
-/** One line for the side panel. */
-export function problemText(p: AppProblem): string {
-  switch (p) {
-    case "not-paired":
-      return "Not paired with the Sussurro app. Pair it in the extension options.";
-    case "not-running":
-      return "The Sussurro app is not running (or listens on another port).";
-    case "meetings-disabled":
-      return "Meeting capture is turned off in the Sussurro app.";
-    case "bad-token":
-      return "The app refused the extension token. Pair the extension again.";
-    case "forbidden":
-      return "The app refused this browser extension.";
-    case "protocol-mismatch":
-      return "This extension and the Sussurro app are different versions. Update both.";
-    case "error":
-      return "The Sussurro app answered with an error.";
-  }
+/** `Authorization` header of the token routes. */
+export function authHeaders(p: Pairing): Record<string, string> {
+  return { Authorization: `Bearer ${p.token}` };
 }

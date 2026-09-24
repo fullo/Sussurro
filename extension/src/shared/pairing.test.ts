@@ -1,69 +1,117 @@
-import { describe, expect, it } from "vitest";
-import { backoffDelay, RECONNECT } from "./backoff";
-import { DEFAULT_PORT, classifyVersion, isFatal, liveUrl, parsePairing, problemText, versionUrl } from "./pairing";
+import { describe, expect, it, vi } from "vitest";
 
-const TOKEN = "ab".repeat(32);
+// The polyfill refuses to load outside an extension. The storage area is
+// injected in most tests; the default one (for onPairingChanged) is fixed.
+const { listeners } = vi.hoisted(() => ({
+  listeners: [] as ((changes: Record<string, unknown>, area: string) => void)[],
+}));
+vi.mock("webextension-polyfill", () => ({
+  default: {
+    storage: {
+      local: { get: async () => ({ port: 4525, token: "0123456789abcdef".repeat(4) }) },
+      onChanged: {
+        addListener: (l: (typeof listeners)[number]) => listeners.push(l),
+        removeListener: (l: (typeof listeners)[number]) => listeners.splice(listeners.indexOf(l), 1),
+      },
+    },
+  },
+}));
 
-describe("parsePairing", () => {
-  it("reads {port, token}, defaulting the port to the app's", () => {
-    expect(parsePairing({ port: 5000, token: ` ${TOKEN} ` })).toEqual({ port: 5000, token: TOKEN });
-    expect(parsePairing({ token: TOKEN })).toEqual({ port: DEFAULT_PORT, token: TOKEN });
-    expect(parsePairing({ port: "4600", token: TOKEN })).toEqual({ port: 4600, token: TOKEN });
+const {
+  PAIRING_KEYS,
+  authHeaders,
+  appUrl,
+  clearPairing,
+  encodePairingCode,
+  getPairing,
+  liveUrl,
+  pairingFromItems,
+  parsePairingCode,
+  setPairing,
+} = await import("./pairing");
+type PairingStorage = import("./pairing").PairingStorage;
+
+const TOKEN = "0123456789abcdef".repeat(4);
+
+/** An in-memory `storage.local`. */
+function memoryStorage(initial: Record<string, unknown> = {}): PairingStorage & { items: Record<string, unknown> } {
+  const items = { ...initial };
+  return {
+    items,
+    async get(keys) {
+      return Object.fromEntries(keys.filter((k) => k in items).map((k) => [k, items[k]]));
+    },
+    async set(next) {
+      Object.assign(items, next);
+    },
+    async remove(keys) {
+      for (const k of keys) delete items[k];
+    },
+  };
+}
+
+describe("storage", () => {
+  it("round-trips a pairing under the shared keys", async () => {
+    const s = memoryStorage();
+    expect(await getPairing(s)).toBeNull();
+    await setPairing({ port: 4525, token: TOKEN }, s);
+    expect(s.items).toEqual({ [PAIRING_KEYS.port]: 4525, [PAIRING_KEYS.token]: TOKEN });
+    expect(PAIRING_KEYS).toEqual({ port: "port", token: "token" });
+    expect(await getPairing(s)).toEqual({ port: 4525, token: TOKEN });
+    await clearPairing(s);
+    expect(s.items).toEqual({});
+    expect(await getPairing(s)).toBeNull();
   });
 
-  it("treats anything else as not paired", () => {
-    for (const bad of [undefined, null, "x", {}, { token: "" }, { token: "a b" }, { token: TOKEN, port: 0 }, { token: TOKEN, port: 70000 }, { token: TOKEN, port: 1.5 }]) {
-      expect(parsePairing(bad)).toBeNull();
-    }
+  it("normalizes on save and refuses an invalid pairing", async () => {
+    const s = memoryStorage();
+    expect(await setPairing({ port: 4525, token: ` ${TOKEN.toUpperCase()} ` }, s)).toEqual({ port: 4525, token: TOKEN });
+    expect(s.items.token).toBe(TOKEN);
+    const before = { ...s.items };
+    await expect(setPairing({ port: 0, token: TOKEN }, s)).rejects.toThrow(/Invalid pairing/);
+    await expect(setPairing({ port: 4525, token: "short" }, s)).rejects.toThrow(/Invalid pairing/);
+    expect(s.items).toEqual(before);
+  });
+
+  it("treats damaged or partial storage as not paired", () => {
+    expect(pairingFromItems({})).toBeNull();
+    expect(pairingFromItems({ port: 4525 })).toBeNull();
+    expect(pairingFromItems({ token: TOKEN })).toBeNull();
+    expect(pairingFromItems({ port: 4525, token: "x" })).toBeNull();
+    expect(pairingFromItems({ port: 99999, token: TOKEN })).toBeNull();
+    expect(pairingFromItems({ port: { n: 1 }, token: TOKEN })).toBeNull();
+    expect(pairingFromItems({ port: "4525", token: TOKEN })).toEqual({ port: 4525, token: TOKEN });
+  });
+
+  it("notifies pairing changes in storage.local only", async () => {
+    const { onPairingChanged } = await import("./pairing");
+    const seen: unknown[] = [];
+    const off = onPairingChanged((p) => seen.push(p));
+    expect(listeners).toHaveLength(1);
+    listeners[0]({ other: {} }, "local");
+    listeners[0]({ token: {} }, "sync");
+    expect(seen).toEqual([]);
+    listeners[0]({ token: {} }, "local");
+    await vi.waitFor(() => expect(seen).toEqual([{ port: 4525, token: TOKEN }]));
+    off();
+    expect(listeners).toHaveLength(0);
   });
 });
 
-it("builds loopback URLs, the token only in the WebSocket query", () => {
-  const p = { port: 4525, token: "a+b/c" };
-  expect(versionUrl(p)).toBe("http://127.0.0.1:4525/app/version");
-  expect(liveUrl(p)).toBe("ws://127.0.0.1:4525/live?token=a%2Bb%2Fc");
-});
-
-describe("classifyVersion", () => {
-  it("accepts the same protocol", () => {
-    expect(classifyVersion(200, { app: "0.9.0", protocol: 1 })).toEqual({ ok: true, app: "0.9.0" });
-  });
-
-  it("tells the failures apart", () => {
-    const reason = (s: number | null, b: unknown = null) => {
-      const r = classifyVersion(s, b);
-      return r.ok ? "ok" : r.reason;
-    };
-    expect(reason(null)).toBe("not-running");
-    expect(reason(401)).toBe("bad-token");
-    expect(reason(403)).toBe("forbidden");
-    expect(reason(404)).toBe("meetings-disabled");
-    expect(reason(500)).toBe("error");
-    expect(reason(200, { app: "1.0.0", protocol: 2 })).toBe("protocol-mismatch");
-    expect(reason(200, "garbage")).toBe("protocol-mismatch");
-  });
-
-  it("retries only what may fix itself", () => {
-    expect(isFatal("not-running")).toBe(false);
-    expect(isFatal("error")).toBe(false);
-    for (const p of ["not-paired", "bad-token", "forbidden", "meetings-disabled", "protocol-mismatch"] as const) {
-      expect(isFatal(p)).toBe(true);
-      expect(problemText(p)).toBeTruthy();
-    }
+describe("the pairing code the app copies", () => {
+  it("parses into what setPairing stores", async () => {
+    const parsed = parsePairingCode(encodePairingCode({ port: 5000, token: TOKEN }));
+    expect(parsed.ok).toBe(true);
+    const s = memoryStorage();
+    if (parsed.ok) await setPairing(parsed.value, s);
+    expect(await getPairing(s)).toEqual({ port: 5000, token: TOKEN });
   });
 });
 
-describe("backoffDelay", () => {
-  it("grows exponentially between half and all of the ceiling", () => {
-    expect(backoffDelay(1, RECONNECT, () => 0)).toBe(250);
-    expect(backoffDelay(1, RECONNECT, () => 1)).toBe(500);
-    expect(backoffDelay(2, RECONNECT, () => 1)).toBe(1000);
-    expect(backoffDelay(4, RECONNECT, () => 0.5)).toBe(3000);
-  });
-
-  it("is capped and tolerates odd input", () => {
-    expect(backoffDelay(50, RECONNECT, () => 1)).toBe(RECONNECT.maxMs);
-    expect(backoffDelay(0, RECONNECT, () => 1)).toBe(500);
-    expect(backoffDelay(3, RECONNECT, () => 7)).toBe(2000);
+describe("URLs and headers", () => {
+  it("target the loopback address only", () => {
+    expect(appUrl(4525, "/app/version")).toBe("http://127.0.0.1:4525/app/version");
+    expect(liveUrl({ port: 4525, token: TOKEN })).toBe(`ws://127.0.0.1:4525/live?token=${TOKEN}`);
+    expect(authHeaders({ port: 4525, token: TOKEN })).toEqual({ Authorization: `Bearer ${TOKEN}` });
   });
 });

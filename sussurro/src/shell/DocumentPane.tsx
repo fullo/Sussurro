@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TranscriptView, toLines } from "@sussurro/transcript";
+import { speakersEnabled } from "../lib/speakers";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, formatDurationLabel, formatLongDate, parseDuration } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
 import { hasParticipants } from "../lib/participants";
+import { peopleSuggestions, personFromParticipant } from "../lib/people";
+import { usePeople } from "../hooks/usePeople";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
-import type { Item, ItemMeta } from "../lib/types";
+import type { Item, ItemMeta, Participant } from "../lib/types";
 import { ChipEditor } from "./ChipEditor";
 import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
 import { DocumentTab } from "./DocumentTab";
@@ -49,6 +52,7 @@ export function DocumentPane({
   const [ctxStatus, setCtxStatus] = useState<ContextStatus>("idle");
   const ctxToggleRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  const { people, reload: reloadPeople } = usePeople();
 
   const load = async () => {
     try {
@@ -105,6 +109,16 @@ export function DocumentPane({
     }
   };
 
+  const addToPeople = async (p: Participant) => {
+    try {
+      await invoke("people_add", { person: personFromParticipant(p) });
+      reloadPeople();
+      ctl.flash(`${p.name} added to People.`, 3000);
+    } catch (e) {
+      ctl.setBusy(String(e));
+    }
+  };
+
   const commitTitle = () => {
     const t = title.trim();
     if (!t) {
@@ -139,9 +153,23 @@ export function DocumentPane({
     }
   };
 
+  const moveLine = async (segmentId: number, speakerId: string) => {
+    try {
+      const updated = await invoke<Item>("archive_move_segment_speaker", { id, segmentId, speakerId });
+      setItem(updated);
+      onChanged();
+    } catch (e) {
+      ctl.setBusy(String(e));
+      load();
+    }
+  };
+
   const reveal = () => invoke("archive_reveal", { id }).catch((e) => ctl.setBusy(String(e)));
 
-  const lines = toLines(item.segments.segments);
+  // Speaker chips and "Move to speaker" are part of the 0.9 preview (#130).
+  const showSpeakers = speakersEnabled(ctl.settings, item);
+  const docSpeakers = showSpeakers ? item.segments.speakers : undefined;
+  const lines = toLines(item.segments.segments, docSpeakers);
   const editable = !item.edited_externally && !item.recording;
   const duration = formatDurationLabel(parseDuration(meta.duration));
   const facts = [
@@ -209,7 +237,7 @@ export function DocumentPane({
               aria-controls="ctx-pane"
               onClick={() => setCtxOpen((o) => !o)}
             >
-              Ask · Export
+              {showSpeakers ? "Speakers · Ask · Export" : "Ask · Export"}
               {ctxStatus !== "idle" && (
                 <span
                   className={`ctx-dot ${ctxStatus}`}
@@ -259,6 +287,9 @@ export function DocumentPane({
               disabled={!!item.recording}
               values={meta.participants}
               onChange={(participants) => saveMeta({ ...meta, participants })}
+              suggestions={peopleSuggestions(people)}
+              people={people}
+              onAddToPeople={addToPeople}
             />
           </>
         )}
@@ -304,6 +335,8 @@ export function DocumentPane({
             editable={editable}
             onEdit={editLine}
             onDelete={deleteLine}
+            speakers={docSpeakers && docSpeakers.length > 0 ? docSpeakers : undefined}
+            onMoveSpeaker={moveLine}
             label={`Transcript of ${meta.title}`}
           />
         ) : item.body.trim() ? (
@@ -368,6 +401,10 @@ export function DocumentPane({
         onChanged();
       }}
       onOpenDocument={openDocument}
+      onItem={(updated) => {
+        setItem(updated);
+        onChanged();
+      }}
     />
     </div>
   );

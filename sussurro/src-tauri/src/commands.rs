@@ -70,34 +70,53 @@ pub async fn credential_store_status() -> Result<crate::secrets::StoreStatus, St
 }
 
 /// The browser extension's pairing token (#126, E6), created on first use.
-/// The pairing UI (#127) shows it for copying into the extension.
+/// Settings → Browser extension (#127) copies it into the pairing code.
 #[tauri::command]
 pub fn extension_token_get(state: State<'_, AppState>) -> Result<String, String> {
-    if let Some(t) = Some(state.settings.lock().unwrap().extension_token.clone())
-        .filter(|t| !t.trim().is_empty())
-    {
-        return Ok(t);
-    }
-    set_extension_token(&state)
+    current_or_new_token(&state.settings, &state.paths.settings_file)
 }
 
 /// Replace the extension token: a paired extension must be paired again.
+/// The local API reads the token on every request, so the old one stops
+/// working at once.
 #[tauri::command]
 pub fn extension_token_regenerate(state: State<'_, AppState>) -> Result<String, String> {
-    set_extension_token(&state)
+    replace_extension_token(&state.settings, &state.paths.settings_file)
+}
+
+/// The current token, or a fresh (saved) one when none exists yet.
+fn current_or_new_token(
+    settings: &std::sync::Mutex<Settings>,
+    file: &std::path::Path,
+) -> Result<String, String> {
+    let current = settings.lock().unwrap().extension_token.clone();
+    if !current.trim().is_empty() {
+        return Ok(current);
+    }
+    replace_extension_token(settings, file)
 }
 
 /// A fresh token, saved; on a failed save the old one stays in effect.
-fn set_extension_token(state: &AppState) -> Result<String, String> {
-    let mut settings = state.settings.lock().unwrap();
+fn replace_extension_token(
+    settings: &std::sync::Mutex<Settings>,
+    file: &std::path::Path,
+) -> Result<String, String> {
+    let mut settings = settings.lock().unwrap();
     let mut next = settings.clone();
     let token = next
         .regenerate_extension_token()
         .map_err(|e| e.to_string())?;
-    next.save(&state.paths.settings_file)
-        .map_err(|e| e.to_string())?;
+    next.save(file).map_err(|e| e.to_string())?;
     settings.extension_token = token.clone();
     Ok(token)
+}
+
+/// Whether the local API is listening, and on which port (#127). Its
+/// settings apply at startup, so Settings → Browser extension compares
+/// this with them to tell when a restart is needed.
+#[tauri::command]
+pub fn local_api_status() -> crate::api::ListenState {
+    crate::api::listen_state()
 }
 
 /// Drive dictation from the in-app Dictate button: mirrors the global hotkey
@@ -307,10 +326,23 @@ pub fn learn_correction(
 }
 
 /// Write the portable config (dictionary, snippets, app styles) to `path`.
+///
+/// The People registry (#132) holds other people's emails, so it is left
+/// out unless `include_people` is explicitly true.
 #[tauri::command]
-pub fn export_config(state: State<'_, AppState>, path: String) -> Result<(), String> {
+pub fn export_config(
+    state: State<'_, AppState>,
+    path: String,
+    include_people: Option<bool>,
+) -> Result<(), String> {
     let settings = state.settings.lock().unwrap().clone();
-    crate::config_io::export_to(std::path::Path::new(&path), &settings)
+    let persons = if include_people == Some(true) {
+        let (dir, _) = archive_paths(&state)?;
+        crate::archive::people::list_people(&dir).map_err(|e| format!("{e:#}"))?
+    } else {
+        Vec::new()
+    };
+    crate::config_io::export_to(std::path::Path::new(&path), &settings, &persons)
         .map_err(|e| e.to_string())
 }
 
@@ -369,7 +401,17 @@ pub fn import_config(state: State<'_, AppState>, path: String) -> Result<String,
             .map_err(|e| e.to_string())?;
         counts
     };
-    Ok(format!("Imported {w} words, {sn} snippets, {st} app styles"))
+    let mut msg = format!("Imported {w} words, {sn} snippets, {st} app styles");
+    // People travel only in a bundle exported with them (#132).
+    if !bundle.people.is_empty() {
+        let (dir, _) = archive_paths(&state)?;
+        let added = crate::archive::people::modify(&dir, |ps| {
+            Ok(crate::archive::people::import_people(ps, &bundle.people))
+        })
+        .map_err(|e| format!("{msg}, but People could not be imported: {e:#}"))?;
+        msg.push_str(&format!(", {added} people"));
+    }
+    Ok(msg)
 }
 
 // ---- Long-form engine (0.7, #113): mic sessions and files → archive items ----
@@ -962,11 +1004,12 @@ pub async fn archive_search(
 #[tauri::command]
 pub async fn archive_get(state: State<'_, AppState>, id: String) -> Result<Item, String> {
     let (dir, _) = archive_paths(&state)?;
-    blocking(move || archive::read_item(&dir, &id)).await
+    blocking(move || archive::read_item(&dir, &id).map(Item::without_embeddings)).await
 }
 
 /// Replace an item's frontmatter; returns the updated item. Participants
-/// are refused on notes (P10, see `archive::update_meta`).
+/// are refused on notes (P10, see `archive::update_meta`); new participants
+/// are linked to the People registry (`archive::people::link_on_save`).
 #[tauri::command]
 pub async fn archive_update_meta(
     state: State<'_, AppState>,
@@ -975,12 +1018,16 @@ pub async fn archive_update_meta(
 ) -> Result<Item, String> {
     let (dir, db) = archive_paths(&state)?;
     let always = subtitles_always(&state);
+    let mut meta = meta;
     blocking(move || {
+        // New participants whose name matches the People registry get the
+        // person's email (#132).
+        archive::people::link_on_save(&dir, &id, &mut meta);
         let item = archive::update_meta(&dir, &id, &meta)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         // Speaker labels and the item type shape the subtitles too.
         refresh_subtitles_if(always, &dir, &id);
-        Ok(item)
+        Ok(item.without_embeddings())
     })
     .await
 }
@@ -1024,7 +1071,68 @@ async fn edit_segment_command(
         let item = archive::edit_segment(&dir, &id, segment_id, edit)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         refresh_subtitles_if(always, &dir, &id);
-        Ok(item)
+        Ok(item.without_embeddings())
+    })
+    .await
+}
+
+/// Speaker panel (#130): move one line to another speaker of the item —
+/// an existing speaker id, or `voice:new` for a new "Voice N". Returns the
+/// updated item. Same rules as a line edit (refused when edited outside
+/// or still being recorded).
+#[tauri::command]
+pub async fn archive_move_segment_speaker(
+    state: State<'_, AppState>,
+    id: String,
+    segment_id: u32,
+    speaker_id: String,
+) -> Result<Item, String> {
+    let edit = archive::SpeakerEdit::Move {
+        segment_id,
+        speaker_id,
+    };
+    edit_speakers_command(&state, id, edit).await
+}
+
+/// Speaker panel (#130): rename a speaker for this item only (an empty
+/// label gives a voice back its "Voice N" name). Returns the updated item.
+#[tauri::command]
+pub async fn archive_rename_speaker(
+    state: State<'_, AppState>,
+    id: String,
+    speaker_id: String,
+    label: String,
+) -> Result<Item, String> {
+    let edit = archive::SpeakerEdit::Rename { speaker_id, label };
+    edit_speakers_command(&state, id, edit).await
+}
+
+/// Speaker panel (#130): "Re-detect speakers" — re-cluster the whole item
+/// offline from the embeddings stored with its lines. Returns the updated
+/// item; refused when no line has voice data.
+#[tauri::command]
+pub async fn archive_redetect_speakers(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Item, String> {
+    edit_speakers_command(&state, id, archive::SpeakerEdit::Redetect).await
+}
+
+async fn edit_speakers_command(
+    state: &AppState,
+    id: String,
+    edit: archive::SpeakerEdit,
+) -> Result<Item, String> {
+    let (dir, db) = archive_paths(state)?;
+    let journal = crate::engine::session::journal_path(state);
+    let always = subtitles_always(state);
+    blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        let item = archive::edit_speakers(&dir, &id, edit)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        // Speaker names and moves change the subtitles too.
+        refresh_subtitles_if(always, &dir, &id);
+        Ok(item.without_embeddings())
     })
     .await
 }
@@ -1130,6 +1238,70 @@ pub async fn archive_create_subtitles(
         archive::export::create_subtitles(&dir, &id)
     })
     .await
+}
+
+// ---- People registry (0.9, #132): names, emails and aliases ----
+//
+// The registry holds other people's emails: nothing here logs it, and it
+// never goes into diagnostics.
+
+use crate::archive::people::{self, Person};
+
+/// Every person, sorted by name. An error when `people.json` can't be read
+/// (the screen says so instead of showing an empty list).
+#[tauri::command]
+pub async fn people_list(state: State<'_, AppState>) -> Result<Vec<Person>, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::list_people(&dir)).await
+}
+
+/// "Appears in N items" per person id, from the search index (synced with
+/// the folder first).
+#[tauri::command]
+pub async fn people_usage(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, usize>, String> {
+    let (dir, db) = archive_paths(&state)?;
+    blocking(move || {
+        let persons = people::read_people(&dir);
+        let rows = archive::with_index(&dir, &db, |idx| idx.participant_rows())?;
+        Ok(people::usage(&persons, &rows))
+    })
+    .await
+}
+
+/// Add a person (the id is assigned); returns it as stored. Refused when
+/// the name or the email is already in the registry.
+#[tauri::command]
+pub async fn people_add(state: State<'_, AppState>, person: Person) -> Result<Person, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::modify(&dir, |ps| people::add_person(ps, &person))).await
+}
+
+/// Replace a person (matched by id); returns it as stored. Existing items
+/// are not changed.
+#[tauri::command]
+pub async fn people_update(state: State<'_, AppState>, person: Person) -> Result<Person, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::modify(&dir, |ps| people::update_person(ps, &person))).await
+}
+
+/// Remove a person. Existing items keep their participants and emails.
+#[tauri::command]
+pub async fn people_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::modify(&dir, |ps| people::delete_person(ps, &id))).await
+}
+
+/// Merge duplicates `from` into `into`; returns the merged person.
+#[tauri::command]
+pub async fn people_merge(
+    state: State<'_, AppState>,
+    into: String,
+    from: Vec<String>,
+) -> Result<Person, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::modify(&dir, |ps| people::merge_people(ps, &into, &from))).await
 }
 
 // ---- Recipes (0.8, #120): prompts that write companion documents ----
@@ -1597,5 +1769,52 @@ mod recipe_tests {
         assert!(consent_for(&store, "2026/09/b", &recipe, &work, Some(&token)).is_err(), "bound to the item");
         let local = LlmProfile::default();
         assert!(consent_for(&store, "2026/09/a", &recipe, &local, None).unwrap().is_none());
+    }
+}
+
+#[cfg(test)]
+mod extension_token_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    fn saved_token(file: &std::path::Path) -> String {
+        Settings::load(file).extension_token
+    }
+
+    #[test]
+    fn the_token_is_created_once_and_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let first = current_or_new_token(&settings, &file).unwrap();
+        assert_eq!(first.len(), 64);
+        assert_eq!(saved_token(&file), first);
+        assert_eq!(current_or_new_token(&settings, &file).unwrap(), first, "stable once created");
+    }
+
+    #[test]
+    fn regenerating_replaces_the_old_token_in_memory_and_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let old = current_or_new_token(&settings, &file).unwrap();
+        let new = replace_extension_token(&settings, &file).unwrap();
+        assert_ne!(old, new);
+        assert_eq!(settings.lock().unwrap().extension_token, new);
+        assert_eq!(saved_token(&file), new);
+        assert_eq!(current_or_new_token(&settings, &file).unwrap(), new);
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_old_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let old = current_or_new_token(&settings, &file).unwrap();
+        // A directory where the file should be: the save fails.
+        let blocked = dir.path().join("blocked");
+        std::fs::create_dir_all(blocked.join("settings.json")).unwrap();
+        assert!(replace_extension_token(&settings, &blocked.join("settings.json")).is_err());
+        assert_eq!(settings.lock().unwrap().extension_token, old);
     }
 }

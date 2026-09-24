@@ -131,7 +131,7 @@ export interface Settings {
    *  every save. Meetings and transcriptions only (P10). */
   subtitles: SubtitlesMode;
   /** 0.9 meetings (#126, E12): the browser-extension routes of the local
-   *  API. Off until 0.9 ships. */
+   *  API, speaker labels and the speaker panel (#130). Off until 0.9 ships. */
   meetings_enabled: boolean;
   /** Browser-extension pairing token (#126); set only by the backend
    *  (`extension_token_get` / `extension_token_regenerate`). */
@@ -139,6 +139,13 @@ export interface Settings {
 }
 
 export type SubtitlesMode = "on_request" | "always";
+
+/** `local_api_status` (#127): whether this run serves the local API. Its
+ *  settings apply at startup, so this can differ from them until a restart. */
+export type ListenState =
+  | { state: "off" }
+  | { state: "listening"; port: number }
+  | { state: "failed"; port: number };
 
 /** What an archive item can be exported as (#133). */
 export type ExportFormat = "md" | "txt" | "srt" | "vtt";
@@ -190,6 +197,16 @@ export interface Participant {
   email?: string;
 }
 
+/** People registry entry (archive/people.rs, #132), stored in
+ *  `<archive>/.sussurro/people.json`. */
+export interface Person {
+  /** "" for a draft not saved yet. */
+  id: string;
+  name: string;
+  email?: string;
+  aliases: string[];
+}
+
 /** Frontmatter of transcript.md. Unknown keys (Obsidian aliases…) ride along
  *  flattened and must be sent back untouched on update. */
 export interface ItemMeta {
@@ -228,9 +245,18 @@ export interface Segment {
   stt_error?: string;
 }
 
+/** A speaker as known to one document (#130): `you`, `meet:<name>` or
+ *  `voice:<n>`, with this document's label and colour. */
+export interface DocSpeaker {
+  id: string;
+  label: string;
+  color: string;
+  person_id?: string;
+}
+
 export interface SegmentsFile {
   version: number;
-  speakers: { id: string; label: string; color: string }[];
+  speakers: DocSpeaker[];
   segments: Segment[];
 }
 
@@ -247,6 +273,9 @@ export interface Item {
   /** Hosts its text was sent to by an external LLM profile (#122); empty =
    *  it never left the machine. */
   external_hosts?: string[];
+  /** Lines with voice data (#130): "Re-detect speakers" needs some. The
+   *  embeddings themselves stay in the backend. */
+  embedded_segments?: number;
 }
 
 export interface ItemSummary {
