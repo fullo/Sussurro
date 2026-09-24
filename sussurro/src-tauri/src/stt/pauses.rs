@@ -111,6 +111,8 @@ impl Energy {
     /// qualifying pause (or no longer than `soft_max_ms`) comes back as one
     /// range. Cuts fall on frame boundaries in the middle of a pause (or at
     /// the quietest frame when `hard_max_ms` forces one).
+    // One range for "no cut" is the intended result, not a mistyped range.
+    #[allow(clippy::single_range_in_vec_init)]
     pub fn split(&self, p: &PauseSplit) -> Vec<Range<usize>> {
         let whole = vec![0..self.len];
         let n = self.rms.len();
@@ -194,15 +196,20 @@ pub fn split_ranges(samples: &[f32], p: &PauseSplit) -> Vec<Range<usize>> {
 }
 
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
 
     /// Synthetic "speech": a loud square wave, and a quiet noise floor.
     fn speech(ms: usize) -> Vec<f32> {
-        (0..ms * 16).map(|i| if (i / 20) % 2 == 0 { 0.2 } else { -0.2 }).collect()
+        (0..ms * 16)
+            .map(|i| if (i / 20) % 2 == 0 { 0.2 } else { -0.2 })
+            .collect()
     }
     fn quiet(ms: usize) -> Vec<f32> {
-        (0..ms * 16).map(|i| if i % 2 == 0 { 3e-4 } else { -3e-4 }).collect()
+        (0..ms * 16)
+            .map(|i| if i % 2 == 0 { 3e-4 } else { -3e-4 })
+            .collect()
     }
     fn build(parts: &[(bool, usize)]) -> Vec<f32> {
         parts
@@ -299,7 +306,10 @@ mod tests {
         assert_tiles(&r, a.len());
         assert!(r.len() >= 2, "{r:?}");
         let (_, first_cut) = secs(&r[0]);
-        assert!((18.0..18.2).contains(&first_cut), "first cut at {first_cut} s");
+        assert!(
+            (18.0..18.2).contains(&first_cut),
+            "first cut at {first_cut} s"
+        );
         let max = frames(PARAKEET.hard_max_ms) * FRAME;
         assert!(r.iter().all(|x| x.len() <= max), "{r:?}");
     }
@@ -309,7 +319,9 @@ mod tests {
         // Background noise at 0.02 RMS (above the dictation gate's 0.01)
         // and speech at 0.2: the threshold follows the buffer.
         let noise = |ms: usize| -> Vec<f32> {
-            (0..ms * 16).map(|i| if i % 2 == 0 { 0.02 } else { -0.02 }).collect()
+            (0..ms * 16)
+                .map(|i| if i % 2 == 0 { 0.02 } else { -0.02 })
+                .collect()
         };
         let mut a = speech(9_000);
         a.extend(noise(800));

@@ -20,7 +20,8 @@ pub const PARAKEET_SHA256: &str =
 /// after a pause. Every caller (hotkey dictation, its live preview, the
 /// local API, engine segments) gets the protection; whisper never splits.
 pub struct ParakeetTranscriber {
-    model: ParakeetModel,
+    /// Boxed: keeps [`super::AnyTranscriber`]'s variants close in size.
+    model: Box<ParakeetModel>,
     /// `None` only in tests and the #194 benchmark (the unsplit baseline).
     split: Option<PauseSplit>,
     /// Model calls so far (the #194 benchmark reports them).
@@ -33,7 +34,7 @@ impl ParakeetTranscriber {
         let model = ParakeetModel::load(model_dir, &Quantization::Int8)
             .map_err(|e| anyhow!("failed to load parakeet model: {e}"))?;
         Ok(Self {
-            model,
+            model: Box::new(model),
             split: Some(pauses::PARAKEET),
             #[cfg(test)]
             decodes: 0,
@@ -196,7 +197,13 @@ mod tests {
             language: None,
         };
         let joined = join_timed(vec![
-            (0, piece("One two.", vec![word("One", 100, 300), word("two.", 400, 700)])),
+            (
+                0,
+                piece(
+                    "One two.",
+                    vec![word("One", 100, 300), word("two.", 400, 700)],
+                ),
+            ),
             (9_500, piece("", vec![])),
             (12_000, piece("Three.", vec![word("Three.", 50, 400)])),
         ]);
@@ -223,14 +230,18 @@ mod tests {
     #[test]
     #[ignore]
     fn parakeet_keeps_sentences_after_a_pause() {
-        let dir = std::env::var("SUSSURRO_TEST_PARAKEET_DIR").expect("set SUSSURRO_TEST_PARAKEET_DIR");
+        let dir =
+            std::env::var("SUSSURRO_TEST_PARAKEET_DIR").expect("set SUSSURRO_TEST_PARAKEET_DIR");
         let wav = std::env::var("SUSSURRO_TEST_WAV").expect("set SUSSURRO_TEST_WAV");
         let tail = std::env::var("SUSSURRO_TEST_TAIL").expect("set SUSSURRO_TEST_TAIL");
         let audio = crate::audio::decode::decode_to_16k_mono(Path::new(&wav)).unwrap();
         let mut t = ParakeetTranscriber::load(Path::new(&dir)).unwrap();
         let text = t.transcribe(&audio).unwrap();
         println!("transcribe: {text}");
-        assert!(words(&text).contains(&words(&tail)), "lost the last sentence: {text}");
+        assert!(
+            words(&text).contains(&words(&tail)),
+            "lost the last sentence: {text}"
+        );
         let timed = t.transcribe_timed(&audio).unwrap();
         println!("transcribe_timed: {}", timed.text);
         assert!(
@@ -293,7 +304,9 @@ mod tests {
         let load_s = started.elapsed().as_secs_f64();
         let detector = || -> Box<dyn SpeechDetector> {
             match &vad {
-                Some(m) => Box::new(crate::engine::vad::SileroDetector::load(Path::new(m)).unwrap()),
+                Some(m) => {
+                    Box::new(crate::engine::vad::SileroDetector::load(Path::new(m)).unwrap())
+                }
                 None => Box::new(EnergyDetector::default()),
             }
         };
@@ -347,7 +360,11 @@ mod tests {
                     _ => {
                         let before = mode == "engine-before";
                         t.split = (!before).then_some(split);
-                        let p = if before { SegmenterParams::default() } else { parakeet };
+                        let p = if before {
+                            SegmenterParams::default()
+                        } else {
+                            parakeet
+                        };
                         let segs = segments(audio, p);
                         t.decodes = 0;
                         let texts: Vec<String> = segs
