@@ -147,6 +147,16 @@ let items: Stored[] = params.get("empty")
 
 const find = (id: string) => items.find((i) => i.id === id);
 
+/** External sends per item id (#122): what `.sussurro/external-log.json`
+ *  records — hosts only here. */
+const externalSends: Record<string, string[]> = {};
+
+/** The item's "sent externally" hosts: its log plus external companions. */
+function hostsOf(id: string): string[] {
+  const fromDocs = (docs[id] ?? []).filter((d) => d.meta.external).map((d) => d.meta.host || "an unknown host");
+  return [...new Set([...(externalSends[id] ?? []), ...fromDocs])].sort();
+}
+
 function toItem(s: Stored): Item {
   const body = `\n# ${s.meta.title}\n\n${s.segments.map((x) => x.text).join(" ")}\n`;
   return {
@@ -157,6 +167,7 @@ function toItem(s: Stored): Item {
     edited_externally: !!s.edited_externally,
     recording: !!s.recording,
     interrupted: !!s.interrupted,
+    external_hosts: hostsOf(s.id),
   };
 }
 
@@ -167,6 +178,7 @@ function toSummary(s: Stored, snippet?: string): ItemSummary {
     edited_externally: !!s.edited_externally,
     recording: !!s.recording,
     interrupted: !!s.interrupted,
+    external_hosts: hostsOf(s.id),
     ...(snippet ? { snippet } : {}),
   };
 }
@@ -413,6 +425,7 @@ function companion(item: Stored, r: Recipe, p: LlmProfile, body: string, date = 
       profile: p.name,
       model: p.model,
       external: p.external,
+      ...(p.external ? { host: hostOf(p) } : {}),
       date,
       transcript: "transcript.md",
     },
@@ -456,6 +469,83 @@ if (!params.get("empty")) {
   docs[onboarding] = [
     companion({ id: onboarding, meta: meta("Idee per l'onboarding", "note", at(0, 8, 40), "", "mic"), segments: [] }, BUILTIN_RECIPES[0], { ...local, model: "qwen3:1.7b" }, ONBOARDING_DOC, at(0, 8, 50)),
   ];
+  // The mock's Library marker (#122): a summary made on the external profile.
+  const podcast = "2026/09/podcast-daruma-ep-12-intervista";
+  const work = settings.llm_profiles.find((p) => p.external)!;
+  const podcastItem = items.find((i) => i.id === podcast);
+  if (podcastItem) {
+    docs[podcast] = [
+      companion(podcastItem, BUILTIN_RECIPES[1], work, "La voce è un dato personale: il podcast spiega perché Sussurro trascrive in locale.\n\n- Un portatile recente trascrive un'ora in pochi minuti.\n- La pulizia con un modello locale è sorprendentemente buona.\n- Licenza AGPL per proteggere il lavoro della comunità.", at(1, 18, 0)),
+    ];
+    externalSends[podcast] = [hostOf(work)];
+  }
+}
+
+/* ---------- privacy gate (#122) ---------- */
+
+function hostOf(p: LlmProfile): string {
+  const s = p.base_url.trim();
+  const rest = s.includes("://") ? s.slice(s.indexOf("://") + 3) : s;
+  return (rest.split(/[/?#]/)[0] ?? "").replace(/^.*@/, "").replace(/:\d+$/, "").toLowerCase();
+}
+
+/** One-time confirmation tokens: what each allows, and when it was issued. */
+const consents: Record<string, { key: string; at: number }> = {};
+let nextConsent = 1;
+
+function consentKey(id: string, r: Recipe, question: string | null, p: LlmProfile): string {
+  return [id, r.id, question ?? "", p.id, hostOf(p), p.model].join("\u0000");
+}
+
+function resolveRun(a: Args): { item: Stored; recipe: Recipe; question: string | null; profile: LlmProfile } {
+  const item = find(String(a.id));
+  if (!item) throw `no archive item '${a.id}'`;
+  let question = a.question == null ? null : String(a.question).split(/\s+/).filter(Boolean).join(" ");
+  if (question === "") throw "write a question first";
+  const recipe = question !== null ? QUESTION : allRecipes().find((x) => x.id === a.recipeId);
+  if (!recipe) throw `no recipe '${a.recipeId}'`;
+  const profile = settings.llm_profiles.find((x) => x.id === a.profileId);
+  if (!profile) throw `no LLM profile '${a.profileId}'`;
+  return { item, recipe, question, profile };
+}
+
+function preview(a: Args) {
+  const { item, recipe, question, profile } = resolveRun(a);
+  const chars = item.segments.reduce((n, s) => n + s.text.length + 12, 0) + recipe.prompt.length;
+  return {
+    item_id: item.id,
+    item_title: item.meta.title,
+    recipe_id: recipe.id,
+    recipe_name: recipe.name,
+    question,
+    profile_id: profile.id,
+    profile_name: profile.name,
+    host: hostOf(profile),
+    base_url: profile.base_url,
+    model: profile.model,
+    chars,
+    approx_tokens: Math.ceil(chars / 4),
+    external: profile.external,
+  };
+}
+
+function prepare(a: Args) {
+  const { item, recipe, question, profile } = resolveRun(a);
+  if (!profile.external) throw `“${profile.name}” is a local profile: its runs need no confirmation`;
+  const token = `mock-consent-${nextConsent++}`;
+  consents[token] = { key: consentKey(item.id, recipe, question, profile), at: Date.now() };
+  return { token, expires_in_secs: 120 };
+}
+
+/** The backend's gate: an external run needs a fresh, matching, unused token. */
+function consume(token: unknown, key: string, p: LlmProfile) {
+  if (!p.external) return;
+  if (typeof token !== "string" || !consents[token])
+    throw `“${p.name}” is an external profile: the transcript would go to ${hostOf(p)}. Confirm the run first — nothing was sent.`;
+  const c = consents[token];
+  delete consents[token];
+  if (Date.now() - c.at > 120_000) throw "this confirmation expired — confirm the run again";
+  if (c.key !== key) throw "this confirmation was given for another run — confirm the run again";
 }
 
 function fakeResult(r: Recipe, item: Stored): string {
@@ -522,7 +612,7 @@ function saveAnswer(id: string, answerId: number): string {
 
 const QUESTION: Recipe = { id: "question", name: "Question", prompt: "", target: "answer", builtin: true };
 
-async function runRecipe(id: string, recipeId: string, profileId: string | null, question: string | null = null) {
+async function runRecipe(id: string, recipeId: string, profileId: string | null, question: string | null = null, consent: unknown = null) {
   const item = find(id);
   if (!item) throw `no archive item '${id}'`;
   const r = question !== null ? QUESTION : allRecipes().find((x) => x.id === recipeId);
@@ -531,15 +621,17 @@ async function runRecipe(id: string, recipeId: string, profileId: string | null,
     question = question.split(/\s+/).filter(Boolean).join(" ");
     if (!question) throw "write a question first";
   }
-  const p = settings.llm_profiles.find((x) => x.id === profileId) ?? settings.llm_profiles[0];
-  if (p.external)
-    throw `“${p.name}” is an external profile: the transcript would leave this machine. Recipes on external profiles need a confirmation for each run, which arrives in a later update — pick a local profile for now.`;
+  // No profile named: a local one, never an external fallback (#122).
+  const p = settings.llm_profiles.find((x) => x.id === profileId) ?? settings.llm_profiles.find((x) => !x.external);
+  if (!p) throw "no local LLM profile — pick a profile for this run (an external one asks for a confirmation first)";
+  consume(consent, consentKey(id, r, question, p), p);
   if (item.recording) throw `'${id}' is still being recorded — run recipes when the session ends`;
   if (recipeRuns[id]) throw `“${recipeRuns[id].recipe.name}” is already running on this item — wait for it or cancel it`;
+  if (p.external) externalSends[id] = [...new Set([...(externalSends[id] ?? []), hostOf(p)])];
   const run = { recipe: r, question, cancelled: false, step: null as { phase: string; done: number; total: number } | null };
   recipeRuns[id] = run;
   const base = { item_id: id, recipe_id: r.id, recipe_name: r.name, question };
-  const prov = { profile: p.name, model: p.model, external: p.external, answer_id: null as number | null };
+  const prov = { profile: p.name, model: p.model, external: p.external, host: p.external ? hostOf(p) : "", answer_id: null as number | null };
   // Long items (transcriptions, meetings) go through map-reduce.
   const parts = item.meta.type === "note" ? 0 : Math.max(2, Math.ceil(item.segments.length / 3));
   const steps = parts ? [...Array.from({ length: parts + 1 }, (_, i) => ({ phase: "map", done: i, total: parts })), { phase: "reduce", done: 0, total: 1 }, { phase: "reduce", done: 1, total: 1 }] : [{ phase: "single", done: 0, total: 1 }, { phase: "single", done: 1, total: 1 }];
@@ -692,9 +784,13 @@ function handle(cmd: string, a: Args): unknown {
       if (!find(String(a.id))) throw `no archive item '${a.id}'`;
       return (docs[String(a.id)] ?? []).map((d) => ({ ...d, meta: { ...d.meta } }));
     case "recipe_run":
-      return runRecipe(String(a.id), String(a.recipeId), (a.profileId as string | null) ?? null);
+      return runRecipe(String(a.id), String(a.recipeId), (a.profileId as string | null) ?? null, null, a.consent);
     case "recipe_ask":
-      return runRecipe(String(a.id), "question", (a.profileId as string | null) ?? null, String(a.question ?? ""));
+      return runRecipe(String(a.id), "question", (a.profileId as string | null) ?? null, String(a.question ?? ""), a.consent);
+    case "external_run_preview":
+      return preview(a);
+    case "prepare_external_run":
+      return prepare(a);
     case "recipe_save_answer":
       return saveAnswer(String(a.id), Number(a.answerId));
     case "recipe_dismiss_answer": {
