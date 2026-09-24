@@ -1,3 +1,4 @@
+use crate::archive::people::Person;
 use crate::settings::{AppStyle, Settings, Snippet};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -5,6 +6,10 @@ use std::path::Path;
 /// Portable subset of the settings — the parts worth carrying between machines
 /// (dictionary, voice snippets, per-app styles). Deliberately excludes
 /// machine-specific fields like models_dir, the hotkey, and the input device.
+///
+/// `people` (the archive's People registry, #132) holds other people's
+/// emails: it is empty — and absent from the file — unless the user ticked
+/// "include People" for that export.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ConfigBundle {
     #[serde(default)]
@@ -13,6 +18,8 @@ pub struct ConfigBundle {
     pub snippets: Vec<Snippet>,
     #[serde(default)]
     pub app_styles: Vec<AppStyle>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub people: Vec<Person>,
 }
 
 impl ConfigBundle {
@@ -21,6 +28,7 @@ impl ConfigBundle {
             dictionary: s.dictionary.clone(),
             snippets: s.snippets.clone(),
             app_styles: s.app_styles.clone(),
+            people: Vec::new(),
         }
     }
 
@@ -58,8 +66,13 @@ impl ConfigBundle {
     }
 }
 
-pub fn export_to(path: &Path, settings: &Settings) -> std::io::Result<()> {
-    let bundle = ConfigBundle::from_settings(settings);
+/// Write the bundle; `people` is included only when the user opted in (the
+/// caller passes an empty slice otherwise).
+pub fn export_to(path: &Path, settings: &Settings, people: &[Person]) -> std::io::Result<()> {
+    let bundle = ConfigBundle {
+        people: people.to_vec(),
+        ..ConfigBundle::from_settings(settings)
+    };
     std::fs::write(
         path,
         serde_json::to_string_pretty(&bundle).expect("bundle serialize"),
@@ -243,7 +256,7 @@ mod tests {
             app_styles: vec![style("slack")],
             ..Default::default()
         };
-        export_to(&path, &s).unwrap();
+        export_to(&path, &s, &[]).unwrap();
         let bundle = load_bundle(&path).unwrap();
         assert_eq!(bundle, ConfigBundle::from_settings(&s));
     }
@@ -261,6 +274,7 @@ mod tests {
             dictionary: vec!["tauri".into(), "Sussurro".into()], // "tauri" dup (case)
             snippets: vec![snip("sig"), snip("intro")],          // "sig" dup
             app_styles: vec![style("slack"), style("outlook")],  // "slack" dup
+            people: Vec::new(),
         };
         let (w, sn, st) = bundle.merge_into(&mut s);
         assert_eq!((w, sn, st), (1, 1, 1));
@@ -431,7 +445,7 @@ mod tests {
             dictionary: vec!["Sussurro".into()],
             ..Default::default()
         };
-        export_to(&path, &s).unwrap();
+        export_to(&path, &s, &[]).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("sk-"), "{text}");
         assert!(!text.contains("api_key"), "{text}");
@@ -442,6 +456,28 @@ mod tests {
     fn bundle_excludes_machine_specific_fields() {
         // Compile-time guard: ConfigBundle has exactly the portable fields.
         let b = ConfigBundle::default();
-        let _ = (b.dictionary, b.snippets, b.app_styles);
+        let _ = (b.dictionary, b.snippets, b.app_styles, b.people);
+    }
+
+    #[test]
+    fn people_are_exported_only_when_passed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cfg.json");
+        let s = Settings { dictionary: vec!["Sussurro".into()], ..Default::default() };
+        export_to(&path, &s, &[]).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("people"), "default: no People key at all\n{text}");
+
+        let anna = Person {
+            id: "p-1".into(),
+            name: "Anna Rossi".into(),
+            email: Some("anna@example.com".into()),
+            aliases: vec!["Annie".into()],
+        };
+        export_to(&path, &s, std::slice::from_ref(&anna)).unwrap();
+        assert_eq!(load_bundle(&path).unwrap().people, vec![anna]);
+        // An older bundle without the key still loads.
+        std::fs::write(&path, r#"{"dictionary":["x"]}"#).unwrap();
+        assert!(load_bundle(&path).unwrap().people.is_empty());
     }
 }

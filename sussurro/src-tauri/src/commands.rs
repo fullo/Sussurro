@@ -307,10 +307,23 @@ pub fn learn_correction(
 }
 
 /// Write the portable config (dictionary, snippets, app styles) to `path`.
+///
+/// The People registry (#132) holds other people's emails, so it is left
+/// out unless `include_people` is explicitly true.
 #[tauri::command]
-pub fn export_config(state: State<'_, AppState>, path: String) -> Result<(), String> {
+pub fn export_config(
+    state: State<'_, AppState>,
+    path: String,
+    include_people: Option<bool>,
+) -> Result<(), String> {
     let settings = state.settings.lock().unwrap().clone();
-    crate::config_io::export_to(std::path::Path::new(&path), &settings)
+    let persons = if include_people == Some(true) {
+        let (dir, _) = archive_paths(&state)?;
+        crate::archive::people::list_people(&dir).map_err(|e| format!("{e:#}"))?
+    } else {
+        Vec::new()
+    };
+    crate::config_io::export_to(std::path::Path::new(&path), &settings, &persons)
         .map_err(|e| e.to_string())
 }
 
@@ -369,7 +382,17 @@ pub fn import_config(state: State<'_, AppState>, path: String) -> Result<String,
             .map_err(|e| e.to_string())?;
         counts
     };
-    Ok(format!("Imported {w} words, {sn} snippets, {st} app styles"))
+    let mut msg = format!("Imported {w} words, {sn} snippets, {st} app styles");
+    // People travel only in a bundle exported with them (#132).
+    if !bundle.people.is_empty() {
+        let (dir, _) = archive_paths(&state)?;
+        let added = crate::archive::people::modify(&dir, |ps| {
+            Ok(crate::archive::people::import_people(ps, &bundle.people))
+        })
+        .map_err(|e| format!("{msg}, but People could not be imported: {e:#}"))?;
+        msg.push_str(&format!(", {added} people"));
+    }
+    Ok(msg)
 }
 
 // ---- Long-form engine (0.7, #113): mic sessions and files → archive items ----
@@ -966,7 +989,8 @@ pub async fn archive_get(state: State<'_, AppState>, id: String) -> Result<Item,
 }
 
 /// Replace an item's frontmatter; returns the updated item. Participants
-/// are refused on notes (P10, see `archive::update_meta`).
+/// are refused on notes (P10, see `archive::update_meta`); new participants
+/// are linked to the People registry (`archive::people::link_on_save`).
 #[tauri::command]
 pub async fn archive_update_meta(
     state: State<'_, AppState>,
@@ -975,7 +999,11 @@ pub async fn archive_update_meta(
 ) -> Result<Item, String> {
     let (dir, db) = archive_paths(&state)?;
     let always = subtitles_always(&state);
+    let mut meta = meta;
     blocking(move || {
+        // New participants whose name matches the People registry get the
+        // person's email (#132).
+        archive::people::link_on_save(&dir, &id, &mut meta);
         let item = archive::update_meta(&dir, &id, &meta)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         // Speaker labels and the item type shape the subtitles too.
@@ -1130,6 +1158,70 @@ pub async fn archive_create_subtitles(
         archive::export::create_subtitles(&dir, &id)
     })
     .await
+}
+
+// ---- People registry (0.9, #132): names, emails and aliases ----
+//
+// The registry holds other people's emails: nothing here logs it, and it
+// never goes into diagnostics.
+
+use crate::archive::people::{self, Person};
+
+/// Every person, sorted by name. An error when `people.json` can't be read
+/// (the screen says so instead of showing an empty list).
+#[tauri::command]
+pub async fn people_list(state: State<'_, AppState>) -> Result<Vec<Person>, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::list_people(&dir)).await
+}
+
+/// "Appears in N items" per person id, from the search index (synced with
+/// the folder first).
+#[tauri::command]
+pub async fn people_usage(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, usize>, String> {
+    let (dir, db) = archive_paths(&state)?;
+    blocking(move || {
+        let persons = people::read_people(&dir);
+        let rows = archive::with_index(&dir, &db, |idx| idx.participant_rows())?;
+        Ok(people::usage(&persons, &rows))
+    })
+    .await
+}
+
+/// Add a person (the id is assigned); returns it as stored. Refused when
+/// the name or the email is already in the registry.
+#[tauri::command]
+pub async fn people_add(state: State<'_, AppState>, person: Person) -> Result<Person, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::modify(&dir, |ps| people::add_person(ps, &person))).await
+}
+
+/// Replace a person (matched by id); returns it as stored. Existing items
+/// are not changed.
+#[tauri::command]
+pub async fn people_update(state: State<'_, AppState>, person: Person) -> Result<Person, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::modify(&dir, |ps| people::update_person(ps, &person))).await
+}
+
+/// Remove a person. Existing items keep their participants and emails.
+#[tauri::command]
+pub async fn people_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::modify(&dir, |ps| people::delete_person(ps, &id))).await
+}
+
+/// Merge duplicates `from` into `into`; returns the merged person.
+#[tauri::command]
+pub async fn people_merge(
+    state: State<'_, AppState>,
+    into: String,
+    from: Vec<String>,
+) -> Result<Person, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || people::modify(&dir, |ps| people::merge_people(ps, &into, &from))).await
 }
 
 // ---- Recipes (0.8, #120): prompts that write companion documents ----

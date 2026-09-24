@@ -222,6 +222,11 @@ details.collapsible:not([open]) .chevron { transform: rotate(-90deg); }
 }
 .field:first-of-type { border-top: none; }
 .field-col { flex-direction: column; align-items: stretch; }
+/* Controls plus a note or option under them, right of the label (#132). */
+.field-stack { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.field-stack .check-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; cursor: pointer; }
+.field-stack .check-row input { flex: none; width: auto; min-height: 0; margin-top: 3px; }
+.field-stack .check-row small { display: block; color: var(--c-text-light); font-size: 12px; }
 
 .field-label { display: flex; flex-direction: column; min-width: 130px; }
 /* Direct child only — must not bleed into .tip / .tip-bubble spans inside. */

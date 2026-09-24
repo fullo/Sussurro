@@ -6,7 +6,7 @@ import { isRunning } from "../lib/engineRuns";
 import { formatClock } from "../lib/format";
 import { sttLabel, cleanupLabel } from "./labels";
 
-export type Screen = "new" | "library" | "recipes" | "models" | "settings";
+export type Screen = "new" | "library" | "people" | "recipes" | "models" | "settings";
 
 const NAV: { id: Screen; label: string; icon: ReactNode }[] = [
   {
@@ -21,6 +21,17 @@ const NAV: { id: Screen; label: string; icon: ReactNode }[] = [
       <>
         <rect x="4" y="4" width="16" height="16" rx="2" />
         <path d="M8 9h8M8 13h8M8 17h5" />
+      </>
+    ),
+  },
+  {
+    id: "people",
+    label: "People",
+    icon: (
+      <>
+        <circle cx="9" cy="8" r="3.5" />
+        <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+        <path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.2a6.5 6.5 0 0 1 3.5 5.8" />
       </>
     ),
   },

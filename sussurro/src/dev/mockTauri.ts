@@ -9,7 +9,8 @@
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import type { CompanionDoc, Item, ItemMeta, ItemSummary, LlmProfile, Recipe, Segment, Settings } from "../lib/types";
+import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
+import type { CompanionDoc, Item, ItemMeta, ItemSummary, LlmProfile, Person, Recipe, Segment, Settings } from "../lib/types";
 
 const params = new URLSearchParams(window.location.search);
 
@@ -161,6 +162,39 @@ let items: Stored[] = params.get("empty")
     ];
 
 const find = (id: string) => items.find((i) => i.id === id);
+
+/* ---------- People registry (#132) ---------- */
+
+let people: Person[] = params.get("empty")
+  ? []
+  : [
+      { id: "p-anna", name: "Anna Rossi", email: "anna@example.com", aliases: ["Anna R.", "Annie"] },
+      { id: "p-marco", name: "Marco Bianchi", email: "marco@example.com", aliases: [] },
+      { id: "p-francesco", name: "Francesco Fullone", email: "francesco@example.com", aliases: ["Fullo"] },
+      { id: "p-giulia", name: "Giulia Verdi", aliases: [] },
+      // A likely duplicate of Anna, to show the merge hint.
+      { id: "p-anna2", name: "Anna R.", email: "a.rossi@studio.example", aliases: [] },
+    ];
+let personSeq = 0;
+
+function cleanPerson(p: Person): Person {
+  const name = p.name.trim().replace(/\s+/g, " ");
+  const email = p.email?.trim() || undefined;
+  const problems = personProblems({ ...p, name, email }, people);
+  if (problems.length) throw problems[0];
+  return { id: p.id, name, ...(email ? { email } : {}), aliases: parseAliases(p.aliases.join("\n"), name) };
+}
+
+function sortedPeople(): Person[] {
+  return people.slice().sort((a, b) => nameKey(a.name).localeCompare(nameKey(b.name)));
+}
+
+function peopleUsage(): Record<string, number> {
+  const out: Record<string, number> = Object.fromEntries(people.map((p) => [p.id, 0]));
+  for (const it of items)
+    for (const id of new Set(it.meta.participants.map((pt) => personFor(people, pt)?.id).filter(Boolean) as string[])) out[id]++;
+  return out;
+}
 
 /** Items whose transcript.srt the preview "wrote" (#133). */
 const srtWritten = new Set<string>();
@@ -764,8 +798,46 @@ function handle(cmd: string, a: Args): unknown {
         .filter((p) => p.name);
       if (next.type === "note" && participants.length && JSON.stringify(participants) !== JSON.stringify(s.meta.participants))
         throw "notes have no participants — participants belong to meetings and transcriptions. Remove them, or change the item's type first.";
+      // Mirrors people::link_on_save (#132): new participants get the email.
+      if (next.type !== "note") {
+        const known = new Set(s.meta.participants.map((p) => nameKey(p.name)));
+        for (const p of participants) {
+          const email = known.has(nameKey(p.name)) ? null : linkEmail(people, p);
+          if (email) Object.assign(p, { email });
+        }
+      }
       s.meta = { ...next, participants };
       return toItem(s);
+    }
+    case "people_list":
+      return sortedPeople();
+    case "people_usage":
+      return peopleUsage();
+    case "people_add": {
+      const p = cleanPerson({ ...(a.person as Person), id: "" });
+      p.id = `p-new${++personSeq}`;
+      people.push(p);
+      return p;
+    }
+    case "people_update": {
+      const input = a.person as Person;
+      const at = people.findIndex((p) => p.id === input.id);
+      if (at < 0) throw "that person is no longer in People";
+      people[at] = cleanPerson(input);
+      return people[at];
+    }
+    case "people_delete": {
+      if (!people.some((p) => p.id === a.id)) throw "that person is no longer in People";
+      people = people.filter((p) => p.id !== a.id);
+      return null;
+    }
+    case "people_merge": {
+      const into = people.find((p) => p.id === a.into);
+      const from = people.filter((p) => (a.from as string[]).includes(p.id) && p.id !== a.into);
+      if (!into || !from.length) throw "that person is no longer in People";
+      const merged = mergePreview(into, from);
+      people = people.filter((p) => !from.includes(p)).map((p) => (p.id === into.id ? merged : p));
+      return merged;
     }
     case "archive_update_segment":
     case "archive_delete_segment": {
