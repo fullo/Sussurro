@@ -91,3 +91,34 @@ the tray, `enigo` and the Secret Service keyring below all link it.
   button and the tray always work.
 - Audio uses ALSA (`libasound2`); PipeWire and PulseAudio expose ALSA
   compatibility by default.
+
+### System audio + mic: a monitor source
+
+*New → System audio + mic* (meetings preview, Settings → Browser extension)
+records a call from a desktop app — Zoom, Teams, anything that plays through
+the computer — as two channels: your microphone ("You") and a second input
+device that carries the computer's sound (the others, told apart as
+"Voice 1, Voice 2…"). Sussurro reads any input device; the OS needs a
+virtual device that turns the output into an input.
+
+On PulseAudio and PipeWire every output already has a **monitor source**
+(`pactl list short sources | grep monitor`). Sussurro captures through ALSA,
+so expose the monitor as an ALSA device with a `hint` (so it is listed) in
+`~/.asoundrc`, using the pulse plugin (`libasound2-plugins`; on PipeWire it
+goes through `pipewire-pulse`):
+
+```
+pcm.system_monitor {
+    type pulse
+    device "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"   # yours from pactl
+    hint {
+        show on
+        description "Computer sound (monitor)"
+    }
+}
+```
+
+Restart Sussurro and choose **system_monitor** as the system audio device.
+Alternative without the file: choose the `pulse` (or `pipewire`) device and,
+while recording, route that stream to *Monitor of …* in `pavucontrol` →
+Recording.
