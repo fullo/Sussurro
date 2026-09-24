@@ -811,7 +811,11 @@ async fn edit_segment_command(
     edit: archive::SegmentEdit,
 ) -> Result<Item, String> {
     let (dir, db) = archive_paths(state)?;
+    let journal = crate::engine::session::journal_path(state);
     blocking(move || {
+        // A live item can't be line-edited (#158): the store refuses the
+        // `recording` marker, this a session that still owns the item.
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         let item = archive::edit_segment(&dir, &id, segment_id, edit)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         Ok(item)
@@ -819,11 +823,15 @@ async fn edit_segment_command(
     .await
 }
 
-/// Move an item folder to the OS trash (never a hard delete).
+/// Move an item folder to the OS trash (never a hard delete). Refused for
+/// an item a capture session is writing (#158), in this process or another
+/// instance.
 #[tauri::command]
 pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let (dir, db) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
     blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         archive::delete_item(&dir, &id)?;
         reindex(&dir, &db, |idx| idx.remove_from_index(&id));
         Ok(())

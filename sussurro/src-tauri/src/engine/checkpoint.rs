@@ -21,6 +21,10 @@
 //!   the plan wants that at onboarding, not at launch) and never walks a
 //!   large archive. An item created in the instant before its journal entry
 //!   is written stays marked `recording`; the UI can still open it.
+//!   Each entry records the pid of the process running the session (#158):
+//!   no single-instance guard stops a second app instance, and its start
+//!   must not mark the first one's live sessions interrupted, so entries of
+//!   a running process ([`process_alive`]) are left alone.
 //! - **Mic spool files** (`engine-spool-<pid>-<session>.f32`, app data
 //!   dir) left by a dead process are deleted at start, with a log line.
 //!   Decision: they are raw 16 kHz samples of segments that were queued
@@ -28,8 +32,7 @@
 //!   of where each segment starts — turning them back into transcript would
 //!   need a spool index plus a fresh STT run, which is not "cheap", and
 //!   they hold the user's voice, which should not linger in app data.
-//!   (Spools of a live second instance are safe: on Unix an open file
-//!   survives the unlink, on Windows the delete fails while it is open.)
+//!   Spools of a running process (a second instance) are left alone.
 
 use crate::archive::{self, live, ItemMeta, Segment, SegmentsFile};
 use anyhow::{Context, Result};
@@ -55,6 +58,74 @@ pub const SPOOL_PREFIX: &str = "engine-spool-";
 pub struct JournalEntry {
     pub archive: PathBuf,
     pub id: String,
+    /// The process running the session (#158). Nothing stops a second app
+    /// instance from starting, and its [`recover`] must not mark the first
+    /// one's live sessions interrupted: entries of a running process are
+    /// left alone. `0` in entries written before this field existed:
+    /// treated as a dead process.
+    #[serde(default)]
+    pub pid: u32,
+}
+
+/// Whether the process `pid` is running. Portable enough for the journal:
+/// `kill(pid, 0)` on Unix (EPERM: it exists, owned by someone else),
+/// `OpenProcess` + `GetExitCodeProcess` on Windows.
+///
+/// Pid reuse: an unrelated process that got a dead instance's pid makes its
+/// entries look alive, so their recovery waits for a later start (the item
+/// stays `recording` — read-only — until then). Never the other way round:
+/// a live session is never taken for a dead one.
+pub fn process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: signal 0 only checks existence and permissions.
+        if unsafe { libc::kill(pid, 0) } == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, GetLastError, ERROR_ACCESS_DENIED, STILL_ACTIVE,
+        };
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        // SAFETY: plain Win32 calls; the handle is closed before returning.
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                // Exists but not ours to query (another user's process).
+                return GetLastError() == ERROR_ACCESS_DENIED;
+            }
+            let mut code = 0u32;
+            let ok = GetExitCodeProcess(handle, &mut code) != 0;
+            CloseHandle(handle);
+            ok && code == STILL_ACTIVE as u32
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
+}
+
+/// Whether the item `id` of `archive` is being written by a running session
+/// — of this process or of another instance — according to the journal.
+/// The archive commands refuse to delete or line-edit such an item (#158),
+/// on top of the `recording` marker check in the store.
+pub fn owned_by_live_session(journal: &Path, archive: &Path, id: &str) -> bool {
+    let me = std::process::id();
+    journal_entries(journal)
+        .iter()
+        .any(|e| e.archive == archive && e.id == id && (e.pid == me || process_alive(e.pid)))
 }
 
 /// Sessions (mic + files) run on several threads; the journal is small and
@@ -131,6 +202,7 @@ impl LiveItem {
             let entry = JournalEntry {
                 archive: item.archive.clone(),
                 id: item.id.clone(),
+                pid: std::process::id(),
             };
             // Without the entry a crash would leave the item "recording"
             // instead of "interrupted" — worth a log, not worth failing.
@@ -287,7 +359,19 @@ pub fn recover(
     let mut out = Recovery::default();
     let _g = JOURNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut keep = Vec::new();
+    // Run before any session of this process: an entry carrying our own pid
+    // is a dead process's whose pid was reused by us.
+    let me = std::process::id();
     for entry in journal_read(journal) {
+        if entry.pid != me && process_alive(entry.pid) {
+            // Another instance is running this session (#158).
+            eprintln!(
+                "engine: {} belongs to a running Sussurro (pid {}); left alone",
+                entry.id, entry.pid
+            );
+            keep.push(entry);
+            continue;
+        }
         match live::mark_interrupted(&entry.archive, &entry.id) {
             Ok(true) => {
                 eprintln!("engine: session item {} was interrupted; kept", entry.id);
@@ -336,8 +420,9 @@ fn spool_pid(name: &str) -> Option<u32> {
     rest.split('-').next()?.parse().ok()
 }
 
-/// Delete mic spools not owned by `current_pid` (see the module docs for
-/// why they are not recovered). Returns how many were removed.
+/// Delete mic spools of dead processes: not `current_pid`'s, not a running
+/// second instance's (see the module docs for why they are not recovered).
+/// Returns how many were removed.
 pub fn remove_stale_spools(dir: &Path, current_pid: u32) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
@@ -348,7 +433,7 @@ pub fn remove_stale_spools(dir: &Path, current_pid: u32) -> usize {
         let Some(pid) = spool_pid(&name) else {
             continue;
         };
-        if pid == current_pid {
+        if pid == current_pid || process_alive(pid) {
             continue;
         }
         let size = e.metadata().map(|m| m.len()).unwrap_or(0);
@@ -599,13 +684,116 @@ mod tests {
         assert!(!e.journal.exists());
     }
 
+    /// A running process that is not this one (killed by the caller).
+    fn other_live_process() -> std::process::Child {
+        #[cfg(unix)]
+        let mut cmd = std::process::Command::new("sleep");
+        #[cfg(unix)]
+        cmd.arg("30");
+        #[cfg(windows)]
+        let mut cmd = std::process::Command::new("ping");
+        #[cfg(windows)]
+        cmd.args(["-n", "30", "127.0.0.1"]);
+        cmd.stdout(std::process::Stdio::null()).spawn().unwrap()
+    }
+
+    /// The pid of a process that has exited (and was reaped).
+    fn dead_pid() -> u32 {
+        #[cfg(unix)]
+        let mut cmd = std::process::Command::new("true");
+        #[cfg(windows)]
+        let mut cmd = std::process::Command::new("cmd");
+        #[cfg(windows)]
+        cmd.args(["/C", "exit 0"]);
+        let mut child = cmd.spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
+    fn set_pids(journal: &Path, pids: &[u32]) {
+        let mut entries = journal_entries(journal);
+        for (e, pid) in entries.iter_mut().zip(pids) {
+            e.pid = *pid;
+        }
+        journal_write(journal, &entries).unwrap();
+    }
+
+    #[test]
+    fn process_liveness() {
+        assert!(process_alive(std::process::id()));
+        assert!(!process_alive(0));
+        assert!(!process_alive(dead_pid()));
+        let mut other = other_live_process();
+        assert!(process_alive(other.id()));
+        other.kill().unwrap();
+        other.wait().unwrap();
+        assert!(!process_alive(other.id()));
+    }
+
+    /// #158 finding 2: a second app instance's start must not mark the first
+    /// one's live session interrupted; the backend sees that item as live.
+    #[test]
+    fn recovery_leaves_a_running_instances_sessions_alone() {
+        let e = env();
+        let mut other = other_live_process();
+        let mut items = Vec::new();
+        for title in ["Altra istanza", "Morta", "Vecchia"] {
+            let mut live = LiveItem::begin(&e.archive, &meta(title), Some(&e.journal)).unwrap();
+            live.push(seg(0));
+            items.push(live);
+        }
+        let ids: Vec<String> = items.iter().map(|l| l.id().to_string()).collect();
+        assert!(journal_entries(&e.journal)
+            .iter()
+            .all(|x| x.pid == std::process::id()));
+        // Every entry of this process is live until its session ends.
+        assert!(owned_by_live_session(&e.journal, &e.archive, &ids[0]));
+        drop(items); // as if these processes had written them
+        // A live instance's session, a crashed one's, and an entry written
+        // before the pid was recorded.
+        set_pids(&e.journal, &[other.id(), dead_pid(), 0]);
+        assert!(owned_by_live_session(&e.journal, &e.archive, &ids[0]));
+        assert!(!owned_by_live_session(&e.journal, &e.archive, &ids[1]));
+        assert!(!owned_by_live_session(&e.journal, &e.archive, &ids[2]));
+
+        let r = recover(&e.journal, Some(&e.archive), None, &e.data);
+        assert_eq!(r.interrupted, ids[1..]);
+        let running = read_item(&e.archive, &ids[0]).unwrap();
+        assert!(running.recording && !running.interrupted, "left alone");
+        let kept = journal_entries(&e.journal);
+        assert_eq!(kept.len(), 1);
+        assert_eq!((kept[0].id.as_str(), kept[0].pid), (ids[0].as_str(), other.id()));
+
+        // Once that instance is gone, the next start recovers it.
+        other.kill().unwrap();
+        other.wait().unwrap();
+        assert!(!owned_by_live_session(&e.journal, &e.archive, &ids[0]));
+        let r = recover(&e.journal, Some(&e.archive), None, &e.data);
+        assert_eq!(r.interrupted, [ids[0].clone()]);
+        assert!(!e.journal.exists());
+    }
+
+    #[test]
+    fn a_running_instances_spool_is_kept() {
+        let e = env();
+        let mut other = other_live_process();
+        let theirs = e.data.join(format!("engine-spool-{}-1.f32", other.id()));
+        std::fs::write(&theirs, [0u8; 8]).unwrap();
+        assert_eq!(remove_stale_spools(&e.data, std::process::id()), 0);
+        assert!(theirs.exists());
+        other.kill().unwrap();
+        other.wait().unwrap();
+        assert_eq!(remove_stale_spools(&e.data, std::process::id()), 1);
+    }
+
     #[test]
     fn stale_spools_are_removed_at_startup() {
         let e = env();
         // Spools of dead processes, one of this process, unrelated files.
         let dead = [
-            e.data.join("engine-spool-1-4.f32"),
-            e.data.join("engine-spool-99999-1.f32"),
+            e.data.join(format!("engine-spool-{}-4.f32", dead_pid())),
+            e.data.join(format!("engine-spool-{}-1.f32", dead_pid())),
         ];
         for p in &dead {
             std::fs::write(p, [0u8; 64]).unwrap();

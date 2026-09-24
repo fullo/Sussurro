@@ -268,6 +268,22 @@ fn app_data_file(state: &AppState, name: &str) -> std::path::PathBuf {
     state.paths.history_file.with_file_name(name)
 }
 
+/// The session journal ([`super::checkpoint`]) in the app data dir.
+pub fn journal_path(state: &AppState) -> std::path::PathBuf {
+    app_data_file(state, super::checkpoint::JOURNAL_FILE)
+}
+
+/// Refuse a delete or a line edit of an item a running capture session is
+/// writing — this process's or another instance's (#158). The store also
+/// refuses items marked `recording`; this catches a live item whose marker
+/// was edited away by hand.
+pub fn ensure_not_live(journal: &Path, archive: &Path, id: &str) -> Result<()> {
+    if super::checkpoint::owned_by_live_session(journal, archive, id) {
+        anyhow::bail!("'{id}' is being written by a running session — stop it first");
+    }
+    Ok(())
+}
+
 /// At app start, before the user can begin a session: items of sessions
 /// the previous run never finished become `interrupted` (and are indexed),
 /// stale mic spools are removed (#153). Touches the archive folder only
@@ -276,7 +292,7 @@ pub fn recover_after_crash(app: &AppHandle) {
     let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap().clone();
     let archive = crate::state::resolve_archive_dir(&state.paths, &settings).ok();
-    let journal = app_data_file(&state, super::checkpoint::JOURNAL_FILE);
+    let journal = journal_path(&state);
     let spool_dir = journal.parent().map(Path::to_path_buf).unwrap_or_default();
     let r = super::checkpoint::recover(
         &journal,
@@ -353,7 +369,7 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
             voice_commands: settings.voice_commands && req.item_type == ItemType::Note,
             archive_dir,
             index_db: Some(state.paths.archive_index.clone()),
-            journal: Some(app_data_file(&state, super::checkpoint::JOURNAL_FILE)),
+            journal: Some(journal_path(&state)),
             meta: start_meta(
                 &settings,
                 req.item_type,
@@ -539,6 +555,30 @@ mod tests {
         // The frontmatter records the run's language.
         let meta = start_meta(&s, ItemType::Note, "t".into(), "mic".into(), "d".into());
         assert_eq!(meta.language, "en");
+    }
+
+    /// #158: the delete / line-edit commands refuse an item a running
+    /// session still owns, even with its `recording` marker edited away.
+    #[test]
+    fn a_live_sessions_item_is_refused_by_the_archive_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let journal = tmp.path().join(super::super::checkpoint::JOURNAL_FILE);
+        let meta = start_meta(
+            &Settings::default(),
+            ItemType::Note,
+            "Live".into(),
+            "mic".into(),
+            "2026-09-24T10:00:00+02:00".into(),
+        );
+        let live =
+            super::super::checkpoint::LiveItem::begin(&archive, &meta, Some(&journal)).unwrap();
+        let id = live.id().to_string();
+        let err = ensure_not_live(&journal, &archive, &id).unwrap_err();
+        assert!(err.to_string().contains("running session"), "{err}");
+        assert!(ensure_not_live(&journal, &archive, "2026/09/other").is_ok());
+        assert!(live.discard().is_none());
+        assert!(ensure_not_live(&journal, &archive, &id).is_ok());
     }
 
     #[test]

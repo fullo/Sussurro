@@ -4943,6 +4943,7 @@ dependencies = [
  "cpal",
  "enigo",
  "flate2",
+ "libc",
  "objc2",
  "objc2-foundation",
  "regex",
@@ -4969,6 +4970,7 @@ dependencies = [
  "trash",
  "unicode-normalization",
  "whisper-rs",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -667,9 +667,33 @@ fn edit_segment_with(
     read_item_at(id, &dir)
 }
 
-/// Move an item folder to the OS trash (never a hard delete).
+/// Move an item folder to the OS trash (never a hard delete). Refused while
+/// the item is marked `recording` (#158): a capture session is writing it —
+/// possibly another app instance's, which this process can't stop. Ending
+/// the session (or restarting after a crash, which marks it `interrupted`)
+/// makes it deletable.
 pub fn delete_item(archive: &Path, id: &str) -> Result<()> {
-    delete_item_with(archive, id, move_to_trash)
+    delete_finished_item_with(archive, id, move_to_trash)
+}
+
+fn delete_finished_item_with(
+    archive: &Path,
+    id: &str,
+    trash: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    // Same lock as the session's checkpoints: the check and the delete
+    // don't interleave with a writer of this item.
+    let _lock = lock_items();
+    let dir = existing_item_dir(archive, id)?;
+    let path = transcript_path(&dir);
+    let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let recording = frontmatter::parse(&String::from_utf8_lossy(&bytes))
+        .map(|(m, _)| m.session_state() == Some(SessionState::Recording))
+        .unwrap_or(false);
+    if recording {
+        bail!("'{id}' is still being recorded — stop the session before deleting it");
+    }
+    delete_item_with(archive, id, trash)
 }
 
 /// [`delete_item`] with an injectable trash mover (tests must not fill the
@@ -1105,6 +1129,25 @@ mod tests {
         let never = |_: &Path| -> Result<()> { panic!("must not trash") };
         assert!(delete_item_with(&archive, "2025", never).is_err());
         assert!(delete_item_with(&archive, "../bin", never).is_err());
+    }
+
+    /// #158 finding 2: the backend refuses to delete an item a capture
+    /// session is writing (the UI only greys the button out); once the
+    /// session has ended it goes to the trash as usual.
+    #[test]
+    fn delete_refuses_a_recording_item() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("arch");
+        let id = crate::archive::live::begin_session(&archive, &meta("Live", DATE)).unwrap();
+        let never = |_: &Path| -> Result<()> { panic!("must not trash") };
+        let err = delete_finished_item_with(&archive, &id, never).unwrap_err();
+        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
+        assert!(delete_item(&archive, &id).is_err());
+        assert!(read_item(&archive, &id).is_ok());
+
+        crate::archive::live::mark_interrupted(&archive, &id).unwrap();
+        delete_item(&archive, &id).unwrap();
+        assert!(test_trash::contains(&archive.join(&id)));
     }
 
     fn temp_leftovers(dir: &Path) -> Vec<String> {
