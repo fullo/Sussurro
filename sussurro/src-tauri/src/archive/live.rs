@@ -22,9 +22,9 @@ use super::frontmatter;
 use super::paths::{folder_name, item_dir, slugify};
 use super::render::{format_timestamp, render_transcript};
 use super::store::{
-    create_item, delete_item_with, existing_item_dir, is_edited_externally, lock_items,
-    read_segments, rerender_if_unchanged, transcript_path, write_atomic, write_segments,
-    write_state,
+    commit_transcript, create_item, delete_item_with, existing_item_dir, is_edited_externally,
+    lock_items, read_segments, rerender_if_unchanged, sha256_hex, transcript_path, write_segments,
+    ChangedOnDisk,
 };
 use super::types::{ItemMeta, SegmentsFile, SessionState};
 use anyhow::{Context, Result};
@@ -76,16 +76,46 @@ pub fn checkpoint(archive: &Path, id: &str, segments: &SegmentsFile, render: boo
     Ok(())
 }
 
+/// How often a session-owned rewrite re-reads the file and tries again when
+/// it changed on disk between the read and the replace (#155).
+const REWRITE_ATTEMPTS: usize = 3;
+
 /// Rewrite the frontmatter through `update`. An app-owned transcript is
 /// regenerated from `segments`; one edited outside the app keeps its body
 /// and only gets the new frontmatter (its hash stays stale, so it stays
 /// "edited outside"). A frontmatter the user broke is replaced by
 /// `fallback` when one is given, otherwise the file is left alone.
+///
+/// The replace goes through the store's freshness check, so an external
+/// save that lands mid-write is never overwritten. The session owns the
+/// marker and the end-of-run metadata, though, so it is the last writer:
+/// on such a race the file is read again — now counted as edited outside,
+/// so the user's body is kept and only the frontmatter is replaced — and
+/// the rewrite is retried.
 fn rewrite_meta(
     dir: &Path,
     segments: &SegmentsFile,
     fallback: Option<&ItemMeta>,
-    update: impl FnOnce(ItemMeta) -> ItemMeta,
+    update: &dyn Fn(ItemMeta) -> ItemMeta,
+    before_commit: &dyn Fn(&Path),
+) -> Result<ItemMeta> {
+    let mut attempt = 1;
+    loop {
+        match rewrite_meta_once(dir, segments, fallback, update, before_commit) {
+            Err(e) if attempt < REWRITE_ATTEMPTS && e.downcast_ref::<ChangedOnDisk>().is_some() => {
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
+fn rewrite_meta_once(
+    dir: &Path,
+    segments: &SegmentsFile,
+    fallback: Option<&ItemMeta>,
+    update: &dyn Fn(ItemMeta) -> ItemMeta,
+    before_commit: &dyn Fn(&Path),
 ) -> Result<ItemMeta> {
     let path = transcript_path(dir);
     let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
@@ -96,13 +126,13 @@ fn rewrite_meta(
         (Err(e), None) => return Err(e),
     };
     let meta = update(meta);
+    let expected = sha256_hex(&bytes);
     if is_edited_externally(dir, &bytes) {
         let doc = frontmatter::replace(&current, &meta)?;
-        write_atomic(&path, doc.as_bytes())?;
+        commit_transcript(dir, doc.as_bytes(), &expected, false, before_commit)?;
     } else {
         let doc = render_transcript(&meta, segments)?;
-        write_atomic(&path, doc.as_bytes())?;
-        write_state(dir, doc.as_bytes())?;
+        commit_transcript(dir, doc.as_bytes(), &expected, true, before_commit)?;
     }
     Ok(meta)
 }
@@ -117,16 +147,33 @@ pub fn finish_session(
     id: &str,
     segments: &SegmentsFile,
     fallback: &ItemMeta,
-    finalize: impl FnOnce(ItemMeta) -> ItemMeta,
+    finalize: impl Fn(ItemMeta) -> ItemMeta,
+) -> Result<ItemMeta> {
+    finish_session_with(archive, id, segments, fallback, &finalize, &|_| {})
+}
+
+fn finish_session_with(
+    archive: &Path,
+    id: &str,
+    segments: &SegmentsFile,
+    fallback: &ItemMeta,
+    finalize: &dyn Fn(ItemMeta) -> ItemMeta,
+    before_commit: &dyn Fn(&Path),
 ) -> Result<ItemMeta> {
     let _lock = lock_items();
     let dir = existing_item_dir(archive, id)?;
     write_segments(&dir, segments)?;
-    rewrite_meta(&dir, segments, Some(fallback), |m| {
-        let mut m = finalize(m);
-        m.set_session_state(None);
-        m
-    })
+    rewrite_meta(
+        &dir,
+        segments,
+        Some(fallback),
+        &|m| {
+            let mut m = finalize(m);
+            m.set_session_state(None);
+            m
+        },
+        before_commit,
+    )
 }
 
 /// Turn a `recording` item left behind by a crash into an `interrupted`
@@ -150,15 +197,21 @@ pub fn mark_interrupted(archive: &Path, id: &str) -> Result<bool> {
         eprintln!("archive: {id}: unreadable segments kept aside ({e:#})");
         SegmentsFile::default()
     });
-    rewrite_meta(&dir, &segments, None, |mut m| {
-        m.set_session_state(Some(SessionState::Interrupted));
-        if m.duration.is_none() {
-            if let Some(last) = segments.segments.iter().map(|s| s.end_ms).max() {
-                m.duration = Some(format_timestamp(last));
+    rewrite_meta(
+        &dir,
+        &segments,
+        None,
+        &|mut m| {
+            m.set_session_state(Some(SessionState::Interrupted));
+            if m.duration.is_none() {
+                if let Some(last) = segments.segments.iter().map(|s| s.end_ms).max() {
+                    m.duration = Some(format_timestamp(last));
+                }
             }
-        }
-        m
-    })?;
+            m
+        },
+        &|_| {},
+    )?;
     Ok(true)
 }
 
@@ -373,6 +426,51 @@ mod tests {
         assert_eq!(item.meta.duration.as_deref(), Some("00:00:03"));
         assert_eq!(item.meta.session_state(), None);
         assert_eq!(item.segments.segments.len(), 3);
+    }
+
+    #[test]
+    fn finish_retries_after_a_concurrent_external_save_and_keeps_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = begin_session(archive, &meta("Race")).unwrap();
+        // The engine's own periodic writes never trip the freshness check.
+        for n in 1..=3 {
+            checkpoint(archive, &id, &segs(n), true).unwrap();
+        }
+        let external = transcript(archive, &id).replace("S0.", "Obsidian.");
+        let calls = std::cell::Cell::new(0);
+        // Obsidian saves the file between the finish's read and its replace.
+        let fin = finish_session_with(
+            archive,
+            &id,
+            &segs(4),
+            &meta("Race"),
+            &|mut m| {
+                m.duration = Some("00:00:04".into());
+                m
+            },
+            &|p| {
+                if calls.get() == 0 {
+                    std::fs::write(p, &external).unwrap();
+                }
+                calls.set(calls.get() + 1);
+            },
+        )
+        .unwrap();
+        assert_eq!(calls.get(), 2, "re-read and retried once");
+        assert_eq!(fin.session_state(), None);
+        let item = read_item(archive, &id).unwrap();
+        // The external save survives; the session still clears its marker.
+        assert!(item.body.contains("Obsidian.") && item.edited_externally);
+        assert!(!item.recording && !item.interrupted);
+        assert_eq!(item.meta.duration.as_deref(), Some("00:00:04"));
+        assert_eq!(item.segments.segments.len(), 4);
+        let leftovers: Vec<_> = std::fs::read_dir(archive.join(&id))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[test]

@@ -188,7 +188,7 @@ impl LiveItem {
     pub fn finish(
         self,
         fallback: &ItemMeta,
-        finalize: impl FnOnce(ItemMeta) -> ItemMeta,
+        finalize: impl Fn(ItemMeta) -> ItemMeta,
     ) -> Result<(String, ItemMeta)> {
         let meta = live::finish_session(&self.archive, &self.id, &self.file, fallback, finalize);
         let meta = match meta {

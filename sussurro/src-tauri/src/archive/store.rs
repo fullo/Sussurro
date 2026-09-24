@@ -181,6 +181,26 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 /// after [`lock_items`] when both are held.
 static TRANSCRIPT_COMMIT: Mutex<()> = Mutex::new(());
 
+/// [`commit_transcript`] found the file changed since the caller read it.
+/// A distinct type so the engine's own writers can re-read and retry
+/// (`e.downcast_ref::<ChangedOnDisk>()` sees through added context).
+#[derive(Debug)]
+pub(super) struct ChangedOnDisk(PathBuf);
+
+impl std::fmt::Display for ChangedOnDisk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} changed on disk while Sussurro was saving it (edited in another app?). \
+             Nothing was overwritten: reopen the item to load the latest version, then \
+             make the change again.",
+            self.0.display()
+        )
+    }
+}
+
+impl std::error::Error for ChangedOnDisk {}
+
 /// Replace `transcript.md` in `dir` with `doc`, but only if the file still
 /// hashes to `expected_sha` (the bytes the caller read and based `doc` on).
 /// The new file is staged first, so the gap between the check and the
@@ -207,12 +227,7 @@ pub(super) fn commit_transcript(
         .unwrap_or(false);
     if !unchanged {
         let _ = std::fs::remove_file(&tmp);
-        bail!(
-            "{} changed on disk while Sussurro was saving it (edited in another app?). \
-             Nothing was overwritten: reopen the item to load the latest version, then \
-             make the change again.",
-            path.display()
-        );
+        return Err(ChangedOnDisk(path).into());
     }
     rename_into(&tmp, &path)?;
     if record_state {
