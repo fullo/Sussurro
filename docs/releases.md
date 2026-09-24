@@ -92,6 +92,10 @@ orphaned installs.
 
 When Actions minutes are exhausted, releases are built locally:
 
+- Every platform bundles the pinned `llama-server` sidecar: run
+  `npm run sidecar` first and add
+  `-- --config src-tauri/tauri.sidecar.conf.json` to `npm run tauri build`
+  (see [development.md](development.md#llama-server-sidecar)).
 - **Windows** — built and signed on the dev box (`npm run tauri build`, then
   `tauri signer sign`). PowerShell drops empty `""` args and unsets empty env
   vars, so sign via `cmd /c` on Windows.
@@ -101,7 +105,8 @@ When Actions minutes are exhausted, releases are built locally:
 
   ```bash
   git clone <repo> && cd Sussurro/sussurro && git checkout vX.Y.Z
-  npm ci && npm run tauri build          # Apple Silicon
+  npm ci && npm run sidecar              # pinned llama-server, SHA-256-checked
+  npm run tauri build -- --config src-tauri/tauri.sidecar.conf.json   # Apple Silicon
   node_modules/.bin/tauri signer sign \
     --private-key-path <sussurro-updater.key> --password "" \
     src-tauri/target/release/bundle/macos/sussurro.app.tar.gz

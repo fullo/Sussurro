@@ -24,13 +24,15 @@ BUNDLE="$TARGET_DIR/$PROFILE/bundle"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-run_version() { # <binary> <lib dir>
-  local bin="$1" libs="$2" out
-  out="$(cd "$libs" && case "$TRIPLE" in
-    *apple-darwin) DYLD_LIBRARY_PATH="$libs" "$bin" --version 2>&1 ;;
-    *windows*) PATH="$libs:$PATH" "$bin" --version 2>&1 ;;
-    *) LD_LIBRARY_PATH="$libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$bin" --version 2>&1 ;;
-  esac)" || { echo "$out"; echo "FAIL: $bin --version exited non-zero"; exit 1; }
+run_version() { # <binary> <lib dir> — the runtime contract: cwd + library path
+  local bin libs out var
+  bin="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+  libs="$(cd "$2" && pwd)"
+  if [[ "$TRIPLE" == *apple-darwin ]]; then var=DYLD_LIBRARY_PATH
+  elif [[ "$TRIPLE" == *windows* ]]; then var=PATH
+  else var=LD_LIBRARY_PATH; fi
+  out="$(cd "$libs" && env "$var=$libs${!var:+:${!var}}" "$bin" --version 2>&1)" ||
+    { echo "$out"; echo "FAIL: $bin --version exited non-zero"; exit 1; }
   echo "$out" | grep -E "^version:" || { echo "$out"; echo "FAIL: no version line"; exit 1; }
 }
 

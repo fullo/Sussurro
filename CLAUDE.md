@@ -207,6 +207,21 @@ project decisions here, not in per-machine memory.**
   frontmatter day vs. the viewer's local today sent by the UI; the date
   facet takes one bucket or one custom range. Index schema v2 (rebuilt
   automatically). Selection is kept in localStorage (`libraryFacets`).
+- **llama-server sidecar packaging (Track E, #116)**: one pinned llama.cpp
+  release for all targets in `sussurro/src-tauri/sidecar/llama-server.lock.json`
+  (asset URL, SHA-256, size, allowlisted libs, licence); `npm run sidecar`
+  fetches + verifies fail-closed into gitignored `src-tauri/binaries/`.
+  `externalBin`/`resources` live **only** in `tauri.sidecar.conf.json`,
+  merged with `--config` by release builds — never move them into
+  `tauri.conf.json`: tauri-build checks `externalBin` at compile time, so
+  every `cargo test`/clippy would need the download. Named
+  `sussurro-llama-server` (no clash with a distro `/usr/bin/llama-server`);
+  upstream files ship unmodified, libs in the `llama-server-libs` resource
+  folder, spawned with that folder as cwd + on
+  `DYLD_LIBRARY_PATH`/`PATH`/`LD_LIBRARY_PATH` (ggml finds its backends in
+  the exe dir or cwd). Linux AppImage builds need that folder on
+  `LD_LIBRARY_PATH` (linuxdeploy's `ldd`). `scripts/verify-sidecar-bundle.sh`
+  checks every release bundle.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`
@@ -242,7 +257,8 @@ project decisions here, not in per-machine memory.**
   macOS assets are added from a Mac afterwards:
   ```bash
   git clone <repo> && cd Sussurro/sussurro && git checkout vX.Y.Z
-  npm ci && npm run tauri build          # Apple Silicon
+  npm ci && npm run sidecar              # pinned llama-server (#116)
+  npm run tauri build -- --config src-tauri/tauri.sidecar.conf.json   # Apple Silicon
   node_modules/.bin/tauri signer sign \
     --private-key-path <sussurro-updater.key> --password "" \
     src-tauri/target/release/bundle/macos/sussurro.app.tar.gz

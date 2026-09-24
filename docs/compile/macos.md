@@ -25,6 +25,32 @@ npm run tauri build    # production bundle (.dmg + .app)
 cd src-tauri && cargo test   # headless test suite
 ```
 
+### The llama-server sidecar (release bundles)
+
+Release bundles ship a pinned upstream `llama-server` (llama.cpp, Metal) for
+the optional Qwen3-ASR engine (plan E9). It is not in git: fetch it once, and
+again whenever `src-tauri/sidecar/llama-server.lock.json` changes — the
+script downloads the pinned asset, checks its SHA-256 and refuses anything
+else:
+
+```bash
+npm run sidecar                                               # → src-tauri/binaries/
+npm run tauri build -- --config src-tauri/tauri.sidecar.conf.json
+```
+
+Without the `--config` the bundle simply has no sidecar; `cargo test`,
+clippy and a plain `tauri dev` never need it (add the same `--config` to
+`tauri dev` to get it in `target/debug/`). The executable lands in
+`Contents/MacOS/sussurro-llama-server`, its dylibs in
+`Contents/Resources/llama-server-libs/`; they are upstream's ad-hoc
+(linker-)signed files, unmodified, and run in the ad-hoc-signed app. The
+app starts it with the lib folder as working directory and
+`DYLD_LIBRARY_PATH` (no hardened runtime, so dyld honours it — if Developer
+ID signing + notarization ever land, the dylibs must move next to the
+binary instead). A quarantined copy (downloaded DMG) should be covered by
+the one-time right-click → *Open* of the app; if the engine then fails to
+start, `xattr -cr /Applications/sussurro.app` clears the flag.
+
 ## Runtime notes
 
 macOS will prompt for two permissions on first use; both are required:
