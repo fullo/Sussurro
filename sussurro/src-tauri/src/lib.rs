@@ -1,4 +1,5 @@
 pub mod api;
+pub mod archive;
 pub mod audio;
 pub mod cleanup;
 pub mod commands;
