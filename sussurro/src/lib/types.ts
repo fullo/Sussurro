@@ -140,6 +140,13 @@ export interface Settings {
 
 export type SubtitlesMode = "on_request" | "always";
 
+/** `local_api_status` (#127): whether this run serves the local API. Its
+ *  settings apply at startup, so this can differ from them until a restart. */
+export type ListenState =
+  | { state: "off" }
+  | { state: "listening"; port: number }
+  | { state: "failed"; port: number };
+
 /** What an archive item can be exported as (#133). */
 export type ExportFormat = "md" | "txt" | "srt" | "vtt";
 

@@ -8,6 +8,7 @@ import { AudioFileCard, MicSessionNotice } from "./settings/AudioFileCard";
 import { BehaviorCard } from "./settings/BehaviorCard";
 import { CleanupCard } from "./settings/CleanupCard";
 import { DictationCard } from "./settings/DictationCard";
+import { ExtensionCard } from "./settings/ExtensionCard";
 import { HistoryCard } from "./settings/HistoryCard";
 import { PersonalizationCard } from "./settings/PersonalizationCard";
 import { SetupBanner } from "./settings/SetupBanner";
@@ -41,6 +42,7 @@ export function LegacyApp({ ctl }: { ctl: Ctl }) {
       <CleanupCard ctl={ctl} />
       <PersonalizationCard ctl={ctl} />
       <BehaviorCard ctl={ctl} />
+      <ExtensionCard ctl={ctl} />
       <HistoryCard ctl={ctl} />
       <AudioFileCard ctl={ctl} engine={engine} />
 
