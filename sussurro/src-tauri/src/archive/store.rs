@@ -19,6 +19,8 @@ use super::types::{ItemMeta, SegmentsFile, SEGMENTS_VERSION};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 pub const TRANSCRIPT_FILE: &str = "transcript.md";
 pub const META_DIR: &str = ".sussurro";
@@ -65,20 +67,110 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-/// Write via a dot-prefixed temp file + rename, so a crash or a sync client
-/// never sees a half-written document.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+/// A fresh temp name next to `path`: dot-prefixed (skipped by the item scan
+/// and by most sync clients) and unique per call — process id, a
+/// per-process counter and the clock's nanoseconds — so concurrent writers
+/// of the same file never share a temp file (#155).
+fn temp_path(path: &Path) -> Result<PathBuf> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let dir = path.parent().context("path without parent")?;
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
         .context("path without file name")?;
-    let tmp = dir.join(format!(".{name}.tmp-{}", std::process::id()));
-    std::fs::write(&tmp, bytes).with_context(|| format!("writing {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| {
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    Ok(dir.join(format!(".{name}.tmp-{}-{n}-{nanos:09}", std::process::id())))
+}
+
+/// Write `bytes` to a new temp file next to `path` and return its path.
+/// `create_new` guarantees the file is ours alone.
+fn write_temp(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
+    use std::io::Write;
+    let mut attempts = 0;
+    let (tmp, mut file) = loop {
+        let tmp = temp_path(path)?;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(file) => break (tmp, file),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempts < 8 => {
+                attempts += 1;
+            }
+            Err(e) => return Err(e).with_context(|| format!("creating {}", tmp.display())),
+        }
+    };
+    if let Err(e) = file.write_all(bytes) {
+        drop(file);
         let _ = std::fs::remove_file(&tmp);
-        format!("replacing {}", path.display())
-    })
+        return Err(e).with_context(|| format!("writing {}", tmp.display()));
+    }
+    Ok(tmp)
+}
+
+/// Move a staged temp file over `path` (removing the temp file on failure).
+fn rename_into(tmp: &Path, path: &Path) -> Result<()> {
+    if let Err(e) = std::fs::rename(tmp, path) {
+        let _ = std::fs::remove_file(tmp);
+        return Err(e).with_context(|| format!("replacing {}", path.display()));
+    }
+    Ok(())
+}
+
+/// Write via a dot-prefixed temp file + rename, so a crash or a sync client
+/// never sees a half-written document.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = write_temp(path, bytes)?;
+    rename_into(&tmp, path)
+}
+
+/// Serializes the app's own check-and-replace of `transcript.md` files, so
+/// two saves in this process can't both pass the freshness check.
+static TRANSCRIPT_COMMIT: Mutex<()> = Mutex::new(());
+
+/// Replace `transcript.md` in `dir` with `doc`, but only if the file still
+/// hashes to `expected_sha` (the bytes the caller read and based `doc` on).
+/// The new file is staged first, so the gap between the check and the
+/// rename is as small as the filesystem allows. On a mismatch — someone
+/// saved the file meanwhile, e.g. from Obsidian — nothing is overwritten
+/// and a clear error is returned. With `record_state`, `state.json` is
+/// updated to the new hash in the same critical section.
+///
+/// `before_commit` runs after staging, right before the check (a test hook
+/// to simulate an external save in that window).
+fn commit_transcript(
+    dir: &Path,
+    doc: &[u8],
+    expected_sha: &str,
+    record_state: bool,
+    before_commit: &dyn Fn(&Path),
+) -> Result<()> {
+    let path = transcript_path(dir);
+    let tmp = write_temp(&path, doc)?;
+    before_commit(&path);
+    let _guard = TRANSCRIPT_COMMIT.lock().unwrap_or_else(|e| e.into_inner());
+    let unchanged = std::fs::read(&path)
+        .map(|now| sha256_hex(&now) == expected_sha)
+        .unwrap_or(false);
+    if !unchanged {
+        let _ = std::fs::remove_file(&tmp);
+        bail!(
+            "{} changed on disk while Sussurro was saving it (edited in another app?). \
+             Nothing was overwritten: reopen the item to load the latest version, then \
+             make the change again.",
+            path.display()
+        );
+    }
+    rename_into(&tmp, &path)?;
+    if record_state {
+        write_state(dir, doc)?;
+    }
+    Ok(())
 }
 
 fn transcript_path(dir: &Path) -> PathBuf {
@@ -318,28 +410,46 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
 /// the whole transcript is regenerated (the `# title` follows the new title);
 /// after an external edit only the frontmatter is replaced and the user's
 /// body is kept verbatim. Returns the updated item.
+///
+/// Refused (nothing written) when the current frontmatter is not valid YAML
+/// — replacing it would silently drop the user's edits there — and when the
+/// file changes on disk while the update is being written (#155).
 pub fn update_meta(archive: &Path, id: &str, meta: &ItemMeta) -> Result<Item> {
+    update_meta_with(archive, id, meta, &|_| {})
+}
+
+fn update_meta_with(
+    archive: &Path,
+    id: &str,
+    meta: &ItemMeta,
+    before_commit: &dyn Fn(&Path),
+) -> Result<Item> {
     let dir = existing_item_dir(archive, id)?;
     let path = transcript_path(&dir);
     let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
     let current = String::from_utf8_lossy(&bytes);
+    let (old, _) = frontmatter::parse(&current).map_err(|e| {
+        anyhow::anyhow!(
+            "the frontmatter of {} can't be read ({e:#}), so Sussurro won't replace it — \
+             that would drop your edits there. Fix the YAML between the two `---` lines \
+             in a text editor (or delete that block to start over), then try again.",
+            path.display()
+        )
+    })?;
     let mut meta = meta.clone();
-    // A user-broken frontmatter is simply replaced; extras are merged only
-    // when the old one still parses.
-    if let Ok((old, _)) = frontmatter::parse(&current) {
-        for (k, v) in old.extra {
-            meta.extra.entry(k).or_insert(v);
-        }
+    // Keys the UI doesn't know (e.g. Obsidian's `aliases`) are kept.
+    for (k, v) in old.extra {
+        meta.extra.entry(k).or_insert(v);
     }
+    let expected = sha256_hex(&bytes);
     if is_edited_externally(&dir, &bytes) {
         let doc = frontmatter::replace(&current, &meta)?;
-        write_atomic(&path, doc.as_bytes())?;
         // State hash deliberately untouched: the file stays "edited outside".
+        commit_transcript(&dir, doc.as_bytes(), &expected, false, before_commit)?;
     } else {
         let segments = read_segments(&dir)?;
         let doc = render_transcript(&meta, &segments)?;
-        write_atomic(&path, doc.as_bytes())?;
-        write_state(&dir, doc.as_bytes())?;
+        commit_transcript(&dir, doc.as_bytes(), &expected, true, before_commit)?;
     }
     read_item_at(id, &dir)
 }
@@ -347,8 +457,19 @@ pub fn update_meta(archive: &Path, id: &str, meta: &ItemMeta) -> Result<Item> {
 /// Store new segments. `segments.json` is always written; `transcript.md`
 /// is regenerated only if it is still what the app last wrote. Returns
 /// `true` when the transcript was regenerated, `false` when it was left
-/// alone because it was edited outside the app.
+/// alone because it was edited outside the app. If the transcript changes
+/// on disk while it is being regenerated, it is left alone and an error is
+/// returned (`segments.json` is saved all the same).
 pub fn save_segments(archive: &Path, id: &str, segments: &SegmentsFile) -> Result<bool> {
+    save_segments_with(archive, id, segments, &|_| {})
+}
+
+fn save_segments_with(
+    archive: &Path,
+    id: &str,
+    segments: &SegmentsFile,
+    before_commit: &dyn Fn(&Path),
+) -> Result<bool> {
     let dir = existing_item_dir(archive, id)?;
     write_segments(&dir, segments)?;
     let path = transcript_path(&dir);
@@ -358,8 +479,14 @@ pub fn save_segments(archive: &Path, id: &str, segments: &SegmentsFile) -> Resul
     }
     let (meta, _) = frontmatter::parse(&String::from_utf8_lossy(&bytes))?;
     let doc = render_transcript(&meta, segments)?;
-    write_atomic(&path, doc.as_bytes())?;
-    write_state(&dir, doc.as_bytes())?;
+    commit_transcript(
+        &dir,
+        doc.as_bytes(),
+        &sha256_hex(&bytes),
+        true,
+        before_commit,
+    )
+    .context("the segments were saved, but transcript.md was not regenerated")?;
     Ok(true)
 }
 
@@ -647,5 +774,117 @@ mod tests {
         let never = |_: &Path| -> Result<()> { panic!("must not trash") };
         assert!(delete_item_with(&archive, "2025", never).is_err());
         assert!(delete_item_with(&archive, "../bin", never).is_err());
+    }
+
+    fn temp_leftovers(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp-"))
+            .collect()
+    }
+
+    #[test]
+    fn temp_names_are_unique_per_call() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("transcript.md");
+        let names: Vec<PathBuf> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    s.spawn(|| {
+                        (0..500)
+                            .map(|_| temp_path(&path).unwrap())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap())
+                .collect()
+        });
+        let unique: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(unique.len(), names.len());
+        let first = names[0].file_name().unwrap().to_string_lossy().into_owned();
+        assert!(first.starts_with(".transcript.md.tmp-"), "{first}");
+
+        // Concurrent atomic writes of one file: all succeed, the result is
+        // one whole payload, and no temp file is left behind.
+        let payloads: Vec<String> = (0..8).map(|i| format!("{i}").repeat(4096)).collect();
+        std::thread::scope(|s| {
+            for p in &payloads {
+                let path = &path;
+                s.spawn(move || {
+                    for _ in 0..25 {
+                        write_atomic(path, p.as_bytes()).unwrap();
+                    }
+                });
+            }
+        });
+        let result = std::fs::read_to_string(&path).unwrap();
+        assert!(payloads.contains(&result));
+        assert!(temp_leftovers(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn update_meta_does_not_overwrite_a_concurrent_external_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        for untouched in [true, false] {
+            let id = create_item(archive, &meta("Gara", DATE), &segs(&["Testo."])).unwrap();
+            let path = archive.join(&id).join("transcript.md");
+            if !untouched {
+                // Already edited outside: only the frontmatter would change.
+                let doc = std::fs::read_to_string(&path).unwrap() + "\nAppunto.\n";
+                std::fs::write(&path, doc).unwrap();
+            }
+            let mut m = read_item(archive, &id).unwrap().meta;
+            m.title = "Nuovo titolo".into();
+            // Obsidian saves the file between our read and our write.
+            let external = "---\ntitle: Salvato da Obsidian\n---\nTesto esterno.\n";
+            let err = update_meta_with(archive, &id, &m, &|p| std::fs::write(p, external).unwrap())
+                .unwrap_err();
+            assert!(format!("{err:#}").contains("changed on disk"), "{err:#}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
+            assert!(temp_leftovers(&archive.join(&id)).is_empty());
+            assert!(read_item(archive, &id).unwrap().edited_externally);
+        }
+    }
+
+    #[test]
+    fn save_segments_does_not_overwrite_a_concurrent_external_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = create_item(archive, &meta("Gara", DATE), &segs(&["Uno."])).unwrap();
+        let path = archive.join(&id).join("transcript.md");
+        let external = "---\ntitle: Gara\n---\nRiscritto a mano.\n";
+        let err = save_segments_with(archive, &id, &segs(&["Due."]), &|p| {
+            std::fs::write(p, external).unwrap()
+        })
+        .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("changed on disk"), "{msg}");
+        assert!(msg.contains("segments were saved"), "{msg}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
+        let item = read_item(archive, &id).unwrap();
+        assert!(item.edited_externally);
+        assert_eq!(item.segments.segments[0].text, "Due.");
+        assert!(temp_leftovers(&archive.join(&id)).is_empty());
+    }
+
+    #[test]
+    fn update_meta_refuses_unparseable_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = create_item(archive, &meta("Rotto", DATE), &segs(&["Testo."])).unwrap();
+        let path = archive.join(&id).join("transcript.md");
+        let broken = "---\ntitle: [oops\naliases: [mio]\n---\n# Rotto\n\nTesto.\n";
+        std::fs::write(&path, broken).unwrap();
+        let err = update_meta(archive, &id, &meta("Nuovo", DATE)).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("won't replace it"), "{msg}");
+        assert!(msg.contains("---"), "{msg}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
     }
 }
