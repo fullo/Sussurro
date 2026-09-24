@@ -77,7 +77,7 @@ reports it as damaged, clear the quarantine flag:
 
 ### System audio + mic: this computer's sound
 
-*New → System audio + mic* (meetings preview, Settings → Browser extension)
+*New → System audio + mic*
 records a call from a desktop app — Zoom, Teams, anything that plays through
 the computer — as two channels: your microphone ("You") and a second input
 source that carries the computer's sound (the others, told apart as

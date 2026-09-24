@@ -12,13 +12,17 @@ project decisions here, not in per-machine memory.**
   browser, `web-ext lint` in CI; see `extension/README.md`). It shares
   `sussurro/src/transcript/` via the `@sussurro/transcript` alias and takes
   its version from `sussurro/package.json`. Its third-party license list is
-  separate from the app's `licenses.json` (lands with #138).
+  separate from the app's `licenses.json` (see below).
 - Build instructions per OS live in `docs/compile/{windows,macos,linux}.md`
   — keep them updated when build requirements change.
 - The About dialog's third-party license list is `sussurro/public/licenses.json`,
   generated from the resolved deps (cargo + npm). **Regenerate after changing
   dependencies:** `cd sussurro && npm run licenses` (needs the Rust toolchain;
-  not run in CI to keep the pipeline simple — the file is committed).
+  not run in CI to keep the pipeline simple — the file is committed). The
+  browser extension's own list (`extension/src/options/licenses.json`, its
+  options page's About) comes from `cd extension && npm run licenses` (same
+  script, `--extension`); a unit test keeps it in step with its lockfile.
+  Both lists hold production deps only — the script fails on a dev one.
 
 ## Standing decisions
 
@@ -105,8 +109,8 @@ project decisions here, not in per-machine memory.**
   in `segments.json` (mean of the line's windows), labels kept stable by
   speech overlap. Thresholds were tuned on English AMI clips (#107) — check
   on Italian before calling them final. Engine option `Job.speakers` (off
-  by default); runs turn it on only with `Settings.meetings_enabled` for
-  meetings — one channel is clustered as is; a browser meeting's mic is
+  by default); runs turn it on for every meeting (and for transcriptions
+  with "Identify voices") — one channel is clustered as is; a browser meeting's mic is
   always "You" and only its remote channel is clustered. Embeddings never
   go to the UI (`Item::without_embeddings`). Linking a speaker to a person
   (`SpeakerEdit::Link`) sets `person_id`, takes the person's name unless
@@ -114,11 +118,10 @@ project decisions here, not in per-machine memory.**
   Unlink) and adds/completes the participant (never replaces an email).
 - **"Identify voices" on transcriptions (0.9, #134, P11)**: a per-run
   option (`RunOptions.identify_voices`, New → File when the type is
-  Transcription, and New → Link), off by default, **not** behind
-  `meetings_enabled` — that flag gates meeting pieces only (browser/live,
-  "Meeting in the room", meeting speaker labels). Gating
+  Transcription, and New → Link), off by default. Gating
   (`session::speaker_options`): note never; transcription = the toggle;
-  meeting = the flag. The speaker panel shows on every transcription.
+  meeting = always. The speaker panel shows on every transcription and
+  meeting.
   After the fact, "Identify voices" in the panel re-reads the original
   file (`engine/identify.rs`: same tracker + end-of-run fold as a run),
   so it needs the file's path: kept **only on this machine** in
@@ -129,8 +132,8 @@ project decisions here, not in per-machine memory.**
   instead of the button.
 - **Local API for the browser extension (0.9, #126)** (`api/`): new routes
   (`GET /app/version`, `WS /live`, `POST /items/{id}/open`,
-  `GET /items/{id}/export`) exist only with `Settings.meetings_enabled`
-  (E12) and need `Settings.extension_token` — `Authorization: Bearer` on
+  `GET /items/{id}/export`) exist whenever the local API runs and need
+  `Settings.extension_token` — `Authorization: Bearer` on
   HTTP, `?token=` plus an extension `Origin` on the WebSocket; web-page
   origins are refused even with the token; CORS only for
   `chrome-extension://` / `moz-extension://`. `/clean`, `/transcribe`,
@@ -143,8 +146,8 @@ project decisions here, not in per-machine memory.**
   item, `source: browser:<host>`; page events go to
   `.sussurro/meeting-events.jsonl` for attribution (#131).
 - **System audio + mic (0.10 step 1, #139)** (`sources/system.rs`):
-  *New → System audio + mic*, behind `meetings_enabled` (it records other
-  people; checked in the backend too). The mic and **any second input
+  *New → System audio + mic* (it records other people: the #136 notice
+  asks first). The mic and **any second input
   device** (BlackHole, VB-Cable, a monitor source — names that look like
   loopback devices are listed first, a hint only) are two channels of one
   `meeting` item, `source: system`: mic = "You", system = clustered
@@ -191,7 +194,7 @@ project decisions here, not in per-machine memory.**
   tab suggests headphones.
 - **People registry (0.9, #132)** (`archive/people.rs`): lives in the
   archive at `<archive>/.sussurro/people.json` so it travels with it; not
-  behind `meetings_enabled` (transcriptions have participants too). Names
+  tied to meetings (transcriptions have participants too). Names
   match case-, accent- and whitespace-insensitively on name or alias; a name
   matching two people links to nobody. Linking only *adds* an email, and on
   save only to participants new to the item (a removed email doesn't come
@@ -293,7 +296,7 @@ project decisions here, not in per-machine memory.**
   `msedge` channel); `brave` only when named locally. `web-ext lint`: 0
   errors, 4 warnings justified in `extension/README.md`.
 - **Library facets (0.9, #135)** (`archive/facets.rs`, `archive_facets`):
-  not behind `meetings_enabled`. OR within a facet, AND across facets and
+  not tied to meetings. OR within a facet, AND across facets and
   with the text query; counts are disjunctive (a facet ignores its own
   selection). Tags/categories group case-insensitively (accents kept);
   participants group by People person (same rule as the People screen's
@@ -322,8 +325,7 @@ project decisions here, not in per-machine memory.**
 - **Speaker-aware recipes and Ask (0.10, #143)** (`recipes/`): built-ins
   *Meeting minutes* and *Who said what* are `speakers_only` — offered and
   run only on meetings/transcriptions whose transcript names its speakers
-  (UI also follows the `meetings_enabled` gate for meetings, like the
-  speaker panel). Map chunks are cut on speaker turns (an over-long line
+  (never on notes, like the speaker panel). Map chunks are cut on speaker turns (an over-long line
   keeps its `[ts] Name:` prefix on every piece); map/merge/reduce prompts
   keep each statement with its speaker and never merge speakers; "Voice N"
   goes as-is with "never guess who they are". **Participants go to the
@@ -435,6 +437,17 @@ project decisions here, not in per-machine memory.**
   saved only on request; extra STT engines (Qwen3-ASR) run in a bundled
   `llama-server` sidecar, never in-process (two ggml copies can't share a
   binary); never add sherpa-onnx (second ONNX Runtime).
+- **Meetings are on by default** (#138, 2026-09-25): the 0.9 preview flag
+  `Settings.meetings_enabled` is gone (E12: removed in the release that
+  turns the feature on — here the single final release). The extension
+  routes of the local API exist whenever the API runs (token + extension
+  Origin, loopback only; an unpaired app accepts nothing), New → System
+  audio + mic and "Meeting in the room" always show (the #136 notice asks
+  first), and meetings always get speaker labels. Settings → Browser
+  extension = explanation + local API status + pairing, no switch. An old
+  settings file with the key loads and drops it on save. A 404 from
+  `/app/version` now tells the extension the app is too old
+  (`app_outdated`). Don't reintroduce a meetings switch.
 
 ## Release process
 

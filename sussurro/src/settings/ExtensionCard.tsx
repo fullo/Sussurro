@@ -11,7 +11,7 @@ import type { ListenState } from "../lib/types";
 import type { CardProps } from "./DictationCard";
 
 const RELEASES_URL = "https://github.com/fullo/Sussurro/releases";
-const EXTENSION_README_URL = "https://github.com/fullo/Sussurro/tree/main/extension#load-it-unpacked";
+const EXTENSION_README_URL = "https://github.com/fullo/Sussurro#browser-extension-meetings";
 
 /** Settings → Browser extension (#127, E6): what the extension does, the
  *  local API status, and pairing by copying one code
@@ -162,7 +162,7 @@ export function ExtensionCard({ ctl, collapsible }: CardProps) {
         >
           Sussurro releases page
         </a>{" "}
-        — until it is in the browser stores, load it as explained in{" "}
+        — until it is in the browser stores, install and pair it as explained in{" "}
         <a
           href={EXTENSION_README_URL}
           onClick={(e) => {
@@ -170,7 +170,7 @@ export function ExtensionCard({ ctl, collapsible }: CardProps) {
             openUrl(EXTENSION_README_URL);
           }}
         >
-          the extension's README
+          the README
         </a>
         .
       </p>
