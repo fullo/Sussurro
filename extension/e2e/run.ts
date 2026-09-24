@@ -38,6 +38,11 @@ const GECKO_ID = "sussurro@darumahq.it";
 const FIREFOX_UUID = "5b7f3a52-6c1e-4f0e-9c1a-2d8b3c4e5f60";
 const headless = !process.env.HEADED;
 const CAPTURE_MS = 6000;
+/** Firefox's event-page idle timeout in the harness (default 30 s): short,
+ *  so that everything the extension does while capturing, and while the app
+ *  finishes after Stop (FINISH_MS), outlasts it several times over. */
+const FIREFOX_IDLE_MS = 2000;
+const FINISH_MS = 5000;
 
 type Config = "chromium" | "chromium-json" | "firefox";
 const ALL: Config[] = ["chromium", "chromium-json", "firefox"];
@@ -122,6 +127,9 @@ interface Launched {
   /** The side panel, opened as a tab controlling `tabId`. */
   openPanel(tabId: number): Promise<Panel>;
   micTone: number;
+  /** Firefox: how many times the event page was suspended so far (it
+   *  runs with a short idle timeout, see FIREFOX_IDLE_MS). */
+  suspends?(): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -191,16 +199,48 @@ async function launchFirefox(config: Config): Promise<Launched> {
       "media.navigator.permission.disabled": true,
       "media.autoplay.default": 0,
       "media.autoplay.block-webaudio": false,
+      "extensions.background.idle.timeout": FIREFOX_IDLE_MS,
       // A fixed internal UUID, so the harness knows the moz-extension:// URL.
       "extensions.webextensions.uuids": JSON.stringify({ [GECKO_ID]: FIREFOX_UUID }),
     },
   });
   const rdpc = await Rdp.connect(rdp);
+  // The parent process (chrome privileges), for two things no extension
+  // document can do. Firefox never suspends an event page while DevTools
+  // are attached to its add-on, and the harness is attached (RDP): make
+  // Firefox ignore that for this add-on, so its idle timeout applies as it
+  // does for users. And count the suspensions.
+  const parent = await rdpc.parentProcessConsole();
+  const chromeJs = (code: string) => rdpc.evaluate(parent, code);
+  await chromeJs(`(() => {
+    const { ExtensionParent } = ChromeUtils.importESModule("resource://gre/modules/ExtensionParent.sys.mjs");
+    const du = ExtensionParent.DebugUtils;
+    const attached = du.hasDevToolsAttached.bind(du);
+    du.hasDevToolsAttached = (id) => id !== ${JSON.stringify(GECKO_ID)} && attached(id);
+    return 0;
+  })()`);
   const id = await rdpc.installTemporaryAddon(ext);
+  const extension = `WebExtensionPolicy.getByID(${JSON.stringify(id)}).extension`;
+  await chromeJs(`(() => {
+    globalThis.__e2eSuspends = 0;
+    ${extension}.on("background-script-suspend", () => { globalThis.__e2eSuspends++; });
+    return 0;
+  })()`);
   const targets = await rdpc.watchAddon(id);
   const target = (part: string): Promise<string> => until(`the ${part} document`, () => [...targets].find(([url]) => url.includes(part))?.[1] ?? "");
-  // Looked up per call: Firefox may suspend and restart the event page.
-  const bg = async (code: string) => rdpc.evaluate(await target("background"), code);
+  // The event page may be suspended (idle) or just restarting: wake it,
+  // then evaluate in its current document.
+  const bg = async (code: string): Promise<unknown> => {
+    for (let attempt = 0; ; attempt++) {
+      await chromeJs(`${extension}.wakeupBackground(); 0`);
+      try {
+        return await rdpc.evaluate(await target("_generated_background_page"), code);
+      } catch (e) {
+        if (attempt >= 20) throw e;
+        await sleep(200);
+      }
+    }
+  };
   // The value of a promise-valued expression: RDP's evaluation returns at
   // once, so the result is parked under a key of its own and polled.
   let parked = 0;
@@ -214,6 +254,7 @@ async function launchFirefox(config: Config): Promise<Launched> {
   return {
     ctx,
     micTone: 1000,
+    suspends: async () => Number(await chromeJs("globalThis.__e2eSuspends")),
     async pair(port, token) {
       await bg(`browser.storage.local.set(${JSON.stringify({ port, token })}); 0`);
       await until("the pairing to be stored", async () => (await bgAwait("browser.storage.local.get('token').then((r) => r.token)")) === token);
@@ -259,11 +300,19 @@ async function runConfig(config: Config): Promise<Check[]> {
   const check = (name: string, ok: boolean, detail?: unknown) => {
     checks.push({ name, ok, detail: detail === undefined ? undefined : typeof detail === "string" ? detail : JSON.stringify(detail) });
   };
-  const server = await startServer(TOKEN);
+  const server = await startServer(TOKEN, { finishMs: FINISH_MS });
   const b = config === "firefox" ? await launchFirefox(config) : await launchChromium(config);
   let shownPanel: Panel | null = null;
   try {
     await b.pair(server.port, TOKEN);
+
+    // 0. Firefox's event page (#137): with nothing going on it is suspended
+    //    after the idle timeout — so the lifetime checks below mean something.
+    if (b.suspends) {
+      const before = await b.suspends();
+      await sleep(FIREFOX_IDLE_MS * 2 + 1000);
+      check("Firefox: the event page is suspended when idle", (await b.suspends()) > before);
+    }
 
     const room = `${config}-${Date.now()}`;
     const base = `http://127.0.0.1:${server.port}/call.html?room=${room}&add=${config === "chromium" ? "replace" : "track"}`;
@@ -295,6 +344,7 @@ async function runConfig(config: Config): Promise<Check[]> {
     // 2. Start → notice → Start recording → live, both channels.
     await panel.click("start");
     await until("the recording notice again", () => panel.canClick("notice-proceed"));
+    const suspendsAtStart = await b.suspends?.();
     await panel.click("notice-proceed");
     await until("phase live", async () => (await phase()) === "live", 15_000);
     const reminder = (await panel.texts("[data-testid=reminder]"))[0] ?? "";
@@ -330,7 +380,14 @@ async function runConfig(config: Config): Promise<Check[]> {
     const a = await A.evaluate(() => (window as any).callState());
     const bs = await B.evaluate(() => (window as any).callState());
     await panel.click("stop");
-    await until("phase done", async () => (await phase()) === "done", 10_000);
+    // The app works through its backlog for FINISH_MS before `done`.
+    const finishing = await until("phase stopping", async () => (await phase()) === "stopping", 5000).catch(() => false);
+    check("Stop → stopping while the app finishes", !!finishing);
+    await until("phase done", async () => (await phase()) === "done", FINISH_MS + 10_000);
+    if (b.suspends) {
+      const n = (await b.suspends()) - (suspendsAtStart ?? 0);
+      check(`Firefox: the event page stays up from Start until the app is done (${FIREFOX_IDLE_MS / 1000} s idle timeout)`, n === 0, `${n} suspension(s)`);
+    }
     await panel.click("action-srt");
     const srt = await until("Create .srt", () => server.items.find((r) => r.path === "/items/e2e-1/export" && r.format === "srt"), 5000).catch(() => null);
     const note = await until("the .srt note", async () => (await panel.texts("[data-testid=action-note]")).find((x) => x.includes(".srt")) ?? "", 5000).catch(() => "");
@@ -383,6 +440,13 @@ async function runConfig(config: Config): Promise<Check[]> {
     //    a route, so the shipped content-script patterns match it) with
     //    tiles and faked contributing sources, in every browser.
     await meetNames();
+
+    // 5. Firefox: the keep-alive lets go once no meeting is on.
+    if (b.suspends) {
+      const before = await b.suspends();
+      await sleep(FIREFOX_IDLE_MS * 2 + 1000);
+      check("Firefox: the event page is suspended again after the meetings", (await b.suspends()) > before);
+    }
   } catch (e) {
     const shown = shownPanel ? await shownPanel.text().catch(() => "") : "";
     check("harness ran", false, `${String(e instanceof Error ? e.stack : e)}\n    side panel: ${shown.replace(/\s+/g, " ")}`);
