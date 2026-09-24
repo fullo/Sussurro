@@ -60,8 +60,16 @@ impl FileStream {
             )
             .context("unsupported or corrupt audio file")?;
         let format = probed.format;
+        // The first audio track: a video file downloaded from a link (#123)
+        // may list its video track first.
         let track = format
-            .default_track()
+            .tracks()
+            .iter()
+            .find(|t| {
+                t.codec_params.codec != symphonia::core::codecs::CODEC_TYPE_NULL
+                    && t.codec_params.sample_rate.is_some()
+            })
+            .or_else(|| format.default_track())
             .ok_or_else(|| anyhow!("no audio track in file"))?;
         let track_id = track.id;
         let src_rate = track.codec_params.sample_rate.unwrap_or(TARGET_RATE);

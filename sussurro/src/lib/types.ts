@@ -247,6 +247,42 @@ export interface EngineStatus {
   mic_session: number | null;
   /** Running file transcriptions, oldest first (#158). */
   file_sessions: { session_id: number; label: string }[];
+  /** Running link transcriptions, oldest first (#123). */
+  link_sessions?: { session_id: number; label: string }[];
+}
+
+/* ---------- Link source (#123, sources/url) ---------- */
+
+export type LinkKind = "direct" | "platform";
+export type LinkVia = "direct" | "yt-dlp";
+
+/** `engine-download` payload: a link run fetching its audio, before
+ *  `engine-started`. */
+export interface EngineDownload {
+  session_id: number;
+  via: LinkVia;
+  downloaded_bytes: number;
+  /** Absent when the server does not say. */
+  total_bytes: number | null;
+  /** The platform's title (yt-dlp), once known. */
+  title: string | null;
+}
+
+/** `link_inspect`: what the Link tab shows while the user types. */
+export interface LinkInfo {
+  kind: LinkKind | null;
+  error: string | null;
+  /** Visibly this computer or the local network: needs the opt-in. */
+  local: boolean;
+  label: string;
+}
+
+/** `yt_dlp_status`. */
+export interface YtDlpStatus {
+  found: boolean;
+  path: string | null;
+  version: string | null;
+  install_help: string;
 }
 
 /* ---------- Recipes (recipes/, archive/companion.rs, #120) ---------- */

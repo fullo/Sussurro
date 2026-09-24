@@ -43,6 +43,7 @@ export function Shell({ ctl }: { ctl: Ctl }) {
   const runDefaults = useRef<Record<RunKind, NewDefaults>>({
     mic: { tags: [], categories: [] },
     file: { tags: [], categories: [] },
+    link: { tags: [], categories: [] },
   });
   const applied = useRef(new Set<string>());
 
@@ -65,9 +66,9 @@ export function Shell({ ctl }: { ctl: Ctl }) {
 
   // When a run writes its item: add New's default tags / category, then
   // refresh the Library. Keyed by item id so it happens once per item.
-  const { mic, file } = engine.runs;
+  const { mic, file, link } = engine.runs;
   useEffect(() => {
-    for (const run of [mic, file]) {
+    for (const run of [mic, file, link]) {
       const result = run?.result;
       if (!run || !result || applied.current.has(result.item_id)) continue;
       applied.current.add(result.item_id);
@@ -85,30 +86,32 @@ export function Shell({ ctl }: { ctl: Ctl }) {
         refreshLibrary();
       })();
     }
-  }, [mic, file, ctl, refreshLibrary]);
+  }, [mic, file, link, ctl, refreshLibrary]);
 
   // A run's item appears in the Library as soon as it starts (#153, marked
   // recording) and may be renamed at the end (untitled → titled folder):
   // refresh on every item-id change and let a selection follow the rename.
   const micItem = mic?.itemId ?? null;
   const fileItem = file?.itemId ?? null;
+  const linkItem = link?.itemId ?? null;
   useEffect(() => {
-    if (micItem || fileItem) refreshLibrary();
-  }, [micItem, fileItem, refreshLibrary]);
+    if (micItem || fileItem || linkItem) refreshLibrary();
+  }, [micItem, fileItem, linkItem, refreshLibrary]);
   useEffect(() => {
-    for (const run of [mic, file]) {
+    for (const run of [mic, file, link]) {
       if (run?.previousItemId && run.itemId) {
         const { previousItemId, itemId } = run;
         setSelectedId((sel) => (sel === previousItemId ? itemId : sel));
       }
     }
-  }, [mic, file]);
+  }, [mic, file, link]);
   // A run that ended in an error still changes the Library (kept or discarded item).
   const micStatus = mic?.status;
   const fileStatus = file?.status;
+  const linkStatus = link?.status;
   useEffect(() => {
-    if (micStatus === "error" || fileStatus === "error") refreshLibrary();
-  }, [micStatus, fileStatus, refreshLibrary]);
+    if (micStatus === "error" || fileStatus === "error" || linkStatus === "error") refreshLibrary();
+  }, [micStatus, fileStatus, linkStatus, refreshLibrary]);
 
   const openItem = (id: string) => {
     setSelectedId(id);

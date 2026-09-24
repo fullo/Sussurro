@@ -916,7 +916,7 @@ mod tests {
         let last = std::sync::Mutex::new(
             std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
         );
-        let (id, _) = sessions.begin(None);
+        let (id, _) = sessions.begin(crate::engine::session::SessionKind::Mic);
         let t = std::time::Duration::from_secs(1);
         assert!(!unload_if_idle(&slot, &last, t, sessions.is_active()));
         sessions.end(id);

@@ -117,10 +117,16 @@ fn fetch_expected_sha256(
 /// models on slow links still complete while a malicious or broken server can't
 /// hold the download open forever.
 fn download_client() -> Result<reqwest::blocking::Client> {
-    Ok(reqwest::blocking::Client::builder()
+    Ok(download_client_builder().build()?)
+}
+
+/// The download client's settings (connect 10 s, 60 s per operation), for
+/// other downloads to start from — the link source (#123) adds its own
+/// redirect and DNS rules. Never `timeout(None)`.
+pub(crate) fn download_client_builder() -> reqwest::blocking::ClientBuilder {
+    reqwest::blocking::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(60))
-        .build()?)
 }
 
 pub fn model_exists(models_dir: &Path, file: &str) -> bool {

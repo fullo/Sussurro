@@ -1,10 +1,11 @@
 /* Long-form engine runs as the workspace shows them: at most one microphone
-   session and one file at a time. A pure reducer over the engine's events
-   (engine-started / -progress / -segment / -done / -error), kept outside
-   React so the routing rules are unit-tested. */
+   session, one file and one link at a time. A pure reducer over the
+   engine's events (engine-download / -started / -progress / -segment /
+   -done / -error), kept outside React so the routing rules are unit-tested. */
 
 import type {
   EngineDone,
+  EngineDownload,
   EngineError,
   EngineProgress,
   EngineResult,
@@ -14,7 +15,7 @@ import type {
   Segment,
 } from "./types";
 
-export type RunKind = "mic" | "file";
+export type RunKind = "mic" | "file" | "link";
 export type RunStatus = "running" | "stopping" | "done" | "error";
 
 /** A transcript line as the live view needs it (no word timings: an hour of
@@ -32,7 +33,7 @@ export interface Run {
    *  return the id up front one day, pass it to `started` and no claim
    *  happens. */
   sessionId: number | null;
-  /** File name, or the mic session's title. */
+  /** File name, the link (shortened), or the mic session's title. */
   label: string;
   status: RunStatus;
   /** Date.now() when the run started (the mic's elapsed clock). */
@@ -45,6 +46,8 @@ export interface Run {
    *  live item can follow the rename. */
   previousItemId: string | null;
   progress: EngineProgress | null;
+  /** A link run's download (#123), before its transcription starts. */
+  download: EngineDownload | null;
   segments: LiveSegment[];
   result: EngineDone | null;
   error: string | null;
@@ -53,6 +56,9 @@ export interface Run {
 export interface RunsState {
   mic: Run | null;
   file: Run | null;
+  /** A link run (#123): its id is known at once (engine_start_link
+   *  returns it), like the mic's. */
+  link: Run | null;
   /** Events of session ids no run has claimed yet, oldest first (#158): a
    *  mic session's `engine-started` can arrive before `engine_start_mic`
    *  resolves with its id. Replayed when a run starts with that id; capped
@@ -61,13 +67,14 @@ export interface RunsState {
   pending: EngineEventAction[];
 }
 
-export const initialRuns: RunsState = { mic: null, file: null, pending: [] };
+export const initialRuns: RunsState = { mic: null, file: null, link: null, pending: [] };
 
 /** How many unclaimed events {@link RunsState.pending} keeps. */
 export const MAX_BUFFERED = 64;
 
 /** An engine-* event, routed by its session id. */
 export type EngineEventAction =
+  | { type: "download"; payload: EngineDownload }
   | { type: "engine-started"; payload: EngineStarted }
   | { type: "progress"; payload: EngineProgress }
   | { type: "segment"; payload: EngineSegmentEvent }
@@ -91,14 +98,16 @@ export type LiveRun = Run & { status: "running" | "stopping" };
 
 const isLive = (r: Run | null): r is LiveRun => !!r && (r.status === "running" || r.status === "stopping");
 
-/** Which run an event with this session id belongs to: the mic when the id
- *  matches, else the running file (claiming the id on its first event).
- *  Events of sessions we did not start (another window, the local API) are
- *  ignored. */
-export function routeEvent(state: RunsState, sessionId: number): RunKind | null {
+/** Which run an event with this session id belongs to: the mic or the link
+ *  when the id matches, else the running file (claiming the id on its
+ *  first event). A download event only ever belongs to a link run: a file
+ *  never claims one. Events of sessions we did not start (another window,
+ *  the local API) are ignored. */
+export function routeEvent(state: RunsState, sessionId: number, type?: EngineEventAction["type"]): RunKind | null {
   if (state.mic && state.mic.sessionId === sessionId) return "mic";
+  if (state.link && state.link.sessionId === sessionId) return "link";
   if (state.file && state.file.sessionId === sessionId) return "file";
-  if (isLive(state.file) && state.file.sessionId === null) return "file";
+  if (type !== "download" && isLive(state.file) && state.file.sessionId === null) return "file";
   return null;
 }
 
@@ -127,6 +136,7 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
           itemId: null,
           previousItemId: null,
           progress: null,
+          download: null,
           segments: [],
           result: null,
           error: null,
@@ -142,13 +152,15 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
     }
     case "adopt": {
       // Sessions that outlive the UI that started them — a window reload,
-      // or ui_v2 switched mid-run (#158): the mic session and the oldest
-      // file transcription, unless a run of that kind is already live here.
+      // or ui_v2 switched mid-run (#158): the mic session, the oldest file
+      // and link transcriptions, unless a run of that kind is live here.
       const { status, now } = action;
       const adopt: { kind: RunKind; sessionId: number; label: string }[] = [];
       if (status.mic_session !== null) adopt.push({ kind: "mic", sessionId: status.mic_session, label: "Microphone" });
       const file = status.file_sessions?.[0];
       if (file) adopt.push({ kind: "file", sessionId: file.session_id, label: file.label });
+      const link = status.link_sessions?.[0];
+      if (link) adopt.push({ kind: "link", sessionId: link.session_id, label: link.label });
       return adopt.reduce<RunsState>((s, a) => {
         const current = s[a.kind];
         if (isLive(current) || current?.sessionId === a.sessionId) return s;
@@ -157,16 +169,19 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
     }
     case "stopping":
       return update(state, action.kind, (r) => (r.status === "running" ? { ...r, status: "stopping" } : r));
+    case "download":
     case "engine-started":
     case "progress":
     case "segment":
     case "done":
     case "error": {
-      const kind = routeEvent(state, action.payload.session_id);
+      const kind = routeEvent(state, action.payload.session_id, action.type);
       if (!kind) return { ...state, pending: [...state.pending, action].slice(-MAX_BUFFERED) };
       return update(state, kind, (r) => {
         const run = { ...r, sessionId: action.payload.session_id };
         switch (action.type) {
+          case "download":
+            return { ...run, download: action.payload };
           case "engine-started":
             return { ...run, itemId: action.payload.item_id };
           case "progress":
@@ -208,14 +223,14 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
   }
 }
 
-/** Whether a run of this kind can be started now. A mic session waits until
- *  a running file has claimed its session id: the mic's first events could
- *  otherwise arrive before engine_start_mic resolves and be taken for the
- *  file's. (Callers also block a file start while engine_start_mic is in
- *  flight, for the same reason.) */
+/** Whether a run of this kind can be started now. A mic or link session
+ *  waits until a running file has claimed its session id: its first events
+ *  could otherwise arrive before engine_start_mic / engine_start_link
+ *  resolves and be taken for the file's. (Callers also block a file start
+ *  while either is in flight, for the same reason.) */
 export function canStart(state: RunsState, kind: RunKind): boolean {
   if (isLive(state[kind])) return false;
-  if (kind === "mic" && isLive(state.file) && state.file.sessionId === null) return false;
+  if (kind !== "file" && isLive(state.file) && state.file.sessionId === null) return false;
   return true;
 }
 
@@ -259,7 +274,7 @@ export function describeProgress(run: Run): string {
     return left > 0 ? `Finishing · ${left} s of audio left` : "Finishing…";
   }
   const p = run.progress;
-  if (!p) return run.kind === "mic" ? "Listening…" : "Starting…";
+  if (!p) return run.kind === "mic" ? "Listening…" : run.kind === "link" && run.itemId === null ? "Downloading…" : "Starting…";
   const behind = Math.round(p.backlog_s);
   const queue = p.queue_len > 0 ? ` · ${p.queue_len} queued` : "";
   return behind >= 1 ? `Transcribing · ${behind} s behind${queue}` : `Up to date${queue}`;

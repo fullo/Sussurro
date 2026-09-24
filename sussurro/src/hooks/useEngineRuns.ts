@@ -11,6 +11,7 @@ import { baseName } from "../lib/format";
 import type {
   CleanupLevel,
   EngineDone,
+  EngineDownload,
   EngineError,
   EngineProgress,
   EngineResult,
@@ -24,17 +25,21 @@ import type {
 export type RunArgs = { language: string | null; cleanupLevel: CleanupLevel | null };
 const NO_OPTIONS: RunArgs = { language: null, cleanupLevel: null };
 
-/** The long-form engine's runs (one mic session, one file), fed by the
- *  engine-* events and routed by session id. Mount it once per window. */
+/** The long-form engine's runs (one mic session, one file, one link), fed
+ *  by the engine-* events and routed by session id. Mount it once per
+ *  window. */
 export function useEngineRuns() {
   const [runs, dispatch] = useReducer(runsReducer, initialRuns);
   /** engine_start_mic in flight: a file start waits (see `canStart`). */
   const [micStarting, setMicStarting] = useState(false);
+  /** engine_start_link in flight: a file start waits too (#123). */
+  const [linkStarting, setLinkStarting] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => {
     mounted.current = true;
     const subs = [
+      listen<EngineDownload>("engine-download", (e) => dispatch({ type: "download", payload: e.payload })),
       listen<EngineStarted>("engine-started", (e) => dispatch({ type: "engine-started", payload: e.payload })),
       listen<EngineProgress>("engine-progress", (e) => dispatch({ type: "progress", payload: e.payload })),
       listen<EngineSegmentEvent>("engine-segment", (e) => dispatch({ type: "segment", payload: e.payload })),
@@ -102,6 +107,29 @@ export function useEngineRuns() {
     [],
   );
 
+  /** Transcribe a link (#123): returns null once the run started, else the
+   *  reason it could not (invalid link, yt-dlp missing, archive). */
+  const startLink = useCallback(
+    async (url: string, title: string, label: string, allowLocal: boolean, options: RunArgs = NO_OPTIONS) => {
+      setLinkStarting(true);
+      try {
+        const id = await invoke<number>("engine_start_link", {
+          url: url.trim(),
+          title: title.trim() || null,
+          allowLocal,
+          ...options,
+        });
+        dispatch({ type: "started", kind: "link", sessionId: id, label, now: Date.now() });
+        return null;
+      } catch (e) {
+        return String(e);
+      } finally {
+        setLinkStarting(false);
+      }
+    },
+    [],
+  );
+
   const cancel = useCallback(
     async (kind: RunKind) => {
       const id = runs[kind]?.sessionId;
@@ -118,11 +146,14 @@ export function useEngineRuns() {
     startMic,
     stopMic,
     startFile,
+    startLink,
     cancel,
     dismiss,
     canStartMic: canStart(runs, "mic") && !micStarting,
-    canStartFile: canStart(runs, "file") && !micStarting,
+    canStartFile: canStart(runs, "file") && !micStarting && !linkStarting,
+    canStartLink: canStart(runs, "link") && !linkStarting,
     micStarting,
+    linkStarting,
   };
 }
 

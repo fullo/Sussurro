@@ -3,7 +3,8 @@
    only when `import.meta.env.DEV` is true AND the page is not running inside
    Tauri, through a dynamic import that production builds drop entirely.
 
-   URL switches: ?ui=legacy (classic window), ?empty=1 (empty archive). */
+   URL switches: ?ui=legacy (classic window), ?empty=1 (empty archive),
+   ?ytdlp=0 (yt-dlp not installed, for the Link tab). */
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
@@ -263,6 +264,10 @@ function cancel(id: number): boolean {
     fileRun.cancelled = true;
     return true;
   }
+  if (linkRun && linkRun.id === id) {
+    linkRun.cancelled = true;
+    return true;
+  }
   return false;
 }
 
@@ -297,6 +302,78 @@ async function transcribeFile(path: string, itemType: "note" | "transcription", 
   const result = { session_id: id, item_id: itemId, item_type: itemType, title: s.meta.title, text: "", segments: 8, duration_s: total };
   ev("engine-done", result);
   return result;
+}
+
+/* ---------- links (#123) ---------- */
+
+const YT_DLP = params.get("ytdlp") !== "0";
+const PLATFORMS = ["youtube.com", "youtu.be", "vimeo.com", "soundcloud.com", "dailymotion.com", "twitch.tv"];
+const MEDIA = /\.(mp3|wav|m4a|aac|mp4|mov|flac|ogg|opus|webm|mkv)$/i;
+
+/** A rough copy of `sources/url` classification, for the preview only. */
+function linkInspect(input: string) {
+  let u: URL;
+  try {
+    u = new URL(input.trim());
+  } catch {
+    return { kind: null, error: "not a valid link — it should start with https://", local: false, label: "" };
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:")
+    return { kind: null, error: `only http and https links are supported, not ${u.protocol}`, local: false, label: "" };
+  if (u.username || u.password)
+    return { kind: null, error: "links with a user name or password are not supported (the link is saved in the item)", local: false, label: "" };
+  const host = u.hostname.replace(/^www\./, "");
+  const platform = !MEDIA.test(u.pathname) && PLATFORMS.some((d) => host === d || host.endsWith(`.${d}`));
+  const local = /^(localhost|127\.|10\.|192\.168\.|169\.254\.|\[::1\])/.test(u.hostname);
+  return { kind: platform ? "platform" : "direct", error: null, local, label: `${host}${u.pathname.replace(/\/$/, "")}${u.search}`.slice(0, 60) };
+}
+
+let linkRun: { id: number; cancelled: boolean; label: string } | null = null;
+
+function startLink(url: string, title: string | null, language: string): number {
+  if (linkRun) throw "a link is already being transcribed";
+  const info = linkInspect(url);
+  if (info.error) throw info.error;
+  if (info.kind === "platform" && !YT_DLP)
+    throw "links to video sites need yt-dlp, which was not found. Install yt-dlp with Homebrew: `brew install yt-dlp` (or `pipx install yt-dlp`).";
+  const id = nextSession++;
+  const run = { id, cancelled: false, label: info.label };
+  linkRun = run;
+  const via = info.kind === "platform" ? "yt-dlp" : "direct";
+  const platformTitle = info.kind === "platform" ? "Local-first software: a conversation" : null;
+  const total = 18 * 1024 * 1024;
+  (async () => {
+    const fail = () => {
+      linkRun = null;
+      ev("engine-error", { session_id: id, error: "cancelled" });
+    };
+    for (let i = 0; i <= 10; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      if (run.cancelled) return fail();
+      ev("engine-download", { session_id: id, via, downloaded_bytes: (total * i) / 10, total_bytes: via === "direct" && i === 0 ? null : total, title: i > 1 ? platformTitle : null });
+    }
+    const name = title || platformTitle || decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).pop() ?? "link").replace(MEDIA, "");
+    const itemId = `2026/09/${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+    items.push({ id: itemId, meta: meta(name, "transcription", new Date().toISOString(), "", `url:${url}`, { language }), segments: [], recording: true });
+    ev("engine-started", { session_id: id, item_id: itemId, item_type: "transcription", title: name, source: `url:${url}` });
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 600));
+      if (run.cancelled) {
+        items = items.filter((x) => x.id !== itemId);
+        return fail();
+      }
+      const seg: Segment = { id: i, start_ms: i * 24000, end_ms: i * 24000 + 23000, raw: FAKE_LINES[i % 5], text: FAKE_LINES[i % 5] };
+      find(itemId)?.segments.push(seg);
+      ev("engine-segment", { session_id: id, segment: seg });
+      ev("engine-progress", { session_id: id, processed_s: (i + 1) * 24, ingested_s: Math.min(144, (i + 2) * 24), total_s: 144, backlog_s: 24, queue_len: 1, segments_done: i + 1 });
+    }
+    const s = find(itemId)!;
+    s.recording = false;
+    s.meta.duration = "00:02:24";
+    linkRun = null;
+    ev("engine-done", { session_id: id, item_id: itemId, item_type: "transcription", title: name, text: "", segments: 6, duration_s: 144 });
+  })();
+  return id;
 }
 
 /* ---------- LLM profiles (#119) ---------- */
@@ -582,10 +659,19 @@ function handle(cmd: string, a: Args): unknown {
       return items.length;
     case "engine_status":
       return {
-        active: (mic ? 1 : 0) + (fileRun ? 1 : 0),
+        active: (mic ? 1 : 0) + (fileRun ? 1 : 0) + (linkRun ? 1 : 0),
         mic_session: mic?.id ?? null,
         file_sessions: fileRun ? [{ session_id: fileRun.id, label: "mock.wav" }] : [],
+        link_sessions: linkRun ? [{ session_id: linkRun.id, label: linkRun.label }] : [],
       };
+    case "link_inspect":
+      return linkInspect(String(a.url ?? ""));
+    case "yt_dlp_status":
+      return YT_DLP
+        ? { found: true, path: "/opt/homebrew/bin/yt-dlp", version: "2025.09.26", install_help: "" }
+        : { found: false, path: null, version: null, install_help: "Install yt-dlp with Homebrew: `brew install yt-dlp` (or `pipx install yt-dlp`). It is not bundled with Sussurro: video sites change often and yt-dlp is updated to follow them." };
+    case "engine_start_link":
+      return startLink(String(a.url), (a.title as string | null) ?? null, runLanguage(a));
     case "engine_start_mic":
       if (mic) throw "a microphone session is already running";
       return startMic((a.title as string | null) ?? null, runLanguage(a));

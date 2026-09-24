@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { TranscriptView, toLines } from "@sussurro/transcript";
 import type { Ctl } from "../hooks/useAppController";
 import type { EngineRuns, RunArgs } from "../hooks/useEngineRuns";
@@ -15,7 +16,17 @@ import {
 } from "../lib/engineRuns";
 import { baseName, formatClock, progressPercent } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
-import type { ItemType } from "../lib/types";
+import type { ItemType, LinkInfo, YtDlpStatus } from "../lib/types";
+import {
+  canTranscribeLink,
+  describeDownload,
+  downloadPercent,
+  kindLabel,
+  linkPhase,
+  linkProblem,
+  looksLikeLink,
+  viaLabel,
+} from "../lib/links";
 import { CleanupLevelPicker } from "../settings/CleanupCard";
 import { AUDIO_EXTENSIONS, pickAudioFile } from "../settings/AudioFileCard";
 import { LANGUAGES } from "../lib/constants";
@@ -30,10 +41,20 @@ export interface NewDefaults extends RunChoice {
   categories: string[];
 }
 
-type Tab = "mic" | "file";
+type Tab = "mic" | "file" | "link";
 
-/** New: every source becomes an item in the Library. 0.7 has Microphone and
- *  File; Link, Meeting and System audio arrive in later releases. */
+const TAB_LABEL: Record<Tab, string> = { mic: "Microphone", file: "File", link: "Link" };
+
+/** The tab New opens on: a running file or link, else the microphone. */
+function initialTab(runs: EngineRuns["runs"]): Tab {
+  if (isRunning(runs.mic)) return "mic";
+  if (isRunning(runs.file)) return "file";
+  if (isRunning(runs.link)) return "link";
+  return "mic";
+}
+
+/** New: every source becomes an item in the Library. Microphone and File
+ *  (0.7), Link (0.8, #123); Meeting and System audio arrive later. */
 export function NewScreen({
   ctl,
   engine,
@@ -49,7 +70,7 @@ export function NewScreen({
   onRunStart: (kind: RunKind) => void;
   onOpenItem: (id: string) => void;
 }) {
-  const [tab, setTab] = useState<Tab>(() => (isRunning(engine.runs.file) && !isRunning(engine.runs.mic) ? "file" : "mic"));
+  const [tab, setTab] = useState<Tab>(() => initialTab(engine.runs));
   const options = runArgs(ctl.settings, defaults);
 
   return (
@@ -60,7 +81,7 @@ export function NewScreen({
       </header>
       <div className="sh-scroll new-body">
         <div className="new-tabs" role="tablist" aria-label="Source">
-          {(["mic", "file"] as const).map((t) => (
+          {(["mic", "file", "link"] as const).map((t) => (
             <button
               key={t}
               type="button"
@@ -71,18 +92,20 @@ export function NewScreen({
               className={`new-tab${tab === t ? " active" : ""}`}
               onClick={() => setTab(t)}
             >
-              {t === "mic" ? "Microphone" : "File"}
+              {TAB_LABEL[t]}
               {isRunning(engine.runs[t]) && <span className={t === "mic" ? "sh-rec-dot" : "sh-busy-dot"} aria-label="running" />}
             </button>
           ))}
         </div>
         <div className="new-grid">
           <section id={`new-panel-${tab}`} role="tabpanel" aria-labelledby={`new-tab-${tab}`} className="new-source">
-            {tab === "mic" ? (
+            {tab === "mic" && (
               <MicPanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
-            ) : (
+            )}
+            {tab === "file" && (
               <FilePanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             )}
+            {tab === "link" && <LinkPanel engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />}
           </section>
           <OptionsCard ctl={ctl} defaults={defaults} onChange={onDefaultsChange} />
         </div>
@@ -203,7 +226,11 @@ function RunOutcome({
     return (
       <div className="run-outcome err" role="alert">
         <p>
-          {wasCancelled(run) ? "Discarded — nothing was saved to the Library (anything transcribed is in the trash)." : run.error}
+          {wasCancelled(run)
+            ? run.kind === "link" && run.itemId === null
+              ? "Cancelled — the download was deleted and nothing was saved."
+              : "Discarded — nothing was saved to the Library (anything transcribed is in the trash)."
+            : run.error}
           {kept && " What was transcribed until then is kept in the Library, marked interrupted."}
         </p>
         <div className="row-gap">
@@ -537,6 +564,230 @@ function FilePanel({
           Transcribe
         </button>
       </div>
+    </div>
+  );
+}
+
+/* ---------- Link (#123) ---------- */
+
+/** Text with `code` spans (the install instructions). */
+function WithCode({ text }: { text: string }) {
+  return (
+    <>
+      {text.split("`").map((part, i) => (i % 2 === 1 ? <code key={i}>{part}</code> : <span key={i}>{part}</span>))}
+    </>
+  );
+}
+
+function LinkPanel({
+  engine,
+  options,
+  onRunStart,
+  onOpenItem,
+}: {
+  engine: EngineRuns;
+  options: RunArgs;
+  onRunStart: (kind: RunKind) => void;
+  onOpenItem: (id: string) => void;
+}) {
+  const run = engine.runs.link;
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [allowLocal, setAllowLocal] = useState(false);
+  const [info, setInfo] = useState<LinkInfo | null>(null);
+  const [ytDlp, setYtDlp] = useState<YtDlpStatus | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const live = isRunning(run);
+
+  // Is yt-dlp installed? Asked once per visit (it may be installed meanwhile).
+  useEffect(() => {
+    let alive = true;
+    invoke<YtDlpStatus>("yt_dlp_status")
+      .then((s) => alive && setYtDlp(s))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // What the link is, as the backend sees it (no network), while typing.
+  useEffect(() => {
+    const u = url.trim();
+    if (!u) {
+      setInfo(null);
+      return;
+    }
+    if (!looksLikeLink(u)) {
+      setInfo({ kind: null, error: "Not a link yet — it should start with https://", local: false, label: "" });
+      return;
+    }
+    let alive = true;
+    const t = setTimeout(() => {
+      invoke<LinkInfo>("link_inspect", { url: u })
+        .then((i) => alive && setInfo(i))
+        .catch(() => {});
+    }, 200);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [url]);
+
+  if (run && !live) {
+    return (
+      <div className="stack">
+        <RunOutcome
+          run={run}
+          onOpenItem={onOpenItem}
+          onDismiss={() => {
+            engine.dismiss("link");
+            setUrl("");
+            setTitle("");
+            setAllowLocal(false);
+          }}
+          againLabel="Transcribe another link"
+        />
+        {run.segments.length > 0 && (
+          <div className="live-box tx-scroll">
+            <TranscriptView lines={toLines(run.segments)} label="Transcript" />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (live) {
+    const phase = linkPhase(run);
+    const d = run.download;
+    const p = run.progress;
+    const dlPct = downloadPercent(d);
+    const pct = phase === "download" ? dlPct ?? 0 : p ? progressPercent(p.processed_s, p.total_s) : 0;
+    const name = d?.title || run.label;
+    return (
+      <div className="stack">
+        <div className="file-row">
+          <span aria-hidden="true">🔗</span>
+          <span className="file-name" title={run.label}>{name}</span>
+          {phase === "transcribe" && p && (
+            <span className="mono sh-muted">{formatClock(p.processed_s)} / {formatClock(p.total_s)}</span>
+          )}
+        </div>
+        <ol className="link-steps" aria-label="Steps">
+          <li className={phase === "download" ? "active" : "done"} aria-current={phase === "download" ? "step" : undefined}>
+            1 · Download{d ? ` (${viaLabel(d.via)})` : ""}
+          </li>
+          <li className={phase === "transcribe" ? "active" : ""} aria-current={phase === "transcribe" ? "step" : undefined}>
+            2 · Transcribe
+          </li>
+        </ol>
+        <div
+          className={`progress${phase === "download" && dlPct === null ? " indeterminate" : ""}`}
+          role="progressbar"
+          aria-label={phase === "download" ? `Downloading ${name}` : `Transcribing ${name}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={phase === "download" && dlPct === null ? undefined : pct}
+        >
+          <div className="progress-fill" style={{ width: `${phase === "download" && dlPct === null ? 100 : pct}%` }} />
+        </div>
+        <div className="row-gap">
+          <span className="sh-muted" aria-live="polite">
+            {phase === "download" ? describeDownload(d) : `${pct}% · ${describeProgress(run)}`}
+            {phase === "transcribe" && p && p.segments_done > 0 && ` · ${p.segments_done} lines`}
+          </span>
+          <button
+            type="button"
+            className="btn-ghost sh-btn push"
+            disabled={run.sessionId === null}
+            title="Stop and discard: nothing is saved, the download is deleted"
+            onClick={() => engine.cancel("link")}
+          >
+            Cancel
+          </button>
+        </div>
+        {phase === "transcribe" && (
+          <div className="live-box tx-scroll">
+            <TranscriptView lines={toLines(run.segments)} follow label="Transcript so far" emptyText="The first lines appear after the first pause…" />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const problem = linkProblem(info, ytDlp, allowLocal);
+  const needsYtDlp = info?.kind === "platform" && ytDlp !== null && !ytDlp.found;
+  return (
+    <div className="stack">
+      <div className="mic-start">
+        <div>
+          <h2 className="sh-h2">Transcribe from a link</h2>
+          <p className="sh-muted">
+            A direct link to an audio or video file, or a video page (YouTube, Vimeo, SoundCloud…) through yt-dlp.
+            Saved as a <strong>Transcription</strong>.
+          </p>
+        </div>
+        <label className="field-stack">
+          <span className="opt-k">Link</span>
+          <input
+            type="url"
+            value={url}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              setStartError(null);
+            }}
+            placeholder="https://…"
+            spellCheck={false}
+            autoComplete="off"
+            aria-invalid={!!info?.error}
+            aria-describedby="link-status"
+          />
+        </label>
+        <div id="link-status" className="row-gap" aria-live="polite">
+          {info?.kind && <span className={`tb ${info.kind === "platform" ? "meeting" : "note"}`}>{kindLabel(info.kind)}</span>}
+          {info?.kind === "platform" && ytDlp?.found && (
+            <span className="sh-muted">yt-dlp {ytDlp.version ?? ""} found</span>
+          )}
+          {problem && <span className="field-err">{problem}</span>}
+        </div>
+        {needsYtDlp && ytDlp && (
+          <p className="link-notice">
+            <WithCode text={ytDlp.install_help} />
+          </p>
+        )}
+        <label className="check-row">
+          <input type="checkbox" checked={allowLocal} onChange={(e) => setAllowLocal(e.target.checked)} />
+          <span>
+            Allow local network addresses{" "}
+            <span className="sh-muted">(this computer, your router, a NAS — off unless you need it)</span>
+          </span>
+        </label>
+        <label className="field-stack">
+          <span className="opt-k">Title <span className="sh-muted">(optional — the video's title, or the file name, if empty)</span></span>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} spellCheck={false} />
+        </label>
+        {startError && <p className="run-outcome err" role="alert">{startError}</p>}
+        <div className="row-gap">
+          <span className="tb transcription" title="Audio recorded by others">Transcription</span>
+          <button
+            type="button"
+            className="btn-dark push"
+            disabled={!canTranscribeLink(info, ytDlp, allowLocal) || !engine.canStartLink}
+            onClick={async () => {
+              if (!info?.label) return;
+              onRunStart("link");
+              const err = await engine.startLink(url, title, info.label, allowLocal, options);
+              setStartError(err);
+            }}
+          >
+            {engine.linkStarting ? "Starting…" : "Transcribe"}
+          </button>
+        </div>
+      </div>
+      <p className="sh-note" role="note">
+        Downloading from video platforms is subject to their terms of service and to copyright. Transcribe only
+        media you have the right to use — you are responsible for what you download. The downloaded audio is a
+        temporary file, deleted when the transcription ends.
+      </p>
     </div>
   );
 }

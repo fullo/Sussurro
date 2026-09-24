@@ -691,3 +691,19 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
   .ctx.drawer.open { display: flex; }
   .ctx-scrim { position: absolute; inset: 0; z-index: 19; background: rgba(0, 0, 0, 0.12); }
 }
+
+/* ---------- New → Link (#123) ---------- */
+
+.link-steps { display: flex; gap: 8px; list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+.link-steps li { padding: 3px 10px; border-radius: var(--radius-pill); border: 1px solid var(--border); color: var(--c-text-light); background: var(--c-surface); }
+.link-steps li.active { color: var(--c-dark); border-color: var(--c-dark); font-weight: 600; }
+.link-steps li.done { color: var(--c-text); }
+.link-steps li.done::after { content: " ✓"; }
+.progress.indeterminate .progress-fill { opacity: 0.25; animation: link-pulse 1.4s ease-in-out infinite; }
+@keyframes link-pulse { 50% { opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) { .progress.indeterminate .progress-fill { animation: none; } }
+.link-notice { margin: 0; padding: 10px 12px; border-radius: var(--radius-lg); border: 1px solid var(--warn-border); background: var(--warn-soft); font-size: 13px; }
+.link-notice code, .run-outcome code { font-size: 12px; padding: 0 4px; border-radius: 4px; background: var(--c-surface); border: 1px solid var(--border); }
+.field-err { color: var(--c-text); font-size: 12.5px; }
+.check-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
+.check-row input { margin-top: 3px; accent-color: var(--c-dark); min-height: 0; }
