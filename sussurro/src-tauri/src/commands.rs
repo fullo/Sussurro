@@ -73,27 +73,30 @@ pub async fn credential_store_status() -> Result<crate::secrets::StoreStatus, St
 /// The pairing UI (#127) shows it for copying into the extension.
 #[tauri::command]
 pub fn extension_token_get(state: State<'_, AppState>) -> Result<String, String> {
-    let mut settings = state.settings.lock().unwrap();
-    if !settings.extension_token.trim().is_empty() {
-        return Ok(settings.extension_token.clone());
+    if let Some(t) = Some(state.settings.lock().unwrap().extension_token.clone())
+        .filter(|t| !t.trim().is_empty())
+    {
+        return Ok(t);
     }
-    let token = settings.ensure_extension_token().map_err(|e| e.to_string())?;
-    settings
-        .save(&state.paths.settings_file)
-        .map_err(|e| e.to_string())?;
-    Ok(token)
+    set_extension_token(&state)
 }
 
 /// Replace the extension token: a paired extension must be paired again.
 #[tauri::command]
 pub fn extension_token_regenerate(state: State<'_, AppState>) -> Result<String, String> {
+    set_extension_token(&state)
+}
+
+/// A fresh token, saved; on a failed save the old one stays in effect.
+fn set_extension_token(state: &AppState) -> Result<String, String> {
     let mut settings = state.settings.lock().unwrap();
-    let token = settings
+    let mut next = settings.clone();
+    let token = next
         .regenerate_extension_token()
         .map_err(|e| e.to_string())?;
-    settings
-        .save(&state.paths.settings_file)
+    next.save(&state.paths.settings_file)
         .map_err(|e| e.to_string())?;
+    settings.extension_token = token.clone();
     Ok(token)
 }
 
@@ -568,6 +571,8 @@ pub struct EngineStatus {
     pub active: usize,
     /// The running mic session, if any.
     pub mic_session: Option<u64>,
+    /// The browser meeting being recorded, if any (#126).
+    pub meeting_session: Option<u64>,
     /// Running file transcriptions, oldest first (#158): a UI mounted
     /// mid-run (window reload, `ui_v2` switched) adopts them, so a file
     /// started from the other UI can still be followed and cancelled.
@@ -588,6 +593,7 @@ pub fn engine_status(state: State<'_, AppState>) -> EngineStatus {
     EngineStatus {
         active: state.engine.active_count(),
         mic_session: state.engine.mic_session(),
+        meeting_session: state.engine.meeting_session(),
         file_sessions: state
             .engine
             .file_sessions()
