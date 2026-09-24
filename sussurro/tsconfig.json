@@ -14,6 +14,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Shared transcript components (also for the 0.9 extension side panel) */
+    "paths": {
+      "@sussurro/transcript": ["./src/transcript/index.ts"]
+    },
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,

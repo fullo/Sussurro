@@ -43,10 +43,10 @@ export function CollapsibleCard({
   if (!collapsible) {
     return (
       <section className={`static-card ${className}`}>
-        <div className="static-card-head">
+        <header className="static-card-head">
           <h2>{title}</h2>
           {headerExtra && <span className="summary-right">{headerExtra}</span>}
-        </div>
+        </header>
         {children}
       </section>
     );

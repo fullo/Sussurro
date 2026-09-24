@@ -1,0 +1,20 @@
+import { CLEANUP_LEVELS, LANGUAGES } from "../lib/constants";
+import type { Settings } from "../lib/types";
+
+/** "Whisper large-v3-turbo" / "Parakeet TDT v3" */
+export function sttLabel(s: Pick<Settings, "engine" | "whisper_model">): string {
+  if (s.engine === "parakeet") return "Parakeet TDT v3";
+  const m = s.whisper_model.replace(/^ggml-/, "").replace(/\.bin$/, "").replace(/-q\d+_\d+$/, "");
+  return `Whisper ${m}`;
+}
+
+/** "Light · llama3.2:3b" / "Off" */
+export function cleanupLabel(s: Pick<Settings, "cleanup_level" | "ollama_model">): string {
+  if (s.cleanup_level === "none") return "Off";
+  const level = CLEANUP_LEVELS.find((l) => l.value === s.cleanup_level)?.label ?? s.cleanup_level;
+  return `${level} · ${s.ollama_model}`;
+}
+
+export function languageLabel(code: string): string {
+  return LANGUAGES.find(([c]) => c === code)?.[1] ?? code;
+}
