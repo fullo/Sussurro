@@ -242,6 +242,45 @@ pub fn list_input_devices() -> Vec<String> {
     crate::audio::recorder::list_input_devices()
 }
 
+/// An input device as *New → System audio + mic* lists it (#139).
+#[derive(serde::Serialize)]
+pub struct InputDeviceInfo {
+    pub name: String,
+    /// The name looks like a loopback/virtual device (BlackHole, VB-Cable,
+    /// a monitor source…) — a hint only; any input can be chosen.
+    pub loopback: bool,
+}
+
+#[derive(serde::Serialize)]
+pub struct SystemAudioDevices {
+    /// The system default input (what an empty mic choice records).
+    pub default_input: Option<String>,
+    /// Every input device, loopback-looking ones first.
+    pub devices: Vec<InputDeviceInfo>,
+}
+
+/// Input devices for the *System audio + mic* tab (#139).
+#[tauri::command]
+pub async fn list_system_audio_devices() -> Result<SystemAudioDevices, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut devices: Vec<InputDeviceInfo> = crate::audio::recorder::list_input_devices()
+            .into_iter()
+            .map(|name| InputDeviceInfo {
+                loopback: crate::sources::system::looks_like_loopback(&name),
+                name,
+            })
+            .collect();
+        // Stable: the OS order within each group.
+        devices.sort_by_key(|d| !d.loopback);
+        SystemAudioDevices {
+            default_input: crate::audio::recorder::default_input_device_name(),
+            devices,
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Start the recorder purely to feed the mic-test VU meter (no transcription).
 #[tauri::command]
 pub fn start_mic_test(state: State<'_, AppState>) -> Result<(), String> {
@@ -504,6 +543,54 @@ pub fn engine_start_mic(
     .map_err(|e| format!("{e:#}"))
 }
 
+/// Start a *System audio + mic* session (#139, behind `meetings_enabled`):
+/// the microphone (`mic_device`; omitted = the dictation's input device)
+/// and a second input device carrying the computer's output
+/// (`system_device`) recorded as two channels of one `meeting` item
+/// (`source: system`). Returns the session id; the item arrives as
+/// `engine-done` after `engine_stop_system`. `engine-warning` events report
+/// a lost device or realigned device clocks while it records.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn engine_start_system(
+    app: AppHandle,
+    system_device: String,
+    mic_device: Option<String>,
+    title: Option<String>,
+    defer: Option<bool>,
+    language: Option<String>,
+    cleanup_level: Option<crate::settings::CleanupLevel>,
+) -> Result<u64, String> {
+    // Off the main thread: it enumerates the audio devices first.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::engine::session::start_system(
+            &app,
+            mic_device,
+            &system_device,
+            title.unwrap_or_default(),
+            defer.unwrap_or(false),
+            crate::engine::session::RunOptions {
+                language,
+                cleanup_level,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Stop recording the system-audio session (#139); the queued segments
+/// are still transcribed and the item written. Returns the session id.
+#[tauri::command]
+pub fn engine_stop_system(state: State<'_, AppState>) -> Result<u64, String> {
+    state
+        .engine
+        .stop_system()
+        .ok_or_else(|| "no system audio session is running".to_string())
+}
+
 /// Transcribe a link (#123): a direct audio/video file, or a video
 /// platform through yt-dlp found on PATH. Returns the session id at once;
 /// `engine-download` events report the download, then the usual `engine-*`
@@ -624,6 +711,8 @@ pub struct EngineStatus {
     pub mic_session: Option<u64>,
     /// The browser meeting being recorded, if any (#126).
     pub meeting_session: Option<u64>,
+    /// The *System audio + mic* session, if any (#139).
+    pub system_session: Option<u64>,
     /// Running file transcriptions, oldest first (#158): a UI mounted
     /// mid-run (window reload, `ui_v2` switched) adopts them, so a file
     /// started from the other UI can still be followed and cancelled.
@@ -645,6 +734,7 @@ pub fn engine_status(state: State<'_, AppState>) -> EngineStatus {
         active: state.engine.active_count(),
         mic_session: state.engine.mic_session(),
         meeting_session: state.engine.meeting_session(),
+        system_session: state.engine.system_session(),
         file_sessions: state
             .engine
             .file_sessions()

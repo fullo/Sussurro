@@ -5,6 +5,7 @@ import {
   discardStep,
   initialRuns,
   MAX_BUFFERED,
+  MAX_WARNINGS,
   routeEvent,
   runsReducer,
   showDiscard,
@@ -324,5 +325,54 @@ describe("link runs", () => {
     const fileStarting = run([{ type: "started", kind: "file", sessionId: null, label: "a", now: 0 }]);
     expect(canStart(fileStarting, "link")).toBe(false);
     expect(canStart(initialRuns, "link")).toBe(true);
+  });
+});
+
+// #139: System audio + mic is a live capture like the mic session, with
+// its own run, its own id and the warnings the engine sends meanwhile.
+describe("System audio + mic runs", () => {
+  const warning = (session_id: number, message: string) => ({ type: "warning" as const, payload: { session_id, message } });
+
+  it("routes its events by id, apart from the mic and a file", () => {
+    const s = run([
+      { type: "started", kind: "system", sessionId: 9, label: "Standup", now: 0 },
+      { type: "started", kind: "file", sessionId: null, label: "a.wav", now: 0 },
+      seg(9, 0, 1000, "hello"),
+      warning(9, "The system audio device stopped delivering audio at 0:10"),
+    ]);
+    expect(s.system?.segments.map((l) => l.text)).toEqual(["hello"]);
+    expect(s.system?.warnings).toEqual(["The system audio device stopped delivering audio at 0:10"]);
+    expect(s.file?.sessionId).toBeNull();
+    expect(describeProgress(s.system!)).toBe("Listening…");
+  });
+
+  it("keeps the latest warnings only", () => {
+    const actions: RunsAction[] = [{ type: "started", kind: "system", sessionId: 2, label: "", now: 0 }];
+    for (let i = 0; i < MAX_WARNINGS + 3; i++) actions.push(warning(2, `w${i}`));
+    const s = run(actions);
+    expect(s.system?.warnings.length).toBe(MAX_WARNINGS);
+    expect(s.system?.warnings[MAX_WARNINGS - 1]).toBe(`w${MAX_WARNINGS + 2}`);
+  });
+
+  it("can't run next to a mic session: both hold the microphone", () => {
+    const sys = run([{ type: "started", kind: "system", sessionId: 1, label: "", now: 0 }]);
+    expect(canStart(sys, "mic")).toBe(false);
+    expect(canStart(sys, "system")).toBe(false);
+    expect(canStart(sys, "file")).toBe(true);
+    const mic = run([{ type: "started", kind: "mic", sessionId: 1, label: "", now: 0 }]);
+    expect(canStart(mic, "system")).toBe(false);
+    const done = run(
+      [{ type: "done", payload: { session_id: 1, item_id: "m", item_type: "meeting", title: "t", text: "", segments: 1, duration_s: 1 } }],
+      sys,
+    );
+    expect(canStart(done, "mic")).toBe(true);
+  });
+
+  it("is adopted from engine_status as system audio, not as a mic session", () => {
+    const s = run([
+      { type: "adopt", status: { active: 1, mic_session: null, system_session: 6, file_sessions: [] }, now: 0 },
+    ]);
+    expect(s.mic).toBeNull();
+    expect(s.system).toMatchObject({ kind: "system", sessionId: 6, status: "running" });
   });
 });

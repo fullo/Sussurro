@@ -420,7 +420,17 @@ function facetSearch(query: string, f: MockFilters): { items: ItemSummary[]; fac
 /* ---------- engine simulation ---------- */
 
 let nextSession = 1;
-let mic: { id: number; itemId: string; timer: number; n: number; started: number } | null = null;
+/** The live capture: a mic session, or System audio + mic (#139) when
+ *  `system` names the loopback device. */
+let mic: { id: number; itemId: string; timer: number; n: number; started: number; system?: string } | null = null;
+const SYSTEM_DEVICES = {
+  default_input: "MacBook Pro Microphone",
+  devices: [
+    { name: "BlackHole 2ch", loopback: true },
+    { name: "MacBook Pro Microphone", loopback: false },
+    { name: "USB Audio Device", loopback: false },
+  ],
+};
 const FAKE_LINES = [
   "Allora, provo a registrare una nota lunga dal microfono.",
   "Il testo appare riga per riga mentre parlo, con il timestamp a sinistra.",
@@ -435,9 +445,19 @@ function micTick() {
   if (!mic) return;
   const i = mic.n++;
   const seg: Segment = { id: i, start_ms: i * 6000, end_ms: i * 6000 + 5200, raw: FAKE_LINES[i % FAKE_LINES.length], text: FAKE_LINES[i % FAKE_LINES.length] };
+  if (mic.system) {
+    // System audio + mic: "You" on the mic channel, voices on the system one.
+    seg.channel = i % 2 === 0 ? "mic" : "system";
+    seg.speaker_id = i % 2 === 0 ? "you" : `voice:${1 + ((i >> 1) % 2)}`;
+  }
   const s = find(mic.itemId);
   if (s) s.segments.push(seg);
   ev("engine-segment", { session_id: mic.id, segment: seg });
+  if (mic.system && i === 3)
+    ev("engine-warning", {
+      session_id: mic.id,
+      message: "The microphone and the system audio device drifted 0.21 s apart — realigned at 0:18 (silence added to the system audio device channel).",
+    });
   const t = (Date.now() - mic.started) / 1000;
   ev("engine-progress", { session_id: mic.id, processed_s: i * 6 + 5, ingested_s: t, total_s: t, backlog_s: Math.max(0, t - (i * 6 + 5)), queue_len: 0, segments_done: i + 1 });
 }
@@ -458,8 +478,36 @@ function startMic(title: string | null, language: string): number {
   return id;
 }
 
-function stopMic(): number {
-  if (!mic) throw "no microphone session is running";
+/** New → System audio + mic (#139): a meeting from the mic and a loopback
+ *  device, behind the meetings preview like the backend. */
+function startSystem(a: Args, language: string): number {
+  if (!settings.meetings_enabled) throw "recording system audio is part of the meetings preview — turn it on in Settings → Browser extension";
+  if (mic) throw mic.system ? "a system audio session is already running" : "a microphone session is running — stop it first";
+  const device = String(a.systemDevice ?? "");
+  const micDevice = (a.micDevice as string | null) || settings.input_device || SYSTEM_DEVICES.default_input;
+  if (!device) throw "choose the system audio device";
+  if (device === micDevice) throw "the system audio device is the microphone — choose a different device for one of them";
+  const title = (a.title as string | null) ?? null;
+  const id = nextSession++;
+  const itemId = `2026/09/${new Date().toISOString().slice(0, 10)}-untitled`;
+  items.push({
+    id: itemId,
+    meta: meta(title || "Untitled", "meeting", new Date().toISOString(), "", "system", { language }),
+    segments: [],
+    speakers: [
+      { id: "you", label: "You", color: "#1f6f5c" },
+      { id: "voice:1", label: "Voice 1", color: "#8a5a00" },
+      { id: "voice:2", label: "Voice 2", color: "#5b4a9e" },
+    ],
+    recording: true,
+  });
+  mic = { id, itemId, n: 0, started: Date.now(), timer: window.setInterval(micTick, 2500), system: device };
+  setTimeout(() => ev("engine-started", { session_id: id, item_id: itemId, item_type: "meeting", title: title ?? "", source: "system" }), 50);
+  return id;
+}
+
+function stopMic(system = false): number {
+  if (!mic || !!mic.system !== system) throw system ? "no system audio session is running" : "no microphone session is running";
   const m = mic;
   clearInterval(m.timer);
   mic = null;
@@ -469,9 +517,9 @@ function stopMic(): number {
     s.recording = false;
     const title = s.meta.title === "Untitled" ? "Allora, provo a registrare una nota lunga" : s.meta.title;
     s.meta.title = title;
-    s.id = m.itemId.replace("untitled", "nota-dal-microfono");
+    s.id = m.itemId.replace("untitled", m.system ? "riunione-audio-di-sistema" : "nota-dal-microfono");
     s.meta.duration = `00:00:${String(Math.round((Date.now() - m.started) / 1000) % 60).padStart(2, "0")}`;
-    ev("engine-done", { session_id: m.id, item_id: s.id, item_type: "note", title, text: "", segments: s.segments.length, duration_s: (Date.now() - m.started) / 1000 });
+    ev("engine-done", { session_id: m.id, item_id: s.id, item_type: s.meta.type, title, text: "", segments: s.segments.length, duration_s: (Date.now() - m.started) / 1000 });
   }, 1200);
   return m.id;
 }
@@ -1136,7 +1184,8 @@ function handle(cmd: string, a: Args): unknown {
     case "engine_status":
       return {
         active: (mic ? 1 : 0) + (fileRun ? 1 : 0) + (linkRun ? 1 : 0),
-        mic_session: mic?.id ?? null,
+        mic_session: mic && !mic.system ? mic.id : null,
+        system_session: mic?.system ? mic.id : null,
         meeting_session: null,
         file_sessions: fileRun ? [{ session_id: fileRun.id, label: "mock.wav" }] : [],
         link_sessions: linkRun ? [{ session_id: linkRun.id, label: linkRun.label }] : [],
@@ -1154,6 +1203,12 @@ function handle(cmd: string, a: Args): unknown {
       return startMic((a.title as string | null) ?? null, runLanguage(a));
     case "engine_stop_mic":
       return stopMic();
+    case "engine_start_system":
+      return startSystem(a, runLanguage(a));
+    case "engine_stop_system":
+      return stopMic(true);
+    case "list_system_audio_devices":
+      return SYSTEM_DEVICES;
     case "engine_cancel":
       return cancel(Number(a.sessionId));
     case "transcribe_file":

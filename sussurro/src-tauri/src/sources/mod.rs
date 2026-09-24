@@ -8,10 +8,13 @@
 //! 0.8: [`url`] fetches a link to a temporary file for the file source.
 //! 0.9: [`browser::BrowserSource`] — a meeting from the browser extension,
 //! two channels (`mic`, `remote`) on one clock.
+//! 0.10: [`system::SystemSource`] — the mic plus any second input device
+//! (a virtual loopback device) as two channels (`mic`, `system`), #139.
 
 pub mod browser;
 pub mod file;
 pub mod mic;
+pub mod system;
 pub mod url;
 
 pub use crate::archive::Channel;
@@ -40,6 +43,12 @@ pub trait Source: Send {
     fn total_samples(&self) -> Option<u64>;
     /// The next frame, `Ok(None)` at the end of the source.
     fn next_frame(&mut self) -> anyhow::Result<Option<Frame>>;
+    /// Problems the user should hear about while the run goes on (a device
+    /// lost, device clocks realigned), taken since the last call. The
+    /// engine emits each as `engine-warning`. Most sources have none.
+    fn take_warnings(&mut self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Tracks a source's clock: stamps consecutive chunks with their start.

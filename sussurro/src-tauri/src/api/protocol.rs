@@ -381,7 +381,7 @@ pub fn from_engine(event: &crate::engine::EngineEvent, stopping: bool) -> Option
     use crate::engine::EngineEvent as E;
     let status = |state| Status::new(state);
     Some(match event {
-        E::Download(_) => return None,
+        E::Download(_) | E::Warning(_) => return None,
         E::Started(p) => ServerMessage::Status(Status {
             session_id: Some(p.session_id),
             item_id: Some(p.item_id.clone()),
