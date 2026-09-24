@@ -199,10 +199,116 @@ pub fn looks_hallucinated(level: &CleanupLevel, transcript: &str, cleaned: &str)
     (kept as f32 / output.len() as f32) < threshold
 }
 
+/// How much of the previous segment the chunked cleanup shows as context:
+/// enough for a sentence or two of continuity, small enough for 3B models.
+pub const CONTEXT_MAX_CHARS: usize = 600;
+
+/// The last `max_chars` characters of `text`, cut at a word boundary so the
+/// context never starts mid-word. Pure.
+pub fn context_tail(text: &str, max_chars: usize) -> &str {
+    let text = text.trim();
+    let n = text.chars().count();
+    if n <= max_chars {
+        return text;
+    }
+    let cut = text
+        .char_indices()
+        .nth(n - max_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let tail = &text[cut..];
+    // Drop the partial first word, if the cut landed inside one.
+    match tail.find(char::is_whitespace) {
+        Some(ws) if !text[..cut].ends_with(char::is_whitespace) => tail[ws..].trim_start(),
+        _ => tail,
+    }
+}
+
+/// Chunked cleanup for the long-form engine (#113): the messages of
+/// [`build_messages`] for ONE segment, with the previous segment given in
+/// the system prompt as read-only context — never the whole transcript, so
+/// an hour-long recording can't overflow a small local model. The segment
+/// stays the last user message, so the few-shot structure and the
+/// hallucination guard work exactly as for a dictation.
+pub fn build_messages_with_context(
+    settings: &crate::settings::Settings,
+    previous: Option<&str>,
+    transcript: &str,
+) -> Option<Vec<Value>> {
+    let mut messages = build_messages(settings, None, transcript)?;
+    let previous = previous.map(|p| context_tail(p, CONTEXT_MAX_CHARS)).unwrap_or("");
+    let system = messages[0]["content"].as_str().unwrap_or_default().to_string();
+    let mut system = format!(
+        "{system} The text is one part of a longer recording, cleaned part by part: \
+         clean only this part, and never add text that is not in it."
+    );
+    if !previous.is_empty() {
+        system.push_str(&format!(
+            " For context only, the part just before it read: \"{previous}\" - do not \
+             repeat, clean or continue that context, output only the cleaned new part."
+        ));
+    }
+    messages[0] = json!({"role": "system", "content": system});
+    Some(messages)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::settings::{CleanupLevel, Settings};
+
+    #[test]
+    fn context_tail_keeps_short_text_and_cuts_long_text_on_a_word() {
+        assert_eq!(context_tail("  short text ", 50), "short text");
+        let tail = context_tail("alpha beta gamma delta", 9);
+        assert_eq!(tail, "delta");
+        // Cut exactly on a boundary keeps the whole word.
+        assert_eq!(context_tail("alpha beta gamma", 5), "gamma");
+        // Multibyte safe.
+        assert_eq!(context_tail("perché così è", 6), "così è");
+        assert_eq!(context_tail("perché così è", 3), "è");
+    }
+
+    #[test]
+    fn chunked_cleanup_puts_previous_segment_in_system_and_segment_last() {
+        let s = cfg(CleanupLevel::Light);
+        let msgs =
+            build_messages_with_context(&s, Some("Earlier part."), "um the new part").unwrap();
+        let system = msgs[0]["content"].as_str().unwrap();
+        assert!(system.contains("\"Earlier part.\""));
+        assert!(system.contains("one part of a longer recording"));
+        let last = msgs.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert_eq!(last["content"], "um the new part");
+        // Same few-shot structure as a dictation.
+        assert_eq!(msgs.len(), build_messages(&s, None, "x").unwrap().len());
+        // The context never becomes a user message of its own.
+        assert!(msgs[1..].iter().all(|m| !m["content"]
+            .as_str()
+            .unwrap()
+            .contains("Earlier part.")));
+    }
+
+    #[test]
+    fn chunked_cleanup_without_previous_and_with_level_none() {
+        let s = cfg(CleanupLevel::Medium);
+        let msgs = build_messages_with_context(&s, None, "first").unwrap();
+        assert!(!msgs[0]["content"].as_str().unwrap().contains("For context only"));
+        let msgs = build_messages_with_context(&s, Some("   "), "first").unwrap();
+        assert!(!msgs[0]["content"].as_str().unwrap().contains("For context only"));
+        // Nothing for the LLM to do: no messages at all, like build_messages.
+        assert!(build_messages_with_context(&cfg(CleanupLevel::None), Some("x"), "y").is_none());
+    }
+
+    #[test]
+    fn chunked_cleanup_context_is_bounded() {
+        let long = "word ".repeat(1_000);
+        let msgs = build_messages_with_context(&cfg(CleanupLevel::Light), Some(&long), "x").unwrap();
+        let system = msgs[0]["content"].as_str().unwrap();
+        let plain = build_messages(&cfg(CleanupLevel::Light), None, "x").unwrap();
+        let base = plain[0]["content"].as_str().unwrap().len();
+        assert!(system.len() < base + CONTEXT_MAX_CHARS + 400);
+    }
 
     /// Settings with voice_commands off so the base assertions stay focused.
     fn cfg(level: CleanupLevel) -> Settings {
