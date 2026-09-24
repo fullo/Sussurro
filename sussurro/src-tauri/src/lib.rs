@@ -186,6 +186,7 @@ pub fn run() {
             commands::export_history,
             commands::model_is_downloaded,
             commands::list_whisper_models,
+            commands::stt_sidecar_available,
             commands::download_model,
             commands::list_ollama_models,
             commands::llm_list_models,

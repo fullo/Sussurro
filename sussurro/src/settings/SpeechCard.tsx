@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AdvancedGroup, CollapsibleCard, Switch, Tip } from "../components/ui";
 import { LANGUAGES, MODELS } from "../lib/constants";
+import { ENGINES, detectsLanguage, engineDetail, engineLabel, engineSelectable } from "../lib/engines";
 import type { Ctl } from "../hooks/useAppController";
 import type { CardProps } from "./DictationCard";
 
@@ -9,25 +10,30 @@ import type { CardProps } from "./DictationCard";
    the classic window keeps them together in one card. */
 
 export function EngineField({ ctl }: { ctl: Ctl }) {
-  const { settings, save } = ctl;
+  const { settings, save, sidecarAvailable } = ctl;
   return (
     <div className="field">
       <div className="field-label">
-        <span>Engine <Tip text="Whisper: GPU-accelerated, any language, choose the model size below. Parakeet: NVIDIA's CPU-optimized model — roughly 10x faster than Whisper without a GPU, auto-detects 25 European languages, one fixed 456 MB model." /></span>
-        <small>{settings.engine === "whisper" ? "whisper.cpp · GPU" : "Parakeet TDT v3 · CPU"}</small>
+        <span>Engine <Tip text="Whisper: GPU-accelerated, any language, choose the model size below. Parakeet: NVIDIA's CPU-optimized model — roughly 10x faster than Whisper without a GPU, auto-detects 25 European languages, one fixed 456 MB model. Qwen3-ASR: optional, runs in a bundled llama-server; see its card under Models." /></span>
+        <small>{engineDetail(settings.engine)}</small>
       </div>
       <div className="segmented" role="radiogroup" aria-label="STT engine">
-        {(["whisper", "parakeet"] as const).map((e) => (
-          <button
-            key={e}
-            role="radio"
-            aria-checked={settings.engine === e}
-            className={settings.engine === e ? "on" : ""}
-            onClick={() => save({ ...settings, engine: e })}
-          >
-            {e === "whisper" ? "Whisper" : "Parakeet"}
-          </button>
-        ))}
+        {ENGINES.map(({ value: e, label }) => {
+          const selectable = engineSelectable(e, settings.engine, sidecarAvailable);
+          return (
+            <button
+              key={e}
+              role="radio"
+              aria-checked={settings.engine === e}
+              className={settings.engine === e ? "on" : ""}
+              disabled={!selectable}
+              title={selectable ? undefined : "Not in this build: it needs the bundled llama-server"}
+              onClick={() => save({ ...settings, engine: e })}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -60,7 +66,7 @@ export function ModelField({ ctl }: { ctl: Ctl }) {
   return (
     <div className="field">
       <div className="field-label">
-        <span>Model <Tip text="Whisper: bigger = more accurate but slower; 'English' variants are faster for English-only dictation. Parakeet has a single fixed model (int8, 456 MB)." /></span>
+        <span>Model <Tip text="Whisper: bigger = more accurate but slower; 'English' variants are faster for English-only dictation. Parakeet has a single fixed model (int8, 456 MB); Qwen3-ASR too (1.7B Q8 plus its audio encoder, about 2.5 GB)." /></span>
         <small>speech-to-text, fully offline</small>
       </div>
       <div className="model-row">
@@ -81,8 +87,10 @@ export function ModelField({ ctl }: { ctl: Ctl }) {
                 <option key={f} value={f}>{f} · installed</option>
               ))}
           </select>
-        ) : (
+        ) : settings.engine === "parakeet" ? (
           <span className="fixed-model">Parakeet TDT 0.6B v3 · int8 · 456 MB</span>
+        ) : (
+          <span className="fixed-model">Qwen3-ASR 1.7B · Q8 · 2.5 GB</span>
         )}
         {!modelReady && (
           <button
@@ -178,8 +186,8 @@ export function SpeechOptionsCard({ ctl, footer }: { ctl: Ctl; footer?: ReactNod
   return (
     <CollapsibleCard storageKey="speechOpen" title="Speech" collapsible={false}>
       <LanguageField ctl={ctl} />
-      {ctl.settings.engine !== "whisper" && (
-        <p className="card-hint">Parakeet detects the language on its own.</p>
+      {detectsLanguage(ctl.settings.engine) && (
+        <p className="card-hint">{engineLabel(ctl.settings.engine)} detects the language on its own.</p>
       )}
       <WhisperModeField ctl={ctl} />
       {footer}

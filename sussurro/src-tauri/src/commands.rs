@@ -322,6 +322,13 @@ pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     }
 }
 
+/// Whether this build ships the llama-server sidecar Qwen3-ASR runs in
+/// (#116/#117): the Models screen offers the engine only then.
+#[tauri::command]
+pub fn stt_sidecar_available(app: AppHandle) -> bool {
+    crate::stt::sidecar::sidecar_available(&app)
+}
+
 /// GGML whisper models (`ggml-*.bin`) already present in the models folder, so
 /// files shared with other whisper.cpp tools show up in the picker without a
 /// re-download. Point Settings → Models folder at a shared directory to reuse.

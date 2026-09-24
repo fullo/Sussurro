@@ -29,6 +29,8 @@ export function useAppController() {
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
   /** GGML whisper models already present in the models folder (reuse). */
   const [installedWhisper, setInstalledWhisper] = useState<string[]>([]);
+  /** This build ships the llama-server sidecar Qwen3-ASR needs (#117). */
+  const [sidecarAvailable, setSidecarAvailable] = useState(false);
   /** Info shown when an installed Ollama model was auto-selected for cleanup. */
   const [modelAdoptNote, setModelAdoptNote] = useState<string | null>(null);
   const [inputDevices, setInputDevices] = useState<string[]>([]);
@@ -90,6 +92,7 @@ export function useAppController() {
     loadOllamaModels();
     invoke<string[]>("list_input_devices").then(setInputDevices).catch(() => {});
     invoke<string[]>("get_default_prompts").then(setDefaultPrompts).catch(() => {});
+    invoke<boolean>("stt_sidecar_available").then(setSidecarAvailable).catch(() => setSidecarAvailable(false));
     checkOllama();
     checkPermissions();
     const unlisten = listen<string>("pipeline-status", (e) => {
@@ -273,6 +276,7 @@ export function useAppController() {
     ollamaModels,
     loadOllamaModels,
     installedWhisper,
+    sidecarAvailable,
     modelAdoptNote,
     inputDevices,
     defaultPrompts,

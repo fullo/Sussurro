@@ -1011,6 +1011,8 @@ function handle(cmd: string, a: Args): unknown {
       return { total_dictations: 132, total_words: 5210, today_dictations: 4, today_words: 88, week_dictations: 31, week_words: 1240 };
     case "model_is_downloaded":
       return true;
+    case "stt_sidecar_available":
+      return true;
     case "list_whisper_models":
       return ["ggml-large-v3-turbo-q5_0.bin", "ggml-small.bin"];
     case "list_ollama_models":

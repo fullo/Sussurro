@@ -2,9 +2,10 @@ import { CLEANUP_LEVELS, LANGUAGES } from "../lib/constants";
 import { cleanupProfile } from "../lib/llmProfiles";
 import type { Settings } from "../lib/types";
 
-/** "Whisper large-v3-turbo" / "Parakeet TDT v3" */
+/** "Whisper large-v3-turbo" / "Parakeet TDT v3" / "Qwen3-ASR 1.7B" */
 export function sttLabel(s: Pick<Settings, "engine" | "whisper_model">): string {
   if (s.engine === "parakeet") return "Parakeet TDT v3";
+  if (s.engine === "qwen3_asr") return "Qwen3-ASR 1.7B";
   const m = s.whisper_model.replace(/^ggml-/, "").replace(/\.bin$/, "").replace(/-q\d+_\d+$/, "");
   return `Whisper ${m}`;
 }
