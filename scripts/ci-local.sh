@@ -66,6 +66,11 @@ cd "$HOME/ci/sussurro/sussurro"
 echo "== [6/8] Frontend build (type-check)"
 npm ci --no-audit --no-fund >/dev/null
 npm run build
+# llama-server sidecar (#116): script tests + the pinned Linux asset starts
+npx vitest run scripts/
+npm run sidecar
+(cd src-tauri/binaries/llama-server-libs && \
+  LD_LIBRARY_PATH="$PWD:${LD_LIBRARY_PATH:-}" ../sussurro-llama-server-x86_64-unknown-linux-gnu --version)
 
 echo "== [7/8] Browser extension: type-check, tests, build, web-ext lint"
 cd ../extension
@@ -125,4 +130,11 @@ xvfb-run -a bash -c '
   kill $APP_PID
   exit 1
 '
+# Linux bundles with the sidecar (#116), as test.yml checks them.
+apt-get install -y -qq patchelf >/dev/null
+LD_LIBRARY_PATH="$PWD/src-tauri/binaries/llama-server-libs:${LD_LIBRARY_PATH:-}" \
+  npm run tauri build -- --debug --bundles deb,appimage \
+  --config src-tauri/tauri.sidecar.conf.json \
+  --config '{"bundle":{"createUpdaterArtifacts":false}}'
+bash ../scripts/verify-sidecar-bundle.sh x86_64-unknown-linux-gnu "$CARGO_TARGET_DIR" debug
 echo "== LOCAL CI PASSED (${BRANCH}) =="
