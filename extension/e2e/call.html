@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>e2e call</title>
+    <!-- Like conferencing apps: the constructor is cached before any app code. The hook must already be installed. -->
+    <script>window.__cachedPC = window.RTCPeerConnection;</script>
+  </head>
+  <body>
+    <button id="join">Join</button>
+    <pre id="log"></pre>
+    <audio id="remote" autoplay></audio>
+    <script src="call.js"></script>
+  </body>
+</html>

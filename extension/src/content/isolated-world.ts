@@ -68,7 +68,7 @@ void mainPort.then((p) => {
         toBg({ type: "state", state });
         return;
       case "armed":
-        toBg({ type: "armed", rate: Number(field(m, "rate")), title: document.title, url: location.href, platform });
+        toBg({ type: "armed", rate: Number(field(m, "rate")), title: document.title, url: location.href, platform, transport: mode });
         return;
       case "arm-failed":
         toBg({ type: "arm-failed", error: String(field(m, "error")) });

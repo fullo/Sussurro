@@ -22,7 +22,7 @@ import { CHANNEL, SeqCounter, encodeFrame, type ChannelByte } from "../shared/fr
 import { getPairing, liveUrl, onPairingChanged } from "../shared/pairing";
 import { testConnection } from "../shared/connection";
 import { toAppCheck, type AppCheck } from "../shared/appcheck";
-import { decodePayload, makeProbe } from "../shared/transport";
+import { decodePayload, makeProbe, type TransportMode } from "../shared/transport";
 import type { CaptureSnapshot, FromBackground, PageInfo, PanelBroadcast, PanelRequest, PanelState, ToBackground, ToOffscreen, ToPage } from "../shared/messages";
 import type { Platform } from "../shared/platform";
 import { initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
@@ -68,6 +68,7 @@ interface Tab {
   /** The meeting page's runtime port (while connected). */
   port: Runtime.Port | null;
   page: { title: string; url: string; platform: Platform | null } | null;
+  transport: TransportMode | null;
   capture: CaptureSnapshot | null;
   ws: WebSocket | null;
   seq: SeqCounter;
@@ -91,6 +92,7 @@ function tabState(tabId: number): Tab {
       session: initialSession(),
       port: null,
       page: null,
+      transport: null,
       capture: null,
       ws: null,
       seq: new SeqCounter(),
@@ -342,6 +344,7 @@ function onPagePort(port: Runtime.Port) {
     switch (m.type) {
       case "armed":
         t.page = { title: m.title, url: m.url, platform: m.platform };
+        t.transport = m.transport;
         dispatch(t, { type: "armed", rate: m.rate });
         return;
       case "arm-failed":
@@ -511,6 +514,7 @@ async function panelState(t: Tab, info?: PageInfo | null): Promise<PanelState> {
     attempt: s.attempt,
     capture: t.capture ?? info?.state ?? null,
     tabCapture: t.tabCapture,
+    transport: t.transport,
   };
 }
 
@@ -520,8 +524,9 @@ async function broadcastState(t: Tab) {
 
 browser.runtime.onMessage.addListener((raw: unknown, sender: Runtime.MessageSender) => {
   const m = raw as PanelRequest;
-  // Only the extension's own pages drive capture (never a content script).
-  if (!m || typeof m !== "object" || sender.tab !== undefined) return undefined;
+  // Only the extension's own pages drive capture (never a content script,
+  // whose sender URL is the web page's).
+  if (!m || typeof m !== "object" || !(sender.url ?? "").startsWith(browser.runtime.getURL(""))) return undefined;
   switch (m.type) {
     case "panel:get":
       return (async () => {

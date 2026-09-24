@@ -8,6 +8,7 @@
 import type { MicVia, RemoteVia } from "../content/registry";
 import type { Platform } from "./platform";
 import type { AppProblem } from "./appcheck";
+import type { TransportMode } from "./transport";
 import type { Phase } from "../background/session";
 
 /** What the page-side capture reports (about once a second while armed,
@@ -43,7 +44,7 @@ export type FromMain =
 export type Payload = ArrayBuffer | string;
 
 export type ToBackground =
-  | { type: "armed"; rate: number; title: string; url: string; platform: Platform | null }
+  | { type: "armed"; rate: number; title: string; url: string; platform: Platform | null; transport: TransportMode }
   | { type: "arm-failed"; error: string }
   | { type: "pcm"; seq: number; mic?: Payload; remote?: Payload }
   | { type: "state"; state: CaptureSnapshot }
@@ -83,6 +84,8 @@ export interface PanelState {
   attempt: number;
   capture: CaptureSnapshot | null;
   tabCapture: "off" | "starting" | "on" | "failed";
+  /** How audio crosses the page → background port (diagnostics). */
+  transport: TransportMode | null;
 }
 
 export type PanelRequest =

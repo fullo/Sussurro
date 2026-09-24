@@ -12,6 +12,7 @@ const state = (p: Partial<PanelState>): PanelState => ({
   attempt: 0,
   capture: null,
   tabCapture: "off",
+  transport: null,
   ...p,
 });
 

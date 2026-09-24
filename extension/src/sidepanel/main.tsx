@@ -113,7 +113,7 @@ function Capture({ tabId }: { tabId: number }) {
           </button>
         </p>
       )}
-      <p className={`page-note tone-${view.tone}`} role="status" data-testid="status" data-phase={state?.phase ?? ""}>
+      <p className={`page-note tone-${view.tone}`} role="status" data-testid="status" data-phase={state?.phase ?? ""} data-transport={state?.transport ?? ""}>
         {view.line}
       </p>
       <div className="capture-controls">
