@@ -71,6 +71,14 @@ export interface ExternalRunPreview {
   chars: number;
   approx_tokens: number;
   external: boolean;
+  /** Speaker names sent with the transcript (#143). */
+  speakers?: string[];
+  /** Participants whose names are sent. */
+  participants?: number;
+  /** Participant emails the item has, and how many this run sends (0
+   *  unless the user ticked them for this run). */
+  emails_available?: number;
+  emails_sent?: number;
 }
 
 /** `prepare_external_run`: the one-time token a confirmed run needs. */
@@ -90,6 +98,9 @@ export interface Recipe {
   prompt: string;
   target: RecipeTarget;
   builtin: boolean;
+  /** Only for meetings and transcriptions whose transcript names its
+   *  speakers (#143: Meeting minutes, Who said what). */
+  speakers_only?: boolean;
 }
 
 export interface Settings {

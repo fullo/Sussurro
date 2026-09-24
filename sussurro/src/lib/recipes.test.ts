@@ -5,15 +5,18 @@ import {
   companionLabel,
   defaultRecipeProfile,
   duplicateRecipe,
+  itemHasSpeakers,
   newRecipe,
   newRecipeId,
   progressFraction,
+  participantEmails,
   progressLabel,
   provenance,
   recipeProblems,
+  recipesFor,
   removeRecipe,
 } from "./recipes";
-import type { CompanionDoc, LlmProfile, Recipe, Settings } from "./types";
+import type { CompanionDoc, Item, ItemType, LlmProfile, Recipe, Settings } from "./types";
 
 const builtin = (id: string, name: string): Recipe => ({ id, name, prompt: "p", target: "companion_document", builtin: true });
 const BUILTINS = [
@@ -122,5 +125,66 @@ describe("profile choice and progress", () => {
     expect(progressFraction({ phase: "map", done: 5, total: 10 })).toBeCloseTo(0.4);
     expect(progressFraction({ phase: "reduce", done: 1, total: 1 })).toBe(1);
     expect(progressFraction(null)).toBe(0);
+  });
+});
+
+// #143: meeting recipes only where the transcript names its speakers.
+describe("speakers-only recipes", () => {
+  const minutes: Recipe = { ...builtin("meeting-minutes", "Meeting minutes"), speakers_only: true };
+  const who: Recipe = { ...builtin("who-said-what", "Who said what"), speakers_only: true };
+  const ALL = [...BUILTINS, minutes, who, mine];
+
+  const item = (type: ItemType, speakers: boolean, extra: Partial<Item> = {}): Item => ({
+    id: "2026/09/x",
+    meta: { type, title: "T", date: "", source: "", language: "it", engine: "", tags: [], categories: [], participants: [] },
+    segments: {
+      version: 1,
+      speakers: speakers ? [{ id: "meet:anna", label: "Anna", color: "#000" }, { id: "voice:1", label: "Voice 1", color: "#111" }] : [],
+      segments: [
+        { id: 0, start_ms: 0, end_ms: 900, raw: "Ciao.", text: "Ciao.", speaker_id: speakers ? "meet:anna" : undefined },
+        { id: 1, start_ms: 1000, end_ms: 1900, raw: "Ok.", text: "Ok.", speaker_id: speakers ? "voice:1" : undefined },
+      ],
+    },
+    body: "",
+    edited_externally: false,
+    ...extra,
+  });
+  const on = { meetings_enabled: true };
+  const ids = (rs: Recipe[]) => rs.map((r) => r.id);
+
+  it("shows them on meetings and transcriptions with speakers", () => {
+    expect(ids(recipesFor(ALL, on, item("meeting", true)))).toEqual(ids(ALL));
+    expect(ids(recipesFor(ALL, { meetings_enabled: false }, item("transcription", true)))).toEqual(ids(ALL));
+  });
+
+  it("hides them on items without speakers", () => {
+    const general = ids([...BUILTINS, mine]);
+    expect(ids(recipesFor(ALL, on, item("meeting", false)))).toEqual(general);
+    expect(ids(recipesFor(ALL, on, item("transcription", false)))).toEqual(general);
+    // Notes never, even with a labelled voice.
+    expect(ids(recipesFor(ALL, on, item("note", true)))).toEqual(general);
+    // Meetings follow the 0.9 preview flag like the speaker panel.
+    expect(ids(recipesFor(ALL, { meetings_enabled: false }, item("meeting", true)))).toEqual(general);
+    // A speaker with no label, or only on an empty line, doesn't count.
+    const blank = item("meeting", true);
+    blank.segments.speakers = blank.segments.speakers.map((s) => ({ ...s, label: " " }));
+    expect(itemHasSpeakers(blank)).toBe(false);
+    const silent = item("meeting", true);
+    silent.segments.segments = silent.segments.segments.map((s) => ({ ...s, text: " " }));
+    expect(itemHasSpeakers(silent)).toBe(false);
+  });
+
+  it("reads speakers from a transcript edited outside Sussurro", () => {
+    const edited = (body: string) => item("meeting", false, { edited_externally: true, body });
+    expect(itemHasSpeakers(edited("# T\n\n**[00:00:01] Anna:** ciao\n"))).toBe(true);
+    expect(itemHasSpeakers(edited("# T\n\n**[00:00:01]** ciao\n[00:00:02] hi\n"))).toBe(false);
+    expect(itemHasSpeakers(edited("Anna: ciao"))).toBe(false);
+  });
+
+  it("counts the participant emails a run could include", () => {
+    const i = item("meeting", true);
+    expect(participantEmails(i)).toBe(0);
+    i.meta.participants = [{ name: "Anna", email: "anna@example.com" }, { name: "Ben" }, { name: " ", email: "x@example.com" }, { name: "Carla", email: " " }];
+    expect(participantEmails(i)).toBe(1);
   });
 });

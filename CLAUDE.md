@@ -189,6 +189,19 @@ project decisions here, not in per-machine memory.**
   frontmatter day vs. the viewer's local today sent by the UI; the date
   facet takes one bucket or one custom range. Index schema v2 (rebuilt
   automatically). Selection is kept in localStorage (`libraryFacets`).
+- **Speaker-aware recipes and Ask (0.10, #143)** (`recipes/`): built-ins
+  *Meeting minutes* and *Who said what* are `speakers_only` — offered and
+  run only on meetings/transcriptions whose transcript names its speakers
+  (UI also follows the `meetings_enabled` gate for meetings, like the
+  speaker panel). Map chunks are cut on speaker turns (an over-long line
+  keeps its `[ts] Name:` prefix on every piece); map/merge/reduce prompts
+  keep each statement with its speaker and never merge speakers; "Voice N"
+  goes as-is with "never guess who they are". **Participants go to the
+  LLM by name only**; emails only with the per-run "Include participant
+  emails" tick (`include_emails`, never remembered), and an external
+  consent token is bound to that choice (`RunTarget.emails`). Fixed corpus:
+  `recipes/testdata/*.txt` (synthetic IT/EN) + `#[ignore]`
+  `live_meeting_recipes_on_ollama` (structural checks).
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`
