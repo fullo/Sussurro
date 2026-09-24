@@ -689,6 +689,20 @@ button.pchip-name:hover { text-decoration: underline; }
 .ctx-prof-text b { font-weight: 600; color: var(--c-dark); }
 .ctx-prof-text small { font-size: 11px; color: var(--c-text-light); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx-profiles:disabled .ctx-prof { cursor: default; opacity: 0.7; }
+.ctx-hint { font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 4px; }
+/* Speakers (#130) */
+.spk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.spk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 3px 0; font-size: 12px; min-width: 0; }
+.spk-row .tx-chip { margin: 0; }
+.spk-src { color: var(--c-text-light); font-size: 11px; }
+.spk-pct { margin-left: auto; color: var(--c-text-light); font-size: 11px; font-variant-numeric: tabular-nums; }
+.spk-acts { flex-basis: 100%; display: flex; gap: 10px; padding-left: 4px; font-size: 11.5px; }
+.spk-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+.spk-rename input { flex: 1; min-width: 0; font-size: 12.5px; }
+.spk-rename .ctx-note { flex-basis: 100%; }
+.spk-redetect { margin-top: 8px; font-size: 12px; }
+.spk-confirm { margin-top: 8px; }
+.spk-confirm .ctx-exports { margin-top: 6px; }
 .ctx-note { margin: 6px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--c-text-light); }
 .ctx-note.warn { color: var(--warn); }
 .ctx-run { display: flex; align-items: center; gap: 8px; margin-top: 10px; }

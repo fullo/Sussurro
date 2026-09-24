@@ -111,6 +111,8 @@ export interface Settings {
   archive_dir: string;
   /** Workspace preview (#114): the new shell instead of the classic window. */
   ui_v2: boolean;
+  /** 0.9 meeting preview (E12): speaker labels and the speaker panel. */
+  meetings_enabled?: boolean;
 }
 
 export interface OllamaStatus {
@@ -187,9 +189,18 @@ export interface Segment {
   stt_error?: string;
 }
 
+/** A speaker as known to one document (#130): `you`, `meet:<name>` or
+ *  `voice:<n>`, with this document's label and colour. */
+export interface DocSpeaker {
+  id: string;
+  label: string;
+  color: string;
+  person_id?: string;
+}
+
 export interface SegmentsFile {
   version: number;
-  speakers: { id: string; label: string; color: string }[];
+  speakers: DocSpeaker[];
   segments: Segment[];
 }
 
@@ -206,6 +217,9 @@ export interface Item {
   /** Hosts its text was sent to by an external LLM profile (#122); empty =
    *  it never left the machine. */
   external_hosts?: string[];
+  /** Lines with voice data (#130): "Re-detect speakers" needs some. The
+   *  embeddings themselves stay in the backend. */
+  embedded_segments?: number;
 }
 
 export interface ItemSummary {
