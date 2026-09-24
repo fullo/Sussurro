@@ -1,0 +1,47 @@
+/* Daruma tokens (a subset of sussurro/src/App.css) for the extension pages.
+   The shared transcript styles read them, with their own fallbacks. */
+:root {
+  color-scheme: light;
+  --c-bg: #fafaf8;
+  --c-surface: #ffffff;
+  --c-surface-alt: #f3f2ee;
+  --c-dark: #1a1a1a;
+  --c-text: #2d2d2d;
+  --c-text-light: #595959;
+  --brand: #e52520;
+  --brand-text: #c91e1a;
+  --brand-soft: #fce8e7;
+  --border: #e5e5e0;
+  --border-strong: #c9c9c2;
+  --f-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --f-serif: Georgia, Cambria, "Times New Roman", serif;
+  --f-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  --radius: 8px;
+  --radius-pill: 100px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--f-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.page { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+.page-header { display: flex; align-items: center; gap: 10px; }
+.page-header img { width: 24px; height: 24px; }
+.page-header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+.page-version { margin-left: auto; font-family: var(--f-mono); font-size: 11.5px; color: var(--c-text-light); }
+.page-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--c-surface);
+  color: var(--c-text-light);
+}
+.tx-scroll { overflow-y: auto; }
