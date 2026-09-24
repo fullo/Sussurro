@@ -11,6 +11,7 @@ pub mod inject;
 pub mod llm;
 pub mod permissions;
 pub mod pipeline;
+pub mod recipes;
 pub mod settings;
 pub mod snippets;
 pub mod sources;
@@ -121,6 +122,7 @@ pub fn run() {
                 stream: Mutex::new(state::StreamState::default()),
                 engine: Default::default(),
                 dictation: Default::default(),
+                recipe_runs: Default::default(),
             });
             // Long-form sessions the last run never finished (crash, forced
             // quit): keep their items as "interrupted" (#153). Off the main
@@ -204,7 +206,13 @@ pub fn run() {
             commands::archive_delete_segment,
             commands::archive_delete,
             commands::archive_reveal,
-            commands::archive_rebuild_index
+            commands::archive_rebuild_index,
+            commands::recipes_list,
+            commands::recipe_documents,
+            commands::recipe_run,
+            commands::recipe_cancel,
+            commands::recipe_status,
+            commands::recipe_reveal_document
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

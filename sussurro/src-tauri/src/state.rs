@@ -108,6 +108,8 @@ pub struct AppState {
     /// A hotkey dictation is recording or waiting for its final pass: the
     /// engine starts no new segment meanwhile (#154).
     pub dictation: crate::engine::priority::DictationGate,
+    /// Recipe runs in flight, one per archive item (#120).
+    pub recipe_runs: crate::recipes::run::Runs,
 }
 
 /// What streaming injection has already done for the current recording.

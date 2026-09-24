@@ -4,12 +4,14 @@
 //!
 //! - [`paths`]: location, folder naming, id validation and confinement
 //! - [`types`]: frontmatter and `segments.json` data model
+//! - [`companion`]: recipe output next to the transcript (`document.md`, #120)
 //! - [`frontmatter`]: YAML frontmatter read/write
 //! - [`render`]: `transcript.md` rendering
 //! - [`store`]: create / read / list / update / delete items
 //! - [`live`]: items written while a session runs (checkpoints, #153)
 //! - [`index`]: search index (rebuildable)
 
+pub mod companion;
 pub mod frontmatter;
 pub mod index;
 pub mod live;

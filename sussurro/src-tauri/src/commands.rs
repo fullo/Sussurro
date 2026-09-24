@@ -902,3 +902,227 @@ pub async fn archive_rebuild_index(state: State<'_, AppState>) -> Result<usize, 
     let (dir, db) = archive_paths(&state)?;
     blocking(move || archive::rebuild_index(&dir, &db)).await
 }
+
+// ---- Recipes (0.8, #120): prompts that write companion documents ----
+
+use crate::recipes::{self, Recipe};
+
+/// Every recipe: the built-ins first, then the user's own.
+#[tauri::command]
+pub fn recipes_list(state: State<'_, AppState>) -> Vec<Recipe> {
+    recipes::all_recipes(&state.settings.lock().unwrap().recipes)
+}
+
+/// The companion documents next to an item's transcript (`document.md`
+/// first).
+#[tauri::command]
+pub async fn recipe_documents(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<archive::companion::CompanionDoc>, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || archive::companion::list_companions(&dir, &id)).await
+}
+
+/// `recipe-progress` payload.
+#[derive(serde::Serialize, Clone)]
+pub struct RecipeProgressEvent {
+    pub item_id: String,
+    pub recipe_id: String,
+    pub recipe_name: String,
+    #[serde(flatten)]
+    pub progress: recipes::engine::Progress,
+}
+
+/// How a recipe run ended (also sent as `recipe-finished`).
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct RecipeFinished {
+    pub item_id: String,
+    pub recipe_id: String,
+    pub recipe_name: String,
+    /// Companion document written, for a document recipe.
+    pub file: Option<String>,
+    /// The text, for an answer recipe.
+    pub answer: Option<String>,
+    pub error: Option<String>,
+    pub cancelled: bool,
+}
+
+/// The profile a recipe runs on when the caller names none: the cleanup
+/// profile when it is local, else the first local one, else the cleanup
+/// profile (which the privacy check then refuses with its explanation).
+fn default_recipe_profile(settings: &Settings) -> crate::llm::LlmProfile {
+    let cleanup = settings.cleanup_llm();
+    if !cleanup.external {
+        return cleanup;
+    }
+    settings
+        .llm_profiles
+        .iter()
+        .find(|p| !p.external)
+        .cloned()
+        .unwrap_or(cleanup)
+}
+
+/// Run a recipe on an archive item with an LLM profile (default: see
+/// [`default_recipe_profile`]). Refusals — unknown recipe or profile, an
+/// external profile (#122 adds the per-run confirmation), a live item,
+/// another run on the same item — are errors, and nothing is sent. Once
+/// started, progress arrives as `recipe-progress` and the end as
+/// `recipe-finished`, whose payload this also returns (with `error` /
+/// `cancelled` set when it did not complete).
+#[tauri::command]
+pub async fn recipe_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    recipe_id: String,
+    profile_id: Option<String>,
+) -> Result<RecipeFinished, String> {
+    use tauri::{Emitter, Manager};
+    let (archive, db) = archive_paths(&state)?;
+    let settings = state.settings.lock().unwrap().clone();
+    let recipe = recipes::find_recipe(&settings.recipes, &recipe_id)
+        .ok_or_else(|| format!("no recipe '{recipe_id}'"))?;
+    let profile = match profile_id.as_deref() {
+        Some(pid) => settings
+            .llm_profiles
+            .iter()
+            .find(|p| p.id == pid)
+            .cloned()
+            .ok_or_else(|| format!("no LLM profile '{pid}'"))?,
+        None => default_recipe_profile(&settings),
+    };
+    recipes::run::check_profile(&profile).map_err(|e| format!("{e:#}"))?;
+    {
+        let journal = crate::engine::session::journal_path(&state);
+        let (archive, id) = (archive.clone(), id.clone());
+        blocking(move || crate::engine::session::ensure_not_live(&journal, &archive, &id)).await?;
+    }
+    let cancel = state
+        .recipe_runs
+        .begin(&id, &recipe)
+        .map_err(|e| format!("{e:#}"))?;
+
+    let handle = app.clone();
+    let (item_id, r) = (id.clone(), recipe.clone());
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<AppState>();
+        /// Unregisters the run however the closure ends (panic included).
+        struct End<'a>(&'a recipes::run::Runs, &'a str);
+        impl Drop for End<'_> {
+            fn drop(&mut self) {
+                self.0.end(self.1);
+            }
+        }
+        let _end = End(&state.recipe_runs, &item_id);
+        let now = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+        let model = recipes::run::ProfileModel {
+            profile: profile.clone(),
+        };
+        let result = recipes::run::run_on_item(
+            &archive,
+            &item_id,
+            &r,
+            &profile,
+            &model,
+            &now,
+            &cancel,
+            &mut |p| {
+                state.recipe_runs.set_progress(&item_id, p);
+                let _ = handle.emit(
+                    "recipe-progress",
+                    RecipeProgressEvent {
+                        item_id: item_id.clone(),
+                        recipe_id: r.id.clone(),
+                        recipe_name: r.name.clone(),
+                        progress: p,
+                    },
+                );
+            },
+        );
+        if result.is_ok() {
+            // Keep the index in step with the item folder.
+            reindex(&archive, &db, |idx| idx.index_item(&item_id));
+        }
+        result
+    })
+    .await;
+    let mut finished = RecipeFinished {
+        item_id: id,
+        recipe_id: recipe.id.clone(),
+        recipe_name: recipe.name.clone(),
+        file: None,
+        answer: None,
+        error: None,
+        cancelled: false,
+    };
+    match joined {
+        Ok(Ok(out)) => {
+            finished.file = out.file;
+            finished.answer = out.answer;
+        }
+        Ok(Err(e)) if e.downcast_ref::<recipes::engine::Cancelled>().is_some() => {
+            finished.cancelled = true;
+        }
+        Ok(Err(e)) => finished.error = Some(format!("{e:#}")),
+        Err(e) => finished.error = Some(e.to_string()),
+    }
+    let _ = app.emit("recipe-finished", finished.clone());
+    Ok(finished)
+}
+
+/// Stop the recipe running on an item after its current step. False when
+/// none runs there.
+#[tauri::command]
+pub fn recipe_cancel(state: State<'_, AppState>, id: String) -> bool {
+    state.recipe_runs.cancel(&id)
+}
+
+/// Recipe runs in flight (a UI mounted mid-run adopts them).
+#[tauri::command]
+pub fn recipe_status(state: State<'_, AppState>) -> Vec<recipes::run::RunStatus> {
+    state.recipe_runs.list()
+}
+
+/// Show a companion document in the OS file manager.
+#[tauri::command]
+pub fn recipe_reveal_document(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    file: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let (dir, _) = archive_paths(&state)?;
+    let path =
+        archive::companion::companion_path(&dir, &id, &file).map_err(|e| format!("{e:#}"))?;
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod recipe_tests {
+    use super::*;
+    use crate::llm::LlmProfile;
+    use crate::settings::CleanupApi;
+
+    #[test]
+    fn default_recipe_profile_prefers_a_local_one() {
+        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
+        let lan = LlmProfile::new("lan", "LAN", CleanupApi::Ollama, "http://localhost:11434", "", "m");
+        let mut s = Settings {
+            llm_profiles: vec![work.clone(), lan],
+            cleanup_profile: "work".into(),
+            ..Default::default()
+        };
+        assert_eq!(default_recipe_profile(&s).id, "lan");
+        s.cleanup_profile = "lan".into();
+        assert_eq!(default_recipe_profile(&s).id, "lan");
+        // Only external profiles: the run is then refused with the reason.
+        s.llm_profiles = vec![work];
+        s.cleanup_profile = "work".into();
+        assert_eq!(default_recipe_profile(&s).id, "work");
+    }
+}

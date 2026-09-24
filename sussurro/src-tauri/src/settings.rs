@@ -86,6 +86,9 @@ pub struct Settings {
     /// Id of the profile that cleans dictations, long-form runs and the
     /// local API's `/clean`. See [`Settings::cleanup_llm`].
     pub cleanup_profile: String,
+    /// The user's own recipes (#120). The built-in ones live in code
+    /// ([`crate::recipes::builtin_recipes`]) and are never stored here.
+    pub recipes: Vec<crate::recipes::Recipe>,
     /// Pre-0.8 flat cleanup settings (`ollama_url`, `ollama_model`,
     /// `cleanup_api`, `api_key`): **read once for the migration, never
     /// written**. `None` when absent (the 0.6 defaults then apply).
@@ -156,6 +159,7 @@ impl Default for Settings {
             engine: SttEngine::Whisper,
             llm_profiles: vec![LlmProfile::default()],
             cleanup_profile: LOCAL_PROFILE_ID.into(),
+            recipes: Vec::new(),
             legacy_ollama_url: None,
             legacy_ollama_model: None,
             legacy_cleanup_api: None,
@@ -217,6 +221,8 @@ impl Settings {
     /// - The legacy fields are then dropped: they are never written back.
     /// - Empty or duplicate ids get a fresh `profile-N`, empty names "Untitled".
     /// - A `cleanup_profile` naming no profile falls back to the first one.
+    /// - User recipes get unique ids that don't clash with the built-ins
+    ///   (see [`crate::recipes::normalize_user_recipes`]).
     ///
     /// Idempotent. Run on load and on every save from the UI.
     pub fn normalize(&mut self) -> bool {
@@ -250,6 +256,7 @@ impl Settings {
         if !self.llm_profiles.iter().any(|p| p.id == self.cleanup_profile) {
             self.cleanup_profile = self.llm_profiles[0].id.clone();
         }
+        crate::recipes::normalize_user_recipes(&mut self.recipes);
         migrated
     }
 
@@ -524,6 +531,7 @@ mod tests {
                 api_key: "sk-local".into(),
                 model: "qwen2.5-3b-instruct".into(),
                 external: false,
+                context_tokens: 0,
             }]
         );
         assert_eq!(s.cleanup_profile, "local");

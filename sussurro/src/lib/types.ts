@@ -30,6 +30,22 @@ export interface LlmProfile {
   /** Text sent to this profile leaves the machine (inferred from the URL,
    *  overridable). Drives the privacy warning. */
   external: boolean;
+  /** Model context window in tokens; 0 / absent = unknown (recipes then
+   *  plan for 4096). */
+  context_tokens?: number;
+}
+
+/** Where a recipe's output goes (recipes/mod.rs). */
+export type RecipeTarget = "companion_document" | "answer";
+
+/** A named prompt with a target (#120). Built-ins come from the backend
+ *  (`recipes_list`); only user recipes live in `Settings.recipes`. */
+export interface Recipe {
+  id: string;
+  name: string;
+  prompt: string;
+  target: RecipeTarget;
+  builtin: boolean;
 }
 
 export interface Settings {
@@ -41,6 +57,8 @@ export interface Settings {
   llm_profiles: LlmProfile[];
   /** Id of the profile cleanup runs on. */
   cleanup_profile: string;
+  /** The user's own recipes (#120); built-ins are not stored. */
+  recipes: Recipe[];
   cleanup_level: CleanupLevel;
   output_language: string;
   dictionary: string[];
@@ -229,4 +247,64 @@ export interface EngineStatus {
   mic_session: number | null;
   /** Running file transcriptions, oldest first (#158). */
   file_sessions: { session_id: number; label: string }[];
+}
+
+/* ---------- Recipes (recipes/, archive/companion.rs, #120) ---------- */
+
+/** Frontmatter of a companion document: its provenance. */
+export interface CompanionMeta {
+  title: string;
+  /** "<recipe> / <profile> / <model>" */
+  generated_by: string;
+  recipe: string;
+  profile: string;
+  model: string;
+  external: boolean;
+  date: string;
+  transcript: string;
+  [extra: string]: unknown;
+}
+
+/** A markdown file a recipe wrote next to the transcript. */
+export interface CompanionDoc {
+  /** File name in the item folder ("document.md"). */
+  file: string;
+  meta: CompanionMeta;
+  body: string;
+  /** Changed since the app wrote it: a regeneration writes a new copy. */
+  edited_externally: boolean;
+}
+
+export type RecipePhase = "single" | "map" | "merge" | "reduce";
+
+export interface RecipeStep {
+  phase: RecipePhase;
+  done: number;
+  total: number;
+}
+
+/** `recipe-progress` payload. */
+export interface RecipeProgress extends RecipeStep {
+  item_id: string;
+  recipe_id: string;
+  recipe_name: string;
+}
+
+/** `recipe_status` entry: a run in flight. */
+export interface RecipeRunStatus {
+  item_id: string;
+  recipe_id: string;
+  recipe_name: string;
+  progress: RecipeStep | null;
+}
+
+/** `recipe-finished` payload and `recipe_run` result. */
+export interface RecipeFinished {
+  item_id: string;
+  recipe_id: string;
+  recipe_name: string;
+  file: string | null;
+  answer: string | null;
+  error: string | null;
+  cancelled: boolean;
 }

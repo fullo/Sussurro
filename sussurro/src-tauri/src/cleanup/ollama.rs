@@ -127,24 +127,59 @@ fn list_models_openai(url: &str, api_key: &str) -> Result<Vec<String>> {
         .unwrap_or_default())
 }
 
-/// One non-streaming chat completion on a profile, dispatched to its API.
-pub fn chat(profile: &LlmProfile, messages: &[Value]) -> Result<String> {
-    match profile.api {
-        CleanupApi::Ollama => chat_ollama(&profile.base_url, &profile.model, messages),
-        CleanupApi::Openai => {
-            chat_openai(&profile.base_url, &profile.model, &profile.api_key, messages)
+/// Per-call knobs of a chat completion. [`ChatOptions::default`] is what
+/// cleanup uses: a 60 s budget, the server's own context window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChatOptions {
+    /// Whole-request timeout (a recipe step on a laptop CPU can take minutes).
+    pub timeout_secs: u64,
+    /// Ollama only: the context window to load the model with (`num_ctx`).
+    /// Ignored by the OpenAI-compatible API, where the server decides.
+    pub num_ctx: Option<u32>,
+    pub temperature: f32,
+}
+
+impl Default for ChatOptions {
+    fn default() -> Self {
+        Self {
+            timeout_secs: 60,
+            num_ctx: None,
+            temperature: 0.2,
         }
     }
 }
 
-fn chat_ollama(url: &str, model: &str, messages: &[Value]) -> Result<String> {
+/// One non-streaming chat completion on a profile, dispatched to its API.
+pub fn chat(profile: &LlmProfile, messages: &[Value]) -> Result<String> {
+    chat_with(profile, messages, &ChatOptions::default())
+}
+
+/// [`chat`] with explicit [`ChatOptions`] (recipes, #120).
+pub fn chat_with(profile: &LlmProfile, messages: &[Value], opts: &ChatOptions) -> Result<String> {
+    match profile.api {
+        CleanupApi::Ollama => chat_ollama(&profile.base_url, &profile.model, messages, opts),
+        CleanupApi::Openai => chat_openai(
+            &profile.base_url,
+            &profile.model,
+            &profile.api_key,
+            messages,
+            opts,
+        ),
+    }
+}
+
+fn chat_ollama(url: &str, model: &str, messages: &[Value], opts: &ChatOptions) -> Result<String> {
+    let mut options = json!({"temperature": opts.temperature});
+    if let Some(n) = opts.num_ctx {
+        options["num_ctx"] = json!(n);
+    }
     let body = json!({
         "model": model,
         "messages": messages,
         "stream": false,
-        "options": {"temperature": 0.2}
+        "options": options
     });
-    let resp: Value = http_client(60)?
+    let resp: Value = http_client(opts.timeout_secs)?
         .post(format!("{}/api/chat", url.trim_end_matches('/')))
         .json(&body)
         .send()
@@ -159,14 +194,20 @@ fn chat_ollama(url: &str, model: &str, messages: &[Value]) -> Result<String> {
         .to_string())
 }
 
-fn chat_openai(url: &str, model: &str, api_key: &str, messages: &[Value]) -> Result<String> {
+fn chat_openai(
+    url: &str,
+    model: &str,
+    api_key: &str,
+    messages: &[Value],
+    opts: &ChatOptions,
+) -> Result<String> {
     let body = json!({
         "model": model,
         "messages": messages,
         "stream": false,
-        "temperature": 0.2
+        "temperature": opts.temperature
     });
-    let mut req = http_client(60)?
+    let mut req = http_client(opts.timeout_secs)?
         .post(format!("{}/v1/chat/completions", openai_base(url)))
         .json(&body);
     if !api_key.is_empty() {
