@@ -405,6 +405,8 @@ export function DocumentPane({
         setItem(updated);
         onChanged();
       }}
+      people={people}
+      onPeopleChanged={reloadPeople}
     />
     </div>
   );

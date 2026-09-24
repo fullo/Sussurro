@@ -244,7 +244,10 @@ export interface DocSpeaker {
   id: string;
   label: string;
   color: string;
+  /** Person of the People registry this speaker is (#132). */
   person_id?: string;
+  /** Label before a link replaced it; unlinking gives it back. */
+  label_before_link?: string;
 }
 
 export interface SegmentsFile {

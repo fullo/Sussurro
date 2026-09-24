@@ -21,7 +21,7 @@ import {
 import { type ExportChoice, exportChoices, exportFileName, hasSubtitles, subtitlesInfo } from "../lib/export";
 import { profileHostOf } from "../lib/privacy";
 import { companionFileName, progressFraction, progressLabel } from "../lib/recipes";
-import type { Item, Recipe, RecipeFinished, RecipeProgress, RecipeRunStatus, SubtitlesStatus } from "../lib/types";
+import type { Item, Person, Recipe, RecipeFinished, RecipeProgress, RecipeRunStatus, SubtitlesStatus } from "../lib/types";
 import { useExternalConsent } from "./ConsentDialog";
 import { Markdown } from "./Markdown";
 import { SpeakerPanel } from "./SpeakerPanel";
@@ -82,9 +82,14 @@ export function ContextPane({
   onDocsChanged,
   onOpenDocument,
   onItem,
+  people,
+  onPeopleChanged,
 }: {
   ctl: Ctl;
   item: Item;
+  /** The People registry (#132), for linking speakers. */
+  people?: Person[];
+  onPeopleChanged?: () => void;
   /** A speaker edit returned the updated item (#130). */
   onItem: (item: Item) => void;
   /** Laid out as a drawer (narrow window). */
@@ -320,7 +325,9 @@ export function ContextPane({
         </div>
       )}
 
-      {showSpeakers && <SpeakerPanel ctl={ctl} item={item} onItem={onItem} />}
+      {showSpeakers && (
+        <SpeakerPanel ctl={ctl} item={item} onItem={onItem} people={people} onPeopleChanged={onPeopleChanged} />
+      )}
 
       <section className="ctx-sect" aria-labelledby="ctx-ask-h">
         <h3 id="ctx-ask-h">Ask</h3>
