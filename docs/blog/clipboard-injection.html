@@ -56,7 +56,7 @@
 <p>Sussurro has to type into whatever application happens to have focus — a browser's compose box, a terminal, a native editor, a chat client, a form field buried three dialogs deep. There's no universal "insert text here" API that works across all of them. So Sussurro doesn't try to integrate with each app. Instead it uses the one interface every app already understands: the clipboard.</p>
 
 <h2>The sequence</h2>
-<p>When it's time to deliver text — a finished dictation, a streamed sentence, an edited command-mode selection — Sussurro runs the same four-step sequence, implemented in <code>inject.rs</code>:</p>
+<p>When it's time to deliver text — a finished dictation or a single streamed sentence — Sussurro runs the same four-step sequence, implemented in <code>inject.rs</code>:</p>
 <ol class="figure-steps">
 <li>Read and hold whatever is currently on the clipboard.</li>
 <li>Write the new text to the clipboard.</li>
@@ -71,14 +71,13 @@
 <div class="callout"><span class="k">YOUR CLIPBOARD IS SAFE</span><p>The swap is save → write → paste → restore, always in that order. If you had something copied before triggering dictation, it's back on your clipboard by the time the paste completes — you don't need to re-copy it.</p></div>
 
 <h2>Where it shows up in the pipeline</h2>
-<p>This isn't only a one-shot operation at the end of a dictation. <a href="streaming-typing.html">Streaming typing</a> calls the same <code>inject_text</code> routine once per delta or per cleaned sentence as you speak, so a single dictation can trigger several quick clipboard swaps in a row rather than one big one at the end. <a href="command-mode.html">Command mode</a> uses the same machinery in reverse: it copies your current selection (via a synthesized <code>Ctrl+C</code>) before rewriting it, then pastes the edited result back over the selection.</p>
+<p>This isn't only a one-shot operation at the end of a dictation. <a href="streaming-typing.html">Streaming typing</a> calls the same <code>inject_text</code> routine once per delta or per cleaned sentence as you speak, so a single dictation can trigger several quick clipboard swaps in a row rather than one big one at the end.</p>
 
 <h2>Edge cases</h2>
 <ul>
 <li><strong>The paste goes to whatever has focus.</strong> The synthesized <code>Ctrl+V</code> lands in whatever window or field is focused at that moment. If you switch apps while a dictation is being delivered, the text follows your cursor — not the app you were dictating into. Don't move focus between the recording finishing and the paste landing; it's the one race this design can't guard against.</li>
 <li><strong>Apps that block or intercept paste.</strong> A small number of hardened or sandboxed apps disable programmatic paste, or don't expose a focused text field the way the OS expects. When that happens the keystroke lands but nothing appears — there's no per-app fallback beyond the clipboard-and-paste flow itself.</li>
 <li><strong>No clipboard manager conflicts.</strong> Because Sussurro restores your previous clipboard content immediately after pasting, clipboard-history tools that watch for changes may briefly see Sussurro's text appear and disappear. This is expected, not a bug.</li>
-<li><strong>Nothing selected in command mode.</strong> If you invoke command mode with no text selected, Sussurro finds nothing to copy and puts your original clipboard back untouched rather than pasting over random content.</li>
 </ul>
 
 <h2>The Linux Wayland wrinkle</h2>
@@ -91,7 +90,7 @@
       <ul>
         <li><a href="linux-injection.html">Wayland injection, explained</a></li>
         <li><a href="streaming-typing.html">Streaming typing</a></li>
-        <li><a href="command-mode.html">Command mode</a></li>
+        <li><a href="how-the-pipeline-works.html">How the pipeline works</a></li>
       </ul>
     </div>
   </footer>

@@ -21,7 +21,7 @@ pub enum SttEngine {
     Parakeet,
 }
 
-/// Which chat API the cleanup / command-mode LLM is driven through.
+/// Which chat API the cleanup LLM is driven through.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupApi {
@@ -77,7 +77,7 @@ pub struct Settings {
     pub engine: SttEngine,
     pub ollama_url: String,
     pub ollama_model: String,
-    /// Which chat API drives cleanup / command mode. Ollama native by default;
+    /// Which chat API drives cleanup. Ollama native by default;
     /// OpenAI-compatible reinterprets `ollama_url` as the server base and
     /// `ollama_model` as the model id, talking `/v1/chat/completions`.
     pub cleanup_api: CleanupApi,
@@ -107,9 +107,6 @@ pub struct Settings {
     pub models_dir: String,
     /// Input device name for capture. Empty = system default microphone.
     pub input_device: String,
-    /// Command mode shortcut: the spoken instruction is applied to the
-    /// currently selected text via the LLM (Wispr's command mode).
-    pub command_hotkey: String,
     /// Quiet-speech mode: boosts mic gain and lowers the silence gate.
     pub whisper_mode: bool,
     /// EXPERIMENTAL: type text into the app while speaking. With cleanup
@@ -153,7 +150,6 @@ impl Default for Settings {
             app_styles: Vec::new(),
             models_dir: String::new(),
             input_device: String::new(),
-            command_hotkey: "CommandOrControl+Alt+Space".into(),
             whisper_mode: false,
             stream_injection: false,
             voice_commands: true,
@@ -308,6 +304,38 @@ mod tests {
         for url in ["", "   ", "http://", "://nope", "not a url", "http://:11434"] {
             assert!(!is_local_endpoint(url), "{url}");
         }
+    }
+
+    /// Command mode was removed in 0.7: a settings.json written by an older
+    /// version still carries `command_hotkey`. It must load (the unknown key
+    /// is ignored, the other fields kept) and the key must be gone after the
+    /// next save.
+    #[test]
+    fn legacy_command_hotkey_is_ignored_and_dropped_on_save() {
+        let legacy = r#"{
+            "hotkey": "Alt+Space",
+            "command_hotkey": "CommandOrControl+Alt+Space",
+            "push_to_talk": false
+        }"#;
+        let s: Settings = serde_json::from_str(legacy).expect("legacy settings must load");
+        assert_eq!(
+            s,
+            Settings {
+                hotkey: "Alt+Space".into(),
+                push_to_talk: false,
+                ..Default::default()
+            }
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, legacy).unwrap();
+        let loaded = Settings::load(&path);
+        assert_eq!(loaded, s, "load() must not fall back to defaults");
+        loaded.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("command_hotkey"), "{saved}");
+        assert!(!serde_json::to_string(&s).unwrap().contains("command_hotkey"));
     }
 
     #[test]

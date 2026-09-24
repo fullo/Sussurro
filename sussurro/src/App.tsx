@@ -62,7 +62,6 @@ interface Settings {
   app_styles: AppStyle[];
   models_dir: string;
   input_device: string;
-  command_hotkey: string;
   whisper_mode: boolean;
   stream_injection: boolean;
   voice_commands: boolean;
@@ -1011,17 +1010,6 @@ export default function App() {
 
         <div className="field">
           <div className="field-label">
-            <span>Command shortcut <Tip text="Command mode: select text anywhere, hold this shortcut and SPEAK AN INSTRUCTION ('make it shorter', 'translate to English', 'fix the grammar') — the LLM applies it to the selection and the result replaces it." /></span>
-            <small>speak an instruction, applied to the selection</small>
-          </div>
-          <HotkeyRecorder
-            value={settings.command_hotkey}
-            onChange={(combo) => save({ ...settings, command_hotkey: combo })}
-          />
-        </div>
-
-        <div className="field">
-          <div className="field-label">
             <span>Push-to-talk <Tip text="On: recording lasts while you hold the shortcut or the Dictate button, like a walkie-talkie. Off: one tap/click starts recording, a second one stops it. Applies to both the keyboard shortcut and the Dictate button in the header." /></span>
             <small>off = toggle mode</small>
           </div>
@@ -1208,7 +1196,7 @@ export default function App() {
         </div>
 
         <div className="field">
-          <div className="field-label"><span>Cleanup backend <Tip text="Which chat API drives cleanup and command mode. Ollama (native) is the default. OpenAI-compatible works with any /v1 server — llama.cpp-server, LM Studio, or antirez's DS4 — reusing the Server and model fields below." /></span></div>
+          <div className="field-label"><span>Cleanup backend <Tip text="Which chat API drives cleanup. Ollama (native) is the default. OpenAI-compatible works with any /v1 server — llama.cpp-server, LM Studio, or antirez's DS4 — reusing the Server and model fields below." /></span></div>
           <select
             value={settings.cleanup_api}
             onChange={(e) => save({ ...settings, cleanup_api: e.target.value as "ollama" | "openai" })}

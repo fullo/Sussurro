@@ -20,7 +20,7 @@ pub fn set_settings(
     // The model name flows into models_dir.join(name) for download and load —
     // reject traversal/absolute paths before anything touches the filesystem.
     models::validate_model_name(&settings.whisper_model).map_err(|e| e.to_string())?;
-    hotkey::apply(&app, &settings.hotkey, &settings.command_hotkey).map_err(|e| e.to_string())?;
+    hotkey::apply(&app, &settings.hotkey).map_err(|e| e.to_string())?;
     // Only touch the OS launch entry when the state actually changes:
     // disabling a never-registered entry fails with os error 2 on Windows.
     let autolaunch = app.autolaunch();
@@ -51,7 +51,7 @@ pub fn set_settings(
 /// press/release, so push-to-talk vs toggle behaves identically.
 #[tauri::command]
 pub fn trigger_dictation(app: AppHandle, pressed: bool) {
-    crate::pipeline::handle_trigger(&app, pressed, false);
+    crate::pipeline::handle_trigger(&app, pressed);
 }
 
 #[tauri::command]
@@ -442,10 +442,9 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
         );
         let _ = writeln!(
             r,
-            "Hotkeys: dictation {} ({}) · command {}",
+            "Hotkey: dictation {} ({})",
             settings.hotkey,
-            if settings.push_to_talk { "push-to-talk" } else { "toggle" },
-            settings.command_hotkey
+            if settings.push_to_talk { "push-to-talk" } else { "toggle" }
         );
         let _ = writeln!(
             r,

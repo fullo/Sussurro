@@ -48,16 +48,9 @@ pub fn run() {
         ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, shortcut, event| {
+                .with_handler(|app, _shortcut, event| {
                     let pressed = event.state() == ShortcutState::Pressed;
-                    let is_command = {
-                        let state = app.state::<state::AppState>();
-                        let cmd = state.settings.lock().unwrap().command_hotkey.clone();
-                        cmd.parse::<tauri_plugin_global_shortcut::Shortcut>()
-                            .map(|c| c == *shortcut)
-                            .unwrap_or(false)
-                    };
-                    pipeline::handle_trigger(app, pressed, is_command);
+                    pipeline::handle_trigger(app, pressed);
                 })
                 .build(),
         )
@@ -74,7 +67,7 @@ pub fn run() {
             // Neither a failed shortcut registration (e.g. GNOME Wayland
             // policy) nor a missing tray host (headless CI, minimal WMs) is
             // fatal: the window and the in-app Dictate button still work.
-            if let Err(e) = hotkey::apply(handle, &settings.hotkey, &settings.command_hotkey) {
+            if let Err(e) = hotkey::apply(handle, &settings.hotkey) {
                 eprintln!("global shortcut unavailable: {e:#}");
             }
             if let Err(e) = tray::setup(handle) {
@@ -86,7 +79,6 @@ pub fn run() {
                 transcriber_last_used: Mutex::new(None),
                 settings: Mutex::new(settings),
                 paths,
-                command_mode: std::sync::atomic::AtomicBool::new(false),
                 mic_test: std::sync::atomic::AtomicBool::new(false),
                 stream: Mutex::new(state::StreamState::default()),
             });

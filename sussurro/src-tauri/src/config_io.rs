@@ -4,7 +4,7 @@ use std::path::Path;
 
 /// Portable subset of the settings — the parts worth carrying between machines
 /// (dictionary, voice snippets, per-app styles). Deliberately excludes
-/// machine-specific fields like models_dir, hotkeys, and the input device.
+/// machine-specific fields like models_dir, the hotkey, and the input device.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ConfigBundle {
     #[serde(default)]
