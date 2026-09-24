@@ -1,0 +1,37 @@
+{
+  "name": "sussurro-extension",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Sussurro browser extension: captures web meetings for the local Sussurro app (Chrome/Edge/Brave + Firefox).",
+  "license": "AGPL-3.0-or-later",
+  "author": "Francesco Fullone (DarumaHQ)",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "npm run build:chrome && npm run build:firefox",
+    "build:chrome": "node scripts/build.ts chrome",
+    "build:firefox": "node scripts/build.ts firefox",
+    "typecheck": "tsc",
+    "lint": "web-ext lint --source-dir dist/firefox",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "webextension-polyfill": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@types/webextension-polyfill": "^0.12.3",
+    "@vitejs/plugin-react": "^4.6.0",
+    "fflate": "^0.8.2",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "vitest": "^4.1.11",
+    "web-ext": "^10.0.0"
+  }
+}

@@ -1,53 +1,26 @@
-//! `GET /items/{id}/export?format=…` (#126, plan §5 "Exports"): "Copy as
-//! text" and downloads from the extension's side panel.
-//!
-//! - `md`: `transcript.md` exactly as stored (frontmatter included).
-//! - `txt`: plain lines `[HH:MM:SS] Label: text` for meetings and
-//!   transcriptions (the label when the segment has a speaker), paragraphs
-//!   for notes; an item edited outside Sussurro exports its markdown body.
-//! - `srt`, `vtt`: recognised, answered "not available yet" until the
-//!   subtitle writers land (#133) — they plug in at [`render`].
+//! `GET /items/{id}/export?format=md|txt|srt|vtt` (#126, the HTTP side of
+//! #133): "Copy as text" and downloads from the extension's side panel.
+//! The content comes from [`archive::export::export_item`], the same code as
+//! the app's Export menu — `md` as stored, `txt` as timed lines, `srt`/`vtt`
+//! from the subtitle writers, refused for notes (P10).
 
-use crate::archive::{self, ItemType};
-use anyhow::Result;
+use crate::archive::{self, export::ExportFormat};
 use std::path::Path;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExportFormat {
-    Md,
-    Txt,
-    Srt,
-    Vtt,
+/// `format` query value → format; missing or empty = `md`.
+pub fn parse_format(s: Option<&str>) -> Option<ExportFormat> {
+    match s.map(str::trim) {
+        None | Some("") => Some(ExportFormat::Md),
+        Some(f) => ExportFormat::parse(f),
+    }
 }
 
-impl ExportFormat {
-    /// `md` | `txt` | `srt` | `vtt` (case-insensitive); missing = `md`.
-    pub fn parse(s: Option<&str>) -> Option<Self> {
-        match s.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
-            None | Some("") | Some("md") => Some(Self::Md),
-            Some("txt") => Some(Self::Txt),
-            Some("srt") => Some(Self::Srt),
-            Some("vtt") => Some(Self::Vtt),
-            _ => None,
-        }
-    }
-
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Md => "md",
-            Self::Txt => "txt",
-            Self::Srt => "srt",
-            Self::Vtt => "vtt",
-        }
-    }
-
-    pub fn content_type(self) -> &'static str {
-        match self {
-            Self::Md => "text/markdown; charset=utf-8",
-            Self::Txt => "text/plain; charset=utf-8",
-            Self::Srt => "application/x-subrip; charset=utf-8",
-            Self::Vtt => "text/vtt; charset=utf-8",
-        }
+pub fn content_type(format: ExportFormat) -> &'static str {
+    match format {
+        ExportFormat::Md => "text/markdown; charset=utf-8",
+        ExportFormat::Txt => "text/plain; charset=utf-8",
+        ExportFormat::Srt => "application/x-subrip; charset=utf-8",
+        ExportFormat::Vtt => "text/vtt; charset=utf-8",
     }
 }
 
@@ -62,62 +35,21 @@ pub struct Export {
 
 #[derive(Debug)]
 pub enum ExportError {
-    /// The item does not exist (or the id is invalid): 404.
+    /// No such item (or an invalid id): 404.
     NotFound(anyhow::Error),
-    /// The format is known but has no writer yet (#133): 501.
-    NotAvailable(ExportFormat),
-    Failed(anyhow::Error),
-}
-
-/// Plain text of an item. Pure.
-pub fn plain_text(item: &archive::Item) -> String {
-    if item.edited_externally {
-        return item.body.trim().to_string() + "\n";
-    }
-    let segs = &item.segments;
-    let mut out = String::new();
-    match item.meta.item_type {
-        ItemType::Note => out = crate::engine::transcript_text(&segs.segments),
-        ItemType::Meeting | ItemType::Transcription => {
-            for s in segs.segments.iter().filter(|s| !s.text.trim().is_empty()) {
-                let ts = archive::render::format_timestamp(s.start_ms);
-                let label = s
-                    .speaker_id
-                    .as_deref()
-                    .and_then(|id| segs.speakers.iter().find(|sp| sp.id == id))
-                    .map(|sp| sp.label.split_whitespace().collect::<Vec<_>>().join(" "))
-                    .filter(|l| !l.is_empty());
-                let text = s.text.split_whitespace().collect::<Vec<_>>().join(" ");
-                match label {
-                    Some(l) => out.push_str(&format!("[{ts}] {l}: {text}\n")),
-                    None => out.push_str(&format!("[{ts}] {text}\n")),
-                }
-            }
-        }
-    }
-    if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out
+    /// The item can't be exported that way (subtitles of a note, nothing
+    /// transcribed yet) or could not be read: 422.
+    Refused(anyhow::Error),
 }
 
 /// The export of item `id` in `format`.
 pub fn render(archive_dir: &Path, id: &str, format: ExportFormat) -> Result<Export, ExportError> {
-    let item = archive::read_item(archive_dir, id).map_err(ExportError::NotFound)?;
-    let body = match format {
-        ExportFormat::Md => {
-            let dir = archive::paths::item_dir(archive_dir, id).map_err(ExportError::NotFound)?;
-            let bytes = std::fs::read(dir.join(archive::store::TRANSCRIPT_FILE))
-                .map_err(|e| ExportError::Failed(e.into()))?;
-            String::from_utf8_lossy(&bytes).into_owned()
-        }
-        ExportFormat::Txt => plain_text(&item),
-        f @ (ExportFormat::Srt | ExportFormat::Vtt) => return Err(ExportError::NotAvailable(f)),
-    };
+    archive::read_item(archive_dir, id).map_err(ExportError::NotFound)?;
+    let body = archive::export::export_item(archive_dir, id, format).map_err(ExportError::Refused)?;
     let folder = id.rsplit('/').next().unwrap_or("transcript");
     Ok(Export {
         body,
-        content_type: format.content_type(),
+        content_type: content_type(format),
         filename: format!("{folder}.{}", format.extension()),
     })
 }
@@ -125,73 +57,64 @@ pub fn render(archive_dir: &Path, id: &str, format: ExportFormat) -> Result<Expo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::archive::{create_item, Channel, DocSpeaker, ItemMeta, Segment, SegmentsFile};
+    use crate::archive::{create_item, Channel, ItemMeta, ItemType, Segment, SegmentsFile};
 
-    fn seg(id: u32, start_ms: u64, text: &str, speaker: Option<&str>) -> Segment {
-        Segment {
-            id,
-            channel: Channel::Remote,
-            start_ms,
-            end_ms: start_ms + 1_000,
-            raw: text.into(),
-            text: text.into(),
-            speaker_id: speaker.map(str::to_string),
-            ..Default::default()
-        }
-    }
-
-    fn meeting(archive: &Path) -> String {
+    fn item(archive: &Path, item_type: ItemType) -> String {
         let meta = ItemMeta {
-            item_type: ItemType::Meeting,
+            item_type,
             title: "Weekly sync".into(),
             date: "2026-09-24T10:00:00+02:00".into(),
             source: "browser:meet.google.com".into(),
             ..Default::default()
         };
         let segs = SegmentsFile {
-            speakers: vec![DocSpeaker {
-                id: "meet:Anna".into(),
-                label: "Anna".into(),
+            segments: vec![Segment {
+                id: 0,
+                channel: Channel::Remote,
+                start_ms: 723_000,
+                end_ms: 725_000,
+                raw: "ciao".into(),
+                text: "Ciao a tutti.".into(),
                 ..Default::default()
             }],
-            segments: vec![
-                seg(0, 723_000, "Ciao a tutti.", Some("meet:Anna")),
-                seg(1, 725_000, " ", None),
-                seg(2, 726_500, "Buongiorno\nAnna.", None),
-            ],
             ..Default::default()
         };
         create_item(archive, &meta, &segs).unwrap()
     }
 
     #[test]
-    fn formats_parse() {
-        assert_eq!(ExportFormat::parse(None), Some(ExportFormat::Md));
-        assert_eq!(ExportFormat::parse(Some("TXT")), Some(ExportFormat::Txt));
-        assert_eq!(ExportFormat::parse(Some("srt")), Some(ExportFormat::Srt));
-        assert_eq!(ExportFormat::parse(Some("vtt")), Some(ExportFormat::Vtt));
-        assert_eq!(ExportFormat::parse(Some("docx")), None);
+    fn formats_parse_with_md_as_default() {
+        assert_eq!(parse_format(None), Some(ExportFormat::Md));
+        assert_eq!(parse_format(Some("")), Some(ExportFormat::Md));
+        assert_eq!(parse_format(Some("TXT")), Some(ExportFormat::Txt));
+        assert_eq!(parse_format(Some("vtt")), Some(ExportFormat::Vtt));
+        assert_eq!(parse_format(Some("docx")), None);
     }
 
     #[test]
-    fn exports_md_as_stored_and_txt_as_lines() {
+    fn exports_every_format_and_refuses_subtitles_for_notes() {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("Sussurro");
-        let id = meeting(&archive);
+        let id = item(&archive, ItemType::Meeting);
         let md = render(&archive, &id, ExportFormat::Md).unwrap();
         let stored = std::fs::read_to_string(archive.join(&id).join("transcript.md")).unwrap();
         assert_eq!(md.body, stored);
         assert!(md.filename.ends_with("weekly-sync.md"), "{}", md.filename);
         let txt = render(&archive, &id, ExportFormat::Txt).unwrap();
-        assert_eq!(
-            txt.body,
-            "[00:12:03] Anna: Ciao a tutti.\n[00:12:06] Buongiorno Anna.\n"
-        );
+        assert_eq!(txt.body, "[00:12:03] Ciao a tutti.\n");
         assert!(txt.content_type.starts_with("text/plain"));
+        let srt = render(&archive, &id, ExportFormat::Srt).unwrap();
+        assert!(srt.body.contains("00:12:03,000 --> "), "{}", srt.body);
+        let vtt = render(&archive, &id, ExportFormat::Vtt).unwrap();
+        assert!(vtt.body.starts_with("WEBVTT"));
+        assert_eq!(vtt.content_type, "text/vtt; charset=utf-8");
+
+        let note = item(&archive, ItemType::Note);
         assert!(matches!(
-            render(&archive, &id, ExportFormat::Srt),
-            Err(ExportError::NotAvailable(ExportFormat::Srt))
+            render(&archive, &note, ExportFormat::Srt),
+            Err(ExportError::Refused(_))
         ));
+        assert!(render(&archive, &note, ExportFormat::Txt).is_ok());
         assert!(matches!(
             render(&archive, "2026/09/nope", ExportFormat::Md),
             Err(ExportError::NotFound(_))

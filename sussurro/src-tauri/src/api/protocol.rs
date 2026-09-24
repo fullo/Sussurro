@@ -229,7 +229,7 @@ pub fn parse_audio_frame(bytes: &[u8]) -> Result<AudioFrame, ProtocolError> {
         channel_from_byte(bytes[0]).ok_or_else(|| bad(format!("unknown channel {}", bytes[0])))?;
     let seq = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
     let pcm = &bytes[FRAME_HEADER..];
-    if pcm.len() % 2 != 0 {
+    if !pcm.len().is_multiple_of(2) {
         return Err(bad("audio frame with an odd number of PCM bytes"));
     }
     let pcm = pcm

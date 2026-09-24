@@ -1,7 +1,7 @@
 import { AdvancedGroup, CollapsibleCard, EndpointNote, Switch, Tip } from "../components/ui";
 import { CLEANUP_LEVELS, LANGUAGES } from "../lib/constants";
 import type { Ctl } from "../hooks/useAppController";
-import { API_LABELS, cleanupProfile, patchCleanupProfile, profileSummary } from "../lib/llmProfiles";
+import { API_LABELS, cleanupProfile, keyStorageWarning, patchCleanupProfile, profileSummary } from "../lib/llmProfiles";
 import { cleanupActive, cleanupGate, withCleanupOptIn } from "../lib/privacy";
 import type { CleanupLevel, LlmApi, LlmProfile } from "../lib/types";
 import type { CardProps } from "./DictationCard";
@@ -137,7 +137,7 @@ function ClassicProfileFields({ ctl, profile }: { ctl: Ctl; profile: LlmProfile 
 
       {profile.api === "openai" && (
         <div className="field">
-          <div className="field-label"><span>API key <Tip text="Optional bearer token for the OpenAI-compatible server. Most local servers (llama.cpp, LM Studio, DS4) ignore it — leave empty unless yours requires one." /></span></div>
+          <div className="field-label"><span>API key <Tip text="Optional bearer token for the OpenAI-compatible server. Most local servers (llama.cpp, LM Studio, DS4) ignore it — leave empty unless yours requires one. Kept in the system keychain, not in the settings file." /></span></div>
           <input
             type="password"
             value={profile.api_key}
@@ -148,6 +148,9 @@ function ClassicProfileFields({ ctl, profile }: { ctl: Ctl; profile: LlmProfile 
             aria-label="API key"
           />
         </div>
+      )}
+      {profile.api === "openai" && keyStorageWarning(profile, profile, null) && (
+        <small className="endpoint-note" role="note">⚠ {keyStorageWarning(profile, profile, null)}</small>
       )}
 
       <div className="field">

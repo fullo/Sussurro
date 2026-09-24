@@ -339,8 +339,7 @@ fn handle_meeting(
             ),
         },
         Route::ExportItem(id) => {
-            let Some(format) = export::ExportFormat::parse(params.get("format").map(String::as_str))
-            else {
+            let Some(format) = export::parse_format(params.get("format").map(String::as_str)) else {
                 return respond_json_with(
                     request,
                     400,
@@ -376,15 +375,9 @@ fn handle_meeting(
                     serde_json::json!({"error": format!("{e:#}")}),
                     &cors,
                 ),
-                Err(export::ExportError::NotAvailable(f)) => respond_json_with(
+                Err(export::ExportError::Refused(e)) => respond_json_with(
                     request,
-                    501,
-                    serde_json::json!({"error": format!("{} export is not available yet", f.extension())}),
-                    &cors,
-                ),
-                Err(export::ExportError::Failed(e)) => respond_json_with(
-                    request,
-                    500,
+                    422,
                     serde_json::json!({"error": format!("{e:#}")}),
                     &cors,
                 ),

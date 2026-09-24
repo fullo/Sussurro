@@ -411,6 +411,33 @@ mod tests {
         assert!(serde_json::from_str::<ImportKind>("\"/etc/passwd\"").is_err());
     }
 
+    /// #159: the portable config never carries LLM profiles, so never an
+    /// API key — whether the key is in the credential store or, as a
+    /// fallback, in settings.json.
+    #[test]
+    fn export_never_contains_api_keys() {
+        use crate::llm::{KeyStorage, LlmProfile};
+        use crate::settings::CleanupApi;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cfg.json");
+        let mut in_store =
+            LlmProfile::new("a", "A", CleanupApi::Openai, "https://a.example/v1", "sk-store-key", "m");
+        in_store.api_key_storage = KeyStorage::Keychain;
+        let mut in_file =
+            LlmProfile::new("b", "B", CleanupApi::Openai, "https://b.example/v1", "sk-file-key", "m");
+        in_file.api_key_storage = KeyStorage::File;
+        let s = Settings {
+            llm_profiles: vec![in_store, in_file],
+            dictionary: vec!["Sussurro".into()],
+            ..Default::default()
+        };
+        export_to(&path, &s).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("sk-"), "{text}");
+        assert!(!text.contains("api_key"), "{text}");
+        assert!(!text.contains("llm_profiles"), "{text}");
+    }
+
     #[test]
     fn bundle_excludes_machine_specific_fields() {
         // Compile-time guard: ConfigBundle has exactly the portable fields.

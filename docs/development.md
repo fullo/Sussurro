@@ -6,7 +6,11 @@ How to build Sussurro from source and work on it. For using the app, see the
 ## Repository layout
 
 - `sussurro/` — the Tauri 2 app: React + TypeScript frontend, Rust backend in
-  `sussurro/src-tauri/`. The repo root holds docs and CI only.
+  `sussurro/src-tauri/`.
+- `extension/` — the browser extension for meeting capture (0.9, preview):
+  Vite + TypeScript + React, one build per browser (Chrome/Edge/Brave and
+  Firefox). See [Browser extension](#browser-extension) below.
+- The repo root holds docs and CI only.
 - `docs/compile/{windows,macos,linux}.md` — per-OS build prerequisites, GPU
   notes and platform caveats. Keep them updated when build requirements change.
 - `docs/releases.md` — the release + auto-update + code-signing process.
@@ -63,6 +67,25 @@ are unavailable, `scripts/ci-local.sh` mirrors it inside WSL2 Ubuntu 24.04:
 ```bash
 wsl -d Ubuntu-dev -u root -- bash /mnt/f/GitHub/Sussurro/scripts/ci-local.sh <branch>
 ```
+
+## Browser extension
+
+`extension/` builds independently of the app (Node.js ≥ 24, no Rust):
+
+```bash
+cd extension
+npm ci
+npm run build          # dist/chrome/, dist/firefox/ + one zip per browser
+npm run typecheck && npm test && npm run lint   # lint = web-ext lint (Firefox build)
+```
+
+It imports the app's transcript components from `sussurro/src/transcript/`
+(`@sussurro/transcript`), so changes there must keep building in both places.
+Its version always equals the app's (read from `sussurro/package.json`).
+Loading it unpacked in Chrome/Edge/Brave and as a temporary add-on in Firefox
+is described in [`extension/README.md`](../extension/README.md). CI builds and
+lints it in its own job; the release workflow attaches both zips to the
+release.
 
 ## Third-party licenses
 

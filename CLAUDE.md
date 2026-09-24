@@ -8,6 +8,11 @@ project decisions here, not in per-machine memory.**
 
 - `sussurro/` — the Tauri 2 app (React + TypeScript frontend, Rust backend
   in `sussurro/src-tauri/`). The repo root only holds docs and CI.
+- `extension/` — the 0.9 browser extension (Vite + TS + React, one build per
+  browser, `web-ext lint` in CI; see `extension/README.md`). It shares
+  `sussurro/src/transcript/` via the `@sussurro/transcript` alias and takes
+  its version from `sussurro/package.json`. Its third-party license list is
+  separate from the app's `licenses.json` (lands with #138).
 - Build instructions per OS live in `docs/compile/{windows,macos,linux}.md`
   — keep them updated when build requirements change.
 - The About dialog's third-party license list is `sussurro/public/licenses.json`,
@@ -51,8 +56,21 @@ project decisions here, not in per-machine memory.**
   `cleanup_api`/`ollama_url`/`ollama_model`/`api_key` keys are read for the
   migration and **never written again**. Consequence, accepted: downgrading
   to ≤ 0.7 loses a custom cleanup server (the old build falls back to its
-  defaults, Ollama on localhost) — the updater only moves forward. API keys
-  stay in `settings.json` in clear, as before.
+  defaults, Ollama on localhost) — the updater only moves forward.
+- **Profile API keys live in the OS credential store (0.8, #159)**
+  (`secrets.rs`): `keyring-core` + one native store crate per OS (macOS
+  Keychain, Windows Credential Manager, Secret Service over libdbus with
+  pure-Rust crypto — not the zbus store, which would need a tokio context
+  since ashpd enables zbus's tokio feature). Entry: service
+  `com.sussurro.app`, user `llm-profile:<id>`. `settings.json` keeps only
+  `api_key_storage: "keychain"`; `Settings::save` writes a key only when it
+  is not in the store. At startup `load_keys` moves clear-text keys in
+  (after a verified write) and reads stored ones; `set_settings` runs
+  `sync_keys` (write on change, delete on clear or profile deletion; the
+  UI's `api_key_storage` is never trusted). No working store → fallback to
+  clear text (`"file"`) with a warning in the profile editor, retried every
+  start. Keys never go into diagnostics, the portable config export, logs
+  or the dev mock. Downgrading below 0.8 loses stored keys (re-enter them).
 - **Link source rules (0.8, #123)** (`sources/url/`): only `http`/`https`,
   no credentials in the link (it is saved as `source: url:<link>`). Hosts on
   this computer or the local network (loopback, private, link-local incl.
@@ -77,6 +95,22 @@ project decisions here, not in per-machine memory.**
   logged per item in `.sussurro/external-log.json` (metadata only, never
   content) and drive the Library's "sent externally" marker.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
+- **Product direction: speech-to-text workbench** (decided 2026-09-24).
+  Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`
+  (decisions P1–P11 + engineering E1–E12 — read it before touching 0.7+).
+  Short form: UX = proposal A (left-rail workspace, mock in
+  `docs/superpowers/plans/ux-mocks/`); **command mode removed** (out of
+  focus, OS voice control covers it — spoken editing commands inside
+  dictation stay); cleaning is text-only (no audio cutting); archive of
+  markdown items in `<Documents>/Sussurro` on every OS (frontmatter is the
+  source of truth, index is derived); three item types by content —
+  note / meeting / transcription (file default: note); participant emails
+  from a manual People registry; LLM profiles speak only OpenAI-compatible
+  or Ollama APIs; .srt is a setting (default on request) for meetings and
+  transcriptions; 0.9 speakers = Meet names + generic "Voice N" only; WAV
+  saved only on request; extra STT engines (Qwen3-ASR) run in a bundled
+  `llama-server` sidecar, never in-process (two ggml copies can't share a
+  binary); never add sherpa-onnx (second ONNX Runtime).
 
 ## Release process
 
@@ -235,6 +269,34 @@ project decisions here, not in per-machine memory.**
     (constant for now; try_lock + recording check, so it never blocks or
     races a dictation) — model RAM is only held while dictating. The
     published v0.6.3 release includes this along with the #88–#95 batch.
+
+### 0.7–0.10 — speech-to-text workbench (agreed 2026-09-24)
+
+Plan and checklists: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`.
+
+Work is tracked as GitHub issues in milestones `Phase 0 — Spikes`, `0.7 — Notetaking`,
+`0.8 — Advanced notetaking + links`, `0.9 — Meeting`, `0.10 — Advanced meeting`,
+`Track E — Qwen3-ASR sidecar` and `Future`, with one epic issue per milestone
+(#147–#152; Future is the single tracking issue #146); agents take issues
+labelled `agent-ready`.
+
+- **Phase 0** — spikes (browser capture on Meet/Teams/Zoom web, Meet
+  speaker names, Silero VAD, speaker embeddings vs Sortformer, word
+  timings, Qwen3-ASR benchmark). Gates 0.9 and Track E only.
+- **0.7 — Notetaking**: remove command mode; archive core; long-form
+  engine for mic + file (streamed decode, VAD segments, chunked cleanup);
+  UI shell A behind `ui_v2` until release.
+- **0.8 — Advanced notetaking + links**: LLM profiles, recipes (formatted
+  companion document with tl;dr/headings/tables), Ask panel, URL source
+  (`yt-dlp` on PATH).
+- **0.9 — Meeting**: browser extension (Chromium + Firefox), Meet names +
+  "Voice N", People registry, SRT/VTT, facet search.
+- **0.10 — Advanced meeting**: system audio as a second channel, opt-in
+  WAV, per-speaker replay.
+- **Track E** (parallel): Qwen3-ASR via `llama-server` sidecar if the
+  benchmark gate passes.
+- **Future (tracked, not built)**: voice recognition after training,
+  text-to-speech, voice cloning with consent.
 
 ### Candidate / not committed
 

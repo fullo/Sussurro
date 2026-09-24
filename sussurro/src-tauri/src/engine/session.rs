@@ -490,6 +490,7 @@ where
             index_db: Some(paths.archive_index.clone()),
             journal: Some(app_data_file(paths, super::checkpoint::JOURNAL_FILE)),
             external_cleanup: external_cleanup_entry(&settings),
+            write_subtitles: settings.subtitles == crate::settings::SubtitlesMode::Always,
             meta: start_meta(
                 &settings,
                 req.item_type,

@@ -1,4 +1,4 @@
-use crate::llm::{LlmProfile, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, LOCAL_PROFILE_ID};
+use crate::llm::{KeyStorage, LlmProfile, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, LOCAL_PROFILE_ID};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -33,6 +33,19 @@ pub enum CleanupApi {
     /// local runtime that speaks it: llama.cpp-server, LM Studio, DS4, and
     /// Ollama's own `/v1` endpoint.
     Openai,
+}
+
+/// When `transcript.srt` is written next to a meeting's or a
+/// transcription's transcript (P7; notes never get subtitles, P10).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SubtitlesMode {
+    /// Only when the user asks ("Create .srt", or an export). The default.
+    #[default]
+    OnRequest,
+    /// Written and kept up to date every time the transcript is saved (end
+    /// of a run, line edits, metadata edits).
+    Always,
 }
 
 /// Optional user overrides for the per-level cleanup instructions sent to the
@@ -157,6 +170,9 @@ pub struct Settings {
     /// Only the backend sets it ([`Settings::regenerate_extension_token`]);
     /// a save from the UI keeps the current one.
     pub extension_token: String,
+    /// Subtitles setting (P7, #133): `transcript.srt` on request (default)
+    /// or on every save. Meetings and transcriptions only.
+    pub subtitles: SubtitlesMode,
 }
 
 impl Default for Settings {
@@ -196,6 +212,7 @@ impl Default for Settings {
             ui_v2: false,
             meetings_enabled: false,
             extension_token: String::new(),
+            subtitles: SubtitlesMode::OnRequest,
         }
     }
 }
@@ -335,13 +352,33 @@ impl Settings {
     /// Serialization failures are mapped into the returned `io::Error` instead
     /// of panicking — a settings write must degrade to an error the caller can
     /// report, never take down the app.
+    ///
+    /// API keys kept in the OS credential store are left out (#159): see
+    /// [`Settings::for_disk`].
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let json = serde_json::to_string_pretty(self)
+        let json = serde_json::to_string_pretty(&self.for_disk())
             .map_err(|e| std::io::Error::other(format!("serialize settings: {e}")))?;
         std::fs::write(path, json)
+    }
+
+    /// The settings as `settings.json` stores them (#159): a profile whose
+    /// key is in the credential store keeps only the reference
+    /// (`api_key_storage: "keychain"`, also for a key that could not be read
+    /// this session, so its entry is not forgotten) and no key. A key that
+    /// is not in the store (fallback, or not migrated yet) stays in clear
+    /// text — dropping it would lose it.
+    pub fn for_disk(&self) -> Settings {
+        let mut out = self.clone();
+        for p in &mut out.llm_profiles {
+            if p.api_key_storage.in_store() {
+                p.api_key.clear();
+                p.api_key_storage = KeyStorage::Keychain;
+            }
+        }
+        out
     }
 }
 
@@ -512,6 +549,22 @@ mod tests {
         assert_eq!(s.archive_dir, "");
     }
 
+    /// Settings files written before 0.9 have no `subtitles`: on request.
+    #[test]
+    fn subtitles_default_to_on_request_and_round_trip() {
+        assert_eq!(Settings::default().subtitles, SubtitlesMode::OnRequest);
+        let old: Settings = serde_json::from_str(r#"{"ui_v2":true}"#).unwrap();
+        assert_eq!(old.subtitles, SubtitlesMode::OnRequest);
+        let on: Settings = serde_json::from_str(r#"{"subtitles":"always"}"#).unwrap();
+        assert_eq!(on.subtitles, SubtitlesMode::Always);
+        let json = serde_json::to_value(&on).unwrap();
+        assert_eq!(json["subtitles"], "always");
+        assert_eq!(
+            serde_json::to_value(SubtitlesMode::OnRequest).unwrap(),
+            "on_request"
+        );
+    }
+
     /// Settings files written before the workspace preview have no `ui_v2`:
     /// they load with the classic UI (serde default).
     #[test]
@@ -592,6 +645,7 @@ mod tests {
                 api: CleanupApi::Openai,
                 base_url: "http://localhost:8080/v1".into(),
                 api_key: "sk-local".into(),
+                api_key_storage: KeyStorage::None,
                 model: "qwen2.5-3b-instruct".into(),
                 external: false,
                 context_tokens: 0,

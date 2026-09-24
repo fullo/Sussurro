@@ -542,7 +542,22 @@ fn a_websocket_meeting_becomes_an_archive_item() {
         &[("Authorization", &auth)],
         "",
     );
-    assert_eq!(srt.status, 501, "subtitles come with #133");
+    assert_eq!(srt.status, 200);
+    assert!(srt.header("Content-Type").unwrap().starts_with("application/x-subrip"));
+    assert!(srt.header("Content-Disposition").unwrap().contains(".srt"));
+    assert!(srt.body.contains(" --> ") && srt.body.contains("hello from remote."), "{}", srt.body);
+    let vtt = http(
+        r.port,
+        "GET",
+        &format!("/items/{item_id}/export?format=vtt"),
+        &[("Authorization", &auth)],
+        "",
+    );
+    assert_eq!(vtt.status, 200);
+    assert!(vtt.body.starts_with("WEBVTT"), "{}", vtt.body);
+    // Without the token, nothing.
+    let anon = http(r.port, "GET", &format!("/items/{item_id}/export?format=srt"), &[], "");
+    assert_eq!(anon.status, 401);
     let open = http(
         r.port,
         "POST",
