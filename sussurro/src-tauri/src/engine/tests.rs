@@ -129,6 +129,7 @@ fn job(dir: &std::path::Path, audio: Vec<f32>, policy: Policy) -> Job {
         external_cleanup: None,
         speakers: None,
         write_subtitles: false,
+        save_audio: false,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: "file:test.wav".into(),
@@ -1066,6 +1067,7 @@ fn engine_end_to_end_with_a_real_model() {
         external_cleanup: None,
         speakers: None,
         write_subtitles: false,
+        save_audio: false,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(&input),
@@ -1161,6 +1163,7 @@ fn engine_long_file_streams_with_bounded_memory() {
         external_cleanup: None,
         speakers: None,
         write_subtitles: false,
+        save_audio: false,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(path),
@@ -2099,6 +2102,464 @@ fn identify_voices_run_option_reaches_the_engine() {
     }
 }
 
+// ---- saved audio (#141) ----------------------------------------------------
+
+/// Every `.wav` under `dir`, at any depth.
+fn wavs_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(wavs_under(&p));
+        } else if p.extension().is_some_and(|x| x == "wav") {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// Decode a saved WAV with the app's own decoder, as a player would.
+fn decode_wav(path: &std::path::Path) -> Vec<f32> {
+    let mut s = crate::audio::decode::FileStream::open(path).unwrap();
+    let mut out = Vec::new();
+    while let Some(chunk) = s.next_chunk().unwrap() {
+        out.extend(chunk);
+    }
+    out
+}
+
+fn fake_stt() -> FakeStt {
+    FakeStt {
+        calls: 0,
+        fail_on: None,
+    }
+}
+
+/// The id of the item a run created (from `engine-started`).
+fn started_id(sink: &VecSink) -> String {
+    sink.0
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|e| match e {
+            EngineEvent::Started(s) => Some(s.item_id.clone()),
+            _ => None,
+        })
+        .unwrap()
+}
+
+/// A mic that fails after `after` samples, like an unplugged device.
+struct BreaksAfter {
+    inner: VecSource,
+    after: usize,
+}
+
+impl Source for BreaksAfter {
+    fn channel(&self) -> Channel {
+        Channel::Mic
+    }
+    fn total_samples(&self) -> Option<u64> {
+        None
+    }
+    fn next_frame(&mut self) -> Result<Option<Frame>> {
+        if self.inner.pos >= self.after {
+            anyhow::bail!("microphone unplugged");
+        }
+        self.inner.next_frame()
+    }
+}
+
+/// P9: with "Save audio" off (the default), a run writes no audio at all —
+/// nothing in the item folder, the archive, or the app data dir.
+#[test]
+fn save_audio_off_writes_no_audio_anywhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = bursts(&[(true, 3.0), (false, 2.5)].repeat(3));
+    let j = job(dir.path(), audio, Policy::Block { max_queued: 2 });
+    assert!(!j.save_audio, "off unless asked");
+    let r = run(
+        j,
+        &mut fake_stt(),
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
+    assert!(wavs_under(dir.path()).is_empty(), "{:?}", wavs_under(dir.path()));
+    let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+    assert!(item.audio.is_empty());
+    assert!(!item.meta.extra.contains_key(archive::audio::AUDIO_KEY));
+    let listed = archive::list_items(&dir.path().join("archive"));
+    assert_eq!(listed[0].audio_bytes, 0);
+}
+
+/// The same with a mic-like spilling queue and a failure mid-run: still no
+/// audio file, even in the kept interrupted item.
+#[test]
+fn save_audio_off_writes_nothing_on_a_failed_run_either() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut j = job(dir.path(), Vec::new(), Policy::Spill { max_in_ram: 1 });
+    j.source = Box::new(BreaksAfter {
+        inner: VecSource::new(bursts(&[(true, 3.0), (false, 2.5)].repeat(4)), Channel::Mic),
+        after: 16_000 * 10,
+    });
+    assert!(run(
+        j,
+        &mut fake_stt(),
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default())
+    )
+    .is_err());
+    assert_eq!(archive::list_items(&dir.path().join("archive")).len(), 1);
+    assert!(wavs_under(dir.path()).is_empty());
+}
+
+#[test]
+fn save_audio_writes_the_runs_audio_as_one_wav_and_lists_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = bursts(&[
+        (false, 0.5),
+        (true, 3.0),
+        (false, 2.5),
+        (true, 2.0),
+        (false, 1.0),
+    ]);
+    let mut j = job(dir.path(), audio.clone(), Policy::Block { max_queued: 2 });
+    j.save_audio = true;
+    let r = run(
+        j,
+        &mut fake_stt(),
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
+    let archive_dir = dir.path().join("archive");
+    let item = archive::read_item(&archive_dir, &r.item_id).unwrap();
+    // The folder was renamed after the title: the file moved with it.
+    assert!(!r.item_id.ends_with("-untitled"));
+    let wav = archive_dir.join(&r.item_id).join("audio.wav");
+    assert_eq!(wavs_under(dir.path()), vec![wav.clone()]);
+    assert_eq!(
+        archive::audio::listed(&item.meta),
+        vec!["audio.wav"],
+        "recorded in the frontmatter"
+    );
+    let bytes = 44 + audio.len() as u64 * 2;
+    assert_eq!(
+        item.audio,
+        vec![archive::audio::AudioFile {
+            name: "audio.wav".into(),
+            bytes
+        }]
+    );
+    assert!(item.folder_bytes > bytes);
+    assert_eq!(archive::list_items(&archive_dir)[0].audio_bytes, bytes);
+    // Search rows carry it too.
+    let hits = archive::with_index(&archive_dir, &dir.path().join("index.sqlite"), |i| {
+        i.search("", &Default::default())
+    })
+    .unwrap();
+    assert_eq!(hits[0].audio_bytes, bytes);
+    // It plays back what the engine transcribed, sample for sample.
+    let back = decode_wav(&wav);
+    assert_eq!(back.len(), audio.len());
+    assert!(audio.iter().zip(&back).all(|(a, b)| (a - b).abs() < 1e-3));
+    // A UI saving stale metadata can't drop (or forge) the list.
+    let mut m = item.meta.clone();
+    m.extra.remove(archive::audio::AUDIO_KEY);
+    m.tags = vec!["x".into()];
+    let updated = archive::update_meta(&archive_dir, &r.item_id, &m).unwrap();
+    assert_eq!(archive::audio::listed(&updated.meta), vec!["audio.wav"]);
+    m.extra.insert(
+        archive::audio::AUDIO_KEY.into(),
+        serde_json::json!(["audio-evil.wav"]),
+    );
+    let updated = archive::update_meta(&archive_dir, &r.item_id, &m).unwrap();
+    assert_eq!(archive::audio::listed(&updated.meta), vec!["audio.wav"]);
+}
+
+/// Two channels: one mono file each, both starting at the run's t = 0 (the
+/// late channel padded with silence), so segment times are file positions.
+#[test]
+fn save_audio_writes_one_file_per_channel_on_one_clock() {
+    let dir = tempfile::tempdir().unwrap();
+    let mic = bursts(&[(false, 0.5), (true, 12.0), (false, 3.0)]);
+    let remote = bursts(&[(false, 1.0), (true, 2.0), (false, 11.5)]);
+    let mut j = job(dir.path(), Vec::new(), Policy::Spill { max_in_ram: 4 });
+    j.source = Box::new(TwoChannels {
+        mic: VecSource::new(mic.clone(), Channel::Mic),
+        remote: VecSource::new(remote.clone(), Channel::Remote),
+        remote_offset: 16_000,
+        turn: false,
+    });
+    j.meta.item_type = ItemType::Meeting;
+    j.save_audio = true;
+    let r = run(
+        j,
+        &mut fake_stt(),
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
+    let folder = dir.path().join("archive").join(&r.item_id);
+    let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+    assert_eq!(
+        archive::audio::listed(&item.meta),
+        vec!["audio-mic.wav", "audio-remote.wav"]
+    );
+    assert_eq!(item.audio.len(), 2);
+    assert_eq!(wavs_under(dir.path()).len(), 2);
+    let m = decode_wav(&folder.join("audio-mic.wav"));
+    assert_eq!(m.len(), mic.len());
+    let rem = decode_wav(&folder.join("audio-remote.wav"));
+    assert_eq!(rem.len(), 16_000 + remote.len(), "padded to the run's t = 0");
+    assert!(rem[..16_000].iter().all(|&s| s == 0.0));
+    assert!(remote
+        .iter()
+        .zip(&rem[16_000..])
+        .all(|(a, b)| (a - b).abs() < 1e-3));
+    // The remote line's start is where its speech is in its file.
+    let line = item
+        .segments
+        .segments
+        .iter()
+        .find(|s| s.channel == Channel::Remote)
+        .unwrap();
+    let at = (line.start_ms * 16) as usize;
+    assert!(rem[at..at + 16_000].iter().any(|s| s.abs() > 0.1));
+}
+
+/// A cancelled run leaves no audio behind in the archive: its folder,
+/// audio included, goes to the trash — never hard-deleted.
+#[test]
+fn a_cancelled_run_trashes_its_audio_with_the_item() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = bursts(&[(true, 3.0), (false, 2.5)].repeat(10));
+    let mut j = job(dir.path(), audio, Policy::Block { max_queued: 1 });
+    j.save_audio = true;
+    let cancel = j.cancel.clone();
+    struct CancelAfterFirst(Arc<AtomicBool>);
+    impl SegmentStt for CancelAfterFirst {
+        fn transcribe(&mut self, _: &[f32]) -> Result<TimedTranscript> {
+            self.0.store(true, Ordering::Relaxed);
+            Ok(TimedTranscript {
+                text: "hello".into(),
+                ..Default::default()
+            })
+        }
+    }
+    let sink = Arc::new(VecSink::default());
+    assert!(run(
+        j,
+        &mut CancelAfterFirst(cancel),
+        &FakeCleaner::default(),
+        sink.clone()
+    )
+    .is_err());
+    let archive_dir = dir.path().join("archive");
+    assert!(archive::list_items(&archive_dir).is_empty());
+    assert!(wavs_under(dir.path()).is_empty());
+    assert!(archive::store::test_trash::contains(
+        &archive_dir.join(started_id(&sink))
+    ));
+}
+
+/// Only silence was said, but the user asked for the audio: the item goes
+/// to the trash (with its audio) instead of being removed outright.
+#[test]
+fn a_run_with_no_speech_trashes_rather_than_removes_saved_audio() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut j = job(
+        dir.path(),
+        bursts(&[(false, 5.0)]),
+        Policy::Block { max_queued: 2 },
+    );
+    j.save_audio = true;
+    let sink = Arc::new(VecSink::default());
+    let err = run(j, &mut fake_stt(), &FakeCleaner::default(), sink.clone()).unwrap_err();
+    assert!(format!("{err:#}").contains("no speech"));
+    assert!(archive::store::test_trash::contains(
+        &dir.path().join("archive").join(started_id(&sink))
+    ));
+}
+
+/// A run that fails after some segments keeps its item as interrupted —
+/// and its audio, finished, listed, playable.
+#[test]
+fn a_failed_run_keeps_its_audio_with_the_interrupted_item() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut j = job(dir.path(), Vec::new(), Policy::Spill { max_in_ram: 2 });
+    j.source = Box::new(BreaksAfter {
+        inner: VecSource::new(bursts(&[(true, 3.0), (false, 2.5)].repeat(4)), Channel::Mic),
+        after: 16_000 * 11,
+    });
+    j.save_audio = true;
+    assert!(run(
+        j,
+        &mut fake_stt(),
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default())
+    )
+    .is_err());
+    let archive_dir = dir.path().join("archive");
+    let items = archive::list_items(&archive_dir);
+    assert_eq!(items.len(), 1);
+    assert!(items[0].interrupted);
+    let item = archive::read_item(&archive_dir, &items[0].id).unwrap();
+    assert_eq!(archive::audio::listed(&item.meta), vec!["audio.wav"]);
+    let wav = archive_dir.join(&items[0].id).join("audio.wav");
+    assert_eq!(decode_wav(&wav).len(), 16_000 * 11);
+}
+
+/// #153 + #141: a crash leaves a WAV whose header was patched only up to
+/// some earlier point and whose buffer never reached the disk; the startup
+/// recovery repairs it, names it and lists it on the interrupted item.
+#[test]
+fn crash_recovery_repairs_and_lists_the_saved_audio() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive_dir = dir.path().join("archive");
+    let journal = dir.path().join(checkpoint::JOURNAL_FILE);
+    let meta = ItemMeta {
+        item_type: ItemType::Note,
+        title: "Crash".into(),
+        date: "2026-09-24T10:00:00+02:00".into(),
+        source: "mic".into(),
+        ..Default::default()
+    };
+    let mut live = checkpoint::LiveItem::begin(&archive_dir, &meta, Some(&journal)).unwrap();
+    let folder = archive_dir.join(live.id());
+    let mut out = audio_out::AudioOut::new(&folder);
+    let mut clock = crate::sources::Clock::default();
+    // 13 s: the header is patched at 10 s, the next 3 s overflow the
+    // 64 KB buffer, so part of them reaches the disk unpatched.
+    let speech = bursts(&[(true, 13.0)]);
+    for chunk in speech.chunks(4_000) {
+        out.push(&clock.stamp(Channel::Mic, chunk.to_vec()));
+    }
+    assert_eq!(out.channels(), [Channel::Mic]);
+    live.push(Segment {
+        id: 0,
+        start_ms: 0,
+        end_ms: 12_000,
+        raw: "ciao".into(),
+        text: "Ciao.".into(),
+        ..Default::default()
+    });
+    // The process dies: no final patch, no rename, the item stays recording.
+    std::mem::forget(out);
+    drop(live);
+    let wav = folder.join("audio-mic.wav");
+    let on_disk = std::fs::read(&wav).unwrap();
+    let header_says = u32::from_le_bytes(on_disk[40..44].try_into().unwrap()) as u64;
+    assert!(
+        header_says < on_disk.len() as u64 - 44,
+        "the header lags behind what reached the disk"
+    );
+
+    let r = checkpoint::recover(
+        &journal,
+        Some(&archive_dir),
+        None,
+        &dir.path().join("data"),
+    );
+    assert_eq!(r.interrupted.len(), 1);
+    let item = archive::read_item(&archive_dir, &r.interrupted[0]).unwrap();
+    assert!(item.interrupted);
+    assert_eq!(archive::audio::listed(&item.meta), vec!["audio.wav"]);
+    assert!(!wav.exists());
+    let fixed = folder.join("audio.wav");
+    let bytes = std::fs::read(&fixed).unwrap();
+    let data = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as u64;
+    assert_eq!(data, bytes.len() as u64 - 44, "sizes match the file");
+    // Playable: everything that reached the disk (at least the patched part).
+    let back = decode_wav(&fixed);
+    assert_eq!(back.len() as u64, data / 2);
+    assert!(data >= header_says);
+}
+
+/// "Delete audio, keep transcript": the audio goes to the trash, the
+/// transcript, segments and metadata stay.
+#[test]
+fn delete_audio_keeps_the_transcript() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut j = job(
+        dir.path(),
+        bursts(&[(true, 3.0), (false, 2.0)]),
+        Policy::Block { max_queued: 2 },
+    );
+    j.save_audio = true;
+    j.meta.title = "Keep me".into();
+    let r = run(
+        j,
+        &mut fake_stt(),
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
+    let archive_dir = dir.path().join("archive");
+    let before = archive::read_item(&archive_dir, &r.item_id).unwrap();
+    let wav = archive_dir.join(&r.item_id).join("audio.wav");
+    assert!(wav.exists());
+
+    assert_eq!(
+        archive::audio::delete_audio(&archive_dir, &r.item_id).unwrap(),
+        1
+    );
+    assert!(!wav.exists());
+    assert!(archive::store::test_trash::contains(&wav), "to the trash");
+    let after = archive::read_item(&archive_dir, &r.item_id).unwrap();
+    assert!(after.audio.is_empty());
+    assert!(archive::audio::listed(&after.meta).is_empty());
+    assert_eq!(after.segments, before.segments);
+    assert_eq!(after.body, before.body);
+    assert_eq!(after.meta.title, "Keep me");
+    assert!(!after.edited_externally);
+    assert!(wavs_under(dir.path()).is_empty());
+    // Nothing left: a second delete is a no-op.
+    assert_eq!(
+        archive::audio::delete_audio(&archive_dir, &r.item_id).unwrap(),
+        0
+    );
+}
+
+#[test]
+fn delete_audio_is_refused_while_recording() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive_dir = dir.path().join("archive");
+    let meta = ItemMeta {
+        title: "Live".into(),
+        date: "2026-09-24T10:00:00+02:00".into(),
+        ..Default::default()
+    };
+    let live = checkpoint::LiveItem::begin(&archive_dir, &meta, None).unwrap();
+    let wav = archive_dir.join(live.id()).join("audio-mic.wav");
+    archive::audio::WavWriter::create(&wav)
+        .unwrap()
+        .finish()
+        .unwrap();
+    let err = archive::audio::delete_audio(&archive_dir, live.id()).unwrap_err();
+    assert!(err.to_string().contains("still being recorded"), "{err}");
+    assert!(wav.exists());
+}
+
+/// The size guard at the engine's side: a channel that reaches the cap
+/// stops being saved; its file stays a valid WAV.
+#[test]
+fn a_full_audio_file_stops_saving_and_stays_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("item");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut out = audio_out::AudioOut::with_cap(&folder, 32_000);
+    let mut clock = crate::sources::Clock::default();
+    for _ in 0..10 {
+        out.push(&clock.stamp(Channel::File, vec![0.1; 4_000]));
+    }
+    assert_eq!(out.finish(), vec!["audio.wav"]);
+    assert_eq!(decode_wav(&folder.join("audio.wav")).len(), 16_000);
+}
+
 /// A device replaying 16 kHz audio in real (fake) time: by wall time `now`
 /// it has delivered `audio[..now]`, until it fails at `fails_at`.
 struct ScriptedDevice {
@@ -2265,5 +2726,166 @@ fn system_audio_session_labels_you_and_voices_and_survives_a_lost_device() {
             assert!(segs.iter().all(|s| s.speaker_id.is_none()));
             assert!(item.segments.speakers.is_empty());
         }
+    }
+}
+
+/// A device whose clock runs 1 % slow: by wall time `now` it has delivered
+/// `audio[..now * 99 / 100]`, so the system audio drifts behind the mic.
+struct SlowDevice {
+    audio: Vec<f32>,
+    pos: usize,
+    wall: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl crate::sources::system::Capture for SlowDevice {
+    fn take(&mut self) -> Vec<f32> {
+        let now = self.wall.load(Ordering::SeqCst) * 99 / 100;
+        let end = (now as usize).min(self.audio.len());
+        let out = self.audio[self.pos.min(end)..end].to_vec();
+        self.pos = end;
+        out
+    }
+    fn failed(&self) -> bool {
+        false
+    }
+    fn stop(&mut self) -> Vec<f32> {
+        Vec::new()
+    }
+}
+
+/// Passes a source through, keeping a copy of every frame it hands out.
+struct Recorded {
+    inner: Box<dyn Source>,
+    frames: Arc<Mutex<Vec<Frame>>>,
+}
+
+impl Source for Recorded {
+    fn channel(&self) -> Channel {
+        self.inner.channel()
+    }
+    fn total_samples(&self) -> Option<u64> {
+        self.inner.total_samples()
+    }
+    fn next_frame(&mut self) -> Result<Option<Frame>> {
+        let f = self.inner.next_frame()?;
+        if let Some(f) = &f {
+            self.frames.lock().unwrap().push(f.clone());
+        }
+        Ok(f)
+    }
+    fn take_warnings(&mut self) -> Vec<String> {
+        self.inner.take_warnings()
+    }
+}
+
+/// #141 × #139: *System audio + mic* with Save audio on writes
+/// `audio-mic.wav` + `audio-system.wav`. The system device's clock drifts,
+/// the source realigns it with silence mid-session, and each file still
+/// holds every sample at its position on the run's clock — the clock the
+/// segment timestamps use — silence included.
+#[test]
+fn system_audio_with_save_audio_keeps_both_files_aligned_through_a_realignment() {
+    use crate::sources::system::SystemSource;
+    let dir = tempfile::tempdir().unwrap();
+    let wall: Arc<std::sync::atomic::AtomicU64> = Arc::default();
+    let stop = Arc::new(AtomicBool::new(false));
+    let mic = voiced(&[(None, 1.0), (Some(0), 4.0), (None, 36.0)]);
+    let system = voiced(&[
+        (None, 3.0),
+        (Some(1), 4.0),
+        (None, 22.0),
+        (Some(1), 5.0),
+        (None, 7.0),
+    ]);
+    let source = SystemSource::from_parts(
+        Box::new(ScriptedDevice {
+            audio: mic,
+            pos: 0,
+            wall: wall.clone(),
+            fails_at: None,
+        }),
+        Box::new(SlowDevice {
+            audio: system,
+            pos: 0,
+            wall: wall.clone(),
+        }),
+        Box::new(ScriptedPacer {
+            wall: wall.clone(),
+            end: 40 * 16_000,
+            stop: stop.clone(),
+        }),
+        stop,
+    );
+    let frames: Arc<Mutex<Vec<Frame>>> = Arc::default();
+    let mut j = job(dir.path(), Vec::new(), Policy::Spill { max_in_ram: 4 });
+    j.source = Box::new(Recorded {
+        inner: Box::new(source),
+        frames: frames.clone(),
+    });
+    j.meta.item_type = ItemType::Meeting;
+    j.meta.source = "system".into();
+    j.save_audio = true;
+    let sink = Arc::new(VecSink::default());
+    let r = run(j, &mut fake_stt(), &FakeCleaner::default(), sink.clone()).unwrap();
+
+    let warned = sink.0.lock().unwrap().iter().any(|e| {
+        matches!(e, EngineEvent::Warning(w) if w.message.contains("drifted"))
+    });
+    assert!(warned, "the system channel was realigned");
+    let archive_dir = dir.path().join("archive");
+    let folder = archive_dir.join(&r.item_id);
+    let item = archive::read_item(&archive_dir, &r.item_id).unwrap();
+    assert_eq!(
+        archive::audio::listed(&item.meta),
+        vec!["audio-mic.wav", "audio-system.wav"]
+    );
+    assert_eq!(wavs_under(dir.path()).len(), 2);
+
+    // Each file = that channel's frames laid out at their `start`.
+    let frames = frames.lock().unwrap();
+    for (channel, name) in [
+        (Channel::Mic, "audio-mic.wav"),
+        (Channel::System, "audio-system.wav"),
+    ] {
+        let mine: Vec<&Frame> = frames.iter().filter(|f| f.channel == channel).collect();
+        let end = mine
+            .iter()
+            .map(|f| f.start + f.samples.len() as u64)
+            .max()
+            .unwrap() as usize;
+        let mut expected = vec![0.0f32; end];
+        for f in &mine {
+            let at = f.start as usize;
+            expected[at..at + f.samples.len()].copy_from_slice(&f.samples);
+        }
+        let got = decode_wav(&folder.join(name));
+        assert_eq!(got.len(), end, "{name}");
+        assert!(
+            expected.iter().zip(&got).all(|(a, b)| (a - b).abs() < 1e-3),
+            "{name} matches the run's clock"
+        );
+    }
+    // The realignment silence is in the system file.
+    let silences = frames
+        .iter()
+        .filter(|f| f.channel == Channel::System && f.samples.iter().all(|&s| s == 0.0))
+        .count();
+    assert!(silences > 0);
+
+    // And the lines point at their speech in their own file, before and
+    // after the realignment.
+    let sys = decode_wav(&folder.join("audio-system.wav"));
+    let lines: Vec<_> = item
+        .segments
+        .segments
+        .iter()
+        .filter(|s| s.channel == Channel::System)
+        .collect();
+    assert_eq!(lines.len(), 2, "{:?}", item.segments.segments);
+    for s in lines {
+        let a = (s.start_ms * 16) as usize;
+        let b = (s.end_ms * 16) as usize;
+        let loud = sys[a..b.min(sys.len())].iter().filter(|x| x.abs() > 0.1).count();
+        assert!(loud > (b - a) / 2, "line {}–{} ms is mostly speech", s.start_ms, s.end_ms);
     }
 }

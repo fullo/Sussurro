@@ -207,6 +207,22 @@ project decisions here, not in per-machine memory.**
   frontmatter day vs. the viewer's local today sent by the UI; the date
   facet takes one bucket or one custom range. Index schema v2 (rebuilt
   automatically). Selection is kept in localStorage (`libraryFacets`).
+- **Saved audio (0.10, #141, P9)** (`archive/audio.rs`,
+  `engine/audio_out.rs`): only on request — New's "Save audio" per run
+  (`RunOptions.save_audio`), else `Settings.save_audio` (off; also covers
+  extension meetings). **Mono 16-bit 16 kHz WAV per channel**, not stereo:
+  channels arrive independently, so interleaving would need a growing
+  alignment buffer; per-channel files also suit per-speaker replay (#142).
+  Written as `audio-<channel>.wav` from the ingest thread, padded to the
+  run's t = 0 (segment `start_ms` = file position); a lone channel is
+  renamed `audio.wav` at the end. Headers patched every 10 s and on stop;
+  startup recovery (#153, `live::mark_interrupted`) repairs them from the
+  file length. Cap = 32-bit WAV limit (~37 h per channel), then that
+  channel stops being saved — no RF64. Frontmatter `audio: [...]` is
+  app-owned (like `status:`); the UI/delete use the files present that
+  match `audio(-[a-z]+)?.wav`, never names from the frontmatter.
+  "Delete audio" and a cancelled/speechless run with audio go to the OS
+  trash. Toggle off = no `AudioOut` at all (tests assert no `.wav`).
 - **Speaker-aware recipes and Ask (0.10, #143)** (`recipes/`): built-ins
   *Meeting minutes* and *Who said what* are `speakers_only` — offered and
   run only on meetings/transcriptions whose transcript names its speakers

@@ -29,6 +29,9 @@ export type RunArgs = {
   /** "Identify voices" (P11, #134): label a transcription's voices "Voice N".
    *  Omitted = off; the backend ignores it for notes. */
   identifyVoices?: boolean;
+  /** "Save audio" (P9, #141): keep the run's audio in the item folder.
+   *  Omitted = the per-app default (off unless turned on in Settings). */
+  saveAudio?: boolean;
 };
 const NO_OPTIONS: RunArgs = { language: null, cleanupLevel: null };
 
@@ -109,6 +112,7 @@ export function useEngineRuns() {
         title: title.trim() || null,
         language: options.language,
         cleanupLevel: options.cleanupLevel,
+        saveAudio: options.saveAudio,
       });
       dispatch({ type: "started", kind: "system", sessionId: id, label: title.trim(), now: Date.now() });
       return null;
