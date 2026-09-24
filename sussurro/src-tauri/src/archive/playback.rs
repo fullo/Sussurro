@@ -93,8 +93,8 @@ pub fn resolve(archive: &Path, id: &str, file: &str) -> Result<PathBuf> {
     }
     let dir = super::store::existing_item_dir(archive, id)?;
     let path = dir.join(file);
-    let meta = std::fs::symlink_metadata(&path)
-        .with_context(|| format!("no audio '{file}' in '{id}'"))?;
+    let meta =
+        std::fs::symlink_metadata(&path).with_context(|| format!("no audio '{file}' in '{id}'"))?;
     if !meta.file_type().is_file() {
         bail!("'{file}' in '{id}' is not a regular file");
     }
@@ -258,7 +258,12 @@ pub fn serve_file(path: &Path, range: Option<&str>, head: bool) -> Reply {
 
 /// Answer one request of the scheme: `method` (GET/HEAD), the URL `path`,
 /// its `Range` header, and the archive folder (or why it's unavailable).
-pub fn handle(archive: Result<PathBuf, String>, method: &str, path: &str, range: Option<&str>) -> Reply {
+pub fn handle(
+    archive: Result<PathBuf, String>,
+    method: &str,
+    path: &str,
+    range: Option<&str>,
+) -> Reply {
     let head = match method {
         "GET" => false,
         "HEAD" => true,
@@ -327,22 +332,62 @@ mod tests {
         use RangeAsk::*;
         let len = 10_000;
         assert_eq!(parse_range(None, len), Whole);
-        assert_eq!(parse_range(Some("bytes=0-99"), len), Part { start: 0, end: 99 });
-        assert_eq!(parse_range(Some("bytes=0-1"), len), Part { start: 0, end: 1 });
-        assert_eq!(parse_range(Some("bytes=9000-"), len), Part { start: 9000, end: 9999 });
+        assert_eq!(
+            parse_range(Some("bytes=0-99"), len),
+            Part { start: 0, end: 99 }
+        );
+        assert_eq!(
+            parse_range(Some("bytes=0-1"), len),
+            Part { start: 0, end: 1 }
+        );
+        assert_eq!(
+            parse_range(Some("bytes=9000-"), len),
+            Part {
+                start: 9000,
+                end: 9999
+            }
+        );
         // End past the file is clamped.
-        assert_eq!(parse_range(Some("bytes=9000-20000"), len), Part { start: 9000, end: 9999 });
+        assert_eq!(
+            parse_range(Some("bytes=9000-20000"), len),
+            Part {
+                start: 9000,
+                end: 9999
+            }
+        );
         // Suffix: the last n bytes (all of them when n > len).
-        assert_eq!(parse_range(Some("bytes=-500"), len), Part { start: 9500, end: 9999 });
-        assert_eq!(parse_range(Some("bytes=-50000"), len), Part { start: 0, end: 9999 });
+        assert_eq!(
+            parse_range(Some("bytes=-500"), len),
+            Part {
+                start: 9500,
+                end: 9999
+            }
+        );
+        assert_eq!(
+            parse_range(Some("bytes=-50000"), len),
+            Part {
+                start: 0,
+                end: 9999
+            }
+        );
         // Only the first of several ranges.
-        assert_eq!(parse_range(Some("bytes=10-19, 30-39"), len), Part { start: 10, end: 19 });
+        assert_eq!(
+            parse_range(Some("bytes=10-19, 30-39"), len),
+            Part { start: 10, end: 19 }
+        );
         // Past the end / empty file / zero suffix: 416.
         assert_eq!(parse_range(Some("bytes=10000-"), len), Unsatisfiable);
         assert_eq!(parse_range(Some("bytes=0-"), 0), Unsatisfiable);
         assert_eq!(parse_range(Some("bytes=-0"), len), Unsatisfiable);
         // Malformed: ignored (whole file).
-        for bad in ["items=0-1", "bytes=abc", "bytes=5-2", "bytes=-", "bytes=1-x", "bytes=+1-2"] {
+        for bad in [
+            "items=0-1",
+            "bytes=abc",
+            "bytes=5-2",
+            "bytes=-",
+            "bytes=1-x",
+            "bytes=+1-2",
+        ] {
             assert_eq!(parse_range(Some(bad), len), Whole, "{bad}");
         }
     }
@@ -352,15 +397,24 @@ mod tests {
         let len = 10 * MAX_CHUNK;
         assert_eq!(
             parse_range(Some("bytes=0-"), len),
-            RangeAsk::Part { start: 0, end: MAX_CHUNK - 1 }
+            RangeAsk::Part {
+                start: 0,
+                end: MAX_CHUNK - 1
+            }
         );
         assert_eq!(
             parse_range(Some("bytes=5-"), len),
-            RangeAsk::Part { start: 5, end: 5 + MAX_CHUNK - 1 }
+            RangeAsk::Part {
+                start: 5,
+                end: 5 + MAX_CHUNK - 1
+            }
         );
         assert_eq!(
             parse_range(Some(&format!("bytes=0-{}", len - 1)), len),
-            RangeAsk::Part { start: 0, end: MAX_CHUNK - 1 }
+            RangeAsk::Part {
+                start: 0,
+                end: MAX_CHUNK - 1
+            }
         );
     }
 
@@ -406,7 +460,10 @@ mod tests {
         assert_eq!((r.status, r.body.len()), (206, 0));
         assert_eq!(r.header("Content-Length"), Some("100"));
 
-        assert_eq!(serve_file(&tmp.path().join("missing.wav"), None, false).status, 404);
+        assert_eq!(
+            serve_file(&tmp.path().join("missing.wav"), None, false).status,
+            404
+        );
     }
 
     #[test]
@@ -417,14 +474,20 @@ mod tests {
         let r = serve_file(&p, None, false);
         assert_eq!(r.status, 206);
         assert_eq!(r.body.len() as u64, MAX_CHUNK);
-        assert_eq!(r.header("Content-Range"), Some(format!("bytes 0-{}/{len}", MAX_CHUNK - 1).as_str()));
+        assert_eq!(
+            r.header("Content-Range"),
+            Some(format!("bytes 0-{}/{len}", MAX_CHUNK - 1).as_str())
+        );
         let r = serve_file(&p, Some("bytes=0-"), false);
         assert_eq!(r.body.len() as u64, MAX_CHUNK);
         // The tail, from the middle of the last chunk.
         let from = len as u64 - 3;
         let r = serve_file(&p, Some(&format!("bytes={from}-")), false);
         assert_eq!(r.body.len(), 3);
-        assert_eq!(r.header("Content-Range"), Some(format!("bytes {from}-{}/{len}", len - 1).as_str()));
+        assert_eq!(
+            r.header("Content-Range"),
+            Some(format!("bytes {from}-{}/{len}", len - 1).as_str())
+        );
     }
 
     const DATE: &str = "2026-09-24T10:00:00+02:00";
@@ -450,7 +513,10 @@ mod tests {
         // A WAV outside the archive.
         let outside = file_of(tmp.path(), "audio.wav", 64);
 
-        assert_eq!(resolve(&archive, &id, "audio.wav").unwrap(), dir.join("audio.wav"));
+        assert_eq!(
+            resolve(&archive, &id, "audio.wav").unwrap(),
+            dir.join("audio.wav")
+        );
         assert!(resolve(&archive, &id, "audio-mic.wav").is_ok());
         // Not an audio name, even though the file exists.
         assert!(resolve(&archive, &id, "transcript.md").is_err());
@@ -495,9 +561,18 @@ mod tests {
 
         let r = handle(Ok(archive.clone()), "GET", &url_path, Some("bytes=0-9"));
         assert_eq!((r.status, r.body.len()), (206, 10));
-        assert_eq!(handle(Ok(archive.clone()), "HEAD", &url_path, None).status, 200);
-        assert_eq!(handle(Ok(archive.clone()), "POST", &url_path, None).status, 405);
-        assert_eq!(handle(Err("no archive".into()), "GET", &url_path, None).status, 503);
+        assert_eq!(
+            handle(Ok(archive.clone()), "HEAD", &url_path, None).status,
+            200
+        );
+        assert_eq!(
+            handle(Ok(archive.clone()), "POST", &url_path, None).status,
+            405
+        );
+        assert_eq!(
+            handle(Err("no archive".into()), "GET", &url_path, None).status,
+            503
+        );
         // The transcript next to it is not reachable.
         let md = format!("/{}", id.replace('/', "%2F") + "%2Ftranscript.md");
         assert_eq!(handle(Ok(archive.clone()), "GET", &md, None).status, 400);

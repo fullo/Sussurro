@@ -1397,7 +1397,12 @@ pub fn serve_audio(
             .headers()
             .get(tauri::http::header::RANGE)
             .and_then(|v| v.to_str().ok());
-        archive::playback::handle(archive, request.method().as_str(), request.uri().path(), range)
+        archive::playback::handle(
+            archive,
+            request.method().as_str(),
+            request.uri().path(),
+            range,
+        )
     };
     let mut response = tauri::http::Response::builder().status(reply.status);
     for (k, v) in &reply.headers {
