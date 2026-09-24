@@ -60,7 +60,7 @@ case "$TRIPLE" in
     dpkg-deb -f "$deb" Depends | grep -q libgomp1 || { echo "FAIL [.deb]: Depends lacks libgomp1"; exit 1; }
     # AppImage: linuxdeploy rewrites the executable's rpath and copies its
     # NEEDED libs into usr/lib, so only presence + start-up are checked.
-    img="$(ls "$BUNDLE"/appimage/*.AppImage | head -1)"
+    img="$(cd "$BUNDLE/appimage" && pwd)/$(ls "$BUNDLE"/appimage | grep '\.AppImage$' | head -1)"
     (cd "$WORK" && "$img" --appimage-extract >/dev/null)
     [ -f "$WORK/squashfs-root/usr/bin/$NAME" ] || { echo "FAIL [AppImage]: no $NAME"; exit 1; }
     run_version "$WORK/squashfs-root/usr/bin/$NAME" "$(find "$WORK/squashfs-root" -type d -name llama-server-libs | head -1)"
