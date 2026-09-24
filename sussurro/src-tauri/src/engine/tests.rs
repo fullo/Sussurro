@@ -1130,7 +1130,7 @@ fn long_file_decoding_stays_a_bounded_distance_ahead_of_stt() {
 }
 
 /// The app's STT under test conditions: every segment takes the shared
-/// model through the dictation gate, like `session::AppStt`.
+/// model through the dictation gate, like `session::app_transcriber`.
 struct GatedStt {
     gate: Arc<priority::DictationGate>,
     model: Arc<Mutex<Vec<String>>>,
@@ -1207,4 +1207,89 @@ fn a_dictation_during_a_run_is_served_before_the_next_segment() {
         ]
     );
     assert!(!gate.is_pending());
+}
+
+/// #157: a session started with a language and a cleanup level from New
+/// transcribes and cleans with them, records the language in the
+/// frontmatter, and leaves the global (dictation) settings untouched. One
+/// without overrides falls back to the settings.
+#[test]
+fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
+    use crate::settings::{CleanupLevel, Settings};
+    use session::{run_parts, start_meta, RunOptions};
+
+    let global = Mutex::new(Settings {
+        language: "it".into(),
+        cleanup_level: CleanupLevel::Light,
+        ..Default::default()
+    });
+    let before = global.lock().unwrap().clone();
+
+    let run_with = |options: RunOptions| {
+        let dir = tempfile::tempdir().unwrap();
+        let languages = Mutex::new(Vec::<String>::new());
+        let levels = Mutex::new(Vec::<CleanupLevel>::new());
+        let fake_stt = |samples: &[f32], language: &str| -> Result<TimedTranscript> {
+            languages.lock().unwrap().push(language.to_string());
+            Ok(TimedTranscript {
+                text: format!("parole {}", samples.len()),
+                // The engine "detects" Italian: an explicit language wins.
+                language: Some("it".into()),
+                ..Default::default()
+            })
+        };
+        let fake_clean = |s: &Settings, _prev: Option<&str>, raw: &str| -> String {
+            levels.lock().unwrap().push(s.cleanup_level.clone());
+            raw.to_uppercase()
+        };
+        // Like the app: the run reads a copy of the settings at its start.
+        let snapshot = global.lock().unwrap().clone();
+        let (settings, mut stt, cleaner) = run_parts(&snapshot, &options, fake_stt, fake_clean);
+        let mut job = job(
+            dir.path(),
+            bursts(&[(true, 2.0), (false, 2.5), (true, 2.0), (false, 1.0)]),
+            Policy::Block { max_queued: 2 },
+        );
+        job.meta = start_meta(
+            &settings,
+            ItemType::Note,
+            "Opzioni".into(),
+            "file:test.wav".into(),
+            String::new(),
+        );
+        let r = run(job, &mut stt, &cleaner, Arc::new(VecSink::default())).unwrap();
+        assert_eq!(r.segments, 2);
+        let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+        assert!(item
+            .segments
+            .segments
+            .iter()
+            .all(|s| s.text == s.raw.to_uppercase()));
+        drop((stt, cleaner));
+        (
+            languages.into_inner().unwrap(),
+            levels.into_inner().unwrap(),
+            item.meta.language,
+        )
+    };
+
+    // Overrides: every segment uses them; the frontmatter records them.
+    let (langs, levels, recorded) = run_with(RunOptions {
+        language: Some("en".into()),
+        cleanup_level: Some(CleanupLevel::High),
+    });
+    assert_eq!(langs, ["en", "en"]);
+    assert_eq!(levels, [CleanupLevel::High, CleanupLevel::High]);
+    assert_eq!(recorded, "en");
+    assert_eq!(*global.lock().unwrap(), before, "settings must not change");
+
+    // No overrides (a blank language counts as none): the dictation settings.
+    let (langs, levels, recorded) = run_with(RunOptions {
+        language: Some("  ".into()),
+        cleanup_level: None,
+    });
+    assert_eq!(langs, ["it", "it"]);
+    assert_eq!(levels, [CleanupLevel::Light, CleanupLevel::Light]);
+    assert_eq!(recorded, "it");
+    assert_eq!(*global.lock().unwrap(), before);
 }

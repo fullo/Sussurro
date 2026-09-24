@@ -340,12 +340,16 @@ pub struct EngineResult {
 /// chunked cleanup) into an archive item of the chosen type — note by
 /// default, or transcription (P10). Resolves when the item is written;
 /// progress arrives as `engine-progress` / `engine-segment` events.
+/// `language` / `cleanup_level`: this run only (#157); omitted = the
+/// dictation settings, which are never modified.
 #[tauri::command]
 pub async fn transcribe_file(
     app: AppHandle,
     path: String,
     item_type: Option<crate::archive::ItemType>,
     title: Option<String>,
+    language: Option<String>,
+    cleanup_level: Option<crate::settings::CleanupLevel>,
 ) -> Result<EngineResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let r = crate::engine::session::transcribe_file(
@@ -353,6 +357,10 @@ pub async fn transcribe_file(
             std::path::Path::new(&path),
             item_type.unwrap_or_default(),
             title.unwrap_or_default(),
+            crate::engine::session::RunOptions {
+                language,
+                cleanup_level,
+            },
         )
         .map_err(|e| format!("{e:#}"))?;
         Ok(EngineResult {
@@ -372,19 +380,26 @@ pub async fn transcribe_file(
 /// Start a long microphone session (independent of the dictation hotkey).
 /// Returns the session id; the item arrives as `engine-done` after
 /// `engine_stop_mic`. `defer`: transcribe only after the stop, for slow
-/// machines.
+/// machines. `language` / `cleanup_level`: this run only (#157); omitted =
+/// the dictation settings, which are never modified.
 #[tauri::command]
 pub fn engine_start_mic(
     app: AppHandle,
     item_type: Option<crate::archive::ItemType>,
     title: Option<String>,
     defer: Option<bool>,
+    language: Option<String>,
+    cleanup_level: Option<crate::settings::CleanupLevel>,
 ) -> Result<u64, String> {
     crate::engine::session::start_mic(
         &app,
         item_type.unwrap_or_default(),
         title.unwrap_or_default(),
         defer.unwrap_or(false),
+        crate::engine::session::RunOptions {
+            language,
+            cleanup_level,
+        },
     )
     .map_err(|e| format!("{e:#}"))
 }
