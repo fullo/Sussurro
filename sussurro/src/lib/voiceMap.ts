@@ -123,10 +123,10 @@ export function layoutVoiceMap(
 
 /** Dot radius in viewBox units: smaller as the map fills up. */
 export function pointRadius(n: number): number {
-  if (n > 2000) return 1.6;
-  if (n > 500) return 2.2;
-  if (n > 100) return 3;
-  return 4;
+  if (n > 2000) return 1.8;
+  if (n > 500) return 2.5;
+  if (n > 100) return 3.5;
+  return 5;
 }
 
 /** Index of the point nearest (x, y) within `maxDist`, or -1. */

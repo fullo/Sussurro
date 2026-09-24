@@ -85,12 +85,17 @@ export function ContextPane({
   onItem,
   people,
   onPeopleChanged,
+  pickedLine,
+  onPickLine,
 }: {
   ctl: Ctl;
   item: Item;
   /** The People registry (#132), for linking speakers. */
   people?: Person[];
   onPeopleChanged?: () => void;
+  /** Voice map (#144): the line picked on the map, and how to pick one. */
+  pickedLine?: number | null;
+  onPickLine?: (segmentId: number) => void;
   /** A speaker edit returned the updated item (#130). */
   onItem: (item: Item) => void;
   /** Laid out as a drawer (narrow window). */
@@ -336,7 +341,15 @@ export function ContextPane({
       )}
 
       {showSpeakers && (
-        <SpeakerPanel ctl={ctl} item={item} onItem={onItem} people={people} onPeopleChanged={onPeopleChanged} />
+        <SpeakerPanel
+          ctl={ctl}
+          item={item}
+          onItem={onItem}
+          people={people}
+          onPeopleChanged={onPeopleChanged}
+          pickedLine={pickedLine}
+          onPickLine={onPickLine}
+        />
       )}
 
       <section className="ctx-sect" aria-labelledby="ctx-ask-h">

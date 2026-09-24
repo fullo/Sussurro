@@ -876,6 +876,30 @@ button.pchip-name:hover { text-decoration: underline; }
 .spk-redetect { margin-top: 8px; font-size: 12px; }
 .spk-confirm { margin-top: 8px; }
 .spk-confirm .ctx-exports { margin-top: 6px; }
+/* Voice map (#144): theme tokens only, so it follows the app's palette. */
+.vmap { margin-top: 12px; }
+.vmap-h { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--c-dark); }
+.vmap-plot { position: relative; }
+.vmap-svg { display: block; width: 100%; height: auto; aspect-ratio: 320 / 220; cursor: crosshair; border-radius: var(--radius); }
+.vmap-svg:focus { outline: none; }
+.vmap-svg:focus-visible { box-shadow: var(--focus-ring); }
+.vmap-bg { fill: var(--c-surface); stroke: var(--border); stroke-width: 1; }
+.vmap-dot { fill-opacity: 0.85; stroke: var(--c-surface); stroke-width: 0.6; }
+.vmap-sel { fill: none; stroke: var(--c-text); stroke-width: 1.8; pointer-events: none; }
+.vmap-cur { fill: none; stroke: var(--c-text); stroke-width: 1; stroke-dasharray: 2 1.5; pointer-events: none; }
+.vmap-tip {
+  position: absolute; z-index: 2; pointer-events: none;
+  width: max-content; max-width: min(230px, 100%); padding: 5px 8px; margin-top: -10px;
+  background: var(--c-surface); color: var(--c-text); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-md); font-size: 11.5px; line-height: 1.35;
+}
+.vmap-tip.below { margin-top: 10px; }
+.vmap-tip-who { display: flex; align-items: center; gap: 5px; font-weight: 600; color: var(--c-dark); }
+.vmap-tip-who i, .vmap-legend i { flex: none; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 1px var(--border-strong); }
+.vmap-tip-text { display: block; margin-top: 2px; overflow-wrap: anywhere; }
+.vmap-legend { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; }
+.vmap-legend li { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.vmap-n { color: var(--c-text-light); font-variant-numeric: tabular-nums; }
 .ctx-note { margin: 6px 0 0; font-size: 11.5px; line-height: 1.4; color: var(--c-text-light); }
 .ctx-note.warn { color: var(--warn); }
 .ctx-run { display: flex; align-items: center; gap: 8px; margin-top: 10px; }

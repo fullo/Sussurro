@@ -11,7 +11,7 @@ import { usePeople } from "../hooks/usePeople";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import type { Item, ItemMeta, Participant } from "../lib/types";
 import { AudioBar } from "./AudioBar";
-import { AudioTab } from "./AudioTab";
+import { AudioTab, type AudioSeek } from "./AudioTab";
 import { ChipEditor } from "./ChipEditor";
 import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
 import { DocumentTab } from "./DocumentTab";
@@ -56,6 +56,17 @@ export function DocumentPane({
   const ctxToggleRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const { people, reload: reloadPeople } = usePeople();
+  /** The line picked on the Voice map (#144): marked in the transcript,
+   *  and where the Audio tab's player goes. */
+  const [picked, setPicked] = useState<AudioSeek | null>(null);
+  const txScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => setPicked(null), [id]);
+  useEffect(() => {
+    if (!picked || tab !== "transcript") return;
+    const el = txScrollRef.current?.querySelector<HTMLElement>(`[data-seg="${picked.id}"]`);
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el?.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+  }, [picked, tab]);
 
   const load = async () => {
     try {
@@ -194,6 +205,13 @@ export function DocumentPane({
     if (drawer) setCtxOpen(false);
   };
 
+  // Voice map (#144): select the line — in the transcript, or in the
+  // Audio tab's player when that is open (the Document tab has no lines).
+  const pickLine = (segmentId: number) => {
+    setPicked((p) => ({ id: segmentId, n: (p?.n ?? 0) + 1 }));
+    if (tab === "document") setTab("transcript");
+  };
+
   return (
     <div className="doc-split">
     <article className="doc" aria-label={meta.title}>
@@ -311,7 +329,7 @@ export function DocumentPane({
       />
 
       {tab === "audio" ? (
-        <AudioTab item={item} speakers={docSpeakers && docSpeakers.length > 0 ? docSpeakers : undefined} />
+        <AudioTab item={item} speakers={docSpeakers && docSpeakers.length > 0 ? docSpeakers : undefined} seek={picked} />
       ) : tab === "document" ? (
         <DocumentTab
           ctl={ctl}
@@ -345,7 +363,7 @@ export function DocumentPane({
         </div>
       )}
 
-      <div className="doc-scroll tx-scroll">
+      <div className="doc-scroll tx-scroll" ref={txScrollRef}>
         {lines.length > 0 ? (
           <TranscriptView
             lines={lines}
@@ -355,6 +373,7 @@ export function DocumentPane({
             speakers={docSpeakers && docSpeakers.length > 0 ? docSpeakers : undefined}
             onMoveSpeaker={moveLine}
             label={`Transcript of ${meta.title}`}
+            selectedId={picked?.id ?? null}
           />
         ) : item.body.trim() ? (
           <pre className="doc-body">{item.body.trim()}</pre>
@@ -424,6 +443,8 @@ export function DocumentPane({
       }}
       people={people}
       onPeopleChanged={reloadPeople}
+      pickedLine={picked?.id ?? null}
+      onPickLine={pickLine}
     />
     </div>
   );
