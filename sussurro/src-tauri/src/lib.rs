@@ -4,6 +4,7 @@ pub mod audio;
 pub mod cleanup;
 pub mod commands;
 pub mod config_io;
+pub mod engine;
 pub mod history;
 pub mod hotkey;
 pub mod inject;
@@ -11,6 +12,7 @@ pub mod permissions;
 pub mod pipeline;
 pub mod settings;
 pub mod snippets;
+pub mod sources;
 pub mod state;
 pub mod stats;
 pub mod stt;
@@ -82,6 +84,7 @@ pub fn run() {
                 paths,
                 mic_test: std::sync::atomic::AtomicBool::new(false),
                 stream: Mutex::new(state::StreamState::default()),
+                engine: Default::default(),
             });
             {
                 let s = app.state::<state::AppState>().settings.lock().unwrap().clone();
@@ -136,7 +139,11 @@ pub fn run() {
             commands::export_config,
             commands::import_config,
             commands::read_import_file,
-            commands::transcribe_audio_file,
+            commands::transcribe_file,
+            commands::engine_start_mic,
+            commands::engine_stop_mic,
+            commands::engine_cancel,
+            commands::engine_status,
             commands::get_default_prompts,
             commands::ollama_status,
             commands::diagnostics,
