@@ -60,8 +60,8 @@ fn position_overlay(w: &tauri::WebviewWindow) {
 }
 
 /// Called from the global-shortcut handler. Must return fast — heavy work is
-/// spawned. `command`: the trigger was the command-mode hotkey.
-pub fn handle_trigger(app: &AppHandle, pressed: bool, command: bool) {
+/// spawned.
+pub fn handle_trigger(app: &AppHandle, pressed: bool) {
     let state = app.state::<AppState>();
     // A running mic test yields to the real thing: stop it and discard the audio.
     if state.mic_test.swap(false, std::sync::atomic::Ordering::Relaxed) {
@@ -78,16 +78,13 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool, command: bool) {
                 set_status(app, &format!("error: {e}"));
                 return;
             }
-            state
-                .command_mode
-                .store(command, std::sync::atomic::Ordering::Relaxed);
             state.stream.lock().unwrap().reset(focused_app_name());
             let settings = state.settings.lock().unwrap().clone();
             if settings.sound_feedback {
                 crate::audio::beep::record_start();
             }
             set_status(app, "recording");
-            if settings.live_preview && !command {
+            if settings.live_preview {
                 let app = app.clone();
                 std::thread::spawn(move || preview_loop(&app));
             }
@@ -97,18 +94,10 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool, command: bool) {
                 crate::audio::beep::record_stop();
             }
             set_status(app, "processing");
-            let was_command = state
-                .command_mode
-                .load(std::sync::atomic::Ordering::Relaxed);
             let app = app.clone();
             // whisper + ollama take seconds — never block the event thread.
             std::thread::spawn(move || {
-                let result = if was_command {
-                    process_command(&app)
-                } else {
-                    process_recording(&app)
-                };
-                match result {
+                match process_recording(&app) {
                     Ok(()) => set_status(&app, "idle"),
                     Err(e) => set_status(&app, &format!("error: {e:#}")),
                 }
@@ -302,8 +291,8 @@ fn append_to_output_file(path: &str, text: &str) -> anyhow::Result<()> {
 }
 
 /// Count a completed mic dictation in the persistent usage stats. Best-effort:
-/// stats must never break the pipeline. File imports and command-mode edits
-/// are not dictations and don't go through here.
+/// stats must never break the pipeline. File imports are not dictations and
+/// don't go through here.
 fn record_stats(state: &AppState, cleaned: &str) {
     let day = chrono::Local::now().format("%Y-%m-%d").to_string();
     let _ = crate::stats::record(
@@ -432,50 +421,6 @@ fn preview_loop(app: &AppHandle) {
             }
         }
     }
-}
-
-/// Command mode: the spoken words are an INSTRUCTION applied to the currently
-/// selected text via the LLM; the result replaces the selection.
-fn process_command(app: &AppHandle) -> anyhow::Result<()> {
-    let state = app.state::<AppState>();
-    let samples = state.recorder.lock().unwrap().stop()?;
-    if samples.len() < 4_800 {
-        return Ok(());
-    }
-    let settings = state.settings.lock().unwrap().clone();
-    let (samples, threshold) = prepare_samples(samples, &settings);
-    if crate::audio::resample::is_mostly_silence(&samples, threshold) {
-        return Ok(());
-    }
-    let samples = crate::audio::resample::trim_silence(&samples, threshold, 1_600, 3_200);
-
-    ensure_transcriber(&state, &settings)?;
-    let instruction = {
-        let mut guard = state.transcriber.lock().unwrap();
-        guard
-            .as_mut()
-            .expect("transcriber loaded above")
-            .transcribe(&samples, None, &settings.language)?
-    };
-    if instruction.is_empty() {
-        return Ok(());
-    }
-
-    let Some(selection) = inject::copy_selection()? else {
-        anyhow::bail!("command mode: select some text first — the instruction is applied to the selection");
-    };
-    let edited = ollama::command_edit(&settings, &instruction, &selection)?;
-    inject::inject_text(&edited)?;
-
-    let _ = history::append(
-        &state.paths.history_file,
-        &HistoryEntry {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            raw: format!("[command] {instruction}"),
-            cleaned: edited,
-        },
-    );
-    Ok(())
 }
 
 /// Name of the app that will receive the injected text. Read at Finish time,

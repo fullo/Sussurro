@@ -98,27 +98,6 @@ fn list_models_openai(url: &str, api_key: &str) -> Result<Vec<String>> {
         .unwrap_or_default())
 }
 
-/// Command mode: apply a spoken instruction to the selected text. Unlike
-/// cleanup(), errors propagate — silently pasting the untouched selection
-/// back would look like success.
-pub fn command_edit(
-    settings: &crate::settings::Settings,
-    instruction: &str,
-    text: &str,
-) -> Result<String> {
-    let system = "You edit text following a spoken instruction. Apply the instruction to the \
-                  text and output only the resulting text, with no preamble, quotes, or \
-                  commentary. If the instruction asks a question about the text, output only \
-                  the answer.";
-    let messages = vec![
-        json!({"role": "system", "content": system}),
-        json!({"role": "user", "content": format!("Instruction: {instruction}\n\nText:\n{text}")}),
-    ];
-    let out = chat(settings, &messages)?;
-    anyhow::ensure!(!out.trim().is_empty(), "empty response from the cleanup model");
-    Ok(out.trim().to_string())
-}
-
 /// One non-streaming chat completion, dispatched to the configured backend.
 fn chat(settings: &crate::settings::Settings, messages: &[Value]) -> Result<String> {
     match settings.cleanup_api {
