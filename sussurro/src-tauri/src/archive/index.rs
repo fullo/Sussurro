@@ -1,19 +1,25 @@
 //! Search index: SQLite FTS5 in the app data dir (`archive-index.sqlite`).
 //!
 //! The index is derived data (E2): the archive folder is the truth. A
-//! missing, corrupt, outdated or foreign (other archive root) database is
-//! deleted and rebuilt from the folder. [`Index::sync`] keeps it current
-//! incrementally — it only stats files and re-reads items whose
-//! `transcript.md` or state changed — so edits made outside the app show up
-//! in search without a file watcher.
+//! missing, outdated or foreign (other archive root) database is emptied and
+//! rebuilt from the folder; only a file that is not a database any more is
+//! replaced. [`Index::sync`] keeps it current incrementally — it only stats
+//! files and re-reads items whose `transcript.md` or state changed — so
+//! edits made outside the app show up in search without a file watcher.
+//!
+//! Concurrency (#155): all handles on one database file share a single
+//! connection behind a process-wide lock, and every write is an IMMEDIATE
+//! transaction with a busy timeout, so parallel commands (searches, the
+//! engine indexing a new item, a rebuild) queue instead of failing.
 
 use super::store::{scan_item_dirs, summary_at, ItemSummary};
 use super::types::{ItemMeta, ItemType};
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 /// Bump when the schema changes: an index with another version is rebuilt.
 const SCHEMA_VERSION: i64 = 1;
@@ -61,9 +67,81 @@ pub struct SearchFilters {
     pub date_to: Option<String>,
 }
 
+/// A handle on the search index of one archive folder.
+///
+/// Handles are cheap: every handle on the same database file shares one
+/// SQLite connection behind one process-wide lock (see [`Slot`]), taken for
+/// the duration of each call.
 pub struct Index {
-    conn: Connection,
+    /// `Some` until dropped (taken in `Drop`, see [`release`]).
+    slot: Option<Shared>,
     archive: PathBuf,
+    db_path: PathBuf,
+}
+
+/// How long a write waits for another process (e.g. a second app instance)
+/// holding the database before giving up with SQLITE_BUSY.
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The one connection to an index file, shared by the whole process (#155).
+///
+/// Every user — search, sync, per-item reindex, rebuild, the long-form
+/// engine — goes through the same `Mutex`, so this process never runs two
+/// SQLite writers at once ("database is locked"), and a rebuild never deletes
+/// or recreates the file under another open connection. The slot lives as
+/// long as some [`Index`] handle on it does; the connection closes with the
+/// last one, so the file is not held open while the archive is idle.
+struct Slot {
+    conn: Option<Connection>,
+    /// Archive root the open connection was validated (or rebuilt) for.
+    ready_for: Option<PathBuf>,
+}
+
+type Shared = Arc<Mutex<Slot>>;
+type Registry = Mutex<HashMap<PathBuf, Weak<Mutex<Slot>>>>;
+
+fn registry() -> &'static Registry {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    REGISTRY.get_or_init(Default::default)
+}
+
+/// A panic mid-operation leaves at worst a rolled-back transaction, so a
+/// poisoned lock is still usable.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The shared slot for `db_path`, created on first use.
+fn shared_slot(db_path: &Path) -> Shared {
+    let key = std::path::absolute(db_path).unwrap_or_else(|_| db_path.to_path_buf());
+    let mut reg = lock(registry());
+    if let Some(slot) = reg.get(&key).and_then(Weak::upgrade) {
+        return slot;
+    }
+    reg.retain(|_, w| w.strong_count() > 0);
+    let slot = Arc::new(Mutex::new(Slot {
+        conn: None,
+        ready_for: None,
+    }));
+    reg.insert(key, Arc::downgrade(&slot));
+    slot
+}
+
+/// Drop a handle while holding the registry lock: if it is the last one, the
+/// connection is fully closed before anyone can look the slot up again (and,
+/// say, replace a corrupt file that must not be open).
+fn release(slot: Shared) {
+    let reg = lock(registry());
+    drop(slot);
+    drop(reg);
+}
+
+impl Drop for Index {
+    fn drop(&mut self) {
+        if let Some(slot) = self.slot.take() {
+            release(slot);
+        }
+    }
 }
 
 fn remove_db_files(db_path: &Path) {
@@ -97,21 +175,105 @@ fn validate(conn: &Connection, archive: &Path) -> Result<()> {
     Ok(())
 }
 
-fn create_fresh(db_path: &Path, archive: &Path) -> Result<Connection> {
-    remove_db_files(db_path);
+fn open_conn(db_path: &Path) -> Result<Connection> {
     if let Some(dir) = db_path.parent() {
-        std::fs::create_dir_all(dir)?;
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
     let conn = Connection::open(db_path)
-        .with_context(|| format!("creating index {}", db_path.display()))?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    conn.execute_batch(SCHEMA)?;
-    conn.execute(
+        .with_context(|| format!("opening index {}", db_path.display()))?;
+    conn.busy_timeout(BUSY_TIMEOUT)?;
+    Ok(conn)
+}
+
+/// Empty the database in place and set it up for `archive`: every table,
+/// view and trigger is dropped and the schema recreated, all in one
+/// IMMEDIATE transaction — nothing is deleted from the filesystem.
+fn reset_schema(conn: &mut Connection, archive: &Path) -> Result<()> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut objects: Vec<(String, String, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT type, name, coalesce(sql, '') FROM sqlite_master \
+             WHERE type IN ('table', 'view', 'trigger') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    // Views and triggers first, then virtual tables (they take their shadow
+    // tables with them), then plain tables (their indexes go with them).
+    objects.sort_by_key(|(kind, _, sql)| match kind.as_str() {
+        "table" if sql.to_ascii_uppercase().starts_with("CREATE VIRTUAL") => 1,
+        "table" => 2,
+        _ => 0,
+    });
+    for (kind, name, _) in &objects {
+        let kind = kind.to_ascii_uppercase();
+        let name = name.replace('"', "\"\"");
+        tx.execute_batch(&format!("DROP {kind} IF EXISTS \"{name}\""))?;
+    }
+    tx.execute_batch(SCHEMA)?;
+    tx.execute(
         "INSERT INTO meta (key, value) VALUES ('archive', ?1)",
         params![archive_key(archive)],
     )?;
-    conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    Ok(conn)
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
+    Ok(())
+}
+
+impl Slot {
+    fn close(&mut self) {
+        self.conn = None;
+        self.ready_for = None;
+    }
+
+    /// The connection, ready for `archive`: opened on first use, validated,
+    /// and emptied for a rebuild when missing, corrupt, outdated or foreign.
+    fn ready(&mut self, archive: &Path, db_path: &Path) -> Result<&mut Connection> {
+        if self.conn.is_some() && !db_path.is_file() {
+            // Deleted behind our back: start over on a new file.
+            self.close();
+        }
+        if self.ready_for.as_deref() != Some(archive) {
+            let existed = db_path.is_file();
+            if self.conn.is_none() {
+                self.conn = Some(open_conn(db_path)?);
+            }
+            let conn = self.conn.as_ref().expect("opened above");
+            match validate(conn, archive) {
+                Ok(()) => self.ready_for = Some(archive.to_path_buf()),
+                Err(e) => {
+                    if existed {
+                        eprintln!("archive index: rebuilding ({e:#})");
+                    }
+                    self.reset(archive, db_path)?;
+                }
+            }
+        }
+        Ok(self.conn.as_mut().expect("ready"))
+    }
+
+    /// Empty the index for `archive` (the caller syncs it afterwards). Done
+    /// in place on the shared connection; only when that fails — the file is
+    /// not a database any more — is the connection closed and the file
+    /// replaced. That is safe: every user in this process goes through this
+    /// slot, and we hold its lock.
+    fn reset(&mut self, archive: &Path, db_path: &Path) -> Result<()> {
+        self.ready_for = None;
+        if self.conn.is_none() {
+            self.conn = Some(open_conn(db_path)?);
+        }
+        let conn = self.conn.as_mut().expect("opened above");
+        if let Err(e) = reset_schema(conn, archive) {
+            eprintln!("archive index: replacing {} ({e:#})", db_path.display());
+            self.close();
+            remove_db_files(db_path);
+            let mut conn = open_conn(db_path)?;
+            reset_schema(&mut conn, archive)?;
+            self.conn = Some(conn);
+        }
+        self.ready_for = Some(archive.to_path_buf());
+        Ok(())
+    }
 }
 
 impl Index {
@@ -119,83 +281,55 @@ impl Index {
     /// from another schema version or another archive folder. Does not sync
     /// — call [`Index::sync`] before searching.
     pub fn open(archive: &Path, db_path: &Path) -> Result<Index> {
-        let existing = if db_path.is_file() {
-            match Connection::open(db_path) {
-                Ok(conn) => {
-                    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
-                    match validate(&conn, archive) {
-                        Ok(()) => Some(conn),
-                        Err(e) => {
-                            eprintln!("archive index: rebuilding ({e:#})");
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("archive index: rebuilding ({e})");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        let conn = match existing {
-            Some(c) => c,
-            None => create_fresh(db_path, archive)?,
-        };
-        Ok(Index {
-            conn,
+        let index = Index::handle(archive, db_path);
+        index.with_conn(|_| Ok(()))?;
+        Ok(index)
+    }
+
+    fn handle(archive: &Path, db_path: &Path) -> Index {
+        Index {
+            slot: Some(shared_slot(db_path)),
             archive: archive.to_path_buf(),
-        })
+            db_path: db_path.to_path_buf(),
+        }
+    }
+
+    /// Run `f` holding the shared lock.
+    fn with_slot<T>(&self, f: impl FnOnce(&mut Slot) -> Result<T>) -> Result<T> {
+        let mut slot = lock(self.slot.as_ref().expect("live index"));
+        f(&mut slot)
+    }
+
+    /// Run `f` on the ready connection, holding the shared lock.
+    fn with_conn<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
+        self.with_slot(|slot| f(slot.ready(&self.archive, &self.db_path)?))
     }
 
     /// Bring the index in line with the folder: index new or changed items,
     /// drop rows whose folder is gone. Returns the number of indexed items.
     pub fn sync(&mut self) -> Result<usize> {
-        let on_disk = scan_item_dirs(&self.archive);
-        let mut known: HashMap<String, String> = {
-            let mut stmt = self.conn.prepare("SELECT id, fingerprint FROM items")?;
-            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
-        let tx = self.conn.transaction()?;
-        let mut count = 0;
-        for (id, dir) in &on_disk {
-            let fp = fingerprint(dir);
-            if known.remove(id).as_deref() == Some(fp.as_str()) {
-                count += 1;
-                continue;
-            }
-            match index_at(&tx, id, dir, &fp) {
-                Ok(()) => count += 1,
-                Err(e) => {
-                    eprintln!("archive index: skipping broken item {id}: {e:#}");
-                    delete_rows(&tx, id)?;
-                }
-            }
-        }
-        for gone in known.keys() {
-            delete_rows(&tx, gone)?;
-        }
-        tx.commit()?;
-        Ok(count)
+        self.with_conn(|conn| sync_conn(conn, &self.archive))
     }
 
     /// (Re)index one item after the app changed it.
     pub fn index_item(&mut self, id: &str) -> Result<()> {
         let dir = super::paths::item_dir(&self.archive, id)?;
-        let tx = self.conn.transaction()?;
-        index_at(&tx, id, &dir, &fingerprint(&dir))?;
-        tx.commit()?;
-        Ok(())
+        self.with_conn(|conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            index_at(&tx, id, &dir, &fingerprint(&dir))?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Drop one item from the index (after a delete).
     pub fn remove_from_index(&mut self, id: &str) -> Result<()> {
-        let tx = self.conn.transaction()?;
-        delete_rows(&tx, id)?;
-        tx.commit()?;
-        Ok(())
+        self.with_conn(|conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            delete_rows(&tx, id)?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     /// Full-text search with facets. An empty query lists every item that
@@ -203,94 +337,132 @@ impl Index {
     /// (BM25), then newest first, and fills `snippet` with the best excerpt
     /// (matches wrapped in `**`).
     pub fn search(&self, query: &str, filters: &SearchFilters) -> Result<Vec<ItemSummary>> {
-        let fts = fts_query(query);
-        let mut sql = String::from("SELECT i.id, i.meta_json, i.edited, ");
-        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(q) = &fts {
-            sql.push_str(
-                "snippet(items_fts, 1, '**', '**', '…', 16) \
-                 FROM items_fts JOIN items i ON i.rowid = items_fts.rowid \
-                 WHERE items_fts MATCH ?",
-            );
-            args.push(Box::new(q.clone()));
-        } else {
-            sql.push_str("NULL FROM items i WHERE 1");
-        }
-        if let Some(t) = filters.item_type {
-            sql.push_str(" AND i.item_type = ?");
-            args.push(Box::new(t.as_str()));
-        }
-        if let Some(tag) = nonempty(&filters.tag) {
-            sql.push_str(
-                " AND EXISTS (SELECT 1 FROM item_tags t WHERE t.id = i.id AND t.tag = ? COLLATE NOCASE)",
-            );
-            args.push(Box::new(tag));
-        }
-        if let Some(cat) = nonempty(&filters.category) {
-            sql.push_str(
-                " AND EXISTS (SELECT 1 FROM item_categories c WHERE c.id = i.id \
-                 AND c.category = ? COLLATE NOCASE)",
-            );
-            args.push(Box::new(cat));
-        }
-        if let Some(p) = nonempty(&filters.participant) {
-            sql.push_str(
-                " AND EXISTS (SELECT 1 FROM item_participants p WHERE p.id = i.id \
-                 AND (p.name = ? COLLATE NOCASE OR p.email = ? COLLATE NOCASE))",
-            );
-            args.push(Box::new(p.clone()));
-            args.push(Box::new(p));
-        }
-        if let Some(from) = day_bound(&filters.date_from)? {
-            sql.push_str(" AND i.day >= ?");
-            args.push(Box::new(from));
-        }
-        if let Some(to) = day_bound(&filters.date_to)? {
-            sql.push_str(" AND i.day <= ?");
-            args.push(Box::new(to));
-        }
-        if fts.is_some() {
-            sql.push_str(" ORDER BY bm25(items_fts, 10.0, 1.0, 5.0, 5.0, 5.0), ");
-        } else {
-            sql.push_str(" ORDER BY ");
-        }
-        sql.push_str("i.sort_ts IS NULL, i.sort_ts DESC, i.id DESC");
-
-        let mut stmt = self.conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
-        let rows = stmt.query_map(params.as_slice(), |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, bool>(2)?,
-                r.get::<_, Option<String>>(3)?,
-            ))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (id, meta_json, edited, snippet) = row?;
-            let meta: ItemMeta =
-                serde_json::from_str(&meta_json).with_context(|| format!("index row for {id}"))?;
-            out.push(ItemSummary {
-                id,
-                meta,
-                edited_externally: edited,
-                snippet: snippet.filter(|s| !s.trim().is_empty()),
-            });
-        }
-        Ok(out)
+        self.with_conn(|conn| search_conn(conn, query, filters))
     }
 }
 
-/// Drop the index and rebuild it from the archive folder. Returns the number
-/// of items indexed.
-pub fn rebuild_index(archive: &Path, db_path: &Path) -> Result<usize> {
-    let conn = create_fresh(db_path, archive)?;
-    let mut index = Index {
-        conn,
-        archive: archive.to_path_buf(),
+fn sync_conn(conn: &mut Connection, archive: &Path) -> Result<usize> {
+    let on_disk = scan_item_dirs(archive);
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut known: HashMap<String, String> = {
+        let mut stmt = tx.prepare("SELECT id, fingerprint FROM items")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
     };
-    index.sync()
+    let mut count = 0;
+    for (id, dir) in &on_disk {
+        let fp = fingerprint(dir);
+        if known.remove(id).as_deref() == Some(fp.as_str()) {
+            count += 1;
+            continue;
+        }
+        match index_at(&tx, id, dir, &fp) {
+            Ok(()) => count += 1,
+            Err(e) => {
+                eprintln!("archive index: skipping broken item {id}: {e:#}");
+                delete_rows(&tx, id)?;
+            }
+        }
+    }
+    for gone in known.keys() {
+        delete_rows(&tx, gone)?;
+    }
+    tx.commit()?;
+    Ok(count)
+}
+
+fn search_conn(
+    conn: &Connection,
+    query: &str,
+    filters: &SearchFilters,
+) -> Result<Vec<ItemSummary>> {
+    let fts = fts_query(query);
+    let mut sql = String::from("SELECT i.id, i.meta_json, i.edited, ");
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(q) = &fts {
+        sql.push_str(
+            "snippet(items_fts, 1, '**', '**', '…', 16) \
+             FROM items_fts JOIN items i ON i.rowid = items_fts.rowid \
+             WHERE items_fts MATCH ?",
+        );
+        args.push(Box::new(q.clone()));
+    } else {
+        sql.push_str("NULL FROM items i WHERE 1");
+    }
+    if let Some(t) = filters.item_type {
+        sql.push_str(" AND i.item_type = ?");
+        args.push(Box::new(t.as_str()));
+    }
+    if let Some(tag) = nonempty(&filters.tag) {
+        sql.push_str(
+            " AND EXISTS (SELECT 1 FROM item_tags t WHERE t.id = i.id AND t.tag = ? COLLATE NOCASE)",
+        );
+        args.push(Box::new(tag));
+    }
+    if let Some(cat) = nonempty(&filters.category) {
+        sql.push_str(
+            " AND EXISTS (SELECT 1 FROM item_categories c WHERE c.id = i.id \
+             AND c.category = ? COLLATE NOCASE)",
+        );
+        args.push(Box::new(cat));
+    }
+    if let Some(p) = nonempty(&filters.participant) {
+        sql.push_str(
+            " AND EXISTS (SELECT 1 FROM item_participants p WHERE p.id = i.id \
+             AND (p.name = ? COLLATE NOCASE OR p.email = ? COLLATE NOCASE))",
+        );
+        args.push(Box::new(p.clone()));
+        args.push(Box::new(p));
+    }
+    if let Some(from) = day_bound(&filters.date_from)? {
+        sql.push_str(" AND i.day >= ?");
+        args.push(Box::new(from));
+    }
+    if let Some(to) = day_bound(&filters.date_to)? {
+        sql.push_str(" AND i.day <= ?");
+        args.push(Box::new(to));
+    }
+    if fts.is_some() {
+        sql.push_str(" ORDER BY bm25(items_fts, 10.0, 1.0, 5.0, 5.0, 5.0), ");
+    } else {
+        sql.push_str(" ORDER BY ");
+    }
+    sql.push_str("i.sort_ts IS NULL, i.sort_ts DESC, i.id DESC");
+
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let rows = stmt.query_map(params.as_slice(), |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, bool>(2)?,
+            r.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, meta_json, edited, snippet) = row?;
+        let meta: ItemMeta =
+            serde_json::from_str(&meta_json).with_context(|| format!("index row for {id}"))?;
+        out.push(ItemSummary {
+            id,
+            meta,
+            edited_externally: edited,
+            snippet: snippet.filter(|s| !s.trim().is_empty()),
+        });
+    }
+    Ok(out)
+}
+
+/// Empty the index and rebuild it from the archive folder. Returns the
+/// number of items indexed. Runs under the shared lock, so concurrent
+/// searches simply wait for it instead of failing.
+pub fn rebuild_index(archive: &Path, db_path: &Path) -> Result<usize> {
+    let index = Index::handle(archive, db_path);
+    index.with_slot(|slot| {
+        slot.reset(archive, db_path)?;
+        sync_conn(slot.ready(archive, db_path)?, archive)
+    })
 }
 
 /// Run `f` on a synced index; if SQLite reports the file itself is broken
@@ -752,6 +924,71 @@ mod tests {
         std::fs::create_dir_all(&broken).unwrap();
         std::fs::write(broken.join("transcript.md"), "---\ntitle: [oops\n---\n").unwrap();
         assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+    }
+
+    #[test]
+    fn parallel_searches_updates_and_rebuilds_never_error() {
+        let f = fixture();
+        let search = || {
+            with_index(&f.archive, &f.db, |i| {
+                i.search("release", &Default::default())
+            })
+        };
+        std::thread::scope(|s| {
+            // Searches: each one syncs first, so they write too.
+            for _ in 0..6 {
+                s.spawn(|| {
+                    for _ in 0..20 {
+                        search().unwrap();
+                    }
+                });
+            }
+            // Rebuilds under them (on Windows this used to fail on
+            // remove_file, then with "table meta already exists").
+            s.spawn(|| {
+                for _ in 0..10 {
+                    assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+                }
+            });
+            // App edits + per-item reindex, which change fingerprints and
+            // make the concurrent syncs rewrite rows.
+            s.spawn(|| {
+                for n in 0..15 {
+                    let mut meta = crate::archive::store::read_item(&f.archive, &f.note)
+                        .unwrap()
+                        .meta;
+                    meta.tags = vec!["Release".into(), format!("giro{n}")];
+                    update_meta(&f.archive, &f.note, &meta).unwrap();
+                    Index::open(&f.archive, &f.db)
+                        .unwrap()
+                        .index_item(&f.note)
+                        .unwrap();
+                }
+            });
+        });
+        let hits = with_index(&f.archive, &f.db, |i| {
+            i.search(
+                "",
+                &SearchFilters {
+                    tag: Some("giro14".into()),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        assert_eq!(ids(hits), vec![f.note.clone()]);
+    }
+
+    #[test]
+    fn rebuild_empties_in_place_under_an_open_handle() {
+        let f = fixture();
+        let idx = Index::open(&f.archive, &f.db).unwrap();
+        assert!(idx.search("", &Default::default()).unwrap().is_empty());
+        // A rebuild while a handle is open neither fails nor strands it.
+        assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+        assert_eq!(idx.search("", &Default::default()).unwrap().len(), 3);
+        assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+        assert_eq!(idx.search("release", &Default::default()).unwrap().len(), 3);
     }
 
     #[test]
