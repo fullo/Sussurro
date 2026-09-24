@@ -156,9 +156,10 @@ version as your app.
   extension's card.
 - **Firefox — temporary add-on**: open `about:debugging#/runtime/this-firefox`,
   click **Load Temporary Add-on…** and pick the zip. Firefox removes a
-  temporary add-on when it quits, so load it again after a restart. If a
-  meeting page is not picked up, allow the site under the add-on's
-  **Permissions** tab in `about:addons`.
+  temporary add-on when it quits, so load it again after a restart.
+
+In either browser, if the extension has no access to a meeting site its
+panel offers **Allow access**.
 
 Building it from source: [`extension/README.md`](extension/README.md).
 
