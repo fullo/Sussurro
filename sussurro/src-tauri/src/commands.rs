@@ -846,6 +846,23 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| e.to_string())?
 }
 
+/// Whether the subtitles setting is *Always* (P7, #133).
+fn subtitles_always(state: &AppState) -> bool {
+    state.settings.lock().unwrap().subtitles == crate::settings::SubtitlesMode::Always
+}
+
+/// With the *Always* subtitles setting, bring the item's `transcript.srt`
+/// up to date after its transcript was saved. The save already succeeded:
+/// a failure here is only logged.
+fn refresh_subtitles_if(always: bool, root: &Path, id: &str) {
+    if !always {
+        return;
+    }
+    if let Err(e) = archive::export::refresh_subtitles(root, id) {
+        eprintln!("archive: transcript.srt of {id} not updated ({e:#})");
+    }
+}
+
 /// Keep the index in step after the app changed an item. The files are
 /// already written, so an index failure is only logged: the next search
 /// re-syncs (or rebuilds) from the folder anyway.
@@ -901,9 +918,12 @@ pub async fn archive_update_meta(
     meta: ItemMeta,
 ) -> Result<Item, String> {
     let (dir, db) = archive_paths(&state)?;
+    let always = subtitles_always(&state);
     blocking(move || {
         let item = archive::update_meta(&dir, &id, &meta)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
+        // Speaker labels and the item type shape the subtitles too.
+        refresh_subtitles_if(always, &dir, &id);
         Ok(item)
     })
     .await
@@ -940,12 +960,14 @@ async fn edit_segment_command(
 ) -> Result<Item, String> {
     let (dir, db) = archive_paths(state)?;
     let journal = crate::engine::session::journal_path(state);
+    let always = subtitles_always(state);
     blocking(move || {
         // A live item can't be line-edited (#158): the store refuses the
         // `recording` marker, this a session that still owns the item.
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         let item = archive::edit_segment(&dir, &id, segment_id, edit)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
+        refresh_subtitles_if(always, &dir, &id);
         Ok(item)
     })
     .await
@@ -1002,6 +1024,56 @@ pub fn archive_reveal(
 pub async fn archive_rebuild_index(state: State<'_, AppState>) -> Result<usize, String> {
     let (dir, db) = archive_paths(&state)?;
     blocking(move || archive::rebuild_index(&dir, &db)).await
+}
+
+/// Export an item to a file the user picked in the save dialog: `.md`,
+/// `.txt`, `.srt` or `.vtt` (#133; subtitles refused for notes, P10). The
+/// format's extension is added when the path lacks it. Returns the path
+/// written.
+#[tauri::command]
+pub async fn archive_export(
+    state: State<'_, AppState>,
+    id: String,
+    format: archive::export::ExportFormat,
+    path: String,
+) -> Result<String, String> {
+    let (dir, _) = archive_paths(&state)?;
+    if path.trim().is_empty() {
+        return Err("no file chosen".to_string());
+    }
+    blocking(move || {
+        let written = archive::export::export_to_file(&dir, &id, format, Path::new(&path))?;
+        Ok(written.display().to_string())
+    })
+    .await
+}
+
+/// Whether the item can have subtitles and where its `transcript.srt`
+/// stands (missing, the app's, edited outside).
+#[tauri::command]
+pub async fn archive_subtitles_status(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<archive::export::SubtitlesStatus, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || archive::export::subtitles_status(&dir, &id)).await
+}
+
+/// "Create .srt": write or update the item's `transcript.srt` (#133).
+/// Refused for notes (P10), live items and a `transcript.srt` edited
+/// outside the app.
+#[tauri::command]
+pub async fn archive_create_subtitles(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<archive::export::SubtitlesStatus, String> {
+    let (dir, _) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
+    blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        archive::export::create_subtitles(&dir, &id)
+    })
+    .await
 }
 
 // ---- Recipes (0.8, #120): prompts that write companion documents ----
