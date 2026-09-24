@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { AboutDialog } from "../components/AboutDialog";
 import type { Ctl } from "../hooks/useAppController";
 import { useEngineRuns } from "../hooks/useEngineRuns";
@@ -113,10 +114,25 @@ export function Shell({ ctl }: { ctl: Ctl }) {
     if (micStatus === "error" || fileStatus === "error" || linkStatus === "error") refreshLibrary();
   }, [micStatus, fileStatus, linkStatus, refreshLibrary]);
 
-  const openItem = (id: string) => {
-    setSelectedId(id);
-    setScreen("library");
-  };
+  const openItem = useCallback(
+    (id: string) => {
+      setSelectedId(id);
+      setScreen("library");
+    },
+    [setScreen],
+  );
+
+  // "Open in Sussurro" from the browser extension (#126,
+  // `POST /items/{id}/open`): the app comes to the front on that item.
+  useEffect(() => {
+    const unlisten = listen<string>("open-item", (e) => {
+      refreshLibrary();
+      openItem(e.payload);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [openItem, refreshLibrary]);
 
   const startRun = (kind: RunKind) => {
     runDefaults.current[kind] = { tags: defaults.tags.slice(), categories: defaults.categories.slice() };

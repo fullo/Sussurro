@@ -127,11 +127,15 @@ export interface Settings {
   archive_dir: string;
   /** Workspace preview (#114): the new shell instead of the classic window. */
   ui_v2: boolean;
-  /** 0.9 meeting preview (E12): speaker labels and the speaker panel. */
-  meetings_enabled?: boolean;
   /** Subtitles setting (P7, #133): `transcript.srt` only when asked, or on
    *  every save. Meetings and transcriptions only (P10). */
   subtitles: SubtitlesMode;
+  /** 0.9 meetings (#126, E12): the browser-extension routes of the local
+   *  API, speaker labels and the speaker panel (#130). Off until 0.9 ships. */
+  meetings_enabled: boolean;
+  /** Browser-extension pairing token (#126); set only by the backend
+   *  (`extension_token_get` / `extension_token_regenerate`). */
+  extension_token: string;
 }
 
 export type SubtitlesMode = "on_request" | "always";
@@ -327,6 +331,8 @@ export interface EngineError {
 export interface EngineStatus {
   active: number;
   mic_session: number | null;
+  /** The browser meeting being recorded (#126). */
+  meeting_session?: number | null;
   /** Running file transcriptions, oldest first (#158). */
   file_sessions: { session_id: number; label: string }[];
   /** Running link transcriptions, oldest first (#123). */

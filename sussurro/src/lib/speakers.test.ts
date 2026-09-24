@@ -28,7 +28,7 @@ describe("speakersEnabled", () => {
     const note = { meta: { type: "note" } } as Pick<Item, "meta">;
     const transcription = { meta: { type: "transcription" } } as Pick<Item, "meta">;
     expect(speakersEnabled({ meetings_enabled: false }, meeting)).toBe(false);
-    expect(speakersEnabled({}, meeting)).toBe(false);
+    
     expect(speakersEnabled({ meetings_enabled: true }, meeting)).toBe(true);
     expect(speakersEnabled({ meetings_enabled: true }, transcription)).toBe(true);
     expect(speakersEnabled({ meetings_enabled: true }, note)).toBe(false);

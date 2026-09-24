@@ -73,6 +73,18 @@ pub trait EngineSink: Send + Sync {
     fn emit(&self, event: &EngineEvent);
 }
 
+/// Sends every event to each sink in turn: a browser meeting (#126) reports
+/// to the app's UI and to the extension's WebSocket.
+pub struct TeeSink(pub Vec<Arc<dyn EngineSink>>);
+
+impl EngineSink for TeeSink {
+    fn emit(&self, event: &EngineEvent) {
+        for s in &self.0 {
+            s.emit(event);
+        }
+    }
+}
+
 // ---- events ----------------------------------------------------------------
 
 /// `engine-progress`: how far the engine is and how far behind the source.
@@ -558,7 +570,6 @@ fn capture(
     sink: &Arc<dyn EngineSink>,
     item: &mut checkpoint::LiveItem,
 ) -> Captured {
-    let channel = source.channel();
     let shared = Arc::new(Shared {
         queue: SegmentQueue::new(policy, spool_path),
         backlog: Mutex::new(Backlog::default()),
@@ -590,7 +601,6 @@ fn capture(
         speakers,
         &**sink,
         session_id,
-        channel,
         defer,
         voice_commands,
         cancel,
@@ -631,57 +641,120 @@ fn capture(
     }
 }
 
-/// Source → aligner → detector → segmenter → queue.
+/// One logical channel's segmentation state. A single-channel source has
+/// one lane; a meeting (#126) has one per channel (`mic`, `remote`), each
+/// with its own aligner, detector state and segmenter, so a pause on one
+/// side never cuts the other side's sentence.
+struct Lane {
+    channel: Channel,
+    aligner: FrameAligner,
+    detector: Box<dyn SpeechDetector>,
+    seg: Segmenter,
+}
+
+impl Lane {
+    /// Detector → segmenter → queue for one aligned block. Returns false
+    /// when the queue was aborted (the worker failed).
+    fn feed(&mut self, block: Vec<f32>, shared: &Shared) -> Result<bool> {
+        let probs = self.detector.probabilities(&block)?;
+        for (frame, p) in block.chunks(FRAME).zip(probs) {
+            for s in self.seg.push(frame, p) {
+                if !enqueue(shared, s)? {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// The lane for `channel`, created on its first frame: the run's detector
+/// goes to the first lane, later lanes get a [`SpeechDetector::fork`] (the
+/// energy detector if that fails). `start` is where the channel's first
+/// frame sits on the run's clock (a channel may join late).
+fn lane_for<'a>(
+    lanes: &'a mut Vec<Lane>,
+    spare: &mut Option<Box<dyn SpeechDetector>>,
+    params: SegmenterParams,
+    channel: Channel,
+    start: u64,
+) -> &'a mut Lane {
+    if let Some(i) = lanes.iter().position(|l| l.channel == channel) {
+        return &mut lanes[i];
+    }
+    let detector = match spare.take() {
+        Some(d) => d,
+        None => match lanes.first().map(|l| l.detector.fork()) {
+            Some(Ok(d)) => d,
+            Some(Err(e)) => {
+                eprintln!("engine: using the energy segmenter for a second channel ({e:#})");
+                Box::new(segmenter::EnergyDetector::default())
+            }
+            None => Box::new(segmenter::EnergyDetector::default()),
+        },
+    };
+    lanes.push(Lane {
+        channel,
+        aligner: FrameAligner::default(),
+        detector,
+        seg: Segmenter::for_channel(params, channel).starting_at(start),
+    });
+    lanes.last_mut().expect("just pushed")
+}
+
+/// Source → per-channel aligner → detector → segmenter → queue. Frames of
+/// one channel must be contiguous on the run's clock (a source fills gaps
+/// with silence); the first frame of a channel may start after 0.
 fn ingest(
     mut source: Box<dyn Source>,
-    mut detector: Box<dyn SpeechDetector>,
+    detector: Box<dyn SpeechDetector>,
     params: SegmenterParams,
     shared: &Shared,
     cancel: &AtomicBool,
     sink: &dyn EngineSink,
     session_id: u64,
 ) -> Result<()> {
-    let mut seg = Segmenter::new(params);
-    let mut aligner = FrameAligner::default();
+    let mut spare = Some(detector);
+    let mut lanes: Vec<Lane> = Vec::new();
     let mut last_progress = Instant::now();
-
-    // Returns false when the queue was aborted (the worker failed).
-    let mut feed = |block: Vec<f32>, seg: &mut Segmenter| -> Result<bool> {
-        let probs = detector.probabilities(&block)?;
-        for (frame, p) in block.chunks(FRAME).zip(probs) {
-            for s in seg.push(frame, p) {
-                if !enqueue(shared, s)? {
-                    return Ok(false);
-                }
-            }
-        }
-        shared.backlog.lock().unwrap().open_start = seg.open_start();
-        Ok(true)
+    let sync_open = |lanes: &[Lane]| {
+        shared.backlog.lock().unwrap().open_start =
+            lanes.iter().filter_map(|l| l.seg.open_start()).min();
     };
 
     while let Some(frame) = source.next_frame()? {
         if cancel.load(Ordering::Relaxed) {
             anyhow::bail!("cancelled");
         }
-        shared.backlog.lock().unwrap().ingested += frame.samples.len() as u64;
-        aligner.push(&frame.samples);
-        while let Some(block) = aligner.take(VAD_BATCH_FRAMES) {
-            if !feed(block, &mut seg)? {
+        {
+            // The run's clock: the furthest any channel has got.
+            let mut b = shared.backlog.lock().unwrap();
+            b.ingested = b.ingested.max(frame.start + frame.samples.len() as u64);
+        }
+        let lane = lane_for(&mut lanes, &mut spare, params, frame.channel, frame.start);
+        lane.aligner.push(&frame.samples);
+        while let Some(block) = lane.aligner.take(VAD_BATCH_FRAMES) {
+            if !lane.feed(block, shared)? {
                 return Ok(());
             }
         }
+        sync_open(&lanes);
         if last_progress.elapsed() >= PROGRESS_EVERY {
             last_progress = Instant::now();
             sink.emit(&shared.progress(session_id));
         }
     }
-    if let Some(rest) = aligner.take_rest() {
-        if !feed(rest, &mut seg)? {
-            return Ok(());
+    for lane in &mut lanes {
+        if let Some(rest) = lane.aligner.take_rest() {
+            if !lane.feed(rest, shared)? {
+                return Ok(());
+            }
         }
     }
-    if let Some(s) = seg.finish() {
-        enqueue(shared, s)?;
+    for lane in &mut lanes {
+        if let Some(s) = lane.seg.finish() {
+            enqueue(shared, s)?;
+        }
     }
     shared.backlog.lock().unwrap().open_start = None;
     Ok(())
@@ -694,7 +767,7 @@ fn enqueue(shared: &Shared, s: SegmentAudio) -> Result<bool> {
 }
 
 /// Queue → STT → timings → chunked cleanup → checkpoint into `item` →
-/// events. Returns the language the engine detected, if any.
+/// events. Each segment keeps the channel it was cut from. Returns the language the engine detected, if any.
 #[allow(clippy::too_many_arguments)]
 fn work(
     shared: &Shared,
@@ -703,7 +776,6 @@ fn work(
     mut speakers: Option<&mut crate::speakers::Tracker>,
     sink: &dyn EngineSink,
     session_id: u64,
-    channel: Channel,
     defer: bool,
     voice_commands: bool,
     cancel: &AtomicBool,
@@ -722,6 +794,7 @@ fn work(
             b.oldest_queued = shared.queue.oldest_start();
         }
         let id = item.segments().len() as u32;
+        let channel = audio.channel;
         let built = match stt.transcribe(&audio.samples) {
             Ok(transcript) => {
                 transcribed_any = true;
