@@ -659,6 +659,19 @@ fn edit_segment_with(
         true,
         before_commit,
     ) {
+        // Undo only if the markdown was not replaced (#158): when the
+        // replace went through and only recording its hash failed, the
+        // edit is in transcript.md, and rolling segments.json back would
+        // leave the two telling different stories.
+        let replaced = std::fs::read(&path)
+            .map(|now| now == doc.as_bytes())
+            .unwrap_or(false);
+        if replaced {
+            return Err(e.context(
+                "the line was saved, but its state could not be recorded — the item \
+                 now counts as edited outside Sussurro",
+            ));
+        }
         if let Err(undo) = write_segments(&dir, &original) {
             return Err(e.context(format!("segments.json could not be restored ({undo:#})")));
         }
@@ -1050,6 +1063,36 @@ mod tests {
         assert_eq!(std::fs::read(&seg_path).unwrap(), before);
         assert!(temp_leftovers(&archive.join(&id)).is_empty());
         assert!(read_item(archive, &id).unwrap().edited_externally);
+    }
+
+    /// #158 finding 5: when `transcript.md` was replaced but recording its
+    /// hash in `state.json` failed, the line edit is in the markdown — so
+    /// `segments.json` must keep it too, not be rolled back.
+    #[test]
+    fn a_failed_state_write_after_the_replace_keeps_segments_in_step() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = create_item(archive, &meta("Stato", DATE), &segs(&["Uno.", "Due."])).unwrap();
+        let dir = archive.join(&id);
+        let state = dir.join(META_DIR).join(STATE_FILE);
+        let err = edit_segment_with(
+            archive,
+            &id,
+            1,
+            SegmentEdit::Text("Due, corretto.".into()),
+            // state.json can't be replaced any more (a folder in its place).
+            &|_| {
+                std::fs::remove_file(&state).unwrap();
+                std::fs::create_dir_all(state.join("blocker")).unwrap();
+            },
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("the line was saved"), "{err:#}");
+        let markdown = std::fs::read_to_string(dir.join(TRANSCRIPT_FILE)).unwrap();
+        assert!(markdown.contains("Due, corretto."), "{markdown}");
+        let saved = read_segments(&dir).unwrap();
+        assert_eq!(saved.segments[1].text, "Due, corretto.", "in step with the markdown");
+        assert!(saved.segments[1].edited);
     }
 
     #[test]
