@@ -86,6 +86,13 @@ pub fn run() {
                 stream: Mutex::new(state::StreamState::default()),
                 engine: Default::default(),
             });
+            // Long-form sessions the last run never finished (crash, forced
+            // quit): keep their items as "interrupted" (#153). Off the main
+            // thread; a session started meanwhile waits on the journal lock.
+            {
+                let handle = handle.clone();
+                std::thread::spawn(move || engine::session::recover_after_crash(&handle));
+            }
             {
                 let s = app.state::<state::AppState>().settings.lock().unwrap().clone();
                 if s.api_enabled {

@@ -193,6 +193,45 @@ fn load_detector(models_dir: &Path) -> Box<dyn SpeechDetector> {
     }
 }
 
+/// A file of the engine's in the app data dir (next to the dictation
+/// history): mic spools and the session journal.
+fn app_data_file(state: &AppState, name: &str) -> std::path::PathBuf {
+    state.paths.history_file.with_file_name(name)
+}
+
+/// At app start, before the user can begin a session: items of sessions
+/// the previous run never finished become `interrupted` (and are indexed),
+/// stale mic spools are removed (#153). Touches the archive folder only
+/// when the journal names an item, so a normal start never does.
+pub fn recover_after_crash(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let settings = state.settings.lock().unwrap().clone();
+    let archive = crate::state::resolve_archive_dir(&state.paths, &settings).ok();
+    let journal = app_data_file(&state, super::checkpoint::JOURNAL_FILE);
+    let spool_dir = journal.parent().map(Path::to_path_buf).unwrap_or_default();
+    let r = super::checkpoint::recover(
+        &journal,
+        archive.as_deref(),
+        Some(&state.paths.archive_index),
+        &spool_dir,
+    );
+    if !r.interrupted.is_empty() || r.spools_removed > 0 {
+        eprintln!(
+            "engine: recovered {} interrupted session item(s), removed {} stale spool(s)",
+            r.interrupted.len(),
+            r.spools_removed
+        );
+    }
+}
+
+/// Fail a start before any audio is captured when the archive folder
+/// can't be written (the run would otherwise lose the recording).
+fn ensure_archive_writable(state: &AppState) -> Result<()> {
+    let settings = state.settings.lock().unwrap().clone();
+    let archive = crate::state::resolve_archive_dir(&state.paths, &settings)?;
+    crate::archive::live::ensure_writable(&archive)
+}
+
 struct Request {
     id: u64,
     cancel: Arc<AtomicBool>,
@@ -219,17 +258,24 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
             policy: req.policy,
             // App data dir (next to the dictation history), not the shared
             // temp dir: it holds the user's audio while the backlog lasts.
-            spool_path: state.paths.history_file.with_file_name(format!(
-                "engine-spool-{}-{}.f32",
-                std::process::id(),
-                req.id
-            )),
+            // The `<prefix><pid>-` part lets the next start tell a dead
+            // process's spool from a live one (see `checkpoint`).
+            spool_path: app_data_file(
+                &state,
+                &format!(
+                    "{}{}-{}.f32",
+                    super::checkpoint::SPOOL_PREFIX,
+                    std::process::id(),
+                    req.id
+                ),
+            ),
             defer: req.defer,
             cancel: req.cancel,
             // Spoken "new line" etc. only make sense in the user's own notes.
             voice_commands: settings.voice_commands && req.item_type == ItemType::Note,
             archive_dir,
             index_db: Some(state.paths.archive_index.clone()),
+            journal: Some(app_data_file(&state, super::checkpoint::JOURNAL_FILE)),
             meta: ItemMeta {
                 item_type: req.item_type,
                 title: req.title,
@@ -247,6 +293,7 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
             sink.emit(&EngineEvent::Error(super::ErrorPayload {
                 session_id: req.id,
                 error: format!("{e:#}"),
+                item_id: None,
             }));
             return Err(e);
         }
@@ -264,6 +311,7 @@ pub fn start_mic(app: &AppHandle, item_type: ItemType, title: String, defer: boo
     if mic.is_some() {
         anyhow::bail!("a microphone session is already running");
     }
+    ensure_archive_writable(&state)?;
     let device = state.settings.lock().unwrap().input_device.clone();
     let stop = Arc::new(AtomicBool::new(false));
     let source = crate::sources::mic::MicSource::start(&device, stop.clone())
@@ -305,8 +353,9 @@ pub fn transcribe_file(
     item_type: ItemType,
     title: String,
 ) -> Result<RunResult> {
-    let source = crate::sources::file::FileSource::open(path)?;
     let state = app.state::<AppState>();
+    ensure_archive_writable(&state)?;
+    let source = crate::sources::file::FileSource::open(path)?;
     let (id, cancel) = state.engine.begin();
     let _guard = SessionGuard {
         app: app.clone(),
