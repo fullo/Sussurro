@@ -16,7 +16,7 @@ pub fn set_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     mut settings: Settings,
-) -> Result<(), String> {
+) -> Result<Settings, String> {
     // Valid LLM profiles and a cleanup selection that names one (#119).
     settings.normalize();
     // The model name flows into models_dir.join(name) for download and load —
@@ -32,6 +32,11 @@ pub fn set_settings(
     } else if !settings.autostart && currently_enabled {
         autolaunch.disable().map_err(|e| e.to_string())?;
     }
+    // Profile API keys go to the OS credential store (#159) — written when
+    // new or changed, deleted when cleared or when their profile is. Where
+    // no store works, a key stays in settings.json (the editor warns).
+    let prev = state.settings.lock().unwrap().clone();
+    crate::secrets::sync_keys(&mut settings, &prev, &crate::secrets::OsStore);
     settings
         .save(&state.paths.settings_file)
         .map_err(|e| e.to_string())?;
@@ -42,11 +47,23 @@ pub fn set_settings(
         (current.ui_v2 != settings.ui_v2).then_some(settings.ui_v2)
     };
     // Main thread: must never wait for the transcriber (#154).
+    // The UI learns where each key ended up (keychain, or the file fallback).
+    let saved = settings.clone();
     crate::pipeline::swap_settings(&state, settings);
     if let Some(on) = workspace {
         crate::apply_main_window_layout(&app, on);
     }
-    Ok(())
+    Ok(saved)
+}
+
+/// Whether a profile API key saved now goes to the OS credential store
+/// (#159); the profile editor warns when it would land in settings.json.
+#[tauri::command]
+pub async fn credential_store_status() -> Result<crate::secrets::StoreStatus, String> {
+    // May block on D-Bus (Linux): off the main thread.
+    tauri::async_runtime::spawn_blocking(|| crate::secrets::status(&crate::secrets::OsStore))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Drive dictation from the in-app Dictate button: mirrors the global hotkey
@@ -686,15 +703,17 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
             settings.hotkey,
             if settings.push_to_talk { "push-to-talk" } else { "toggle" }
         );
+        // Never the key itself (#159): only where it is kept.
         let _ = writeln!(
             r,
-            "Cleanup: {:?} · profile \"{}\" ({:?}, {}) · {} @ {} (running: {llm_running}, model present: {llm_has_model}) · {} profile(s)",
+            "Cleanup: {:?} · profile \"{}\" ({:?}, {}) · {} @ {} (running: {llm_running}, model present: {llm_has_model}) · API key: {} · {} profile(s)",
             settings.cleanup_level,
             profile.name,
             profile.api,
             if profile.external { "external" } else { "local" },
             profile.model,
-            profile.base_url,
+            crate::secrets::redact_url(&profile.base_url),
+            crate::secrets::key_summary(&profile),
             settings.llm_profiles.len()
         );
         let _ = writeln!(
