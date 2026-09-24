@@ -696,7 +696,21 @@ const BUILTIN_RECIPES: Recipe[] = [
   { id: "summary", name: "Summary", prompt: "Summarise the transcript in markdown: a short paragraph with the gist, then the key points as a bullet list.", target: "companion_document", builtin: true },
   { id: "action-items", name: "Action items", prompt: "List every action item in the transcript as a markdown task list (`- [ ] …`), with owner and deadline when said.", target: "companion_document", builtin: true },
   { id: "decisions", name: "Decisions", prompt: "List the decisions taken in the transcript as a markdown bullet list, each with its reason.", target: "companion_document", builtin: true },
+  // #143: only where the transcript names its speakers.
+  { id: "meeting-minutes", name: "Meeting minutes", prompt: "Write the minutes of this meeting: Attendees, Agenda, Discussion, Decisions (who decided), Action items as a table Action | Owner | Due.", target: "companion_document", builtin: true, speakers_only: true },
+  { id: "who-said-what", name: "Who said what", prompt: "For each speaker, a ## heading with their name, then what they said, with timestamps.", target: "companion_document", builtin: true, speakers_only: true },
 ];
+
+/** Speaker labels the item's lines carry (#143), in order. */
+function mockSpeakers(item: Stored): string[] {
+  if (item.meta.type === "note") return [];
+  const out: string[] = [];
+  for (const seg of item.segments) {
+    const label = (item.speakers ?? []).find((x) => x.id === seg.speaker_id)?.label.trim();
+    if (label && seg.text.trim() && !out.includes(label)) out.push(label);
+  }
+  return out;
+}
 
 const allRecipes = (): Recipe[] => [...BUILTIN_RECIPES, ...settings.recipes];
 
@@ -784,8 +798,8 @@ function hostOf(p: LlmProfile): string {
 const consents: Record<string, { key: string; at: number }> = {};
 let nextConsent = 1;
 
-function consentKey(id: string, r: Recipe, question: string | null, p: LlmProfile): string {
-  return [id, r.id, question ?? "", p.id, hostOf(p), p.model].join("\u0000");
+function consentKey(id: string, r: Recipe, question: string | null, p: LlmProfile, emails = false): string {
+  return [id, r.id, question ?? "", p.id, hostOf(p), p.model, emails ? "emails" : "names"].join("\u0000");
 }
 
 function resolveRun(a: Args): { item: Stored; recipe: Recipe; question: string | null; profile: LlmProfile } {
@@ -803,7 +817,13 @@ function resolveRun(a: Args): { item: Stored; recipe: Recipe; question: string |
 function preview(a: Args) {
   const { item, recipe, question, profile } = resolveRun(a);
   const chars = item.segments.reduce((n, s) => n + s.text.length + 12, 0) + recipe.prompt.length;
+  const people = item.meta.participants.filter((x) => x.name.trim());
+  const emails = people.filter((x) => (x.email ?? "").trim()).length;
   return {
+    speakers: mockSpeakers(item),
+    participants: people.length,
+    emails_available: emails,
+    emails_sent: a.includeEmails ? emails : 0,
     item_id: item.id,
     item_title: item.meta.title,
     recipe_id: recipe.id,
@@ -824,7 +844,7 @@ function prepare(a: Args) {
   const { item, recipe, question, profile } = resolveRun(a);
   if (!profile.external) throw `“${profile.name}” is a local profile: its runs need no confirmation`;
   const token = `mock-consent-${nextConsent++}`;
-  consents[token] = { key: consentKey(item.id, recipe, question, profile), at: Date.now() };
+  consents[token] = { key: consentKey(item.id, recipe, question, profile, !!a.includeEmails), at: Date.now() };
   return { token, expires_in_secs: 120 };
 }
 
@@ -903,7 +923,7 @@ function saveAnswer(id: string, answerId: number): string {
 
 const QUESTION: Recipe = { id: "question", name: "Question", prompt: "", target: "answer", builtin: true };
 
-async function runRecipe(id: string, recipeId: string, profileId: string | null, question: string | null = null, consent: unknown = null) {
+async function runRecipe(id: string, recipeId: string, profileId: string | null, question: string | null = null, consent: unknown = null, includeEmails = false) {
   const item = find(id);
   if (!item) throw `no archive item '${id}'`;
   const r = question !== null ? QUESTION : allRecipes().find((x) => x.id === recipeId);
@@ -915,8 +935,10 @@ async function runRecipe(id: string, recipeId: string, profileId: string | null,
   // No profile named: a local one, never an external fallback (#122).
   const p = settings.llm_profiles.find((x) => x.id === profileId) ?? settings.llm_profiles.find((x) => !x.external);
   if (!p) throw "no local LLM profile — pick a profile for this run (an external one asks for a confirmation first)";
-  consume(consent, consentKey(id, r, question, p), p);
+  consume(consent, consentKey(id, r, question, p, includeEmails), p);
   if (item.recording) throw `'${id}' is still being recorded — run recipes when the session ends`;
+  if (r.speakers_only && !mockSpeakers(item).length)
+    throw `“${r.name}” needs a meeting or transcription whose transcript names its speakers — this one has none`;
   if (recipeRuns[id]) throw `“${recipeRuns[id].recipe.name}” is already running on this item — wait for it or cancel it`;
   if (p.external) externalSends[id] = [...new Set([...(externalSends[id] ?? []), hostOf(p)])];
   const run = { recipe: r, question, cancelled: false, step: null as { phase: string; done: number; total: number } | null };
@@ -1259,9 +1281,9 @@ function handle(cmd: string, a: Args): unknown {
       if (!find(String(a.id))) throw `no archive item '${a.id}'`;
       return (docs[String(a.id)] ?? []).map((d) => ({ ...d, meta: { ...d.meta } }));
     case "recipe_run":
-      return runRecipe(String(a.id), String(a.recipeId), (a.profileId as string | null) ?? null, null, a.consent);
+      return runRecipe(String(a.id), String(a.recipeId), (a.profileId as string | null) ?? null, null, a.consent, !!a.includeEmails);
     case "recipe_ask":
-      return runRecipe(String(a.id), "question", (a.profileId as string | null) ?? null, String(a.question ?? ""), a.consent);
+      return runRecipe(String(a.id), "question", (a.profileId as string | null) ?? null, String(a.question ?? ""), a.consent, !!a.includeEmails);
     case "external_run_preview":
       return preview(a);
     case "prepare_external_run":

@@ -1,0 +1,33 @@
+# Synthetic corpus (#143): English product planning call, three named
+# speakers and one unidentified voice; one participant without an email.
+# Invented people and addresses.
+type: meeting
+title: Q4 planning — mobile app
+date: 2026-09-22T15:00:00+01:00
+language: en
+participant: Anna Rossi <anna@example.com>
+participant: Ben Carter <ben.carter@example.com>
+participant: Chris Doyle
+speaker: meet:anna = Anna Rossi
+speaker: meet:ben = Ben Carter
+speaker: meet:chris = Chris Doyle
+speaker: voice:2 = Voice 2
+---
+00:00:02 meet:anna | Thanks for joining. The goal today is to agree on the Q4 scope for the mobile app and who owns what.
+00:00:11 meet:anna | We have three candidates: offline mode, the new onboarding, and push notifications.
+00:00:20 meet:ben | Offline mode is the one customers ask for most. Support logged forty tickets about it last month.
+00:00:31 meet:ben | But it's also the biggest. My estimate is six weeks for two engineers.
+00:00:40 meet:chris | Onboarding is much smaller, two weeks, and it should lift activation. Design is already done.
+00:00:49 voice:2 | Push notifications depend on the new backend, which won't be ready before December.
+00:00:58 voice:2 | So I'd leave them out of Q4 entirely.
+00:01:04 meet:anna | Agreed, push notifications are out of Q4. Let's do onboarding first and then offline mode.
+00:01:12 meet:ben | Fine by me, as long as offline mode starts by the first of November.
+00:01:19 meet:anna | Decision then: onboarding in October, offline mode from November first.
+00:01:26 meet:chris | I'll hand the onboarding designs over to engineering by Friday.
+00:01:33 meet:ben | I'll write the technical spec for offline mode by October fifteenth.
+00:01:40 voice:2 | I can check with the backend team whether December is still realistic for the notification service.
+00:01:48 meet:anna | Please do, and send a short note to the group when you know.
+00:01:54 meet:anna | I'll update the public roadmap once the spec is in.
+00:02:00 meet:chris | One open question: do we need a feature flag for the new onboarding, or do we ship it to everyone?
+00:02:08 meet:ben | Let's decide that next week with the data from the beta.
+00:02:14 meet:anna | Good. Thanks everyone.
