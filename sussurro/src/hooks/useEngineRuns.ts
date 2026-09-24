@@ -9,6 +9,7 @@ import {
 } from "../lib/engineRuns";
 import { baseName } from "../lib/format";
 import type {
+  CleanupLevel,
   EngineDone,
   EngineError,
   EngineProgress,
@@ -18,6 +19,10 @@ import type {
   EngineStatus,
   ItemType,
 } from "../lib/types";
+
+/** A run's language and cleanup level (#157); null = the dictation setting. */
+export type RunArgs = { language: string | null; cleanupLevel: CleanupLevel | null };
+const NO_OPTIONS: RunArgs = { language: null, cleanupLevel: null };
 
 /** The long-form engine's runs (one mic session, one file), fed by the
  *  engine-* events and routed by session id. Mount it once per window. */
@@ -50,10 +55,10 @@ export function useEngineRuns() {
     };
   }, []);
 
-  const startMic = useCallback(async (title: string, itemType: ItemType = "note") => {
+  const startMic = useCallback(async (title: string, itemType: ItemType = "note", options: RunArgs = NO_OPTIONS) => {
     setMicStarting(true);
     try {
-      const id = await invoke<number>("engine_start_mic", { itemType, title: title.trim() || null });
+      const id = await invoke<number>("engine_start_mic", { itemType, title: title.trim() || null, ...options });
       dispatch({ type: "started", kind: "mic", sessionId: id, label: title.trim(), now: Date.now() });
       return null;
     } catch (e) {
@@ -76,7 +81,7 @@ export function useEngineRuns() {
 
   /** Transcribe a file; resolves with the item (or null on error/cancel). */
   const startFile = useCallback(
-    async (path: string, itemType: ItemType, title = ""): Promise<EngineResult | null> => {
+    async (path: string, itemType: ItemType, title = "", options: RunArgs = NO_OPTIONS): Promise<EngineResult | null> => {
       // transcribe_file blocks until the end (its result carries the session
       // id only then), so the run claims the id of its first event,
       // engine-started (#153). Were the id returned up front, pass it here.
@@ -86,6 +91,7 @@ export function useEngineRuns() {
           path,
           itemType,
           title: title.trim() || null,
+          ...options,
         });
         dispatch({ type: "resolved", kind: "file", result });
         return result;

@@ -6,7 +6,7 @@ use super::queue::Policy;
 use super::segmenter::{EnergyDetector, SegmenterParams, SpeechDetector};
 use super::{Cleaner, EngineEvent, EngineSink, Job, RunResult, SegmentStt};
 use crate::archive::{ItemMeta, ItemType};
-use crate::settings::{Settings, SttEngine};
+use crate::settings::{CleanupLevel, Settings, SttEngine};
 use crate::sources::Source;
 use crate::state::AppState;
 use crate::stt::TimedTranscript;
@@ -113,35 +113,127 @@ pub fn engine_label(settings: &Settings) -> String {
     }
 }
 
-/// The dictation's transcriber, shared. Settings are re-read per segment so
-/// a model change mid-session reloads the same engine the dictation uses.
-struct AppStt {
-    app: AppHandle,
+/// Per-run choices made in *New* (#157): the language hint and the cleanup
+/// level for this session only. `None` (or an empty language) falls back to
+/// the dictation settings; the global settings are never modified.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RunOptions {
+    pub language: Option<String>,
+    pub cleanup_level: Option<CleanupLevel>,
 }
 
-impl SegmentStt for AppStt {
-    fn transcribe(&mut self, samples: &[f32]) -> Result<TimedTranscript> {
-        let state = self.app.state::<AppState>();
-        // A hotkey dictation recording or waiting for its final pass goes
-        // first; one pressed while this segment runs waits for it only
-        // (see `priority` for the bound). The model is (re)loaded for the
-        // settings current when the lock is taken.
-        let mut model = super::priority::acquire_yielding(&state.dictation, || {
-            crate::pipeline::lock_transcriber(&state)
-        })?;
-        let settings = state.settings.lock().unwrap().clone();
-        let prompt = crate::stt::dictionary_prompt(&settings.dictionary);
-        model.transcribe_timed(samples, prompt.as_deref(), &settings.language)
+impl RunOptions {
+    /// The settings a run uses: a copy of `global` with this run's
+    /// overrides. Pure — `global` is only read.
+    pub fn apply(&self, global: &Settings) -> Settings {
+        let mut s = global.clone();
+        if let Some(lang) = self
+            .language
+            .as_deref()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+        {
+            s.language = lang.to_string();
+        }
+        if let Some(level) = &self.cleanup_level {
+            s.cleanup_level = level.clone();
+        }
+        s
     }
 }
 
-struct AppCleaner {
-    settings: Settings,
+/// The run's STT: the language is fixed when the run starts (the value the
+/// frontmatter records); `inner` transcribes with that hint. In the app,
+/// `inner` shares the dictation's transcriber ([`app_transcriber`]); tests
+/// pass a fake.
+pub(crate) struct RunStt<T> {
+    pub language: String,
+    pub inner: T,
 }
 
-impl Cleaner for AppCleaner {
+impl<T> SegmentStt for RunStt<T>
+where
+    T: FnMut(&[f32], &str) -> Result<TimedTranscript> + Send,
+{
+    fn transcribe(&mut self, samples: &[f32]) -> Result<TimedTranscript> {
+        (self.inner)(samples, &self.language)
+    }
+}
+
+/// The run's chunked cleanup, with the run's settings (overrides applied)
+/// fixed when the run starts. In the app `clean` is
+/// [`crate::cleanup::ollama::cleanup_with_context`]; tests pass a fake.
+pub(crate) struct RunCleaner<C> {
+    pub settings: Settings,
+    pub clean: C,
+}
+
+impl<C> Cleaner for RunCleaner<C>
+where
+    C: Fn(&Settings, Option<&str>, &str) -> String + Send,
+{
     fn clean(&self, previous: Option<&str>, raw: &str) -> String {
-        crate::cleanup::ollama::cleanup_with_context(&self.settings, previous, raw)
+        (self.clean)(&self.settings, previous, raw)
+    }
+}
+
+/// Resolve what a run takes from the settings, once at its start: the run
+/// settings (`global` + `options`, see [`RunOptions::apply`]), the STT with
+/// their language and the cleaner with their level. `global` is only read.
+pub(crate) fn run_parts<T, C>(
+    global: &Settings,
+    options: &RunOptions,
+    transcribe: T,
+    clean: C,
+) -> (Settings, RunStt<T>, RunCleaner<C>) {
+    let settings = options.apply(global);
+    let stt = RunStt {
+        language: settings.language.clone(),
+        inner: transcribe,
+    };
+    let cleaner = RunCleaner {
+        settings: settings.clone(),
+        clean,
+    };
+    (settings, stt, cleaner)
+}
+
+/// The frontmatter a run starts with, from its run settings — so the
+/// recorded language is the one the run transcribes with. Pure.
+pub(crate) fn start_meta(
+    settings: &Settings,
+    item_type: ItemType,
+    title: String,
+    source_label: String,
+    date: String,
+) -> ItemMeta {
+    ItemMeta {
+        item_type,
+        title,
+        date,
+        source: source_label,
+        language: settings.language.clone(),
+        engine: engine_label(settings),
+        ..Default::default()
+    }
+}
+
+/// The dictation's transcriber, shared, as the `inner` of a [`RunStt`]. The
+/// model is (re)loaded for the settings current when the lock is taken, so
+/// a model change mid-session reloads the same engine the dictation uses;
+/// the dictionary is re-read per segment too. The language is the run's.
+fn app_transcriber(app: AppHandle) -> impl FnMut(&[f32], &str) -> Result<TimedTranscript> + Send {
+    move |samples, language| {
+        let state = app.state::<AppState>();
+        // A hotkey dictation recording or waiting for its final pass goes
+        // first; one pressed while this segment runs waits for it only
+        // (see `priority` for the bound).
+        let mut model = super::priority::acquire_yielding(&state.dictation, || {
+            crate::pipeline::lock_transcriber(&state)
+        })?;
+        let dictionary = state.settings.lock().unwrap().dictionary.clone();
+        let prompt = crate::stt::dictionary_prompt(&dictionary);
+        model.transcribe_timed(samples, prompt.as_deref(), language)
     }
 }
 
@@ -218,12 +310,21 @@ struct Request {
     item_type: ItemType,
     title: String,
     source_label: String,
+    options: RunOptions,
 }
 
 fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
     let sink: Arc<dyn EngineSink> = Arc::new(TauriSink { app: app.clone() });
     let state = app.state::<AppState>();
-    let settings = state.settings.lock().unwrap().clone();
+    let global = state.settings.lock().unwrap().clone();
+    // This run's settings: the dictation's plus the choices made in New
+    // (#157). The global settings are not modified.
+    let (settings, mut stt, cleaner) = run_parts(
+        &global,
+        &req.options,
+        app_transcriber(app.clone()),
+        crate::cleanup::ollama::cleanup_with_context,
+    );
     let prepared = (|| -> Result<Job> {
         let archive_dir = crate::state::resolve_archive_dir(&state.paths, &settings)?;
         let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
@@ -253,15 +354,13 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
             archive_dir,
             index_db: Some(state.paths.archive_index.clone()),
             journal: Some(app_data_file(&state, super::checkpoint::JOURNAL_FILE)),
-            meta: ItemMeta {
-                item_type: req.item_type,
-                title: req.title,
-                date: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
-                source: req.source_label,
-                language: settings.language.clone(),
-                engine: engine_label(&settings),
-                ..Default::default()
-            },
+            meta: start_meta(
+                &settings,
+                req.item_type,
+                req.title,
+                req.source_label,
+                chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+            ),
         })
     })();
     let job = match prepared {
@@ -275,14 +374,20 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
             return Err(e);
         }
     };
-    let mut stt = AppStt { app: app.clone() };
-    super::run(job, &mut stt, &AppCleaner { settings }, sink)
+    super::run(job, &mut stt, &cleaner, sink)
 }
 
 /// Start a long microphone session (separate from the hotkey). Returns the
 /// session id at once; the result arrives as `engine-done`/`engine-error`
-/// after [`Sessions::stop_mic`].
-pub fn start_mic(app: &AppHandle, item_type: ItemType, title: String, defer: bool) -> Result<u64> {
+/// after [`Sessions::stop_mic`]. `options`: this run's language and cleanup
+/// level (#157).
+pub fn start_mic(
+    app: &AppHandle,
+    item_type: ItemType,
+    title: String,
+    defer: bool,
+    options: RunOptions,
+) -> Result<u64> {
     let state = app.state::<AppState>();
     let mut mic = state.engine.mic.lock().unwrap();
     if mic.is_some() {
@@ -314,6 +419,7 @@ pub fn start_mic(app: &AppHandle, item_type: ItemType, title: String, defer: boo
             item_type,
             title,
             source_label: "mic".to_string(),
+            options,
         };
         if let Err(e) = run_request(&app, req) {
             eprintln!("mic session {id} failed: {e:#}");
@@ -324,11 +430,13 @@ pub fn start_mic(app: &AppHandle, item_type: ItemType, title: String, defer: boo
 
 /// Transcribe a file from its path, blocking until the item is written.
 /// Progress arrives as events; the session can be cancelled by id.
+/// `options`: this run's language and cleanup level (#157).
 pub fn transcribe_file(
     app: &AppHandle,
     path: &Path,
     item_type: ItemType,
     title: String,
+    options: RunOptions,
 ) -> Result<RunResult> {
     let state = app.state::<AppState>();
     ensure_archive_writable(&state)?;
@@ -358,6 +466,7 @@ pub fn transcribe_file(
             item_type,
             title,
             source_label: crate::sources::file::source_label(path),
+            options,
         },
     )
 }
@@ -400,6 +509,36 @@ mod tests {
         s.end(id);
         assert_eq!(s.mic_session(), None);
         assert!(!s.is_active());
+    }
+
+    #[test]
+    fn run_options_override_a_copy_and_fall_back_to_settings() {
+        let global = Settings {
+            language: "it".into(),
+            cleanup_level: CleanupLevel::Light,
+            ..Default::default()
+        };
+        let before = global.clone();
+        let o = RunOptions {
+            language: Some(" en ".into()),
+            cleanup_level: Some(CleanupLevel::None),
+        };
+        let s = o.apply(&global);
+        assert_eq!(
+            (s.language.as_str(), s.cleanup_level.clone()),
+            ("en", CleanupLevel::None)
+        );
+        assert_eq!(global, before);
+        // Unset or blank: the dictation settings.
+        assert_eq!(RunOptions::default().apply(&global), global);
+        let blank = RunOptions {
+            language: Some(String::new()),
+            cleanup_level: None,
+        };
+        assert_eq!(blank.apply(&global), global);
+        // The frontmatter records the run's language.
+        let meta = start_meta(&s, ItemType::Note, "t".into(), "mic".into(), "d".into());
+        assert_eq!(meta.language, "en");
     }
 
     #[test]
