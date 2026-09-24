@@ -33,7 +33,6 @@ import {
   nativeOptionLabel,
   osOf,
   saveSystemDevice,
-  systemTabVisible,
 } from "../lib/systemAudio";
 import {
   canTranscribeLink,
@@ -76,9 +75,11 @@ function initialTab(runs: EngineRuns["runs"]): Tab {
   return "mic";
 }
 
+const TABS: Tab[] = ["mic", "file", "link", "system"];
+
 /** New: every source becomes an item in the Library. Microphone and File
- *  (0.7), Link (0.8, #123), System audio + mic (0.10, #139 — behind the
- *  meetings preview, since it records other people). */
+ *  (0.7), Link (0.8, #123), System audio + mic (0.10, #139 — it records
+ *  other people, so its first use shows the recording notice, #136). */
 export function NewScreen({
   ctl,
   engine,
@@ -96,10 +97,6 @@ export function NewScreen({
 }) {
   const [tab, setTab] = useState<Tab>(() => initialTab(engine.runs));
   const options: RunArgs = { ...runArgs(ctl.settings, defaults), saveAudio: saveAudioChoice(ctl.settings, defaults) };
-  const showSystem = systemTabVisible(!!ctl.settings.meetings_enabled, isRunning(engine.runs.system));
-  const tabs: Tab[] = showSystem ? ["mic", "file", "link", "system"] : ["mic", "file", "link"];
-  // The preview was switched off while this tab was open.
-  const shown: Tab = tabs.includes(tab) ? tab : "mic";
 
   return (
     <div className="sh-screen">
@@ -109,15 +106,15 @@ export function NewScreen({
       </header>
       <div className="sh-scroll new-body">
         <div className="new-tabs" role="tablist" aria-label="Source">
-          {tabs.map((t) => (
+          {TABS.map((t) => (
             <button
               key={t}
               type="button"
               role="tab"
               id={`new-tab-${t}`}
-              aria-selected={shown === t}
+              aria-selected={tab === t}
               aria-controls={`new-panel-${t}`}
-              className={`new-tab${shown === t ? " active" : ""}`}
+              className={`new-tab${tab === t ? " active" : ""}`}
               onClick={() => setTab(t)}
             >
               {TAB_LABEL[t]}
@@ -128,15 +125,15 @@ export function NewScreen({
           ))}
         </div>
         <div className="new-grid">
-          <section id={`new-panel-${shown}`} role="tabpanel" aria-labelledby={`new-tab-${shown}`} className="new-source">
-            {shown === "mic" && (
+          <section id={`new-panel-${tab}`} role="tabpanel" aria-labelledby={`new-tab-${tab}`} className="new-source">
+            {tab === "mic" && (
               <MicPanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             )}
-            {shown === "file" && (
+            {tab === "file" && (
               <FilePanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             )}
-            {shown === "link" && <LinkPanel engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />}
-            {shown === "system" && (
+            {tab === "link" && <LinkPanel engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />}
+            {tab === "system" && (
               <SystemPanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             )}
           </section>
@@ -344,10 +341,10 @@ function MicPanel({
 }) {
   const run = engine.runs.mic;
   const [title, setTitle] = useState("");
-  /** 0.9 preview (#130): an in-room meeting, one mic for everyone —
-   *  saved as a Meeting with voices labelled "Voice 1, Voice 2…". */
+  /** #130: an in-room meeting, one mic for everyone — saved as a Meeting
+   *  with voices labelled "Voice 1, Voice 2…". */
   const [inRoom, setInRoom] = useState(false);
-  const meetingOn = !!ctl.settings.meetings_enabled && inRoom;
+  const meetingOn = inRoom;
   const { confirmNotice, dialog } = useRecordingNotice(ctl);
 
   if (!run) {
@@ -371,14 +368,12 @@ function MicPanel({
               spellCheck={false}
             />
           </label>
-          {ctl.settings.meetings_enabled && (
-            <label className="check-row">
-              <input type="checkbox" checked={inRoom} onChange={(e) => setInRoom(e.target.checked)} />
-              <span>
-                Meeting in the room <span className="sh-muted">— several people on this mic, labelled by voice (preview)</span>
-              </span>
-            </label>
-          )}
+          <label className="check-row">
+            <input type="checkbox" checked={inRoom} onChange={(e) => setInRoom(e.target.checked)} />
+            <span>
+              Meeting in the room <span className="sh-muted">— several people on this mic, labelled by voice</span>
+            </span>
+          </label>
           <div className="row-gap">
             {meetingOn ? (
               <span className="tb meeting" title="Several people on one microphone">Meeting</span>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { CollapsibleCard, Switch, Tip } from "../components/ui";
+import { CollapsibleCard, Tip } from "../components/ui";
 import { apiNotice } from "../lib/localApi";
 import { encodePairingCode, maskedPairingCode } from "../lib/pairingCode";
 import { needsMeetingNotice, withNoticeReset } from "../lib/meetingNotice";
@@ -13,9 +13,11 @@ import type { CardProps } from "./DictationCard";
 const RELEASES_URL = "https://github.com/fullo/Sussurro/releases";
 const EXTENSION_README_URL = "https://github.com/fullo/Sussurro/tree/main/extension#load-it-unpacked";
 
-/** Settings → Browser extension (#127, E6): enable meetings, and pair the
- *  extension by copying one code (`sussurro:<port>:<token>`) into its
- *  options page. The token is never shown: it only goes to the clipboard. */
+/** Settings → Browser extension (#127, E6): what the extension does, the
+ *  local API status, and pairing by copying one code
+ *  (`sussurro:<port>:<token>`) into its options page. The token is never
+ *  shown: it only goes to the clipboard. Meetings are always available
+ *  (#138): there is no switch, only pairing. */
 export function ExtensionCard({ ctl, collapsible }: CardProps) {
   const { settings, save, setBusy, flash } = ctl;
   const [status, setStatus] = useState<ListenState | null>(null);
@@ -60,23 +62,14 @@ export function ExtensionCard({ ctl, collapsible }: CardProps) {
   return (
     <CollapsibleCard
       storageKey="extensionOpen"
-      title={<>Browser extension <span className="via">meetings · preview</span></>}
+      title={<>Browser extension <span className="via">meetings</span></>}
       collapsible={collapsible}
     >
-      <div className="field">
-        <div className="field-label">
-          <span>
-            Meetings{" "}
-            <Tip text="The Sussurro browser extension records web meetings (Google Meet, Microsoft Teams, Zoom in the browser) and sends the audio to this app, which transcribes it into your Library. Nothing leaves this computer. While this is off, the extension's routes of the local API don't exist." />
-          </span>
-          <small>{settings.meetings_enabled ? "on — preview" : "let the browser extension record meetings"}</small>
-        </div>
-        <Switch
-          checked={settings.meetings_enabled}
-          onChange={(v) => save({ ...settings, meetings_enabled: v })}
-          label="Enable meetings from the browser extension"
-        />
-      </div>
+      <p className="card-hint">
+        The Sussurro browser extension records web meetings (Google Meet, Microsoft Teams, Zoom in the browser) and
+        sends the audio to this app, which transcribes it into your Library. Nothing leaves this computer. It needs the
+        local API below and this app's pairing code; recording starts only when you press Start in its side panel.
+      </p>
 
       <div className="field">
         <div className="field-label">

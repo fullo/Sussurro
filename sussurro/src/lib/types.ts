@@ -142,9 +142,6 @@ export interface Settings {
   /** Subtitles setting (P7, #133): `transcript.srt` only when asked, or on
    *  every save. Meetings and transcriptions only (P10). */
   subtitles: SubtitlesMode;
-  /** 0.9 meetings (#126, E12): the browser-extension routes of the local
-   *  API, speaker labels and the speaker panel (#130). Off until 0.9 ships. */
-  meetings_enabled: boolean;
   /** Browser-extension pairing token (#126); set only by the backend
    *  (`extension_token_get` / `extension_token_regenerate`). */
   extension_token: string;

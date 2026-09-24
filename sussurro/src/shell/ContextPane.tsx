@@ -70,8 +70,8 @@ export type ContextStatus = "idle" | "running" | "answer";
 
 const KIND_NOUN: Record<string, string> = { note: "note", meeting: "meeting", transcription: "transcription" };
 
-/** The document pane's context pane (plan §9): *Speakers* (#130, behind
- *  the 0.9 preview), *Ask* (#121) and *Export*. Below ~1000 px it is a
+/** The document pane's context pane (plan §9): *Speakers* (#130, not on
+ *  notes), *Ask* (#121) and *Export*. Below ~1000 px it is a
  *  drawer. */
 export function ContextPane({
   ctl,
@@ -189,9 +189,9 @@ export function ContextPane({
   const blocked = askBlocked(item, settings.llm_profiles);
   const busy = !!state.run;
   const noun = KIND_NOUN[item.meta.type] ?? "document";
-  const showSpeakers = speakersEnabled(settings, item);
+  const showSpeakers = speakersEnabled(item);
   // Meeting recipes only where the transcript names its speakers (#143).
-  const shown = recipesFor(recipes, settings, item);
+  const shown = recipesFor(recipes, item);
   const emailCount = participantEmails(item);
 
   const dropAnswer = () => {
