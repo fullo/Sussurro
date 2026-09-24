@@ -288,6 +288,8 @@ export interface RecipeProgress extends RecipeStep {
   item_id: string;
   recipe_id: string;
   recipe_name: string;
+  /** The question, for a free question from the Ask panel (#121). */
+  question?: string | null;
 }
 
 /** `recipe_status` entry: a run in flight. */
@@ -295,16 +297,24 @@ export interface RecipeRunStatus {
   item_id: string;
   recipe_id: string;
   recipe_name: string;
+  question?: string | null;
   progress: RecipeStep | null;
 }
 
-/** `recipe-finished` payload and `recipe_run` result. */
+/** `recipe-finished` payload and `recipe_run` / `recipe_ask` result. */
 export interface RecipeFinished {
   item_id: string;
   recipe_id: string;
   recipe_name: string;
   file: string | null;
   answer: string | null;
+  /** Handle for `recipe_save_answer` (the answer is kept in memory only). */
+  answer_id?: number | null;
+  question?: string | null;
+  /** Profile the run used (its name), model and external flag. */
+  profile?: string;
+  model?: string;
+  external?: boolean;
   error: string | null;
   cancelled: boolean;
 }
