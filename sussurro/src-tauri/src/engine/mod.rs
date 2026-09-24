@@ -113,9 +113,11 @@ pub struct DonePayload {
 }
 
 /// `engine-error`: the run failed or was cancelled. A cancelled run (or one
-/// that found no speech) leaves nothing behind; a run that failed after
-/// some segments were transcribed keeps them as an `interrupted` archive
-/// item, named by `item_id` (absent when nothing was kept).
+/// that found no speech) leaves nothing in the archive — what it had
+/// transcribed goes to the OS trash, an empty item is removed (#158); a run
+/// that failed after some segments were transcribed keeps them as an
+/// `interrupted` archive item, named by `item_id` (absent when nothing was
+/// kept).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ErrorPayload {
     pub session_id: u64,
@@ -212,7 +214,8 @@ pub struct Job {
     pub spool_path: PathBuf,
     /// "Transcribe at the end": hold every segment until the source ends.
     pub defer: bool,
-    /// Set to abort the run (nothing is written).
+    /// Set to abort the run (its item leaves the archive: to the OS trash
+    /// if anything was transcribed).
     pub cancel: Arc<AtomicBool>,
     /// Apply the deterministic spoken commands (new line…) before cleanup.
     pub voice_commands: bool,

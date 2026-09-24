@@ -699,16 +699,55 @@ pub fn delete_item_with(
 /// The OS trash. On macOS through `NSFileManager` rather than the crate's
 /// default Finder/AppleScript route, which would prompt for Automation
 /// permission.
+///
+/// In unit tests nothing reaches the developer's real trash: the folder is
+/// recorded in [`test_trash`] and removed, so tests can assert that a path
+/// went "to the trash" rather than being hard-deleted.
 pub fn move_to_trash(path: &Path) -> Result<()> {
-    #[allow(unused_mut)]
-    let mut ctx = trash::TrashContext::default();
-    #[cfg(target_os = "macos")]
+    #[cfg(test)]
     {
-        use trash::macos::{DeleteMethod, TrashContextExtMacos};
-        ctx.set_delete_method(DeleteMethod::NsFileManager);
+        test_trash::take(path)
     }
-    ctx.delete(path)
-        .with_context(|| format!("moving {} to the trash", path.display()))
+    #[cfg(not(test))]
+    {
+        #[allow(unused_mut)]
+        let mut ctx = trash::TrashContext::default();
+        #[cfg(target_os = "macos")]
+        {
+            use trash::macos::{DeleteMethod, TrashContextExtMacos};
+            ctx.set_delete_method(DeleteMethod::NsFileManager);
+        }
+        ctx.delete(path)
+            .with_context(|| format!("moving {} to the trash", path.display()))
+    }
+}
+
+/// The trash as unit tests see it (see [`move_to_trash`]).
+#[cfg(test)]
+pub(crate) mod test_trash {
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static TRASHED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    pub(crate) fn take(path: &Path) -> anyhow::Result<()> {
+        TRASHED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(path.to_path_buf());
+        std::fs::remove_dir_all(path)?;
+        Ok(())
+    }
+
+    /// Whether `path` was moved to the (test) trash. Tests run in parallel:
+    /// ask about paths under your own tempdir.
+    pub(crate) fn contains(path: &Path) -> bool {
+        TRASHED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|p| p == path)
+    }
 }
 
 #[cfg(test)]

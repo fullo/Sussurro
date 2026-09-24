@@ -227,13 +227,14 @@ impl LiveItem {
         }
     }
 
-    /// The user cancelled (or nothing was said): remove the item — unless
-    /// the user edited its transcript meanwhile, then it is kept as
+    /// The user cancelled (or nothing was said): drop the item — to the OS
+    /// trash if any segment has text, removed only when empty — unless the
+    /// user edited its transcript meanwhile, then it is kept as
     /// `interrupted`. Returns the kept item's id, if any.
     pub fn discard(self) -> Option<String> {
         let kept = match live::discard_session(&self.archive, &self.id) {
-            Ok(true) => None,
-            Ok(false) => Some(self.id.clone()),
+            Ok(live::Discarded::Removed | live::Discarded::Trashed) => None,
+            Ok(live::Discarded::Kept) => Some(self.id.clone()),
             Err(e) => {
                 eprintln!("engine: could not remove {} ({e:#})", self.id);
                 None
@@ -497,6 +498,10 @@ mod tests {
         let gone = live.id().to_string();
         assert_eq!(live.discard(), None);
         assert!(read_item(&e.archive, &gone).is_err());
+        assert!(
+            archive::store::test_trash::contains(&e.archive.join(&gone)),
+            "a cancel with text goes to the trash (#158)"
+        );
         assert!(journal_entries(&e.journal).is_empty());
     }
 

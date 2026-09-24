@@ -2,7 +2,17 @@ import { useEffect, useState } from "react";
 import { TranscriptView, toLines } from "@sussurro/transcript";
 import type { Ctl } from "../hooks/useAppController";
 import type { EngineRuns, RunArgs } from "../hooks/useEngineRuns";
-import { describeProgress, isRunning, wasCancelled, type Run, type RunKind } from "../lib/engineRuns";
+import {
+  describeProgress,
+  discardStep,
+  isRunning,
+  showDiscard,
+  wasCancelled,
+  type DiscardAction,
+  type DiscardStep,
+  type Run,
+  type RunKind,
+} from "../lib/engineRuns";
 import { baseName, formatClock, progressPercent } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
 import type { ItemType } from "../lib/types";
@@ -193,7 +203,7 @@ function RunOutcome({
     return (
       <div className="run-outcome err" role="alert">
         <p>
-          {wasCancelled(run) ? "Cancelled — nothing was saved." : run.error}
+          {wasCancelled(run) ? "Discarded — nothing was saved to the Library (anything transcribed is in the trash)." : run.error}
           {kept && " What was transcribed until then is kept in the Library, marked interrupted."}
         </p>
         <div className="row-gap">
@@ -231,6 +241,16 @@ function MicPanel({
   const [title, setTitle] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const live = isRunning(run);
+  const [discard, setDiscard] = useState<DiscardStep>("idle");
+  const confirming = discard === "confirming" && showDiscard(run);
+  const sessionId = run?.sessionId ?? null;
+  // A new session starts with the question closed.
+  useEffect(() => setDiscard("idle"), [sessionId]);
+  const act = (action: DiscardAction) => {
+    const next = discardStep(discard, action);
+    setDiscard(next.step);
+    if (next.cancel) engine.cancel("mic");
+  };
   useEffect(() => {
     if (!live) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -290,7 +310,7 @@ function MicPanel({
           </span>
           <span className="sh-muted" aria-live="polite">{describeProgress(run)}</span>
           <span className="row-gap push">
-            {run.status === "running" && (
+            {run.status === "running" && !confirming && (
               <button type="button" className="btn-stop" onClick={async () => {
                 const err = await engine.stopMic();
                 if (err) ctl.setBusy(err);
@@ -298,15 +318,30 @@ function MicPanel({
                 ■ Stop
               </button>
             )}
-            <button
-              type="button"
-              className="btn-ghost sh-btn"
-              disabled={run.sessionId === null}
-              title="Stop and discard: nothing is saved"
-              onClick={() => engine.cancel("mic")}
-            >
-              Discard
-            </button>
+            {/* Discard only while recording, and only after a confirmation
+                (#158): the item already holds everything said so far. */}
+            {showDiscard(run) &&
+              (confirming ? (
+                <span className="row-gap" role="group" aria-label="Discard this recording?">
+                  <span className="sh-muted">Discard this recording? What was transcribed goes to the trash.</span>
+                  <button type="button" className="btn-ghost sh-btn" autoFocus onClick={() => act("keep")}>
+                    Keep recording
+                  </button>
+                  <button type="button" className="btn-stop" onClick={() => act("confirm")}>
+                    Discard
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-ghost sh-btn"
+                  disabled={run.sessionId === null}
+                  title="Stop and throw this recording away (asks first)"
+                  onClick={() => act("ask")}
+                >
+                  Discard…
+                </button>
+              ))}
           </span>
         </div>
       )}

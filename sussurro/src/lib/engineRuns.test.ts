@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   canStart,
   describeProgress,
+  discardStep,
   initialRuns,
   routeEvent,
   runsReducer,
+  showDiscard,
   wasCancelled,
   type RunsAction,
   type RunsState,
@@ -173,6 +175,32 @@ describe("canStart", () => {
     expect(canStart(fileStarting, "mic")).toBe(false);
     const fileClaimed = run([{ type: "progress", payload: progress(5) }], fileStarting);
     expect(canStart(fileClaimed, "mic")).toBe(true);
+  });
+});
+
+describe("Discard (#158)", () => {
+  const recording = run([{ type: "started", kind: "mic", sessionId: 4, label: "", now: 0 }]);
+
+  it("is offered only while the session records, never once Stop was pressed", () => {
+    expect(showDiscard(null)).toBe(false);
+    expect(showDiscard(recording.mic)).toBe(true);
+    const stopping = run([{ type: "stopping", kind: "mic" }], recording);
+    expect(showDiscard(stopping.mic)).toBe(false);
+    const done = run(
+      [{ type: "done", payload: { session_id: 4, item_id: "a", item_type: "note", title: "t", text: "", segments: 1, duration_s: 1 } }],
+      stopping,
+    );
+    expect(showDiscard(done.mic)).toBe(false);
+  });
+
+  it("cancels the session only after an explicit confirmation", () => {
+    // A single click never discards.
+    expect(discardStep("idle", "confirm")).toEqual({ step: "idle", cancel: false });
+    const asked = discardStep("idle", "ask");
+    expect(asked).toEqual({ step: "confirming", cancel: false });
+    // Keep recording closes the question without cancelling.
+    expect(discardStep(asked.step, "keep")).toEqual({ step: "idle", cancel: false });
+    expect(discardStep(asked.step, "confirm")).toEqual({ step: "idle", cancel: true });
   });
 });
 

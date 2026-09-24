@@ -189,6 +189,30 @@ export function wasCancelled(run: Run): boolean {
   return run.status === "error" && /cancel/i.test(run.error ?? "");
 }
 
+/** Whether New shows Discard for a mic run (#158): only while it records.
+ *  Once Stop is pressed the run is finishing into a saved note, and a stray
+ *  click on Discard must not throw that away. */
+export function showDiscard(run: Run | null): boolean {
+  return !!run && run.status === "running";
+}
+
+/** Discard asks first (#158): since #153 the session's item holds all that
+ *  was said so far. `ask` opens the confirmation, `keep` closes it, and
+ *  `confirm` cancels the session — only from an open confirmation. */
+export type DiscardStep = "idle" | "confirming";
+export type DiscardAction = "ask" | "keep" | "confirm";
+
+export function discardStep(step: DiscardStep, action: DiscardAction): { step: DiscardStep; cancel: boolean } {
+  switch (action) {
+    case "ask":
+      return { step: "confirming", cancel: false };
+    case "keep":
+      return { step: "idle", cancel: false };
+    case "confirm":
+      return { step: "idle", cancel: step === "confirming" };
+  }
+}
+
 /** Short status line under a running session: "Transcribing · 2 s behind". */
 export function describeProgress(run: Run): string {
   if (run.status === "stopping") {
