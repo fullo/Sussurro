@@ -64,7 +64,7 @@ pub trait SegmentStt: Send {
 
 /// Cleans one segment with the previous segment's cleaned text as context.
 /// Must never fail: on any problem it returns `raw`.
-pub trait Cleaner: Send {
+pub trait Cleaner: Send + Sync {
     fn clean(&self, previous: Option<&str>, raw: &str) -> String;
 }
 
@@ -244,6 +244,49 @@ pub struct Job {
     /// source, language, engine, date. Duration and a missing title or
     /// language are filled in at the end.
     pub meta: ItemMeta,
+    /// The run's cleanup goes to an external profile the user opted in for
+    /// (#122): this entry is recorded in the item's external-send log right
+    /// before the first segment is cleaned (once per run), so a run that
+    /// then fails or is cancelled is still marked. `None` = cleanup stays
+    /// on this machine (or sends nothing).
+    pub external_cleanup: Option<archive::external::ExternalSend>,
+}
+
+/// A [`Cleaner`] whose first call records the run's external send in the
+/// item's log before anything is sent (#122). If the entry can't be
+/// written, no text is sent at all: every segment keeps its raw text.
+struct ExternalLogCleaner<'a> {
+    inner: &'a dyn Cleaner,
+    archive: PathBuf,
+    item_id: String,
+    entry: archive::external::ExternalSend,
+    /// `None` until the first call, then whether the entry was recorded.
+    logged: std::sync::Mutex<Option<bool>>,
+}
+
+impl Cleaner for ExternalLogCleaner<'_> {
+    fn clean(&self, previous: Option<&str>, raw: &str) -> String {
+        let allowed = {
+            let mut logged = self.logged.lock().unwrap_or_else(|e| e.into_inner());
+            *logged.get_or_insert_with(|| {
+                match archive::external::record(&self.archive, &self.item_id, &self.entry) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        eprintln!(
+                            "engine: could not record the external cleanup of {} — keeping raw text, nothing sent ({e:#})",
+                            self.item_id
+                        );
+                        false
+                    }
+                }
+            })
+        };
+        if allowed {
+            self.inner.clean(previous, raw)
+        } else {
+            raw.to_string()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -346,6 +389,7 @@ fn run_inner(
         index_db,
         journal,
         meta,
+        external_cleanup,
     } = job;
     let reindex = |id: &str| {
         if let Some(db) = &index_db {
@@ -372,6 +416,19 @@ fn run_inner(
         title: meta.title.clone(),
         source: meta.source.clone(),
     }));
+    // External cleanup (#122): logged in the item before the first segment
+    // is sent, whatever happens to the run afterwards.
+    let logging = external_cleanup.map(|entry| ExternalLogCleaner {
+        inner: cleaner,
+        archive: archive_dir.clone(),
+        item_id: item.id().to_string(),
+        entry,
+        logged: std::sync::Mutex::new(None),
+    });
+    let cleaner: &dyn Cleaner = match &logging {
+        Some(l) => l,
+        None => cleaner,
+    };
     let captured = capture(
         session_id,
         source,

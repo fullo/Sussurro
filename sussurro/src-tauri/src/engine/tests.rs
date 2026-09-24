@@ -126,6 +126,7 @@ fn job(dir: &std::path::Path, audio: Vec<f32>, policy: Policy) -> Job {
         archive_dir: dir.join("archive"),
         index_db: Some(dir.join("index.sqlite")),
         journal: Some(dir.join(checkpoint::JOURNAL_FILE)),
+        external_cleanup: None,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: "file:test.wav".into(),
@@ -591,6 +592,137 @@ fn cancel_stops_the_run_without_writing() {
     assert!(archive::list_items(&dir.path().join("archive")).is_empty());
 }
 
+/// #122: the external-cleanup entry a session carries.
+fn external_entry() -> archive::external::ExternalSend {
+    archive::external::ExternalSend {
+        date: "2026-09-24T12:00:00+02:00".into(),
+        host: "api.example.com".into(),
+        profile: "Work".into(),
+        model: "gpt".into(),
+        kind: archive::external::SendKind::Cleanup,
+        recipe: String::new(),
+    }
+}
+
+/// A fake external LLM cleaner: on every call it notes how many
+/// external-send entries the live item's log already holds, and it can
+/// cancel the run after its first call.
+struct ExternalLlm {
+    archive: PathBuf,
+    logged_at_call: Mutex<Vec<usize>>,
+    cancel_after_first: Option<Arc<AtomicBool>>,
+}
+
+impl Cleaner for ExternalLlm {
+    fn clean(&self, _: Option<&str>, raw: &str) -> String {
+        let items = archive::list_items(&self.archive);
+        let logged = items
+            .first()
+            .map(|i| archive::external::read_log(&self.archive, &i.id).unwrap().len())
+            .unwrap_or(0);
+        self.logged_at_call.lock().unwrap().push(logged);
+        if let Some(c) = &self.cancel_after_first {
+            c.store(true, Ordering::Relaxed);
+        }
+        raw.to_uppercase()
+    }
+}
+
+/// #122: a run that fails after its cleanup already went to an external
+/// host keeps the send in its log (recorded before the first segment was
+/// sent, once per run), so the kept item is marked.
+#[test]
+fn external_cleanup_is_logged_before_the_first_send_even_if_the_run_fails() {
+    struct Breaks {
+        inner: VecSource,
+        after: usize,
+    }
+    impl Source for Breaks {
+        fn channel(&self) -> Channel {
+            self.inner.channel()
+        }
+        fn total_samples(&self) -> Option<u64> {
+            None
+        }
+        fn next_frame(&mut self) -> Result<Option<Frame>> {
+            if self.inner.pos >= self.after {
+                anyhow::bail!("decode error at packet 42");
+            }
+            self.inner.next_frame()
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let archive_dir = dir.path().join("archive");
+    let mut j = job(dir.path(), Vec::new(), Policy::Block { max_queued: 4 });
+    j.source = Box::new(Breaks {
+        inner: VecSource::new(bursts(&[(true, 3.0), (false, 2.5)].repeat(6)), Channel::File),
+        after: (16_000.0 * 5.5 * 3.0) as usize,
+    });
+    j.external_cleanup = Some(external_entry());
+    let llm = ExternalLlm { archive: archive_dir.clone(), logged_at_call: Mutex::new(Vec::new()), cancel_after_first: None };
+    let mut stt = FakeStt { calls: 0, fail_on: None };
+    let err = run(j, &mut stt, &llm, Arc::new(VecSink::default())).unwrap_err();
+    assert!(format!("{err:#}").contains("decode error"));
+    let calls = llm.logged_at_call.lock().unwrap().clone();
+    assert!(!calls.is_empty(), "a segment was cleaned before the failure");
+    assert!(calls.iter().all(|&n| n == 1), "logged before the first send, once per run: {calls:?}");
+
+    let items = archive::list_items(&archive_dir);
+    assert_eq!(items.len(), 1);
+    assert!(items[0].interrupted);
+    assert_eq!(items[0].external_hosts, ["api.example.com"]);
+    let log = archive::external::read_log(&archive_dir, &items[0].id).unwrap();
+    assert_eq!(log, [external_entry()]);
+}
+
+/// #122: a run cancelled right after its first external cleanup call had
+/// already recorded the send when that call went out.
+#[test]
+fn external_cleanup_is_logged_before_the_first_send_even_if_the_run_is_cancelled() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive_dir = dir.path().join("archive");
+    let mut j = job(dir.path(), bursts(&[(true, 3.0), (false, 2.5)].repeat(10)), Policy::Block { max_queued: 1 });
+    j.external_cleanup = Some(external_entry());
+    let llm = ExternalLlm {
+        archive: archive_dir.clone(),
+        logged_at_call: Mutex::new(Vec::new()),
+        cancel_after_first: Some(j.cancel.clone()),
+    };
+    let mut stt = FakeStt { calls: 0, fail_on: None };
+    let err = run(j, &mut stt, &llm, Arc::new(VecSink::default())).unwrap_err();
+    assert!(format!("{err:#}").contains("cancelled"));
+    let calls = llm.logged_at_call.lock().unwrap().clone();
+    assert_eq!(calls.first(), Some(&1), "the entry was on disk when the first text went out: {calls:?}");
+    assert!(calls.iter().all(|&n| n == 1), "one entry per run: {calls:?}");
+}
+
+/// A finished run with several externally cleaned segments logs one entry.
+#[test]
+fn external_cleanup_is_logged_once_per_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive_dir = dir.path().join("archive");
+    let mut j = job(dir.path(), bursts(&[(true, 3.0), (false, 2.5)].repeat(3)), Policy::Block { max_queued: 2 });
+    j.external_cleanup = Some(external_entry());
+    let llm = ExternalLlm { archive: archive_dir.clone(), logged_at_call: Mutex::new(Vec::new()), cancel_after_first: None };
+    let r = run(j, &mut FakeStt { calls: 0, fail_on: None }, &llm, Arc::new(VecSink::default())).unwrap();
+    let calls = llm.logged_at_call.lock().unwrap().clone();
+    assert!(calls.len() >= 2 && calls.iter().all(|&n| n == 1), "{calls:?}");
+    assert_eq!(archive::external::read_log(&archive_dir, &r.item_id).unwrap(), [external_entry()]);
+    assert_eq!(archive::read_item(&archive_dir, &r.item_id).unwrap().external_hosts, ["api.example.com"]);
+}
+
+/// Without an external cleanup nothing is logged.
+#[test]
+fn local_cleanup_logs_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive_dir = dir.path().join("archive");
+    let j = job(dir.path(), bursts(&[(true, 3.0), (false, 2.5)].repeat(2)), Policy::Block { max_queued: 2 });
+    let llm = ExternalLlm { archive: archive_dir.clone(), logged_at_call: Mutex::new(Vec::new()), cancel_after_first: None };
+    let r = run(j, &mut FakeStt { calls: 0, fail_on: None }, &llm, Arc::new(VecSink::default())).unwrap();
+    assert!(llm.logged_at_call.lock().unwrap().iter().all(|&n| n == 0));
+    assert!(archive::read_item(&archive_dir, &r.item_id).unwrap().external_hosts.is_empty());
+}
+
 #[test]
 fn silence_only_input_is_an_error_not_an_empty_item() {
     let dir = tempfile::tempdir().unwrap();
@@ -887,6 +1019,7 @@ fn engine_end_to_end_with_a_real_model() {
         archive_dir: archive_dir.clone(),
         index_db: Some(dir.path().join("index.sqlite")),
         journal: None,
+        external_cleanup: None,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(&input),
@@ -979,6 +1112,7 @@ fn engine_long_file_streams_with_bounded_memory() {
         archive_dir: dir.path().join("Sussurro"),
         index_db: None,
         journal: None,
+        external_cleanup: None,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(path),
