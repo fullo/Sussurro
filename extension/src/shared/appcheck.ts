@@ -1,19 +1,19 @@
 /* "Is the app there?" for the capture session (#128), on top of #127's
  * `testConnection` (`GET /app/version`, connection.ts) and the stored
  * pairing (pairing.ts). Pure — unit tested. */
-import type { ConnectionResult } from "./connection";
+import type { ConnectionResult, SubtitlesMode } from "./connection";
 
 /** Why the app can't take a meeting right now. */
 export type AppProblem = "not_paired" | Exclude<ConnectionResult["kind"], "ok">;
 
-export type AppCheck = { ok: true; app: string } | { ok: false; reason: AppProblem; detail?: string };
+export type AppCheck = { ok: true; app: string; subtitles?: SubtitlesMode } | { ok: false; reason: AppProblem; detail?: string };
 
 /** `null` = no pairing stored. */
 export function toAppCheck(r: ConnectionResult | null): AppCheck {
   if (!r) return { ok: false, reason: "not_paired" };
   switch (r.kind) {
     case "ok":
-      return { ok: true, app: r.app };
+      return r.subtitles ? { ok: true, app: r.app, subtitles: r.subtitles } : { ok: true, app: r.app };
     case "protocol_mismatch":
       return { ok: false, reason: r.kind, detail: `app ${r.app} speaks protocol ${r.protocol}` };
     case "unexpected":

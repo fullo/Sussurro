@@ -397,7 +397,7 @@ token (E6):
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/app/version` | `{app, protocol}` handshake; the extension refuses to run against an incompatible protocol |
+| GET | `/app/version` | `{app, protocol, subtitles}` handshake; the extension refuses to run against an incompatible protocol; `subtitles` (`on_request` \| `always`) tells the side panel whether to offer "Create .srt" (#129) |
 | WS | `/live?token=` | client → app: `start{title, url, platform, rate, channels}`, `speaker_active{name, t}`, `participants{names}`, `stop`, binary audio frames; app → client: `segment` (new or updated), `speaker`, `status` (backlog, errors) |
 | POST | `/items/{id}/open` | bring the app to the front on that item ("Open in Sussurro" in the side panel) |
 | GET | `/items/{id}/export?format=md\|txt\|srt\|vtt` | "Copy as text" and downloads from the side panel |
