@@ -28,7 +28,10 @@ fn sanitiser_passes_plain_text_through() {
 fn sanitiser_keeps_the_text_after_the_last_marker() {
     let out = sanitize("language English<asr_text>draft<asr_text>final words");
     assert_eq!(out.text, "final words");
-    assert_eq!(out.language, None, "no language right before the last marker");
+    assert_eq!(
+        out.language, None,
+        "no language right before the last marker"
+    );
     let out = sanitize("language French<asr_text>bonjour</asr_text>");
     assert_eq!(out.text, "bonjour");
     assert_eq!(out.language.as_deref(), Some("fr"));
@@ -45,7 +48,13 @@ fn sanitiser_removes_special_tokens() {
 
 #[test]
 fn sanitiser_handles_silence_and_unknown_languages() {
-    for raw in ["language None<asr_text>", "language English", "language None", "", "   "] {
+    for raw in [
+        "language None<asr_text>",
+        "language English",
+        "language None",
+        "",
+        "   ",
+    ] {
         assert_eq!(sanitize(raw).text, "", "{raw:?}");
     }
     assert_eq!(sanitize("language English").language.as_deref(), Some("en"));
@@ -57,7 +66,10 @@ fn sanitiser_handles_silence_and_unknown_languages() {
 
 #[test]
 fn sanitiser_collapses_whitespace() {
-    assert_eq!(sanitize("language English<asr_text> a \n b\t c ").text, "a b c");
+    assert_eq!(
+        sanitize("language English<asr_text> a \n b\t c ").text,
+        "a b c"
+    );
 }
 
 #[test]
@@ -74,15 +86,28 @@ fn tone(n: usize) -> Vec<f32> {
     (0..n).map(|i| 0.5 * ((i as f32) * 0.05).sin()).collect()
 }
 
+fn lens(r: &[std::ops::Range<usize>]) -> Vec<usize> {
+    r.iter().map(|x| x.len()).collect()
+}
+
+fn assert_tiles(r: &[std::ops::Range<usize>], len: usize) {
+    assert_eq!(r.first().unwrap().start, 0);
+    assert_eq!(r.last().unwrap().end, len);
+    assert!(r.windows(2).all(|w| w[0].end == w[1].start));
+}
+
 #[test]
-fn short_input_is_one_piece() {
-    let s = tone(1_000);
-    let pieces = split_at_pauses(&s, 16_000, 8_000, 320);
-    assert_eq!(pieces.len(), 1);
-    assert_eq!(pieces[0].len(), 1_000);
-    let s = tone(16_000);
-    assert_eq!(split_at_pauses(&s, 16_000, 8_000, 320).len(), 1, "exactly the cap");
-    assert_eq!(split_at_pauses(&[], 16_000, 8_000, 320), vec![&[] as &[f32]]);
+fn input_up_to_30_s_is_one_piece() {
+    for n in [0, 1_000, MAX_INPUT_SAMPLES] {
+        let s = tone(n);
+        assert_eq!(input_pieces(&s), vec![0..n], "{n}");
+    }
+    // An engine segment of 30 s with a pause in it is still sent whole.
+    let mut s = tone(MAX_INPUT_SAMPLES);
+    s[22 * 16_000..23 * 16_000]
+        .iter_mut()
+        .for_each(|x| *x = 0.0);
+    assert_eq!(input_pieces(&s).len(), 1);
 }
 
 #[test]
@@ -93,25 +118,35 @@ fn long_input_is_cut_at_pauses_under_the_cap() {
     for at in [25 * rate, 50 * rate] {
         s[at..at + rate / 2].iter_mut().for_each(|x| *x = 0.0);
     }
-    let pieces = split_at_pauses(&s, MAX_INPUT_SAMPLES, PAUSE_SEARCH_SAMPLES, PAUSE_WINDOW_SAMPLES);
-    assert_eq!(pieces.len(), 3);
-    assert!(pieces.iter().all(|p| p.len() <= MAX_INPUT_SAMPLES));
+    let r = input_pieces(&s);
+    assert_tiles(&r, s.len());
+    assert_eq!(r.len(), 3, "{:?}", lens(&r));
+    assert!(r.iter().all(|p| p.len() <= MAX_INPUT_SAMPLES));
     // Each cut falls inside a pause.
-    let first = pieces[0].len();
-    assert!((25 * rate..25 * rate + rate / 2).contains(&first), "cut at {first}");
-    let second = first + pieces[1].len();
-    assert!((50 * rate..50 * rate + rate / 2).contains(&second), "cut at {second}");
-    // Nothing lost or duplicated.
-    assert_eq!(pieces.concat(), s);
+    assert!(
+        (25 * rate..25 * rate + rate / 2).contains(&r[0].end),
+        "cut at {}",
+        r[0].end
+    );
+    assert!(
+        (50 * rate..50 * rate + rate / 2).contains(&r[1].end),
+        "cut at {}",
+        r[1].end
+    );
 }
 
 #[test]
 fn input_without_pauses_is_still_capped() {
     let s = tone(95 * 16_000);
-    let pieces = split_at_pauses(&s, MAX_INPUT_SAMPLES, PAUSE_SEARCH_SAMPLES, PAUSE_WINDOW_SAMPLES);
-    assert!(pieces.len() >= 4);
-    assert!(pieces.iter().all(|p| !p.is_empty() && p.len() <= MAX_INPUT_SAMPLES));
-    assert_eq!(pieces.concat(), s);
+    let r = input_pieces(&s);
+    assert_tiles(&r, s.len());
+    assert!(r.len() >= 4);
+    assert!(
+        r.iter()
+            .all(|p| !p.is_empty() && p.len() <= MAX_INPUT_SAMPLES),
+        "{:?}",
+        lens(&r)
+    );
 }
 
 #[test]
@@ -119,7 +154,9 @@ fn multipart_body_has_the_fields_and_the_file() {
     let wav = crate::archive::audio::wav_bytes(&tone(10));
     let body = multipart_body("B0UND", &[("model", "qwen3-asr")], "audio.wav", &wav);
     let text = String::from_utf8_lossy(&body);
-    assert!(text.starts_with("--B0UND\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nqwen3-asr\r\n"));
+    assert!(text.starts_with(
+        "--B0UND\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nqwen3-asr\r\n"
+    ));
     assert!(text.contains(
         "--B0UND\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF"
     ));
@@ -139,8 +176,16 @@ fn server_args_bind_loopback_only_and_keep_paths_whole() {
     let mmproj = Path::new("/models dir/mmproj; rm -rf ~.gguf");
     let args = server_args(model, mmproj, 43_210);
     let pos = |a: &str| args.iter().position(|x| x == a).unwrap();
-    assert_eq!(args[pos("-m") + 1], model.as_os_str(), "a path with spaces is one argument");
-    assert_eq!(args[pos("--mmproj") + 1], mmproj.as_os_str(), "shell syntax stays literal");
+    assert_eq!(
+        args[pos("-m") + 1],
+        model.as_os_str(),
+        "a path with spaces is one argument"
+    );
+    assert_eq!(
+        args[pos("--mmproj") + 1],
+        mmproj.as_os_str(),
+        "shell syntax stays literal"
+    );
     assert_eq!(args[pos("--host") + 1], "127.0.0.1");
     assert_eq!(args[pos("--port") + 1], "43210");
     for flag in ["-ngl", "-c", "-np", "--cache-ram", "--no-webui"] {
@@ -163,10 +208,16 @@ fn command_runs_the_binary_directly_from_the_lib_dir() {
     let args: Vec<&OsStr> = cmd.get_args().collect();
     assert_eq!(args[0], "--prefix");
     assert_eq!(
-        args[1..].iter().map(|a| a.to_os_string()).collect::<Vec<_>>(),
+        args[1..]
+            .iter()
+            .map(|a| a.to_os_string())
+            .collect::<Vec<_>>(),
         server_args(&cfg.model, &cfg.mmproj, 5_000)
     );
-    assert_eq!(cmd.get_current_dir(), Some(Path::new("/app/llama-server-libs")));
+    assert_eq!(
+        cmd.get_current_dir(),
+        Some(Path::new("/app/llama-server-libs"))
+    );
     let var = library_path_var(std::env::consts::OS);
     let (_, value) = cmd
         .get_envs()
@@ -183,11 +234,24 @@ fn library_path_per_os() {
     assert_eq!(library_path_var("linux"), "LD_LIBRARY_PATH");
     let lib = Path::new("/libs");
     assert_eq!(library_path_value("linux", lib, None), "/libs");
-    assert_eq!(library_path_value("linux", lib, Some(OsStr::new(""))), "/libs");
-    assert_eq!(library_path_value("linux", lib, Some(OsStr::new("/usr/lib"))), "/libs:/usr/lib");
-    assert_eq!(library_path_value("macos", lib, Some(OsStr::new("/opt/lib"))), "/libs:/opt/lib");
     assert_eq!(
-        library_path_value("windows", Path::new(r"C:\App\libs"), Some(OsStr::new(r"C:\Windows;C:\Tools"))),
+        library_path_value("linux", lib, Some(OsStr::new(""))),
+        "/libs"
+    );
+    assert_eq!(
+        library_path_value("linux", lib, Some(OsStr::new("/usr/lib"))),
+        "/libs:/usr/lib"
+    );
+    assert_eq!(
+        library_path_value("macos", lib, Some(OsStr::new("/opt/lib"))),
+        "/libs:/opt/lib"
+    );
+    assert_eq!(
+        library_path_value(
+            "windows",
+            Path::new(r"C:\App\libs"),
+            Some(OsStr::new(r"C:\Windows;C:\Tools"))
+        ),
         r"C:\App\libs;C:\Windows;C:\Tools"
     );
 }
@@ -219,10 +283,15 @@ fn fake_config(dir: &Path, mode: &str) -> SidecarConfig {
     let mmproj = dir.join("mmproj.gguf");
     std::fs::write(&mmproj, "").unwrap();
     let mut cfg = SidecarConfig::new(std::env::current_exe().unwrap(), libs, model, mmproj);
-    cfg.prefix_args = ["--exact", "stt::remote::tests::fake_sidecar_server", "--test-threads=1", "--"]
-        .iter()
-        .map(OsString::from)
-        .collect();
+    cfg.prefix_args = [
+        "--exact",
+        "stt::remote::tests::fake_sidecar_server",
+        "--test-threads=1",
+        "--",
+    ]
+    .iter()
+    .map(OsString::from)
+    .collect();
     cfg.log_file = Some(dir.join("sidecar.log"));
     cfg.start_timeout = Duration::from_secs(30);
     cfg.request_timeout = Duration::from_secs(30);
@@ -237,7 +306,10 @@ fn serial() -> MutexGuard<'static, ()> {
 }
 
 fn arg_after(args: &[String], flag: &str) -> Option<String> {
-    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 /// Not a test of its own: the fake `llama-server` (see [`fake_config`]).
@@ -267,7 +339,8 @@ fn fake_sidecar_server() {
         let url = req.url().to_string();
         match (req.method(), url.as_str()) {
             (tiny_http::Method::Get, "/health") => {
-                let ready = mode != "never_healthy" && started.elapsed() > Duration::from_millis(200);
+                let ready =
+                    mode != "never_healthy" && started.elapsed() > Duration::from_millis(200);
                 let _ = if ready {
                     req.respond(json(serde_json::json!({"status": "ok"}), 200))
                 } else {
@@ -290,7 +363,9 @@ fn fake_sidecar_server() {
                 let _ = req.as_reader().read_to_end(&mut body);
                 let multipart = req.headers().iter().any(|h| {
                     h.field.equiv("Content-Type")
-                        && h.value.as_str().starts_with("multipart/form-data; boundary=")
+                        && h.value
+                            .as_str()
+                            .starts_with("multipart/form-data; boundary=")
                 });
                 // crash_once: the first instance leaves a marker and dies;
                 // the restarted one finds it and serves.
@@ -362,7 +437,10 @@ fn sidecar_starts_healthy_on_loopback_and_dies_with_its_owner() {
 
     // A multipart WAV goes in, a sanitised transcript comes out.
     let text = t.transcribe(&tone(16_000)).unwrap();
-    assert!(text.starts_with("heard ") && text.ends_with(" bytes"), "{text}");
+    assert!(
+        text.starts_with("heard ") && text.ends_with(" bytes"),
+        "{text}"
+    );
     assert!(!text.contains("asr_text"));
     let timed = t.transcribe_timed(&tone(16_000)).unwrap();
     assert_eq!(timed.language.as_deref(), Some("en"));
@@ -385,7 +463,10 @@ fn long_input_is_sent_in_pieces_of_at_most_30_s() {
         .map(|s| s.trim().trim_end_matches(" bytes").parse().unwrap())
         .collect();
     assert_eq!(sizes.len(), 3, "{text}");
-    assert!(sizes.iter().all(|&n| n < 30 * 16_000 * 2 + 1_000), "{sizes:?}");
+    assert!(
+        sizes.iter().all(|&n| n < 30 * 16_000 * 2 + 1_000),
+        "{sizes:?}"
+    );
 }
 
 #[test]
@@ -436,15 +517,23 @@ fn startup_failures_are_reported_not_hung() {
     let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     let t = Instant::now();
-    let err = Sidecar::start(fake_config(dir.path(), "exit_now")).err().unwrap();
-    assert!(format!("{err:#}").contains("exited while starting"), "{err:#}");
+    let err = Sidecar::start(fake_config(dir.path(), "exit_now"))
+        .err()
+        .unwrap();
+    assert!(
+        format!("{err:#}").contains("exited while starting"),
+        "{err:#}"
+    );
     assert!(t.elapsed() < Duration::from_secs(20));
 
     let dir = tempfile::tempdir().unwrap();
     let mut cfg = fake_config(dir.path(), "never_healthy");
     cfg.start_timeout = Duration::from_secs(1);
     let err = Sidecar::start(cfg).err().unwrap();
-    assert!(format!("{err:#}").contains("not ready after 1 s"), "{err:#}");
+    assert!(
+        format!("{err:#}").contains("not ready after 1 s"),
+        "{err:#}"
+    );
     // The unhealthy process was not left running.
     assert_eq!(kill_all(), 0);
 
@@ -465,10 +554,14 @@ fn idle_unload_stops_the_sidecar() {
     let last = Mutex::new(Instant::now().checked_sub(Duration::from_secs(10)));
     let threshold = Duration::from_secs(1);
     // In use (a recording or a long-form session): kept.
-    assert!(!crate::pipeline::unload_if_idle(&slot, &last, threshold, true));
+    assert!(!crate::pipeline::unload_if_idle(
+        &slot, &last, threshold, true
+    ));
     assert!(process_alive(pid));
     // Idle: the transcriber goes, and its sidecar with it.
-    assert!(crate::pipeline::unload_if_idle(&slot, &last, threshold, false));
+    assert!(crate::pipeline::unload_if_idle(
+        &slot, &last, threshold, false
+    ));
     assert!(wait_dead(pid));
 }
 
@@ -509,19 +602,31 @@ fn kill_all_stops_every_live_sidecar() {
 #[test]
 #[ignore]
 fn live_qwen3_asr_transcribes_a_fleurs_clip() {
-    let binary = PathBuf::from(std::env::var("SUSSURRO_TEST_LLAMA_SERVER").expect("set SUSSURRO_TEST_LLAMA_SERVER"));
+    let binary = PathBuf::from(
+        std::env::var("SUSSURRO_TEST_LLAMA_SERVER").expect("set SUSSURRO_TEST_LLAMA_SERVER"),
+    );
     let libs = std::env::var("SUSSURRO_TEST_LLAMA_LIBS")
         .map(PathBuf::from)
         .unwrap_or_else(|_| binary.parent().unwrap().to_path_buf());
-    let models = PathBuf::from(std::env::var("SUSSURRO_TEST_QWEN3_ASR_DIR").expect("set SUSSURRO_TEST_QWEN3_ASR_DIR"));
-    let wav = PathBuf::from(std::env::var("SUSSURRO_TEST_FLEURS_WAV").expect("set SUSSURRO_TEST_FLEURS_WAV"));
+    let models = PathBuf::from(
+        std::env::var("SUSSURRO_TEST_QWEN3_ASR_DIR").expect("set SUSSURRO_TEST_QWEN3_ASR_DIR"),
+    );
+    let wav = PathBuf::from(
+        std::env::var("SUSSURRO_TEST_FLEURS_WAV").expect("set SUSSURRO_TEST_FLEURS_WAV"),
+    );
 
-    let paths = crate::stt::sidecar::SidecarPaths { binary, lib_dir: libs };
+    let paths = crate::stt::sidecar::SidecarPaths {
+        binary,
+        lib_dir: libs,
+    };
     let log = tempfile::tempdir().unwrap();
     let cfg = qwen3_asr_config(&paths, &models, Some(log.path().join("llama-server.log")));
     let started = Instant::now();
     let mut t = RemoteTranscriber::start(cfg).unwrap();
-    println!("sidecar healthy after {:.1} s", started.elapsed().as_secs_f32());
+    println!(
+        "sidecar healthy after {:.1} s",
+        started.elapsed().as_secs_f32()
+    );
     let pid = t.sidecar().pid().unwrap();
 
     let mut stream = crate::audio::decode::FileStream::open(&wav).unwrap();
@@ -541,7 +646,12 @@ fn live_qwen3_asr_transcribes_a_fleurs_clip() {
     assert!(!out.text.is_empty());
     assert!(!out.text.contains("asr_text") && !out.text.starts_with("language"));
     // A long dictation (the clip three times, > 30 s) is split and still transcribed.
-    let long: Vec<f32> = samples.iter().chain(&samples).chain(&samples).copied().collect();
+    let long: Vec<f32> = samples
+        .iter()
+        .chain(&samples)
+        .chain(&samples)
+        .copied()
+        .collect();
     let text = t.transcribe(&long).unwrap();
     println!("{:.1} s → {text}", long.len() as f32 / 16_000.0);
     assert!(text.len() > out.text.len() * 2);

@@ -34,10 +34,10 @@
 //! piece of audio, sent as a 16 kHz mono WAV. Qwen3-ASR has no dictionary
 //! prompt and ignores the language hint (it detects the language itself):
 //! dictionary words only reach the cleanup prompt. Longer input (a long
-//! hotkey dictation) is split at the quietest point before each 30 s cap
-//! ([`split_at_pauses`]), because Qwen3-ASR returns empty output on long
+//! hotkey dictation) is split at pauses with #194's splitter
+//! ([`input_pieces`]), because Qwen3-ASR returns empty output on long
 //! inputs (llama.cpp #21847). The long-form engine's segments are already
-//! ≤ 30 s.
+//! ≤ 30 s and go as they are.
 //!
 //! **Output** — the model prefixes every transcript with
 //! `language <Name><asr_text>` (llama.cpp #26749); [`sanitize`] strips it
@@ -64,10 +64,6 @@ pub const QWEN3_ASR_LABEL: &str = "qwen3-asr-1.7b-q8";
 const RATE: usize = 16_000;
 /// Longest audio sent in one request (llama.cpp #21847).
 pub const MAX_INPUT_SAMPLES: usize = 30 * RATE;
-/// Where to look for a pause before the cap: the last 10 s.
-const PAUSE_SEARCH_SAMPLES: usize = 10 * RATE;
-/// RMS window of the pause search (20 ms).
-const PAUSE_WINDOW_SAMPLES: usize = 320;
 /// Waits up to this long are slept through before a restart; longer ones
 /// fail the request instead.
 const MAX_INLINE_BACKOFF: Duration = Duration::from_secs(2);
@@ -171,41 +167,41 @@ pub fn language_code(name: &str) -> Option<&'static str> {
 
 // ----------------------------------------------------------------- input --
 
-/// Cut `samples` into pieces of at most `max` samples, each ending at the
-/// quietest `window` within the last `search` samples before its cap (a
-/// pause between words, when there is one). The pieces cover the input
-/// exactly, in order. Pure.
-pub fn split_at_pauses(samples: &[f32], max: usize, search: usize, window: usize) -> Vec<&[f32]> {
-    let max = max.max(1);
-    let window = window.clamp(1, max);
-    let search = search.clamp(window, max);
-    let mut pieces = Vec::new();
-    let mut rest = samples;
-    while rest.len() > max {
-        let lo = max - search;
-        let mut best = (f32::INFINITY, max);
-        let mut at = lo;
-        while at + window <= max {
-            let energy = crate::audio::resample::rms(&rest[at..at + window]);
-            // `<=`: among equally quiet windows, cut as late as possible.
-            if energy <= best.0 {
-                best = (energy, at + window / 2);
-            }
-            at += window;
-        }
-        let cut = best.1.clamp(1, max);
-        pieces.push(&rest[..cut]);
-        rest = &rest[cut..];
+/// How input longer than [`MAX_INPUT_SAMPLES`] is cut, with the #194
+/// pause splitter ([`super::pauses`]): a piece closes at the first pause
+/// (≥ 300 ms, relative to the audio's own loudness) after 20 s, and one
+/// without a pause is cut at its quietest frame of the last 8 s before
+/// 28 s — so every piece stays under the 30 s limit. No tail re-decode:
+/// that is a Parakeet workaround.
+pub const QWEN3_ASR_SPLIT: super::pauses::PauseSplit = super::pauses::PauseSplit {
+    soft_max_ms: 20_000,
+    min_pause_ms: 300,
+    hard_max_ms: 28_000,
+    cap_search_ms: 8_000,
+    tail_grace_ms: 0,
+    tail_speech_ms: 0,
+};
+
+/// The request pieces of `samples`: the whole input up to 30 s (the
+/// long-form engine's segments), else [`QWEN3_ASR_SPLIT`]'s cuts. The
+/// ranges tile the input. Pure.
+// One range for "send it whole" is the intended result.
+#[allow(clippy::single_range_in_vec_init)]
+pub fn input_pieces(samples: &[f32]) -> Vec<std::ops::Range<usize>> {
+    if samples.len() <= MAX_INPUT_SAMPLES {
+        return vec![0..samples.len()];
     }
-    if !rest.is_empty() || pieces.is_empty() {
-        pieces.push(rest);
-    }
-    pieces
+    super::pauses::split_ranges(samples, &QWEN3_ASR_SPLIT)
 }
 
 /// A `multipart/form-data` body: the text `fields`, then `wav` as the
 /// `file` part. Pure.
-pub fn multipart_body(boundary: &str, fields: &[(&str, &str)], file_name: &str, wav: &[u8]) -> Vec<u8> {
+pub fn multipart_body(
+    boundary: &str,
+    fields: &[(&str, &str)],
+    file_name: &str,
+    wav: &[u8],
+) -> Vec<u8> {
     let mut body = Vec::with_capacity(wav.len() + 512);
     for (name, value) in fields {
         body.extend_from_slice(
@@ -336,7 +332,10 @@ pub fn command(cfg: &SidecarConfig, port: u16) -> Command {
     cmd.args(&cfg.prefix_args)
         .args(server_args(&cfg.model, &cfg.mmproj, port))
         .current_dir(&cfg.lib_dir)
-        .env(var, library_path_value(os, &cfg.lib_dir, std::env::var_os(var).as_deref()))
+        .env(
+            var,
+            library_path_value(os, &cfg.lib_dir, std::env::var_os(var).as_deref()),
+        )
         .stdin(Stdio::null());
     #[cfg(windows)]
     {
@@ -355,7 +354,8 @@ pub fn backoff(base: Duration, failures: u32) -> Duration {
         return Duration::ZERO;
     }
     let exp = (failures - 2).min(16);
-    base.saturating_mul(1u32 << exp).min(Duration::from_secs(60))
+    base.saturating_mul(1u32 << exp)
+        .min(Duration::from_secs(60))
 }
 
 fn free_loopback_port() -> Result<u16> {
@@ -388,10 +388,7 @@ fn register(child: &SharedChild) {
 pub fn kill_all() -> usize {
     // Entries stay: a sidecar used again after this restarts into the same
     // slot, and must still be found by the next call.
-    let live: Vec<SharedChild> = lock(registry())
-        .iter()
-        .filter_map(Weak::upgrade)
-        .collect();
+    let live: Vec<SharedChild> = lock(registry()).iter().filter_map(Weak::upgrade).collect();
     let mut killed = 0;
     for shared in live {
         if let Some(mut child) = lock(&shared).take() {
@@ -701,7 +698,11 @@ impl Sidecar {
                 );
             }
             // 503 while the model loads, 200 once ready.
-            if probe.get(&url).send().is_ok_and(|r| r.status().is_success()) {
+            if probe
+                .get(&url)
+                .send()
+                .is_ok_and(|r| r.status().is_success())
+            {
                 return Ok(());
             }
             if started.elapsed() >= self.cfg.start_timeout {
@@ -725,26 +726,32 @@ impl Sidecar {
         );
         let resp = self
             .http
-            .post(format!("http://127.0.0.1:{}/v1/audio/transcriptions", self.port))
+            .post(format!(
+                "http://127.0.0.1:{}/v1/audio/transcriptions",
+                self.port
+            ))
             .header(
                 reqwest::header::CONTENT_TYPE,
                 format!("multipart/form-data; boundary={boundary}"),
             )
             .body(body)
             .send()
-            .map_err(|e| PostError::Transport(anyhow::Error::new(e).context("sidecar request failed")))?;
+            .map_err(|e| {
+                PostError::Transport(anyhow::Error::new(e).context("sidecar request failed"))
+            })?;
         let status = resp.status();
-        let text = resp
-            .text()
-            .map_err(|e| PostError::Transport(anyhow::Error::new(e).context("reading the sidecar answer")))?;
+        let text = resp.text().map_err(|e| {
+            PostError::Transport(anyhow::Error::new(e).context("reading the sidecar answer"))
+        })?;
         if !status.is_success() {
             let detail: String = text.chars().take(300).collect();
             return Err(PostError::Server(anyhow::anyhow!(
                 "the sidecar answered {status}: {detail}"
             )));
         }
-        let v: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| PostError::Server(anyhow::anyhow!("the sidecar answer is not JSON: {e}")))?;
+        let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+            PostError::Server(anyhow::anyhow!("the sidecar answer is not JSON: {e}"))
+        })?;
         v["text"]
             .as_str()
             .map(str::to_string)
@@ -784,7 +791,9 @@ impl Sidecar {
                     if !self.exits_within(Duration::from_millis(500)) {
                         // Alive but not answering (timeout): don't trust it.
                         self.stop();
-                        return Err(e.context("the Qwen3-ASR sidecar did not answer; it will restart on the next use"));
+                        return Err(e.context(
+                            "the Qwen3-ASR sidecar did not answer; it will restart on the next use",
+                        ));
                     }
                     eprintln!("llama-server sidecar crashed during a request: {e:#}; restarting");
                     self.note_failure();
@@ -811,7 +820,8 @@ impl Drop for Sidecar {
 
 /// `AnyTranscriber::Remote`: Qwen3-ASR in the sidecar.
 pub struct RemoteTranscriber {
-    sidecar: Sidecar,
+    /// Boxed: keeps `AnyTranscriber` small (clippy `large_enum_variant`).
+    sidecar: Box<Sidecar>,
 }
 
 impl RemoteTranscriber {
@@ -819,7 +829,7 @@ impl RemoteTranscriber {
     /// transcriber's lifetime.
     pub fn start(cfg: SidecarConfig) -> Result<Self> {
         Ok(Self {
-            sidecar: Sidecar::start(cfg)?,
+            sidecar: Box::new(Sidecar::start(cfg)?),
         })
     }
 
@@ -848,12 +858,8 @@ impl RemoteTranscriber {
     fn transcribe_detect(&mut self, samples: &[f32]) -> Result<AsrOutput> {
         let mut texts = Vec::new();
         let mut language = None;
-        for piece in split_at_pauses(
-            samples,
-            MAX_INPUT_SAMPLES,
-            PAUSE_SEARCH_SAMPLES,
-            PAUSE_WINDOW_SAMPLES,
-        ) {
+        for range in input_pieces(samples) {
+            let piece = &samples[range];
             if piece.is_empty() {
                 continue;
             }
@@ -890,4 +896,5 @@ pub fn qwen3_asr_config(
 }
 
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)]
 mod tests;
