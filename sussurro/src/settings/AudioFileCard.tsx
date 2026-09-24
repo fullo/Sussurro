@@ -1,36 +1,47 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { CollapsibleCard, Tip } from "../components/ui";
-import { baseName, progressPercent } from "../lib/format";
-import type { EngineProgress, EngineResult } from "../lib/types";
+import { useEngineRuns } from "../hooks/useEngineRuns";
+import { isRunning, wasCancelled } from "../lib/engineRuns";
+import { progressPercent } from "../lib/format";
+import type { EngineResult } from "../lib/types";
 import type { CardProps } from "./DictationCard";
 
 export const AUDIO_EXTENSIONS = ["wav", "mp3", "m4a", "aac", "flac", "ogg"];
+
+/** Pick an audio file to transcribe; null when the dialog is dismissed. */
+export async function pickAudioFile(): Promise<string | null> {
+  const path = await openDialog({
+    title: "Transcribe an audio file",
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }],
+  });
+  return path && typeof path === "string" ? path : null;
+}
 
 /** Classic window only: transcribe an audio file into the archive. In the
  *  workspace this lives in New → File, with the Library behind it. */
 export function AudioFileCard({ ctl, collapsible }: CardProps) {
   const { setBusy } = ctl;
-  /** Audio-file card (long-form engine, #113): item type for the archive
-   *  (P10 — note by default, or transcription), the running file, and the
-   *  last result. */
+  const engine = useEngineRuns();
+  const file = engine.runs.file;
+  const running = isRunning(file);
+  /** Item type for the archive (P10 — note by default, or transcription). */
   const [fileItemType, setFileItemType] = useState<"note" | "transcription">("note");
-  const [fileRunning, setFileRunning] = useState<string | null>(null);
   const [fileResult, setFileResult] = useState<EngineResult | null>(null);
 
-  // Progress of the file being transcribed, shown in the status line.
+  // Progress of *this* file's session (events are routed by session id),
+  // shown in the status line.
+  const pct = file?.progress ? progressPercent(file.progress.processed_s, file.progress.total_s) : null;
   useEffect(() => {
-    if (!fileRunning) return;
-    const unlisten = listen<EngineProgress>("engine-progress", (e) => {
-      const p = e.payload;
-      setBusy(`Transcribing ${fileRunning}… ${progressPercent(p.processed_s, p.total_s)}%`);
-    });
-    return () => {
-      unlisten.then((f) => f());
-    };
-  }, [fileRunning, setBusy]);
+    if (running) setBusy(`Transcribing ${file.label}…${pct !== null ? ` ${pct}%` : ""}`);
+  }, [running, file?.label, pct, setBusy]);
+  // Errors go to the status line, as before; a cancel says nothing was saved.
+  const failed = file?.status === "error" ? (wasCancelled(file) ? "Cancelled — nothing was saved." : file.error ?? "") : null;
+  useEffect(() => {
+    if (failed !== null) setBusy(failed);
+  }, [failed, setBusy]);
 
   return (
     <CollapsibleCard
@@ -49,7 +60,7 @@ export function AudioFileCard({ ctl, collapsible }: CardProps) {
         </div>
         <select
           value={fileItemType}
-          disabled={fileRunning !== null}
+          disabled={running}
           onChange={(e) => setFileItemType(e.target.value as "note" | "transcription")}
           aria-label="Save as"
         >
@@ -57,36 +68,31 @@ export function AudioFileCard({ ctl, collapsible }: CardProps) {
           <option value="transcription">Transcription</option>
         </select>
       </div>
-      <button
-        disabled={fileRunning !== null}
-        onClick={async () => {
-          const path = await openDialog({
-            title: "Transcribe an audio file",
-            multiple: false,
-            directory: false,
-            filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }],
-          });
-          if (!path || typeof path !== "string") return;
-          const name = baseName(path);
-          setFileResult(null);
-          setFileRunning(name);
-          setBusy(`Transcribing ${name}…`);
-          try {
-            const result = await invoke<EngineResult>("transcribe_file", {
-              path,
-              itemType: fileItemType,
-            });
+      <div className="model-row">
+        <button
+          disabled={!engine.canStartFile}
+          onClick={async () => {
+            const path = await pickAudioFile();
+            if (!path) return;
+            setFileResult(null);
+            const result = await engine.startFile(path, fileItemType);
             setFileResult(result);
-            setBusy("");
-          } catch (err) {
-            setBusy(String(err));
-          } finally {
-            setFileRunning(null);
-          }
-        }}
-      >
-        {fileRunning ? `Transcribing ${fileRunning}…` : "Choose audio file…"}
-      </button>
+            if (result) setBusy("");
+          }}
+        >
+          {running ? `Transcribing ${file.label}…` : "Choose audio file…"}
+        </button>
+        {running && (
+          <button
+            className="btn-ghost"
+            disabled={file.sessionId === null}
+            title={file.sessionId === null ? "Starting…" : "Stop and discard: nothing is saved"}
+            onClick={() => engine.cancel("file")}
+          >
+            Cancel
+          </button>
+        )}
+      </div>
       {fileResult && (
         <div className="history">
           <p className="cleaned">{fileResult.text}</p>

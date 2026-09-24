@@ -3,15 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { CollapsibleCard, Tip } from "../components/ui";
 import { LANGUAGES } from "../lib/constants";
-import {
-  describeDictionaryMerge,
-  describeSnippetMerge,
-  mergeDictionary,
-  mergeSnippets,
-  parseDictionaryFile,
-  parseSnippetFile,
-} from "../utils";
 import type { CardProps } from "./DictationCard";
+import { importDictionary, importSnippets } from "./listImport";
 
 export function PersonalizationCard({ ctl, collapsible }: CardProps) {
   const { settings, setSettings, save, setBusy } = ctl;
@@ -31,53 +24,8 @@ export function PersonalizationCard({ ctl, collapsible }: CardProps) {
     if (document.activeElement !== dictRef.current) setDictText(dictionaryKey);
   }, [dictionaryKey]);
 
-  // Bulk import: pick a file, read its text via the narrow `read_import_file`
-  // command (.txt/.csv only), then MERGE into the current list — existing
-  // entries are never replaced. Empty/unparseable files change nothing.
-  const readImportFile = async (title: string, name: string, ext: string) => {
-    const path = await openDialog({
-      title,
-      multiple: false,
-      directory: false,
-      filters: [{ name, extensions: [ext] }],
-    });
-    if (!path || typeof path !== "string") return null;
-    return invoke<string>("read_import_file", { path });
-  };
-
-  const handleImportDictionary = async () => {
-    try {
-      const content = await readImportFile("Import dictionary", "Text files", "txt");
-      if (content === null) return;
-      const words = parseDictionaryFile(content);
-      if (words.length === 0) {
-        setBusy("Import failed: no words found — expected a .txt file with one word or phrase per line.");
-        return;
-      }
-      const result = mergeDictionary(settings.dictionary, words);
-      if (result.added > 0 && !(await save({ ...settings, dictionary: result.merged }))) return;
-      ctl.flash(describeDictionaryMerge(result));
-    } catch (e) {
-      setBusy(String(e));
-    }
-  };
-
-  const handleImportSnippets = async () => {
-    try {
-      const content = await readImportFile("Import snippets", "CSV files", "csv");
-      if (content === null) return;
-      const imported = parseSnippetFile(content);
-      if (imported.length === 0) {
-        setBusy('Import failed: no snippets found — expected a .csv file with one "cue,text" per line.');
-        return;
-      }
-      const result = mergeSnippets(settings.snippets, imported);
-      if (result.added > 0 && !(await save({ ...settings, snippets: result.merged }))) return;
-      ctl.flash(describeSnippetMerge(result));
-    } catch (e) {
-      setBusy(String(e));
-    }
-  };
+  const handleImportDictionary = () => importDictionary(ctl);
+  const handleImportSnippets = () => importSnippets(ctl);
 
   return (
     <CollapsibleCard

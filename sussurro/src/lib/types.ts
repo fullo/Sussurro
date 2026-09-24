@@ -120,6 +120,8 @@ export interface Segment {
   text: string;
   edited?: boolean;
   words?: Word[];
+  /** STT failed on this stretch (#153): empty text, shown as "[not transcribed]". */
+  stt_error?: string;
 }
 
 export interface SegmentsFile {
@@ -134,6 +136,10 @@ export interface Item {
   segments: SegmentsFile;
   body: string;
   edited_externally: boolean;
+  /** A capture session is still writing this item (#153). */
+  recording?: boolean;
+  /** The app stopped before the session was finalized (#153). */
+  interrupted?: boolean;
 }
 
 export interface ItemSummary {
@@ -142,12 +148,16 @@ export interface ItemSummary {
   edited_externally: boolean;
   /** Search excerpt with `**match**` highlights (search results only). */
   snippet?: string;
+  recording?: boolean;
+  interrupted?: boolean;
 }
 
 /* ---------- Long-form engine (engine/mod.rs, commands.rs) ---------- */
 
 /** `transcribe_file` result: the archive item written by the engine. */
 export interface EngineResult {
+  /** Present since #153. */
+  session_id?: number;
   item_id: string;
   item_type: ItemType;
   title: string;
@@ -173,15 +183,28 @@ export interface EngineSegmentEvent {
   segment: Segment;
 }
 
+/** `engine-started` payload (#153): the run's item exists, marked
+ *  recording. `item_id` is provisional for an untitled session: the folder
+ *  is renamed after the final title and `engine-done` carries the final id. */
+export interface EngineStarted {
+  session_id: number;
+  item_id: string;
+  item_type: ItemType;
+  title: string;
+  source: string;
+}
+
 /** `engine-done` payload. */
 export interface EngineDone extends EngineResult {
   session_id: number;
 }
 
-/** `engine-error` payload. */
+/** `engine-error` payload. `item_id` names an item kept as interrupted when
+ *  some segments were transcribed before the failure (#153). */
 export interface EngineError {
   session_id: number;
   error: string;
+  item_id?: string;
 }
 
 export interface EngineStatus {
