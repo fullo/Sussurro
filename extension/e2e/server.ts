@@ -84,7 +84,7 @@ export async function startServer(token: string) {
       }
       if (req.headers.authorization !== `Bearer ${token}`) return void res.writeHead(401, cors).end();
       const json = (status: number, body: object) => void res.writeHead(status, { ...cors, "Content-Type": "application/json" }).end(JSON.stringify(body));
-      if (!item) return json(200, { app: "e2e", protocol: 1, subtitles: "on_request" });
+      if (!item) return json(200, { app: "e2e", protocol: 2, protocol_min: 1, subtitles: "on_request" });
       const [, id, action] = item;
       items.push({ method: req.method ?? "", path: url.pathname, format: url.searchParams.get("format") });
       if (!/^e2e-\d+$/.test(decodeURIComponent(id))) return json(404, { error: "no such item" });
@@ -130,7 +130,7 @@ export async function startServer(token: string) {
     const s: LiveSession = { origin, start: null, controls: [], channels: new Map(), badFrames: 0, stopped: false, closed: false };
     sessions.push(s);
     const reply = (m: object) => ws.send(JSON.stringify({ type: "status", ...m }));
-    reply({ state: "ready", protocol: 1, app: "e2e" });
+    reply({ state: "ready", protocol: 2, app: "e2e" });
     ws.on("message", (data, isBinary) => {
       if (!isBinary) {
         const m = JSON.parse(data.toString());

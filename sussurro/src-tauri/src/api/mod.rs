@@ -360,6 +360,7 @@ fn handle_meeting(
             serde_json::json!({
                 "app": env!("CARGO_PKG_VERSION"),
                 "protocol": protocol::PROTOCOL_VERSION,
+                "protocol_min": protocol::MIN_PROTOCOL,
                 "subtitles": config.subtitles,
             }),
             &cors,

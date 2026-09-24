@@ -397,8 +397,8 @@ token (E6):
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/app/version` | `{app, protocol, subtitles}` handshake; the extension refuses to run against an incompatible protocol; `subtitles` (`on_request` \| `always`) tells the side panel whether to offer "Create .srt" (#129) |
-| WS | `/live?token=` | client → app: `start{title, url, platform, rate, channels}`, `speaker_active{name, t}`, `participants{names}`, `stop`, binary audio frames; app → client: `segment` (new or updated), `speaker`, `status` (backlog, errors) |
+| GET | `/app/version` | `{app, protocol, protocol_min, subtitles}` handshake; the extension runs only when its protocol is within `protocol_min..=protocol` (#131); `subtitles` (`on_request` \| `always`) tells the side panel whether to offer "Create .srt" (#129) |
+| WS | `/live?token=` | client → app: `start{title, url, platform, rate, channels}`, `speaker_active{name, t}` (protocol 2, #131: `speaker_active{t, id?, name?, source?}`, `speaker_idle`, `speaker_name{id, name}`, `observer_health`), `participants{names}`, `stop`, binary audio frames; app → client: `segment` (new or updated), `speaker{id, label, color}`, `status` (backlog, errors) |
 | POST | `/items/{id}/open` | bring the app to the front on that item ("Open in Sussurro" in the side panel) |
 | GET | `/items/{id}/export?format=md\|txt\|srt\|vtt` | "Copy as text" and downloads from the side panel |
 

@@ -7,7 +7,8 @@ The extension is a capture device plus a live mirror; editing happens in the
 app (plan decision E3).
 
 **Status: preview.** Pairing with the app (#127), capture (#128) and the
-live transcript in the side panel (#129) work. Capture is
+live transcript in the side panel (#129) work; Meet names (#131) are
+implemented and wait for a live check. Capture is
 verified automatically against a local two-peer call (see *Capture
 harness*); real Meet / Teams / Zoom calls are still checked by hand (#184).
 Build it only to work on it.
@@ -136,6 +137,63 @@ free of page code (React, the transcript CSS): Chrome runs it as a service
 worker without a DOM, and the build refuses a `background.js` that uses
 `document`.
 
+## Meet names (#131)
+
+Who spoke, per remote line (plan §4.3, decision P8): the mic channel is
+always **You** (layer 1); on **Google Meet** the page adds names (layer 2);
+whatever stays unnamed is **Voice N** from the app's voice clustering
+(layer 3). **Teams and Zoom web get layers 1 and 3 only** in 0.9: no
+observer runs there.
+
+On a Meet tab, while capturing, the MAIN-world observer
+(`src/content/meet/`) runs every 100 ms:
+
+- **Who is speaking, from the audio** (`csrc.ts`): Meet tags each packet of
+  its few remote audio streams with the speaker's contributing source
+  (CSRC), stable per participant for the call. The observer polls
+  `RTCRtpReceiver.getContributingSources()` on the remote audio receivers
+  and sends `speaker_active` / `speaker_idle` with `id: "csrc:<n>"`,
+  `source: "rtp"` (no indicator lag). A CSRC on two receivers for several
+  polls is a mirror of the current speaker and is ignored for the call.
+- **Names, from the page** (`dom.ts`, `selectors/`): participant tiles,
+  the user's own tile and the lit ("speaking") tile, read through a
+  **versioned, data-only selector set** — attributes and structure only,
+  never obfuscated classes, never visible text or labels (localized).
+  Sets are picked at run time (first whose fingerprint fits, re-checked
+  every 30 s; several can be live for phased rollouts). The shipped set
+  `meet-2026-09a` is **provisional and unverified** (`verifiedOn: null`):
+  #184 confirms or replaces its values from our own inspection of a live
+  page. A MutationObserver on the set's attributes plus a 1 s refresh
+  keeps the read cheap; the observer never clicks or opens panels.
+- **Binding** (`binder.ts`): when exactly one CSRC speaks and exactly one
+  remote tile is lit, that is a vote; 5 agreeing votes with a margin of 3
+  lock the name (`speaker_name {id, name}`), which then applies to every
+  line of that CSRC, even after the page breaks. One live CSRC per name
+  (a rejoin may take it after 30 s), namesakes and the user's own name
+  never bind, and 10 contradicting votes in a row drop a binding
+  (`name: null`).
+- **Without CSRCs** (another browser or transport), after 2 s of remote
+  speech the lit tiles themselves become the timeline (`source: "dom"`,
+  `id: "tile:<hash>"` with the name); the app compensates their lag.
+- **Participants**: the names on the remote tiles (the user excluded),
+  through one name guard (`names.ts`: no ids, timers or "You").
+- **Health** (`health.ts`): cross-checks, not "a selector matched": 20 s
+  of remote speech without a single lit tile means the speaking hook is
+  broken; tiles without names mean the name hook is. A broken hook stops
+  sending names — never guesses — and `observer_health {state:
+  "names_unavailable"}` goes to the app and to the side panel
+  (`PanelState.names`).
+
+Times: the page stamps events in its own worklet frames; the background
+turns them into milliseconds on the connection's audio clock (the clock of
+the app's segments) and replays the page's state (participants, names,
+active speakers, health) to a new connection (`src/shared/speakerEvents.ts`).
+The app attributes each remote line to the name active for most of it
+(see `sussurro/src-tauri/src/speakers/names.rs`).
+
+**Not done yet**: Meet's live captions as an opt-in name fallback (a
+follow-up); lag numbers and the real hooks come from the live check (#184).
+
 ## Layout
 
 | Path | What it is |
@@ -145,6 +203,7 @@ worker without a DOM, and the build refuses a `background.js` that uses
 | `src/background/` | background worker: per-tab session, WebSocket to the app, badge, Chrome tab capture |
 | `src/content/main-world.ts` | MAIN-world content script (the `RTCPeerConnection` hook, E4) |
 | `src/content/isolated-world.ts` | ISOLATED-world content script (relay to the background) |
+| `src/content/meet/` | Meet name observer (#131): CSRC timeline, selector sets + fixtures, binder, health |
 | `src/offscreen/`, `offscreen.html` | Chrome only: tab-capture fallback |
 | `e2e/` | capture harness (Playwright + a fake app) |
 | `src/sidepanel/`, `sidepanel.html` | side panel (Chrome) / sidebar (Firefox): live lines, Start/Stop, item actions (#129) |
@@ -200,7 +259,10 @@ speaker chips, timestamps, the backlog) and reaching `open` / `export`
 (txt, then srt after Stop), a new Start clearing it, the
 `start` message, both channels arriving with their own tone, `seq` from 0
 without gaps, the call unaffected both ways, Stop, and `stop` when the tab
-closes. Configurations: `chromium` (binary messaging, Meet-like
+closes. On a fake Meet page (`e2e/meet.html`, served at `meet.google.com` by
+a route; Chromium configurations only) it checks the Meet name observer:
+CSRC `speaker_active`/`speaker_idle`, bound names, participants without
+the user, healthy observer. Configurations: `chromium` (binary messaging, Meet-like
 `replaceTrack`), `chromium-json` (the manifest key removed: base64, as on
 Chrome < 148) and `firefox` (installed as a temporary add-on and driven
 over the remote debugging protocol, which Playwright lacks for Firefox

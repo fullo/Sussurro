@@ -5,7 +5,9 @@
  * keeps working both ways, Stop ends the meeting, and closing the tab mid-
  * capture sends `stop`. The side panel (#129) shows the fake app's live
  * lines with their speaker chips and backlog, and its Open in Sussurro /
- * Copy as text / Create .srt reach the app's item routes.
+ * Copy as text / Create .srt reach the app's item routes. On a fake Meet
+ * page (Chromium), the Meet name observer (#131) sends the contributing-
+ * source timeline, the bound names, the participants and its health.
  *
  *   npm run build && npm run test:e2e            (all configurations)
  *   npm run test:e2e -- chromium firefox          (a subset)
@@ -352,6 +354,13 @@ async function runConfig(config: Config): Promise<Check[]> {
     const second = await until("stop after the tab closed", () => (server.sessions[1].stopped ? server.sessions[1] : null), 10_000).catch(() => null);
     check("closing the tab sends stop", !!second);
     await B.close();
+
+    // 4. Meet names (#131): a fake Meet page (served at meet.google.com by
+    //    a route) with tiles and faked contributing sources. Chromium only:
+    //    Firefox does not run the temporary add-on's content scripts in a
+    //    page Playwright fulfils from a route (the observer's logic is
+    //    browser-independent and unit tested).
+    if (config !== "firefox") await meetNames();
   } catch (e) {
     const shown = shownPanel ? await shownPanel.text().catch(() => "") : "";
     check("harness ran", false, `${String(e instanceof Error ? e.stack : e)}\n    side panel: ${shown.replace(/\s+/g, " ")}`);
@@ -360,6 +369,44 @@ async function runConfig(config: Config): Promise<Check[]> {
     await server.close();
   }
   return checks;
+
+  async function meetNames() {
+    await b.ctx.route("https://meet.google.com/**", (r) =>
+      r.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: readFileSync(join(EXT, "e2e", "meet.html"), "utf8") }),
+    );
+    const M = await b.ctx.newPage();
+    await M.goto("https://meet.google.com/e2e-fake");
+    await M.click("#join");
+    await until("the fake Meet call", () => M.evaluate(() => (window as any).callState().joined), 10_000);
+    const meetPanel = await b.openPanel(await b.tabIdOf("meet.google.com"));
+    shownPanel = meetPanel;
+    await until("Start on the Meet tab", () => meetPanel.canClick("start"));
+    const before = server.sessions.length;
+    await meetPanel.click("start");
+    await until("Meet session live", async () => (await meetPanel.status("phase")) === "live", 15_000);
+    await sleep(9_000);
+    await meetPanel.click("stop");
+    await until("Meet session done", async () => (await meetPanel.status("phase")) === "done", 10_000);
+    const ms = server.sessions[before];
+    const ctl = (type: string) => (ms?.controls ?? []).filter((c) => c.type === type);
+    check("Meet: start says platform meet", ms?.start?.platform === "meet", ms?.start);
+    const act = ctl("speaker_active");
+    check(
+      "Meet: speaker_active from the contributing sources (rtp, csrc ids, t on the audio clock)",
+      act.some((c) => c.id === "csrc:1001" && c.source === "rtp") &&
+        act.some((c) => c.id === "csrc:1002") &&
+        act.every((c, i) => typeof c.t === "number" && c.t >= 0 && c.t <= 15_000 && (i === 0 || (c.t as number) >= (act[i - 1].t as number) - 500)),
+      act,
+    );
+    check("Meet: speaker_idle when a speaker stops", ctl("speaker_idle").some((c) => c.id === "csrc:1001"), ctl("speaker_idle"));
+    const bound = Object.fromEntries(ctl("speaker_name").map((c) => [c.id, c.name]));
+    check("Meet: names bound to the sources by the lit tiles", bound["csrc:1001"] === "Bo E2e" && bound["csrc:1002"] === "Cy E2e", bound);
+    const people = ctl("participants").flatMap((c) => c.names as string[]);
+    check("Meet: participants without the user", people.includes("Bo E2e") && people.includes("Cy E2e") && !people.includes("Ada E2e"), people);
+    const health = ctl("observer_health").at(-1);
+    check("Meet: observer health ok, with the selector set", health?.state === "ok" && health?.set === "meet-2026-09a", health);
+    await M.close();
+  }
 }
 
 // ---- main ------------------------------------------------------------------------------

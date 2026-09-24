@@ -9,6 +9,7 @@ import type { MicVia, RemoteVia } from "../content/registry";
 import type { Platform } from "./platform";
 import type { AppProblem } from "./appcheck";
 import type { TransportMode } from "./transport";
+import type { HealthReport, PageSpeakerMsg } from "./speakerEvents";
 import type { SubtitlesMode } from "./connection";
 import type { LiveAction, LiveTranscript } from "./live";
 import type { Phase } from "../background/session";
@@ -38,7 +39,9 @@ export type FromMain =
   | { t: "armed"; rate: number }
   | { t: "arm-failed"; error: string }
   | { t: "pcm"; seq: number; mic: ArrayBuffer; remote: ArrayBuffer | null }
-  | { t: "state"; state: CaptureSnapshot };
+  | { t: "state"; state: CaptureSnapshot }
+  /** Meet names (#131): a speaker event, stamped in page frames. */
+  | { t: "speaker"; msg: PageSpeakerMsg };
 
 // ---- content / offscreen ↔ background (runtime ports) -----------------------
 
@@ -50,6 +53,7 @@ export type ToBackground =
   | { type: "arm-failed"; error: string }
   | { type: "pcm"; seq: number; mic?: Payload; remote?: Payload }
   | { type: "state"; state: CaptureSnapshot }
+  | { type: "speaker"; msg: PageSpeakerMsg }
   | { type: "offscreen-error"; error: string };
 
 export type FromBackground =
@@ -88,6 +92,10 @@ export interface PanelState {
   tabCapture: "off" | "starting" | "on" | "failed";
   /** How audio crosses the page → background port (diagnostics). */
   transport: TransportMode | null;
+  /** The Meet name observer's last health report (#131; null: none, e.g.
+   *  not a Meet page or not capturing). `names_unavailable`: new speakers
+   *  stay "Voice N". */
+  names?: HealthReport | null;
 }
 
 export type PanelRequest =

@@ -465,6 +465,8 @@ pub(crate) struct Request {
     pub title: String,
     pub source_label: String,
     pub options: RunOptions,
+    /// A browser meeting's page timeline (#131): names for its remote lines.
+    pub names: Option<crate::speakers::names::SharedNames>,
 }
 
 fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
@@ -543,7 +545,13 @@ where
             &req.source_label,
             req.options.identify_voices,
         )
-        .map(|o| crate::speakers::Tracker::new(o, speaker_model(models_dir.clone())));
+        .map(|mut o| {
+            // A browser meeting's page names apply to its remote lines (#131).
+            if o.two_channel {
+                o.names = req.names.clone();
+            }
+            crate::speakers::Tracker::new(o, speaker_model(models_dir.clone()))
+        });
         Ok(Job {
             session_id: req.id,
             source: req.source,
@@ -608,7 +616,8 @@ where
 /// - One channel (the in-room case, a file or a link): it is clustered.
 /// - A browser meeting (`source: browser:<host>`, #126) records the mic
 ///   and the remote side apart: the mic is always "You" and only the
-///   remote channel is clustered (names from the meeting page are #131).
+///   remote channel is clustered; the run adds the page's names
+///   (`Request::names`, #131) for the remote lines the page attributes.
 /// - System audio + mic (`source: system`, #139) likewise: the mic is
 ///   "You" and the system channel is clustered.
 ///
@@ -633,11 +642,13 @@ pub(crate) fn speaker_options(
         crate::speakers::SpeakerOptions {
             cluster: vec![Channel::Remote],
             two_channel: true,
+            names: None,
         }
     } else if source_label == crate::sources::system::SOURCE_LABEL {
         crate::speakers::SpeakerOptions {
             cluster: vec![Channel::System],
             two_channel: true,
+            names: None,
         }
     } else {
         crate::speakers::SpeakerOptions::clustering(&[channel])
@@ -718,6 +729,7 @@ pub fn start_mic(
             defer,
             item_type,
             title,
+            names: None,
             source_label: "mic".to_string(),
             options,
         };
@@ -764,6 +776,7 @@ pub(crate) fn system_request(
         title,
         source_label: crate::sources::system::SOURCE_LABEL.to_string(),
         options,
+        names: None,
     }
 }
 
@@ -834,12 +847,14 @@ pub fn start_system(
 }
 
 /// The run of a browser meeting (#126): a `meeting` item whose source is
-/// `browser:<host>`, fed live (the queue spills like a mic session's).
+/// `browser:<host>`, fed live (the queue spills like a mic session's). `names`: the
+/// page's speaker timeline the `/live` connection fills (#131).
 pub(crate) fn meeting_request(
     id: u64,
     cancel: Arc<AtomicBool>,
     start: &crate::api::protocol::Start,
     source: crate::sources::browser::BrowserSource,
+    names: crate::speakers::names::SharedNames,
 ) -> Request {
     Request {
         id,
@@ -851,6 +866,7 @@ pub(crate) fn meeting_request(
         defer: false,
         item_type: ItemType::Meeting,
         title: start.title.clone(),
+        names: Some(names),
         source_label: start.source_label(),
         options: RunOptions::default(),
     }
@@ -867,6 +883,7 @@ pub fn start_meeting(app: &AppHandle, meeting: crate::api::live::MeetingStart) -
         start,
         source,
         sink,
+        names,
     } = meeting;
     let (id, cancel) = state.engine.begin_meeting(&start.host)?;
     crate::pipeline::refresh_overlay(app);
@@ -877,7 +894,7 @@ pub fn start_meeting(app: &AppHandle, meeting: crate::api::live::MeetingStart) -
             id,
         };
         let state = app.state::<AppState>();
-        let req = meeting_request(id, cancel.clone(), &start, source);
+        let req = meeting_request(id, cancel.clone(), &start, source, names);
         let sinks: Vec<Arc<dyn EngineSink>> = vec![Arc::new(TauriSink { app: app.clone() }), sink];
         if let Err(e) = run_request_with(
             &state.settings,
@@ -935,6 +952,7 @@ pub fn transcribe_file(
             defer: false,
             item_type,
             title,
+            names: None,
             source_label: crate::sources::file::source_label(path),
             options,
         },
@@ -1086,6 +1104,7 @@ where
             // Audio recorded by others (P10).
             item_type: ItemType::Transcription,
             title,
+            names: None,
             source_label: url::source_label(&link.url),
             options,
         },

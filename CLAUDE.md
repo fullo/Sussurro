@@ -210,6 +210,30 @@ project decisions here, not in per-machine memory.**
   permission). The background must never import page code (React,
   `@sussurro/transcript`): Chrome's service worker has no DOM, and the
   extension build fails if `background.js` uses `document`.
+- **Meet names (0.9, #131, P8)** (`speakers/names.rs`,
+  `extension/src/content/meet/`): layer 1 mic = "You", layer 2 names on
+  **Meet only** (Teams/Zoom: layers 1 + 3), layer 3 Voice N. The page's
+  identity is the RTP **CSRC** (`getContributingSources()` polled at
+  10 Hz, mirror CSRCs excluded); names come from tiles through
+  **versioned data-only selector sets** (attributes/structure, never
+  obfuscated classes or label text; the shipped `meet-2026-09a` is
+  unverified until #184 — replace values only from our own inspection,
+  with a synthetic fixture) and are bound CSRC → name by voting (5 votes,
+  margin 3, 1:1, drop after 10 contradictions). Health cross-checks
+  against the audio; a broken hook sends `names_unavailable`, never
+  guesses. Without CSRCs the lit tiles become a `dom` timeline. **Protocol
+  2** (additive; `/app/version` reports `protocol_min: 1`, the extension
+  accepts `protocol_min..=protocol`): `speaker_active {t, id?, name?,
+  source?}`, `speaker_idle`, `speaker_name` (last binding applies to the
+  whole call), `observer_health`; `t` = ms on the connection's audio clock
+  (page frames mapped by the background). App: a remote line takes the
+  name covering ≥ 50 % of it and 1.5× the runner-up, after lag
+  compensation (dom 400 ms, caption 1.5 s, rtp 0) and 250 ms edge trim —
+  constants in `AttributionParams`, to re-tune from #184's measurements;
+  else Voice N. An end-of-run pass re-attributes with every event;
+  `meet:<name>` speakers feed the People link suggestion; page
+  participants join the frontmatter with People emails. Captions fallback
+  not built (follow-up).
 - **Library facets (0.9, #135)** (`archive/facets.rs`, `archive_facets`):
   not behind `meetings_enabled`. OR within a facet, AND across facets and
   with the text query; counts are disjunctive (a facet ignores its own

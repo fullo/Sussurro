@@ -1,0 +1,15 @@
+<!doctype html>
+<!-- Synthetic fixture (#131): tiles still carry their participant ids but
+     the name leaf moved (no element the set's name strategies find) and one
+     tile shows an id-like string instead of a name — the "names broke"
+     case the health check must report instead of guessing. -->
+<html>
+  <body>
+    <div data-participant-id="spaces/x/devices/7">
+      <div class="namebox"><b>Dora Finta</b></div>
+    </div>
+    <div data-participant-id="spaces/x/devices/8">
+      <span class="notranslate">devices/8</span>
+    </div>
+  </body>
+</html>
