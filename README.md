@@ -78,9 +78,6 @@ Building from source instead? See
 - **Live preview** — the overlay shows a rolling partial transcript while you
   speak; the pasted text always comes from the final full-quality pass.
 - **Whisper mode** — dictate quietly: 3× mic gain and a lower silence gate.
-- **Command mode** — select text anywhere, hold the command shortcut (default
-  `Ctrl+Alt+Space`) and speak an instruction ("make it shorter", "translate to
-  English"): the LLM applies it and the result replaces the selection.
 
 ### Cleanup & tone
 - **Cleanup levels** — None / Light / Medium / High, editable in Cleanup →
@@ -179,8 +176,12 @@ Current version **0.4.1**. Full detail (and standing decisions) in
   SmartScreen prompt (*More info → Run anyway*). Signing is on the roadmap
   (Windows via SignPath; macOS Developer ID later). The **updater** artifacts
   are always signed with the project's own key, independent of OS signing.
-- **Cleanup output is pasted without review.** The cleaned text — and in
-  command mode, the rewritten selection — goes straight into the focused app;
+- **Editing a selection by voice is not built in.** Command mode (a second
+  hotkey that applied a spoken instruction to the selected text) was removed
+  in 0.7; use your OS voice control instead — Voice Control on macOS, Voice
+  Access on Windows 11.
+- **Cleanup output is pasted without review.** The cleaned text goes straight
+  into the focused app;
   there is no step between the model and your cursor. By design the model only
   ever generates text and never triggers actions, so instructions carried by a
   dictation or a personal-dictionary entry can at most change what gets
