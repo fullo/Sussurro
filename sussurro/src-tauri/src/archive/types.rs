@@ -160,6 +160,11 @@ pub struct Segment {
     pub edited: bool,
     #[serde(default)]
     pub words: Vec<Word>,
+    /// `words` were split proportionally over the segment (the engine gave
+    /// no timings), not measured — consumers (SRT, playback highlight) may
+    /// want to treat them as approximate. Omitted from JSON when false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub words_estimated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
 }
@@ -300,11 +305,13 @@ mod tests {
                     start_ms: 200,
                     end_ms: 600,
                 }],
+                words_estimated: false,
                 embedding: None,
             }],
         };
         let json = serde_json::to_string(&f).unwrap();
         assert!(!json.contains("embedding"));
+        assert!(!json.contains("words_estimated"));
         assert!(!json.contains("person_id"));
         assert_eq!(serde_json::from_str::<SegmentsFile>(&json).unwrap(), f);
     }
