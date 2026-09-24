@@ -158,7 +158,16 @@ mod tests {
         let raw = std::fs::read_to_string(archive.join(&id).join(".sussurro/external-log.json")).unwrap();
         // Exactly these keys: no text, no question.
         let v: Vec<serde_json::Map<String, serde_json::Value>> = serde_json::from_str(&raw).unwrap();
-        let keys: Vec<Vec<&str>> = v.iter().map(|e| e.keys().map(String::as_str).collect()).collect();
+        // Sorted: serde_json keeps insertion order when a dependency enables
+        // its `preserve_order` feature (as happens on Linux CI).
+        let keys: Vec<Vec<&str>> = v
+            .iter()
+            .map(|e| {
+                let mut k: Vec<&str> = e.keys().map(String::as_str).collect();
+                k.sort_unstable();
+                k
+            })
+            .collect();
         assert_eq!(keys[0], ["date", "host", "kind", "model", "profile", "recipe"]);
         assert_eq!(keys[1], ["date", "host", "kind", "model", "profile"]);
         assert_eq!(v[1]["kind"], "question");
