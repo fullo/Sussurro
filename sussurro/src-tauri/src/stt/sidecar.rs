@@ -78,10 +78,23 @@ pub fn dev_paths() -> Option<SidecarPaths> {
     dev_resolve(&Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries"))
 }
 
+/// The target triple `npm run sidecar` names the host's file after: one
+/// per target in `sidecar/llama-server.lock.json`. Pure.
+pub fn host_triple() -> String {
+    let rest = if cfg!(target_os = "macos") {
+        "apple-darwin"
+    } else if cfg!(windows) {
+        "pc-windows-msvc"
+    } else {
+        "unknown-linux-gnu"
+    };
+    format!("{}-{rest}", std::env::consts::ARCH)
+}
+
 fn dev_resolve(binaries: &Path) -> Option<SidecarPaths> {
     let binary = binaries.join(format!(
         "{SIDECAR_NAME}-{}{}",
-        env!("SUSSURRO_TARGET_TRIPLE"),
+        host_triple(),
         std::env::consts::EXE_SUFFIX
     ));
     let lib_dir = binaries.join(LIB_DIR);
@@ -126,7 +139,7 @@ mod tests {
         assert_eq!(dev_resolve(tmp.path()), None);
         let binary = tmp.path().join(format!(
             "{SIDECAR_NAME}-{}{}",
-            env!("SUSSURRO_TARGET_TRIPLE"),
+            host_triple(),
             std::env::consts::EXE_SUFFIX
         ));
         fs::write(&binary, b"bin").unwrap();
@@ -139,6 +152,22 @@ mod tests {
                 lib_dir: tmp.path().join(LIB_DIR),
             })
         );
+    }
+
+    #[test]
+    fn the_host_triple_is_one_the_lock_file_pins() {
+        let lock: serde_json::Value =
+            serde_json::from_str(include_str!("../../sidecar/llama-server.lock.json")).unwrap();
+        let targets = lock["targets"].as_object().unwrap();
+        // Only the release targets need to match; other hosts (Intel Mac,
+        // ARM Linux) have no sidecar and dev_paths finds nothing.
+        let host = host_triple();
+        let release_host = cfg!(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "linux", target_arch = "x86_64"),
+        ));
+        assert_eq!(targets.contains_key(&host), release_host, "{host}");
     }
 
     #[test]
