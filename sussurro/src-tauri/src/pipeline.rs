@@ -2,9 +2,10 @@ use crate::cleanup::ollama;
 use crate::history::{self, HistoryEntry};
 use crate::inject;
 use crate::settings::SttEngine;
-use crate::state::AppState;
+use crate::state::{AppState, Loaded, ModelKey};
 use crate::stt::whisper::Transcriber;
 use crate::stt::{dictionary_prompt, models, parakeet::ParakeetTranscriber, AnyTranscriber};
+use std::sync::{Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, PartialEq)]
@@ -74,7 +75,11 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool) {
         TriggerAction::Ignore => {}
         TriggerAction::Start => {
             let device = state.settings.lock().unwrap().input_device.clone();
+            // Long-form segments yield from now until the final pass is
+            // done (`process_recording` ends the turn, #154).
+            state.dictation.begin();
             if let Err(e) = state.recorder.lock().unwrap().start(&device) {
+                state.dictation.end();
                 set_status(app, &format!("error: {e}"));
                 return;
             }
@@ -172,38 +177,121 @@ fn prepare_samples(
     (samples, threshold)
 }
 
-/// Lazy-load the configured STT engine into AppState (load takes seconds; do it once).
-/// Also used by the long-form engine, which shares the same transcriber.
-pub(crate) fn ensure_transcriber(state: &AppState, settings: &crate::settings::Settings) -> anyhow::Result<()> {
-    let models_dir = crate::state::resolve_models_dir(&state.paths, settings);
-    let mut guard = state.transcriber.lock().unwrap();
-    if guard.is_none() {
-        *guard = Some(match settings.engine {
-            SttEngine::Whisper => {
-                if !models::model_exists(&models_dir, &settings.whisper_model) {
-                    anyhow::bail!(
-                        "model not downloaded — open Settings and click 'Download model'"
-                    );
-                }
-                // settings.json is user-editable — validate before loading.
-                let path = models::resolve_model_path(&models_dir, &settings.whisper_model)?;
-                AnyTranscriber::Whisper(Transcriber::load(&path)?)
+/// Load the model a [`ModelKey`] names (takes seconds).
+fn load_model(key: &ModelKey) -> anyhow::Result<AnyTranscriber> {
+    let models_dir = &key.models_dir;
+    Ok(match key.engine {
+        SttEngine::Whisper => {
+            if !models::model_exists(models_dir, &key.whisper_model) {
+                anyhow::bail!("model not downloaded — open Settings and click 'Download model'");
             }
-            SttEngine::Parakeet => {
-                if !models::parakeet_exists(&models_dir) {
-                    anyhow::bail!(
-                        "Parakeet model not downloaded — open Settings and click 'Download model'"
-                    );
-                }
-                let dir = models_dir.join(crate::stt::parakeet::PARAKEET_DIR);
-                AnyTranscriber::Parakeet(ParakeetTranscriber::load(&dir)?)
+            // settings.json is user-editable — validate before loading.
+            let path = models::resolve_model_path(models_dir, &key.whisper_model)?;
+            AnyTranscriber::Whisper(Transcriber::load(&path)?)
+        }
+        SttEngine::Parakeet => {
+            if !models::parakeet_exists(models_dir) {
+                anyhow::bail!(
+                    "Parakeet model not downloaded — open Settings and click 'Download model'"
+                );
             }
-        });
+            let dir = models_dir.join(crate::stt::parakeet::PARAKEET_DIR);
+            AnyTranscriber::Parakeet(ParakeetTranscriber::load(&dir)?)
+        }
+    })
+}
+
+/// Lock `slot` and make sure it holds a model loaded for `wanted()` —
+/// read *under* the lock, so a caller that waited for the lock (behind a
+/// long-form segment or a dictation) uses the settings of now, not of when
+/// it started waiting. A model loaded for other settings is the "reload
+/// pending" state `set_settings` leaves when the lock is busy (#154): it is
+/// dropped (freeing its RAM first) and the wanted one loaded. Generic so
+/// tests can drive it without real models.
+fn lock_loaded<'a, T>(
+    slot: &'a Mutex<Option<Loaded<T>>>,
+    wanted: impl FnOnce() -> ModelKey,
+    load: impl FnOnce(&ModelKey) -> anyhow::Result<T>,
+) -> anyhow::Result<MutexGuard<'a, Option<Loaded<T>>>> {
+    let mut guard = slot.lock().unwrap();
+    let key = wanted();
+    if guard.as_ref().is_some_and(|l| l.key != key) {
+        *guard = None;
     }
+    if guard.is_none() {
+        let model = load(&key)?;
+        *guard = Some(Loaded { key, model });
+    }
+    Ok(guard)
+}
+
+/// The shared transcriber, locked and loaded for the current settings.
+pub(crate) struct TranscriberGuard<'a>(MutexGuard<'a, Option<Loaded<AnyTranscriber>>>);
+
+impl std::ops::Deref for TranscriberGuard<'_> {
+    type Target = AnyTranscriber;
+    fn deref(&self) -> &AnyTranscriber {
+        &self.0.as_ref().expect("loaded by lock_transcriber").model
+    }
+}
+
+impl std::ops::DerefMut for TranscriberGuard<'_> {
+    fn deref_mut(&mut self) -> &mut AnyTranscriber {
+        &mut self.0.as_mut().expect("loaded by lock_transcriber").model
+    }
+}
+
+/// Lock the shared transcriber, lazily (re)loading the configured engine
+/// (load takes seconds; done once per model). Used by the dictation, the
+/// HTTP API and the long-form engine — one model in RAM for all.
+pub(crate) fn lock_transcriber(state: &AppState) -> anyhow::Result<TranscriberGuard<'_>> {
+    // Lock order: transcriber → settings (nothing takes them the other way).
+    let guard = lock_loaded(
+        &state.transcriber,
+        || ModelKey::of(&state.paths, &state.settings.lock().unwrap()),
+        load_model,
+    )?;
     // Refresh the idle-unload clock while still holding the transcriber lock,
     // so a concurrent idle check can't unload what was just (re)loaded.
     *state.transcriber_last_used.lock().unwrap() = Some(std::time::Instant::now());
-    Ok(())
+    Ok(TranscriberGuard(guard))
+}
+
+/// Load the transcriber now (at recording start) so the final pass doesn't pay for it.
+pub(crate) fn ensure_transcriber(state: &AppState) -> anyhow::Result<()> {
+    lock_transcriber(state).map(drop)
+}
+
+/// After a model change: free the old model's RAM now if nobody is using
+/// it, without ever waiting for the lock — `set_settings` runs on the main
+/// thread and a long-form segment can hold the transcriber for seconds.
+/// When busy, [`lock_transcriber`] reloads on the next use (the loaded
+/// model's key no longer matches the settings). Returns whether it dropped.
+pub(crate) fn release_transcriber_if_free<T>(slot: &Mutex<Option<T>>) -> bool {
+    match slot.try_lock() {
+        Ok(mut guard) => guard.take().is_some(),
+        Err(_) => false,
+    }
+}
+
+/// Make `settings` the live settings (`set_settings`, main thread; the file
+/// is already saved). Never waits for the transcriber — a long-form
+/// segment or a dictation can hold it for seconds (#154): a model change
+/// frees the old model only if it's idle, and otherwise its next user
+/// reloads it ([`lock_transcriber`]). Returns whether the model changed.
+pub(crate) fn swap_settings(state: &AppState, settings: crate::settings::Settings) -> bool {
+    let model_changed = {
+        let mut current = state.settings.lock().unwrap();
+        let changed = current.whisper_model != settings.whisper_model
+            || current.engine != settings.engine
+            || current.models_dir != settings.models_dir;
+        *current = settings;
+        changed
+    };
+    if model_changed {
+        release_transcriber_if_free(&state.transcriber);
+    }
+    model_changed
 }
 
 /// A loaded model holds hundreds of MB to a few GB of RAM while the app sits
@@ -315,16 +403,8 @@ fn record_stats(state: &AppState, cleaned: &str) {
 /// app go through the long-form engine instead (#113). Returns (raw, cleaned).
 pub fn transcribe_batch(state: &AppState, samples: &[f32]) -> anyhow::Result<(String, String)> {
     let settings = state.settings.lock().unwrap().clone();
-    ensure_transcriber(state, &settings)?;
-
     let prompt = dictionary_prompt(&settings.dictionary);
-    let raw = {
-        let mut guard = state.transcriber.lock().unwrap();
-        guard
-            .as_mut()
-            .expect("transcriber loaded above")
-            .transcribe(samples, prompt.as_deref(), &settings.language)?
-    };
+    let raw = lock_transcriber(state)?.transcribe(samples, prompt.as_deref(), &settings.language)?;
     if raw.trim().is_empty() {
         anyhow::bail!("no speech found in the audio");
     }
@@ -351,7 +431,7 @@ pub fn transcribe_batch(state: &AppState, samples: &[f32]) -> anyhow::Result<(St
 fn preview_loop(app: &AppHandle) {
     let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap().clone();
-    if ensure_transcriber(&state, &settings).is_err() {
+    if ensure_transcriber(&state).is_err() {
         return; // no model yet — the final pass will surface the error
     }
     let prompt = dictionary_prompt(&settings.dictionary);
@@ -385,7 +465,10 @@ fn preview_loop(app: &AppHandle) {
         let Ok(mut guard) = state.transcriber.try_lock() else {
             continue;
         };
-        let Some(transcriber) = guard.as_mut() else {
+        let Some(Loaded {
+            model: transcriber, ..
+        }) = guard.as_mut()
+        else {
             return;
         };
         if let Ok(text) = transcriber.transcribe(&samples, prompt.as_deref(), &settings.language)
@@ -441,6 +524,10 @@ fn focused_app_name() -> String {
 
 fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     let state = app.state::<AppState>();
+    // Begun by `handle_trigger` at Start. Ends right after the final
+    // transcription — or on any early return — so long-form segments,
+    // which yield to it, resume as soon as the model is free (#154).
+    let turn = state.dictation.adopt();
     let target_app = focused_app_name();
 
     let samples = state.recorder.lock().unwrap().stop()?;
@@ -457,16 +544,9 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     // VAD-lite: don't waste inference on leading/trailing silence.
     let samples = crate::audio::resample::trim_silence(&samples, threshold, 1_600, 3_200);
 
-    ensure_transcriber(&state, &settings)?;
-
     let prompt = dictionary_prompt(&settings.dictionary);
-    let raw = {
-        let mut guard = state.transcriber.lock().unwrap();
-        guard
-            .as_mut()
-            .expect("transcriber loaded above")
-            .transcribe(&samples, prompt.as_deref(), &settings.language)?
-    };
+    let raw = lock_transcriber(&state)?.transcribe(&samples, prompt.as_deref(), &settings.language)?;
+    turn.finish(); // cleanup and injection don't need the model
     if raw.is_empty() {
         return Ok(());
     }
@@ -670,6 +750,160 @@ mod tests {
         // The session ends: the next idle round unloads.
         assert!(unload_if_idle(&slot, &last, std::time::Duration::from_secs(1), false));
         assert!(slot.lock().unwrap().is_none());
+    }
+
+    fn key(model: &str) -> ModelKey {
+        ModelKey {
+            engine: SttEngine::Whisper,
+            whisper_model: model.to_string(),
+            models_dir: "/models".into(),
+        }
+    }
+
+    fn test_state(dir: &std::path::Path) -> AppState {
+        AppState {
+            recorder: Default::default(),
+            transcriber: Mutex::new(None),
+            transcriber_last_used: Mutex::new(None),
+            settings: Mutex::new(crate::settings::Settings::default()),
+            paths: crate::state::AppPaths {
+                settings_file: dir.join("settings.json"),
+                models_dir: dir.join("models"),
+                history_file: dir.join("history.jsonl"),
+                stats_file: dir.join("stats.json"),
+                archive_index: dir.join("index.sqlite"),
+                documents_dir: None,
+                home_dir: None,
+            },
+            mic_test: Default::default(),
+            stream: Default::default(),
+            engine: Default::default(),
+            dictation: Default::default(),
+        }
+    }
+
+    /// Hold `slot`'s lock on another thread (a long-form segment
+    /// transcribing) until the returned sender is used or dropped.
+    fn hold_lock<T: Send + 'static>(
+        slot: std::sync::Arc<Mutex<T>>,
+    ) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let t = std::thread::spawn(move || {
+            let _g = slot.lock().unwrap();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        held_rx.recv().unwrap();
+        (release_tx, t)
+    }
+
+    #[test]
+    fn a_model_change_never_waits_for_a_busy_transcriber() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = std::sync::Arc::new(test_state(dir.path()));
+        // The lock is held by a "segment" until we say so: if swap_settings
+        // waited for it, this test would never get past the call.
+        let (release, segment) = {
+            let (held_tx, held_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            let state = state.clone();
+            let t = std::thread::spawn(move || {
+                let _g = state.transcriber.lock().unwrap();
+                held_tx.send(()).unwrap();
+                let _ = release_rx.recv();
+            });
+            held_rx.recv().unwrap();
+            (release_tx, t)
+        };
+        let mut s = crate::settings::Settings::default();
+        s.whisper_model = format!("{}-other", s.whisper_model);
+        assert!(swap_settings(&state, s.clone()), "model change detected");
+        assert_eq!(state.settings.lock().unwrap().whisper_model, s.whisper_model);
+        // Not a model change: nothing to reload either way.
+        s.push_to_talk = !s.push_to_talk;
+        assert!(!swap_settings(&state, s));
+        release.send(()).unwrap();
+        segment.join().unwrap();
+    }
+
+    #[test]
+    fn a_busy_model_is_reloaded_by_its_next_user_after_a_change() {
+        let slot = std::sync::Arc::new(Mutex::new(Some(Loaded {
+            key: key("a"),
+            model: "model a",
+        })));
+        let (release, segment) = hold_lock(slot.clone());
+        // set_settings while the segment runs: the old model stays for now.
+        assert!(!release_transcriber_if_free(&slot));
+        release.send(()).unwrap();
+        segment.join().unwrap();
+        assert_eq!(slot.lock().unwrap().as_ref().unwrap().model, "model a");
+
+        // The next user wants "b": the stale model goes, "b" is loaded.
+        let mut loads = Vec::new();
+        {
+            let g = lock_loaded(
+                &slot,
+                || key("b"),
+                |k| {
+                    loads.push(k.clone());
+                    Ok("model b")
+                },
+            )
+            .unwrap();
+            let loaded = g.as_ref().unwrap();
+            assert_eq!((loaded.key.clone(), loaded.model), (key("b"), "model b"));
+        }
+        assert_eq!(loads, [key("b")]);
+        // Same settings: no reload.
+        let g = lock_loaded(
+            &slot,
+            || key("b"),
+            |_| -> anyhow::Result<&str> { panic!("reloaded an up-to-date model") },
+        )
+        .unwrap();
+        assert_eq!(g.as_ref().unwrap().model, "model b");
+        drop(g);
+        // A failed load leaves no stale model behind.
+        let err = lock_loaded(
+            &slot,
+            || key("c"),
+            |_| -> anyhow::Result<&str> { anyhow::bail!("model not downloaded") },
+        );
+        assert!(err.is_err());
+        assert!(slot.lock().unwrap().is_none());
+        // Idle: a change frees the model at once.
+        *slot.lock().unwrap() = Some(Loaded {
+            key: key("c"),
+            model: "model c",
+        });
+        assert!(release_transcriber_if_free(&slot));
+        assert!(slot.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn the_wanted_model_is_read_after_waiting_for_the_lock() {
+        // A caller queued behind a segment must load what the settings say
+        // when it gets the lock, not what they said when it started waiting.
+        let slot = std::sync::Arc::new(Mutex::new(Some(Loaded {
+            key: key("a"),
+            model: "model a",
+        })));
+        let wanted = std::sync::Arc::new(Mutex::new(key("a")));
+        let (release, segment) = hold_lock(slot.clone());
+        let waiter = {
+            let (slot, wanted) = (slot.clone(), wanted.clone());
+            std::thread::spawn(move || {
+                let g = lock_loaded(&slot, || wanted.lock().unwrap().clone(), |_| Ok("model b"))
+                    .unwrap();
+                g.as_ref().unwrap().key.clone()
+            })
+        };
+        *wanted.lock().unwrap() = key("b"); // settings change while it waits
+        release.send(()).unwrap();
+        segment.join().unwrap();
+        assert_eq!(waiter.join().unwrap(), key("b"));
     }
 
     #[test]

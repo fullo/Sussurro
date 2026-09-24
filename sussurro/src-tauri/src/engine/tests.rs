@@ -251,9 +251,32 @@ fn deferred_mic_run_spills_and_still_writes_everything() {
     j.defer = true;
     j.meta.item_type = ItemType::Note;
     j.meta.source = "mic".into();
-    let mut stt = FakeStt {
-        calls: 0,
-        fail_on: None,
+    /// Records the spool file's size when STT first runs: in deferred mode
+    /// every segment is queued by then.
+    struct SpoolWatch {
+        inner: FakeStt,
+        spool: std::path::PathBuf,
+        spool_bytes_at_first_call: Option<u64>,
+        samples: Vec<usize>,
+    }
+    impl SegmentStt for SpoolWatch {
+        fn transcribe(&mut self, samples: &[f32]) -> Result<TimedTranscript> {
+            if self.samples.is_empty() {
+                self.spool_bytes_at_first_call =
+                    Some(std::fs::metadata(&self.spool).map(|m| m.len()).unwrap_or(0));
+            }
+            self.samples.push(samples.len());
+            self.inner.transcribe(samples)
+        }
+    }
+    let mut stt = SpoolWatch {
+        inner: FakeStt {
+            calls: 0,
+            fail_on: None,
+        },
+        spool: dir.path().join("spool.f32"),
+        spool_bytes_at_first_call: None,
+        samples: Vec::new(),
     };
     let r = run(
         j,
@@ -263,6 +286,14 @@ fn deferred_mic_run_spills_and_still_writes_everything() {
     )
     .unwrap();
     assert_eq!(r.segments, 8);
+    // The cap held: one segment in RAM, the other seven went to disk…
+    assert_eq!(r.queue.peak_in_ram, 1, "{:?}", r.queue);
+    assert_eq!(r.queue.spilled, 7, "{:?}", r.queue);
+    assert_eq!(r.queue.peak_len, 8, "deferred: all queued before STT");
+    assert_eq!(r.queue.peak_ram_samples, stt.samples[0] as u64);
+    // …really on disk: the spool held exactly segments 2..=8 as f32.
+    let spilled: usize = stt.samples[1..].iter().sum();
+    assert_eq!(stt.spool_bytes_at_first_call, Some(spilled as u64 * 4));
     let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
     assert!(item
         .segments
@@ -892,10 +923,11 @@ fn engine_end_to_end_with_a_real_model() {
         .contains(r.text.split_whitespace().next().unwrap()));
 }
 
-/// Memory check on a long file (plan §11): run it under `/usr/bin/time -l`
-/// (macOS) or `-v` (Linux) and compare the peak RSS with the model alone —
-/// the audio in RAM must stay bounded (see the module docs), not grow with
-/// the file (a whole-file decode of 60 min is ~230 MB of f32).
+/// Memory check on a long file (plan §11) with a real model: asserts the
+/// segment queue's high-water marks stay within the module-doc bound
+/// whatever the length (a whole-file decode of 60 min is ~230 MB of f32).
+/// For the process as a whole, also run it under `/usr/bin/time -l`
+/// (macOS) or `-v` (Linux) and compare the peak RSS with the model alone.
 ///   SUSSURRO_TEST_MODEL=/path/ggml-tiny.en.bin
 ///   SUSSURRO_TEST_LONG_WAV=/path/60-minutes.wav
 ///   cargo test engine_long_file -- --ignored --nocapture
@@ -947,9 +979,232 @@ fn engine_long_file_streams_with_bounded_memory() {
     let started = Instant::now();
     let r = run(job, &mut stt, &Identity, Arc::new(VecSink::default())).unwrap();
     println!(
-        "{} segments, {:.0} s of audio in {:.1} s",
+        "{} segments, {:.0} s of audio in {:.1} s, queue {:?}",
         r.segments,
         r.duration_ms as f64 / 1000.0,
-        started.elapsed().as_secs_f64()
+        started.elapsed().as_secs_f64(),
+        r.queue
     );
+    // The audio waiting in RAM stayed within the module-doc bound whatever
+    // the file's length (a whole-file decode would be ~230 MB per hour).
+    assert!(
+        r.segments > FILE_MAX_QUEUED,
+        "a long file: {} segments",
+        r.segments
+    );
+    assert_bounded_file_queue(&r.queue);
+}
+
+/// The file policy's memory bound: at most `FILE_MAX_QUEUED` segments of at
+/// most `max_segment_ms` each waiting, none spilled.
+fn assert_bounded_file_queue(q: &queue::QueueStats) {
+    let max_segment = segmenter::ms_to_samples(SegmenterParams::default().max_segment_ms) as u64;
+    assert!(q.peak_len <= FILE_MAX_QUEUED, "{q:?}");
+    assert!(q.peak_in_ram <= FILE_MAX_QUEUED, "{q:?}");
+    assert!(
+        q.peak_ram_samples <= FILE_MAX_QUEUED as u64 * max_segment,
+        "{q:?}"
+    );
+    assert_eq!(q.spilled, 0, "files block, never spill: {q:?}");
+}
+
+/// Continuous speech generated as it is read (the test holds no copy), that
+/// records how far the decoder ever ran ahead of the STT.
+struct LongSpeech {
+    total: u64,
+    pos: u64,
+    clock: Clock,
+    transcribed: Arc<std::sync::atomic::AtomicU64>,
+    max_lead: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl Source for LongSpeech {
+    fn channel(&self) -> Channel {
+        Channel::File
+    }
+    fn total_samples(&self) -> Option<u64> {
+        Some(self.total)
+    }
+    fn next_frame(&mut self) -> Result<Option<Frame>> {
+        if self.pos >= self.total {
+            return Ok(None);
+        }
+        let n = 4_000.min(self.total - self.pos);
+        let chunk = (self.pos..self.pos + n)
+            .map(|i| 0.2 * ((i as f32) * 0.07).sin())
+            .collect();
+        self.pos += n;
+        let lead = self.pos - self.transcribed.load(Ordering::SeqCst);
+        self.max_lead.fetch_max(lead, Ordering::SeqCst);
+        Ok(Some(self.clock.stamp(Channel::File, chunk)))
+    }
+}
+
+/// Deterministic twin of `engine_long_file_streams_with_bounded_memory`:
+/// 6 minutes of speech (12 capped segments), with the first STT call held
+/// until the decoder is as far ahead as it can get — so the bound is
+/// reached, not just respected by an STT that happened to keep up.
+#[test]
+fn long_file_decoding_stays_a_bounded_distance_ahead_of_stt() {
+    use std::sync::atomic::AtomicU64;
+    let dir = tempfile::tempdir().unwrap();
+    let max_segment = segmenter::ms_to_samples(SegmenterParams::default().max_segment_ms) as u64;
+    let transcribed = Arc::new(AtomicU64::new(0));
+    let max_lead = Arc::new(AtomicU64::new(0));
+    let mut j = job(
+        dir.path(),
+        Vec::new(),
+        Policy::Block {
+            max_queued: FILE_MAX_QUEUED,
+        },
+    );
+    j.source = Box::new(LongSpeech {
+        total: 12 * max_segment,
+        pos: 0,
+        clock: Clock::default(),
+        transcribed: transcribed.clone(),
+        max_lead: max_lead.clone(),
+    });
+    j.index_db = None;
+
+    struct SlowFirst {
+        inner: FakeStt,
+        transcribed: Arc<AtomicU64>,
+        max_lead: Arc<AtomicU64>,
+        fill: u64,
+    }
+    impl SegmentStt for SlowFirst {
+        fn transcribe(&mut self, samples: &[f32]) -> Result<TimedTranscript> {
+            if self.inner.calls == 0 {
+                // In flight + a full queue behind it.
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while self.max_lead.load(Ordering::SeqCst) < self.fill {
+                    assert!(
+                        Instant::now() < deadline,
+                        "the decoder never filled the queue"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+            let r = self.inner.transcribe(samples);
+            self.transcribed
+                .fetch_add(samples.len() as u64, Ordering::SeqCst);
+            r
+        }
+    }
+    let mut stt = SlowFirst {
+        inner: FakeStt {
+            calls: 0,
+            fail_on: None,
+        },
+        transcribed: transcribed.clone(),
+        max_lead: max_lead.clone(),
+        fill: (FILE_MAX_QUEUED as u64 + 1) * max_segment,
+    };
+    let r = run(
+        j,
+        &mut stt,
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
+    assert!(r.segments >= 12, "{} segments", r.segments);
+    // Everything but the detector's onset reached STT (the few frames it
+    // missed only make the measured lead below more pessimistic).
+    let missed = 12 * max_segment - transcribed.load(Ordering::SeqCst);
+    assert!(missed < 16_000, "{missed} samples never transcribed");
+    assert_bounded_file_queue(&r.queue);
+    assert_eq!(r.queue.peak_len, FILE_MAX_QUEUED, "the bound was reached");
+    // Ahead of STT: the segment in flight, the queue, the segment waiting
+    // to be queued plus what is left open after it (≤ one cap together),
+    // the VAD batch being fed, the aligner's rest and one source chunk —
+    // a fixed amount, never the whole file (12 caps here).
+    let bound = (FILE_MAX_QUEUED as u64 + 2) * max_segment
+        + 2 * (VAD_BATCH_FRAMES * segmenter::FRAME) as u64
+        + 4_000;
+    let lead = max_lead.load(Ordering::SeqCst);
+    assert!(
+        lead <= bound,
+        "decoder ran {lead} samples ahead (bound {bound})"
+    );
+}
+
+/// The app's STT under test conditions: every segment takes the shared
+/// model through the dictation gate, like `session::AppStt`.
+struct GatedStt {
+    gate: Arc<priority::DictationGate>,
+    model: Arc<Mutex<Vec<String>>>,
+    calls: usize,
+    /// Run inside the first segment, with the model held.
+    during_first: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl SegmentStt for GatedStt {
+    fn transcribe(&mut self, _samples: &[f32]) -> Result<TimedTranscript> {
+        let mut model = priority::acquire_yielding(&self.gate, || Ok(self.model.lock().unwrap()))?;
+        self.calls += 1;
+        model.push(format!("segment {}", self.calls));
+        if let Some(f) = self.during_first.take() {
+            f();
+        }
+        Ok(TimedTranscript {
+            text: format!("word{}", self.calls),
+            ..Default::default()
+        })
+    }
+}
+
+/// #154: a hotkey dictation pressed while segment 1 is transcribing waits
+/// for that segment only, and is served before segment 2.
+#[test]
+fn a_dictation_during_a_run_is_served_before_the_next_segment() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = bursts(&[(true, 2.0), (false, 2.5)].repeat(4));
+    let gate = Arc::new(priority::DictationGate::default());
+    let model = Arc::new(Mutex::new(Vec::new()));
+    let dictation = Arc::new(Mutex::new(None));
+    let during_first: Box<dyn FnOnce() + Send> = {
+        let (gate, model, dictation) = (gate.clone(), model.clone(), dictation.clone());
+        Box::new(move || {
+            gate.begin(); // hotkey pressed: recording starts
+            *dictation.lock().unwrap() = Some(std::thread::spawn(move || {
+                // Recording stops once the engine is parked on the gate —
+                // i.e. segment 1 is done and segment 2 was not started.
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while gate.waiting() == 0 {
+                    assert!(Instant::now() < deadline, "the engine never yielded");
+                    std::thread::yield_now();
+                }
+                model.lock().unwrap().push("dictation".to_string());
+                gate.end(); // final pass done
+            }));
+        })
+    };
+    let mut stt = GatedStt {
+        gate: gate.clone(),
+        model: model.clone(),
+        calls: 0,
+        during_first: Some(during_first),
+    };
+    let r = run(
+        job(dir.path(), audio, Policy::Block { max_queued: 4 }),
+        &mut stt,
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
+    let t = dictation.lock().unwrap().take().unwrap();
+    t.join().unwrap();
+    assert_eq!(r.segments, 4);
+    assert_eq!(
+        *model.lock().unwrap(),
+        [
+            "segment 1",
+            "dictation",
+            "segment 2",
+            "segment 3",
+            "segment 4"
+        ]
+    );
+    assert!(!gate.is_pending());
 }

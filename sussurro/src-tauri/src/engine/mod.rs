@@ -22,6 +22,7 @@
 //! start marks such an item `interrupted`.
 
 pub mod checkpoint;
+pub mod priority;
 pub mod queue;
 pub mod segmenter;
 pub mod session;
@@ -235,6 +236,8 @@ pub struct RunResult {
     pub text: String,
     pub segments: usize,
     pub duration_ms: u64,
+    /// The segment queue's high-water marks (the memory bound, measured).
+    pub queue: queue::QueueStats,
 }
 
 /// Run a job to completion on the calling thread (the ingest thread is
@@ -297,6 +300,7 @@ enum Captured {
     Done {
         worked: Worked,
         ingested: u64,
+        queue: queue::QueueStats,
     },
     /// The user cancelled.
     Cancelled,
@@ -365,7 +369,7 @@ fn run_inner(
         &sink,
         &mut item,
     );
-    let (worked, ingested) = match captured {
+    let (worked, ingested, queue) = match captured {
         Captured::Cancelled => {
             let kept = item.discard();
             return (Err(anyhow!("cancelled")), kept);
@@ -377,7 +381,11 @@ fn run_inner(
             }
             return (Err(e), kept);
         }
-        Captured::Done { worked, ingested } => (worked, ingested),
+        Captured::Done {
+            worked,
+            ingested,
+            queue,
+        } => (worked, ingested, queue),
     };
     let Worked {
         detected,
@@ -427,6 +435,7 @@ fn run_inner(
             text,
             segments: n,
             duration_ms,
+            queue,
         }),
         None,
     )
@@ -515,7 +524,11 @@ fn capture(
         return Captured::Cancelled;
     }
     let ingested = shared.backlog.lock().unwrap().ingested;
-    Captured::Done { worked, ingested }
+    Captured::Done {
+        worked,
+        ingested,
+        queue: shared.queue.stats(),
+    }
 }
 
 /// Source → aligner → detector → segmenter → queue.

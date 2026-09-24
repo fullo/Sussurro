@@ -15,13 +15,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
-
-/// After a hotkey dictation stops recording, the engine waits this long
-/// before taking the transcriber again, so the dictation's final pass
-/// (which locks it a few ms after the recording stops) goes first.
-const DICTATION_GRACE: Duration = Duration::from_millis(400);
 
 struct MicSession {
     id: u64,
@@ -128,34 +122,17 @@ struct AppStt {
 impl SegmentStt for AppStt {
     fn transcribe(&mut self, samples: &[f32]) -> Result<TimedTranscript> {
         let state = self.app.state::<AppState>();
-        wait_for_dictation(&state);
-        for _ in 0..2 {
-            let settings = state.settings.lock().unwrap().clone();
-            crate::pipeline::ensure_transcriber(&state, &settings)?;
-            let prompt = crate::stt::dictionary_prompt(&settings.dictionary);
-            // Blocks while a dictation transcribes: the engine waits for it
-            // — and a dictation arriving now waits for this one segment.
-            let mut guard = state.transcriber.lock().unwrap();
-            if let Some(t) = guard.as_mut() {
-                return t.transcribe_timed(samples, prompt.as_deref(), &settings.language);
-            }
-            // Unloaded between ensure and lock (settings changed): reload.
-        }
-        anyhow::bail!("the speech model was unloaded while transcribing — retry")
+        // A hotkey dictation recording or waiting for its final pass goes
+        // first; one pressed while this segment runs waits for it only
+        // (see `priority` for the bound). The model is (re)loaded for the
+        // settings current when the lock is taken.
+        let mut model = super::priority::acquire_yielding(&state.dictation, || {
+            crate::pipeline::lock_transcriber(&state)
+        })?;
+        let settings = state.settings.lock().unwrap().clone();
+        let prompt = crate::stt::dictionary_prompt(&settings.dictionary);
+        model.transcribe_timed(samples, prompt.as_deref(), &settings.language)
     }
-}
-
-/// Yield the transcriber to a hotkey dictation that is recording right now.
-fn wait_for_dictation(state: &AppState) {
-    let dictating =
-        || state.recorder.lock().unwrap().is_recording() && !state.mic_test.load(Ordering::Relaxed);
-    if !dictating() {
-        return;
-    }
-    while dictating() {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    std::thread::sleep(DICTATION_GRACE);
 }
 
 struct AppCleaner {
