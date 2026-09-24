@@ -25,6 +25,10 @@ pub const WARMUP_SAMPLES: usize = 16 * FRAME;
 pub struct SileroDetector {
     ctx: WhisperVadContext,
     warm: Vec<f32>,
+    /// Kept to load one more context for another channel ([`fork`]).
+    ///
+    /// [`fork`]: SpeechDetector::fork
+    model: std::path::PathBuf,
 }
 
 impl SileroDetector {
@@ -42,6 +46,7 @@ impl SileroDetector {
         Ok(Self {
             ctx,
             warm: Vec::new(),
+            model: model.to_path_buf(),
         })
     }
 }
@@ -74,6 +79,10 @@ impl SpeechDetector for SileroDetector {
         let keep = WARMUP_SAMPLES.min(buf.len());
         self.warm = buf.split_off(buf.len() - keep);
         Ok(out)
+    }
+
+    fn fork(&self) -> Result<Box<dyn SpeechDetector>> {
+        Ok(Box::new(Self::load(&self.model)?))
     }
 
     fn name(&self) -> &'static str {

@@ -747,6 +747,7 @@ fn build_segment_uses_engine_timings_and_skips_non_speech() {
     let audio = SegmentAudio {
         start: 32_000, // 2 s into the recording
         samples: vec![0.0; 16_000],
+        channel: Channel::Mic,
     };
     let t = TimedTranscript {
         text: " ciao mondo ".into(),
@@ -804,6 +805,7 @@ fn build_segment_applies_voice_commands_before_cleanup() {
     let audio = SegmentAudio {
         start: 0,
         samples: vec![0.0; 16_000],
+        channel: Channel::Mic,
     };
     let t = TimedTranscript {
         text: "first new line second".into(),
@@ -1720,4 +1722,109 @@ fn external_cleanup_marks_the_item_only_when_it_was_sent() {
     assert!(run_with("", None).is_empty(), "no opt-in: nothing sent, nothing recorded");
     assert!(run_with("other.example", None).is_empty(), "an opt-in for another host doesn't count");
     assert!(run_with("api.example.com", Some(CleanupLevel::None)).is_empty(), "cleanup None sends nothing");
+}
+
+/// A two-channel source (#126): `mic` from 0, `remote` joining 1 s late,
+/// frames interleaved like the browser sends them.
+struct TwoChannels {
+    mic: VecSource,
+    remote: VecSource,
+    remote_offset: u64,
+    turn: bool,
+}
+
+impl TwoChannels {
+    fn next_remote(&mut self) -> Result<Option<Frame>> {
+        let off = self.remote_offset;
+        Ok(self.remote.next_frame()?.map(|mut f| {
+            f.start += off;
+            f
+        }))
+    }
+}
+
+impl Source for TwoChannels {
+    fn channel(&self) -> Channel {
+        Channel::Remote
+    }
+    fn total_samples(&self) -> Option<u64> {
+        None
+    }
+    fn next_frame(&mut self) -> Result<Option<Frame>> {
+        self.turn = !self.turn;
+        if self.turn {
+            match self.mic.next_frame()? {
+                Some(f) => Ok(Some(f)),
+                None => self.next_remote(),
+            }
+        } else {
+            match self.next_remote()? {
+                Some(f) => Ok(Some(f)),
+                None => self.mic.next_frame(),
+            }
+        }
+    }
+}
+
+/// Counts forks: each channel must get its own detector state.
+struct CountingDetector(Arc<std::sync::atomic::AtomicUsize>);
+
+impl segmenter::SpeechDetector for CountingDetector {
+    fn probabilities(&mut self, samples: &[f32]) -> Result<Vec<f32>> {
+        EnergyDetector::default().probabilities(samples)
+    }
+    fn name(&self) -> &'static str {
+        "counting"
+    }
+    fn fork(&self) -> Result<Box<dyn segmenter::SpeechDetector>> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(CountingDetector(self.0.clone())))
+    }
+}
+
+#[test]
+fn two_channels_segment_separately_on_one_clock_in_time_order() {
+    let dir = tempfile::tempdir().unwrap();
+    // Mic: a long 12 s sentence from 0.5 s. Remote (joins at 1 s): a short
+    // reply at 2–4 s of the run — it closes first but starts later.
+    let mic = bursts(&[(false, 0.5), (true, 12.0), (false, 3.0)]);
+    let remote = bursts(&[(false, 1.0), (true, 2.0), (false, 11.5)]);
+    let forks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut j = job(dir.path(), Vec::new(), Policy::Spill { max_in_ram: 4 });
+    j.source = Box::new(TwoChannels {
+        mic: VecSource::new(mic, Channel::Mic),
+        remote: VecSource::new(remote, Channel::Remote),
+        remote_offset: 16_000,
+        turn: false,
+    });
+    j.detector = Box::new(CountingDetector(forks.clone()));
+    j.meta.item_type = ItemType::Meeting;
+    let sink = Arc::new(VecSink::default());
+    let r = run(
+        j,
+        &mut FakeStt {
+            calls: 0,
+            fail_on: None,
+        },
+        &FakeCleaner::default(),
+        sink,
+    )
+    .unwrap();
+    assert_eq!(forks.load(Ordering::SeqCst), 1, "one detector per channel");
+    let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+    let segs = &item.segments.segments;
+    let mic: Vec<_> = segs.iter().filter(|s| s.channel == Channel::Mic).collect();
+    let remote: Vec<_> = segs.iter().filter(|s| s.channel == Channel::Remote).collect();
+    assert_eq!((mic.len(), remote.len()), (1, 1), "{segs:?}");
+    assert!(mic[0].start_ms < 700, "{}", mic[0].start_ms);
+    // On the run's clock: 1 s offset + 1 s of silence.
+    assert!((1_700..2_100).contains(&remote[0].start_ms), "{}", remote[0].start_ms);
+    // The remote reply finished first, but the item is in time order.
+    assert_eq!(segs[0].channel, Channel::Mic);
+    assert!(segs.windows(2).all(|w| w[0].start_ms <= w[1].start_ms));
+    let mut ids: Vec<u32> = segs.iter().map(|s| s.id).collect();
+    ids.sort();
+    assert_eq!(ids, [0, 1], "ids stay unique");
+    // The run lasts as long as the furthest channel (15.5 s), not the sum.
+    assert!((15_000..16_500).contains(&r.duration_ms), "{}", r.duration_ms);
 }

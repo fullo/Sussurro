@@ -6,7 +6,10 @@
 //! 0.7 sources: [`mic::MicSource`] (long sessions, separate from the hotkey
 //! recorder) and [`file::FileSource`] (decoded from a path, streamed).
 //! 0.8: [`url`] fetches a link to a temporary file for the file source.
+//! 0.9: [`browser::BrowserSource`] — a meeting from the browser extension,
+//! two channels (`mic`, `remote`) on one clock.
 
+pub mod browser;
 pub mod file;
 pub mod mic;
 pub mod url;
@@ -26,7 +29,12 @@ pub struct Frame {
 /// A pull-based audio source. The engine's ingest thread calls
 /// [`Source::next_frame`] in a loop; a file source is naturally throttled by
 /// the engine's backpressure, a live source blocks until audio arrives.
+///
+/// A source may interleave frames of several channels (a meeting, #126):
+/// each channel's frames are contiguous on the source's clock, and a
+/// channel's first frame may start after 0 (it joined late).
 pub trait Source: Send {
+    /// The source's main channel (the only one for mic and file sources).
     fn channel(&self) -> Channel;
     /// Total length in samples, when known up front (files).
     fn total_samples(&self) -> Option<u64>;

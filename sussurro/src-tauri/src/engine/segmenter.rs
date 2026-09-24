@@ -7,6 +7,7 @@
 //! (≤ `max_segment_ms`) plus a `pad_ms` pre-roll; the aligner holds less
 //! than one frame between calls.
 
+use crate::archive::Channel;
 use std::collections::VecDeque;
 
 /// Samples per VAD frame: Silero's window at 16 kHz (32 ms).
@@ -30,6 +31,14 @@ pub trait SpeechDetector: Send {
     fn probabilities(&mut self, samples: &[f32]) -> anyhow::Result<Vec<f32>>;
     /// Short name for logs and the #106 notes: `silero` | `energy`.
     fn name(&self) -> &'static str;
+    /// A fresh detector of the same kind for another channel of the same
+    /// run (#126: a meeting has `mic` and `remote`). Detectors keep state
+    /// between calls (Silero's warm-up audio), so channels never share one.
+    /// The default refuses; the engine then falls back to the energy
+    /// detector for that channel.
+    fn fork(&self) -> anyhow::Result<Box<dyn SpeechDetector>> {
+        anyhow::bail!("the {} detector cannot serve another channel", self.name())
+    }
 }
 
 /// Fallback detector when the Silero model is unavailable: frame RMS
@@ -56,6 +65,12 @@ impl SpeechDetector for EnergyDetector {
 
     fn name(&self) -> &'static str {
         "energy"
+    }
+
+    fn fork(&self) -> anyhow::Result<Box<dyn SpeechDetector>> {
+        Ok(Box::new(EnergyDetector {
+            threshold: self.threshold,
+        }))
     }
 }
 
@@ -103,11 +118,12 @@ impl Default for SegmenterParams {
 }
 
 /// A finished segment: 16 kHz mono samples starting at `start` on the
-/// source's sample clock.
+/// source's sample clock, from logical `channel`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SegmentAudio {
     pub start: u64,
     pub samples: Vec<f32>,
+    pub channel: Channel,
 }
 
 impl SegmentAudio {
@@ -123,6 +139,8 @@ fn frames(ms: u32) -> usize {
 /// The VAD state machine. Feed it one frame at a time with its probability.
 pub struct Segmenter {
     p: SegmenterParams,
+    /// Stamped on every segment this segmenter emits.
+    channel: Channel,
     /// Clock position of the next frame's first sample.
     clock: u64,
     /// Idle pre-roll: the last `pad_ms` of non-speech audio.
@@ -138,8 +156,14 @@ pub struct Segmenter {
 
 impl Segmenter {
     pub fn new(p: SegmenterParams) -> Self {
+        Self::for_channel(p, Channel::default())
+    }
+
+    /// A segmenter for one logical channel of a (multi-channel) source.
+    pub fn for_channel(p: SegmenterParams, channel: Channel) -> Self {
         Self {
             p,
+            channel,
             clock: 0,
             pre: VecDeque::new(),
             active: false,
@@ -149,6 +173,14 @@ impl Segmenter {
             speech_frames: 0,
             silence_run: 0,
         }
+    }
+
+    /// Start the clock at `clock` instead of 0: a channel that joins a run
+    /// late (#126) stamps its segments on the run's clock. Only meaningful
+    /// before the first push.
+    pub fn starting_at(mut self, clock: u64) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// Clock position after everything pushed so far.
@@ -241,6 +273,7 @@ impl Segmenter {
         let seg = SegmentAudio {
             start: self.cur_start,
             samples: std::mem::take(&mut self.cur),
+            channel: self.channel,
         };
         self.active = false;
         self.cur_probs.clear();
@@ -271,6 +304,7 @@ impl Segmenter {
         let seg = SegmentAudio {
             start: self.cur_start,
             samples: std::mem::replace(&mut self.cur, rest),
+            channel: self.channel,
         };
         self.cur_start += cut as u64;
         self.cur_probs.drain(..cut_frames.min(self.cur_probs.len()));
