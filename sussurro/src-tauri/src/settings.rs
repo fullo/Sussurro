@@ -162,7 +162,8 @@ pub struct Settings {
     /// Settings). Off = today's single-column window. Removed when 0.7 ships.
     pub ui_v2: bool,
     /// 0.9 meetings (E12): the browser-extension routes of the local API
-    /// (`/app/version`, `/live`, `/items/…`) answer only when this is on.
+    /// (`/app/version`, `/live`, `/items/…`) answer only when this is on,
+    /// and so do speaker labels ("Voice N") and the speaker panel (#130).
     /// Removed when 0.9 ships (#138).
     pub meetings_enabled: bool,
     /// Pairing token of the browser extension (E6): `Authorization: Bearer`

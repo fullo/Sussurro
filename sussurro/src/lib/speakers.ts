@@ -1,0 +1,93 @@
+/* Speakers of a document (#130): the pure logic behind the speaker panel
+   and the line chips. Components only wire these to invoke(). */
+
+import type { DocSpeaker, Item, Segment, Settings } from "./types";
+
+/** Line-move target that opens a new "Voice N" (speakers/doc.rs NEW_VOICE). */
+export const NEW_VOICE = "voice:new";
+/** Longest speaker name (speakers/doc.rs MAX_LABEL_CHARS). */
+export const MAX_LABEL_CHARS = 60;
+
+/** The speaker panel and line chips are part of the 0.9 preview (E12):
+ *  shown only with `meetings_enabled`, and never on notes (P10). */
+export function speakersEnabled(settings: Pick<Settings, "meetings_enabled">, item: Pick<Item, "meta">): boolean {
+  return !!settings.meetings_enabled && item.meta.type !== "note";
+}
+
+/** Where a speaker's name comes from, for the panel's small print. */
+export function speakerSource(id: string): string {
+  if (id === "you") return "mic channel";
+  if (id.startsWith("meet:")) return "from Meet";
+  if (id.startsWith("voice:")) return "by voice";
+  return "";
+}
+
+export function isVoice(id: string): boolean {
+  return /^voice:[1-9]\d*$/.test(id);
+}
+
+export interface SpeakerShare {
+  speaker: DocSpeaker;
+  /** Speech attributed to the speaker, ms. */
+  ms: number;
+  /** Lines attributed to the speaker. */
+  lines: number;
+  /** Share of all attributed speech, 0–100, rounded. */
+  percent: number;
+}
+
+const lineMs = (s: Segment) => Math.max(0, s.end_ms - s.start_ms);
+
+/** Each speaker of the document with its share of speech (lines with text
+ *  only), in the document's speaker order. Percentages are rounded to
+ *  whole numbers; a speaker with no line left shows 0 %. */
+export function speakerShares(item: Pick<Item, "segments">): SpeakerShare[] {
+  const { speakers, segments } = item.segments;
+  const ms = new Map<string, number>();
+  const lines = new Map<string, number>();
+  let total = 0;
+  for (const s of segments) {
+    if (!s.speaker_id || !s.text.trim()) continue;
+    const d = lineMs(s);
+    ms.set(s.speaker_id, (ms.get(s.speaker_id) ?? 0) + d);
+    lines.set(s.speaker_id, (lines.get(s.speaker_id) ?? 0) + 1);
+    total += d;
+  }
+  return speakers.map((speaker) => {
+    const m = ms.get(speaker.id) ?? 0;
+    return {
+      speaker,
+      ms: m,
+      lines: lines.get(speaker.id) ?? 0,
+      percent: total > 0 ? Math.round((m / total) * 100) : 0,
+    };
+  });
+}
+
+/** Speaker of each line id, for the transcript chips. */
+export function speakerOfLine(item: Pick<Item, "segments">): Map<number, DocSpeaker> {
+  const byId = new Map(item.segments.speakers.map((s) => [s.id, s]));
+  const out = new Map<number, DocSpeaker>();
+  for (const s of item.segments.segments) {
+    const sp = s.speaker_id ? byId.get(s.speaker_id) : undefined;
+    if (sp) out.set(s.id, sp);
+  }
+  return out;
+}
+
+/** Why a speaker name can't be saved, or "" when it can. An empty name is
+ *  fine for a voice (it gets its "Voice N" name back). */
+export function labelProblem(id: string, label: string): string {
+  const l = label.trim().replace(/\s+/g, " ");
+  if (!l && !isVoice(id)) return "A speaker needs a name.";
+  if ([...l].length > MAX_LABEL_CHARS) return `At most ${MAX_LABEL_CHARS} characters.`;
+  return "";
+}
+
+/** Why "Re-detect speakers" is not available on this item, or "". */
+export function redetectBlocked(item: Pick<Item, "recording" | "edited_externally" | "embedded_segments">): string {
+  if (item.recording) return "Available when the recording ends.";
+  if (item.edited_externally) return "The transcript was edited outside Sussurro.";
+  if (!item.embedded_segments) return "This recording has no voice data: speakers can only be detected on recordings made with speaker labels on.";
+  return "";
+}

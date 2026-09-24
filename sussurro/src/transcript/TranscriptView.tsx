@@ -5,6 +5,13 @@ import "./transcript.css";
    they take lines and callbacks — so the 0.9 browser-extension side panel
    can import them through the `@sussurro/transcript` Vite alias (E11). */
 
+/** A speaker as a line shows it (#130): chip label and colour. */
+export interface TranscriptSpeaker {
+  id: string;
+  label: string;
+  color: string;
+}
+
 export interface TranscriptLineData {
   id: number;
   start_ms: number;
@@ -13,23 +20,35 @@ export interface TranscriptLineData {
   edited?: boolean;
   /** Speech-to-text failed on this stretch: why (shown as "[not transcribed]"). */
   sttError?: string;
+  /** Who said it, when the document has speakers (#130). */
+  speaker?: TranscriptSpeaker;
 }
 
 /** Segment-shaped data → lines: blank segments are dropped, except the ones
- *  STT failed on, which stay as "[not transcribed]" rows. */
+ *  STT failed on, which stay as "[not transcribed]" rows. With `speakers`,
+ *  each line carries its listed speaker (chip). */
 export function toLines(
-  segments: { id: number; start_ms: number; text: string; edited?: boolean; stt_error?: string }[],
+  segments: { id: number; start_ms: number; text: string; edited?: boolean; stt_error?: string; speaker_id?: string }[],
+  speakers?: TranscriptSpeaker[],
 ): TranscriptLineData[] {
+  const byId = new Map((speakers ?? []).map((s) => [s.id, s]));
   return segments
     .filter((s) => s.text.trim() || s.stt_error)
-    .map((s) => ({
-      id: s.id,
-      start_ms: s.start_ms,
-      text: s.text,
-      ...(s.edited ? { edited: true } : {}),
-      ...(s.stt_error && !s.text.trim() ? { sttError: s.stt_error } : {}),
-    }));
+    .map((s) => {
+      const sp = s.speaker_id ? byId.get(s.speaker_id) : undefined;
+      return {
+        id: s.id,
+        start_ms: s.start_ms,
+        text: s.text,
+        ...(s.edited ? { edited: true } : {}),
+        ...(s.stt_error && !s.text.trim() ? { sttError: s.stt_error } : {}),
+        ...(sp ? { speaker: { id: sp.id, label: sp.label, color: sp.color } } : {}),
+      };
+    });
 }
+
+/** Line-move target that opens a new "Voice N" (the backend's NEW_VOICE). */
+export const NEW_VOICE_TARGET = "voice:new";
 
 /** `HH:MM:SS`, as in transcript.md. */
 export function lineTimestamp(ms: number): string {
@@ -44,9 +63,22 @@ interface LineProps {
   /** Resolve true when saved (the editor closes), false to keep it open. */
   onEdit?: (id: number, text: string) => Promise<boolean>;
   onDelete?: (id: number) => Promise<void>;
+  /** The document's speakers, offered by "Move to speaker" (#130). */
+  speakers?: TranscriptSpeaker[];
+  /** Move the line to a speaker id (or {@link NEW_VOICE_TARGET}). */
+  onMoveSpeaker?: (id: number, speakerId: string) => Promise<void>;
 }
 
-export function TranscriptLine({ line, editable, onEdit, onDelete }: LineProps) {
+function SpeakerChip({ speaker }: { speaker: TranscriptSpeaker }) {
+  return (
+    <span className="tx-chip" style={{ background: speaker.color || undefined }} title={speaker.label}>
+      <i aria-hidden="true" />
+      {speaker.label}
+    </span>
+  );
+}
+
+export function TranscriptLine({ line, editable, onEdit, onDelete, speakers, onMoveSpeaker }: LineProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -105,6 +137,7 @@ export function TranscriptLine({ line, editable, onEdit, onDelete }: LineProps) 
         </div>
       ) : (
         <div className="tx-body">
+          {line.speaker && <SpeakerChip speaker={line.speaker} />}
           {line.sttError !== undefined ? (
             <p className="tx-text tx-failed" title={`Speech-to-text failed here: ${line.sttError}`}>
               [not transcribed]
@@ -120,6 +153,31 @@ export function TranscriptLine({ line, editable, onEdit, onDelete }: LineProps) 
               <button type="button" className="tx-btn" onClick={() => setDraft(line.text)} aria-label={`Edit line at ${ts}`}>
                 Edit
               </button>
+              {speakers && onMoveSpeaker && (
+                <select
+                  className="tx-btn tx-move"
+                  aria-label={`Move line at ${ts} to another speaker`}
+                  value=""
+                  disabled={saving}
+                  onChange={async (e) => {
+                    const to = e.target.value;
+                    if (!to) return;
+                    setSaving(true);
+                    await onMoveSpeaker(line.id, to);
+                    setSaving(false);
+                  }}
+                >
+                  <option value="">Move to speaker…</option>
+                  {speakers
+                    .filter((s) => s.id !== line.speaker?.id)
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.label}
+                      </option>
+                    ))}
+                  <option value={NEW_VOICE_TARGET}>New voice</option>
+                </select>
+              )}
               <button
                 type="button"
                 className={`tx-btn${confirmDelete ? " tx-btn-danger" : ""}`}
@@ -148,6 +206,8 @@ export function TranscriptView({
   editable = false,
   onEdit,
   onDelete,
+  speakers,
+  onMoveSpeaker,
   follow = false,
   emptyText = "No lines yet.",
   label = "Transcript",
@@ -156,6 +216,9 @@ export function TranscriptView({
   editable?: boolean;
   onEdit?: LineProps["onEdit"];
   onDelete?: LineProps["onDelete"];
+  /** Speakers offered by "Move to speaker" (#130); omit to hide it. */
+  speakers?: TranscriptSpeaker[];
+  onMoveSpeaker?: LineProps["onMoveSpeaker"];
   /** Live view: keep the newest line in sight while the user is at the bottom. */
   follow?: boolean;
   emptyText?: string;
@@ -175,7 +238,15 @@ export function TranscriptView({
   return (
     <ol className="tx-list" aria-label={label}>
       {lines.map((l) => (
-        <TranscriptLine key={l.id} line={l} editable={editable} onEdit={onEdit} onDelete={onDelete} />
+        <TranscriptLine
+          key={l.id}
+          line={l}
+          editable={editable}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          speakers={speakers}
+          onMoveSpeaker={onMoveSpeaker}
+        />
       ))}
       <li ref={endRef} className="tx-end" aria-hidden="true" />
     </ol>

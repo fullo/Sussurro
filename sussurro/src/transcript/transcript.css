@@ -32,6 +32,29 @@
   color: var(--c-dark, #1a1a1a);
   overflow-wrap: anywhere;
 }
+/* Speaker chip (#130): the speaker's colour, white text (every palette
+   colour is dark enough in both themes). */
+.tx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  margin: 0 0 3px;
+  padding: 1px 9px 1px 6px;
+  border-radius: var(--radius-pill, 100px);
+  background: var(--c-text-light, #595959);
+  color: #fff;
+  font-family: var(--f-sans, system-ui, sans-serif);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.tx-chip i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: rgba(255, 255, 255, 0.85); }
+.tx-move { appearance: auto; max-width: 180px; }
 .tx-failed { font-family: var(--f-mono, ui-monospace, monospace); font-size: 13px; color: var(--c-text-light, #595959); }
 .tx-edited { font-family: var(--f-sans, system-ui, sans-serif); font-size: 11px; color: var(--c-text-light, #595959); }
 

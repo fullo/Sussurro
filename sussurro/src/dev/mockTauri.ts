@@ -10,7 +10,7 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
-import type { CompanionDoc, Item, ItemMeta, ItemSummary, LlmProfile, Person, Recipe, Segment, Settings } from "../lib/types";
+import type { CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Person, Recipe, Segment, Settings } from "../lib/types";
 
 const params = new URLSearchParams(window.location.search);
 
@@ -62,8 +62,9 @@ const settings: Settings = {
   output_file: "",
   archive_dir: "",
   ui_v2: params.get("ui") !== "legacy",
+  // 0.9 preview (#130): on in the dev preview, `?meetings=off` hides it.
+  meetings_enabled: params.get("meetings") !== "off",
   subtitles: "on_request",
-  meetings_enabled: false,
   extension_token: "",
 };
 
@@ -81,7 +82,15 @@ interface Stored {
   edited_externally?: boolean;
   interrupted?: boolean;
   recording?: boolean;
+  /** Speakers of the document (#130). */
+  speakers?: DocSpeaker[];
+  /** Voice each line "really" has, standing in for the stored embeddings:
+   *  what "Re-detect speakers" gives back. */
+  voiceOf?: Record<number, string>;
 }
+
+const VOICE_COLORS = ["#0f766e", "#7e22ce", "#1f6feb", "#c2410c", "#be185d", "#4d7c0f", "#0369a1", "#9a3412"];
+const voice = (n: number): DocSpeaker => ({ id: `voice:${n}`, label: `Voice ${n}`, color: VOICE_COLORS[(n - 1) % VOICE_COLORS.length] });
 
 const at = (daysAgo: number, h: number, m: number) => {
   const d = new Date();
@@ -143,6 +152,24 @@ let items: Stored[] = params.get("empty")
         ]),
         edited_externally: true,
       },
+      (() => {
+        const lines = segs([
+          "Allora, siamo tutti? Partiamo dalla roadmap della 0.9.",
+          "Io vorrei chiudere prima l'estensione del browser, il resto dipende da lì.",
+          "D'accordo, ma le etichette delle voci servono anche per le riunioni in sala.",
+          "Giusto: con un solo portatile al centro del tavolo non abbiamo i nomi di Meet.",
+          "Quindi Voice 1, Voice 2, e poi si rinominano nel documento.",
+          "Esatto. E se il raggruppamento sbaglia, si sposta la riga a mano.",
+        ]);
+        const truth = ["voice:1", "voice:2", "voice:3", "voice:1", "voice:2", "voice:3"];
+        return {
+          id: "2026/09/riunione-in-sala-roadmap-0-9",
+          meta: meta("Riunione in sala — roadmap 0.9", "meeting", at(1, 10, 0), "00:12:40", "mic", { categories: ["team"] }),
+          segments: lines.map((l, i) => ({ ...l, speaker_id: i === 5 ? "voice:2" : truth[i] })),
+          speakers: [voice(1), { ...voice(2), label: "Anna" }, voice(3)],
+          voiceOf: Object.fromEntries(truth.map((v, i) => [i, v])),
+        } as Stored;
+      })(),
       {
         id: "2026/09/lezione-diritto-d-autore-e-ia",
         meta: meta("Lezione: diritto d'autore e IA — una lezione molto lunga con un titolo lunghissimo", "transcription", at(5, 9, 30), "01:12:40", "file:lezione.m4a"),
@@ -214,12 +241,13 @@ function toItem(s: Stored): Item {
   return {
     id: s.id,
     meta: { ...s.meta },
-    segments: { version: 1, speakers: [], segments: s.segments.map((x) => ({ ...x })) },
+    segments: { version: 1, speakers: (s.speakers ?? []).map((x) => ({ ...x })), segments: s.segments.map((x) => ({ ...x })) },
     body,
     edited_externally: !!s.edited_externally,
     recording: !!s.recording,
     interrupted: !!s.interrupted,
     external_hosts: hostsOf(s.id),
+    embedded_segments: s.voiceOf ? Object.keys(s.voiceOf).length : 0,
   };
 }
 
@@ -850,6 +878,37 @@ function handle(cmd: string, a: Args): unknown {
         s.segments = s.segments.map((x) =>
           x.id === sid ? { ...x, text: String(a.text).trim(), edited: true, stt_error: undefined } : x,
         );
+      return toItem(s);
+    }
+    case "archive_move_segment_speaker":
+    case "archive_rename_speaker":
+    case "archive_redetect_speakers": {
+      // Mirrors archive::edit_speakers (#130), simplified.
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      if (s.edited_externally) throw `'${s.id}' was edited outside Sussurro: its transcript.md is kept as is — edit it there`;
+      if (s.recording) throw `'${s.id}' is still being recorded — edit it when the session ends`;
+      const speakers = (s.speakers ??= []);
+      if (cmd === "archive_move_segment_speaker") {
+        let to = String(a.speakerId);
+        if (to === "voice:new") {
+          const max = Math.max(0, ...speakers.map((x) => Number(x.id.split(":")[1]) || 0));
+          speakers.push(voice(max + 1));
+          to = `voice:${max + 1}`;
+        } else if (!speakers.some((x) => x.id === to)) throw `no speaker '${to}' in this document`;
+        s.segments = s.segments.map((x) => (x.id === Number(a.segmentId) ? { ...x, speaker_id: to } : x));
+      } else if (cmd === "archive_rename_speaker") {
+        const sp = speakers.find((x) => x.id === a.speakerId);
+        if (!sp) throw `no speaker '${a.speakerId}' in this document`;
+        const label = String(a.label).trim().replace(/\s+/g, " ");
+        sp.label = label || sp.id.replace("voice:", "Voice ");
+      } else {
+        const truth = s.voiceOf;
+        if (!truth) throw "this document has no voice data — speakers can only be detected on recordings made with speaker detection on";
+        s.segments = s.segments.map((x) => (truth[x.id] ? { ...x, speaker_id: truth[x.id] } : x));
+        const used = new Set(s.segments.map((x) => x.speaker_id));
+        s.speakers = speakers.filter((x) => used.has(x.id));
+      }
       return toItem(s);
     }
     case "archive_delete":

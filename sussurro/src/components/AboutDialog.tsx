@@ -11,7 +11,8 @@ interface LicensePackage {
   /** Original SPDX expression, only when it differed from `license`. */
   spdx: string;
   repository: string;
-  ecosystem: "rust" | "npm";
+  /** `model`: a model downloaded on first use (attribution, #130). */
+  ecosystem: "rust" | "npm" | "model";
   textId: number;
 }
 interface LicensesData {
@@ -54,7 +55,8 @@ export function AboutDialog({
       p.license.toLowerCase().includes(q),
   );
   const rustCount = data?.packages.filter((p) => p.ecosystem === "rust").length ?? 0;
-  const npmCount = (data?.packages.length ?? 0) - rustCount;
+  const modelCount = data?.packages.filter((p) => p.ecosystem === "model").length ?? 0;
+  const npmCount = (data?.packages.length ?? 0) - rustCount - modelCount;
 
   return (
     <div
@@ -116,6 +118,7 @@ export function AboutDialog({
             {data && (
               <span className="license-count">
                 {rustCount} Rust · {npmCount} npm
+                {modelCount > 0 && ` · ${modelCount} model${modelCount === 1 ? "" : "s"}`}
               </span>
             )}
           </div>

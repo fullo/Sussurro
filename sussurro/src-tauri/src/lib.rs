@@ -16,6 +16,7 @@ pub mod secrets;
 pub mod settings;
 pub mod snippets;
 pub mod sources;
+pub mod speakers;
 pub mod state;
 pub mod stats;
 pub mod stt;
@@ -217,6 +218,9 @@ pub fn run() {
             commands::archive_update_meta,
             commands::archive_update_segment,
             commands::archive_delete_segment,
+            commands::archive_move_segment_speaker,
+            commands::archive_rename_speaker,
+            commands::archive_redetect_speakers,
             commands::archive_delete,
             commands::archive_reveal,
             commands::archive_rebuild_index,

@@ -54,6 +54,21 @@ pub struct Item {
     /// sorted; empty = it never left the machine. See
     /// [`super::external::sent_hosts_at`].
     pub external_hosts: Vec<String>,
+    /// Lines carrying a speaker embedding (#130): "Re-detect speakers"
+    /// has something to work on when this is not zero. Counted before
+    /// [`Item::without_embeddings`] strips them for the UI.
+    pub embedded_segments: usize,
+}
+
+impl Item {
+    /// The item as the UI gets it: embeddings (256 floats per line, only
+    /// needed by the backend) are left out of the payload.
+    pub fn without_embeddings(mut self) -> Self {
+        for s in &mut self.segments.segments {
+            s.embedding = None;
+        }
+        self
+    }
 }
 
 /// A list/search row.
@@ -387,10 +402,16 @@ fn read_item_at(id: &str, dir: &Path) -> Result<Item> {
         meta.title = fallback_title(&body, dir);
     }
     let state = meta.session_state();
+    let segments = read_segments(dir)?;
     Ok(Item {
         id: id.to_string(),
         meta,
-        segments: read_segments(dir)?,
+        embedded_segments: segments
+            .segments
+            .iter()
+            .filter(|s| s.embedding.is_some())
+            .count(),
+        segments,
         body,
         edited_externally: is_edited_externally(dir, &bytes),
         recording: state == Some(SessionState::Recording),
@@ -652,6 +673,95 @@ fn edit_segment_with(
     edit: SegmentEdit,
     before_commit: &dyn Fn(&Path),
 ) -> Result<Item> {
+    modify_segments_with(archive, id, before_commit, |segments| {
+        let pos = segments
+            .segments
+            .iter()
+            .position(|s| s.id == segment_id)
+            .with_context(|| format!("no line {segment_id} in '{id}'"))?;
+        match edit {
+            SegmentEdit::Text(text) => {
+                let text = text.trim();
+                if text.is_empty() {
+                    bail!("a line can't be empty — delete it instead");
+                }
+                let seg = &mut segments.segments[pos];
+                if seg.text != text {
+                    seg.text = text.to_string();
+                    seg.edited = true;
+                    // Typed in by hand over a stretch STT could not transcribe.
+                    seg.stt_error = None;
+                }
+            }
+            SegmentEdit::Delete => {
+                segments.segments.remove(pos);
+            }
+        }
+        Ok(())
+    })
+}
+
+/// A change to a document's speakers, from the speaker panel (#130).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpeakerEdit {
+    /// Move one line to another speaker of the document;
+    /// [`crate::speakers::doc::NEW_VOICE`] opens a new "Voice N".
+    Move { segment_id: u32, speaker_id: String },
+    /// Rename a speaker for this document only (empty: a voice gets its
+    /// "Voice N" name back).
+    Rename { speaker_id: String, label: String },
+    /// "Re-detect speakers": re-cluster the whole document offline from
+    /// the stored embeddings.
+    Redetect,
+}
+
+/// Apply a [`SpeakerEdit`] and regenerate `transcript.md`, under the same
+/// rules as a line edit ([`edit_segment`]): refused when the transcript
+/// was edited outside the app or the item is still being recorded, and
+/// undone if the markdown changes on disk meanwhile. Returns the updated
+/// item.
+pub fn edit_speakers(archive: &Path, id: &str, edit: SpeakerEdit) -> Result<Item> {
+    edit_speakers_with(archive, id, edit, &|_| {})
+}
+
+fn edit_speakers_with(
+    archive: &Path,
+    id: &str,
+    edit: SpeakerEdit,
+    before_commit: &dyn Fn(&Path),
+) -> Result<Item> {
+    use crate::speakers::doc;
+    modify_segments_with(archive, id, before_commit, |segments| {
+        match edit {
+            SpeakerEdit::Move {
+                segment_id,
+                speaker_id,
+            } => {
+                doc::move_segment(segments, segment_id, &speaker_id)?;
+            }
+            SpeakerEdit::Rename { speaker_id, label } => {
+                doc::rename_speaker(segments, &speaker_id, &label)?;
+            }
+            SpeakerEdit::Redetect => {
+                doc::redetect(segments)?;
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Read-modify-write of an item's `segments.json` from the app's editors
+/// (lines, speakers), with `transcript.md` regenerated in step. Refused
+/// when the transcript was edited outside the app (the content-hash rule:
+/// the markdown wins, so a change that could never reach it is not saved
+/// either) and while a capture session writes the item (#153). `change`
+/// failing leaves everything as it was.
+fn modify_segments_with(
+    archive: &Path,
+    id: &str,
+    before_commit: &dyn Fn(&Path),
+    change: impl FnOnce(&mut SegmentsFile) -> Result<()>,
+) -> Result<Item> {
     // Same lock as the engine's checkpoints and update_meta: the check and
     // the write must not interleave with another writer of this item.
     let _lock = lock_items();
@@ -670,32 +780,10 @@ fn edit_segment_with(
     }
     let original = read_segments(&dir)?;
     let mut segments = original.clone();
-    let pos = segments
-        .segments
-        .iter()
-        .position(|s| s.id == segment_id)
-        .with_context(|| format!("no line {segment_id} in '{id}'"))?;
-    match edit {
-        SegmentEdit::Text(text) => {
-            let text = text.trim();
-            if text.is_empty() {
-                bail!("a line can't be empty — delete it instead");
-            }
-            let seg = &mut segments.segments[pos];
-            if seg.text != text {
-                seg.text = text.to_string();
-                seg.edited = true;
-                // Typed in by hand over a stretch STT could not transcribe.
-                seg.stt_error = None;
-            }
-        }
-        SegmentEdit::Delete => {
-            segments.segments.remove(pos);
-        }
-    }
+    change(&mut segments)?;
     // Rendered from the very bytes checked above, and replaced only if the
     // file still holds them (#155): an external save that lands meanwhile
-    // wins, and the line edit is undone in segments.json too — it could
+    // wins, and the change is undone in segments.json too — it could
     // never reach the markdown, so it is not kept anywhere.
     let doc = render_transcript(&meta, &segments)?;
     write_segments(&dir, &segments)?;
@@ -1464,5 +1552,138 @@ mod tests {
         assert!(msg.contains("won't replace it"), "{msg}");
         assert!(msg.contains("---"), "{msg}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
+    }
+
+    /// A meeting with two voices and embeddings on every line (#130).
+    fn voiced_meeting(archive: &Path) -> String {
+        use crate::speakers::cluster::tests::{sample, voices};
+        use crate::speakers::doc::voice_speaker;
+        let (mut rng, v) = voices(2, 8);
+        let truth = [0usize, 1, 0, 1, 0, 1];
+        let mut m = meta("Riunione", DATE);
+        m.item_type = ItemType::Meeting;
+        let segments = SegmentsFile {
+            speakers: vec![voice_speaker(1), voice_speaker(2)],
+            segments: truth
+                .iter()
+                .enumerate()
+                .map(|(i, &t)| Segment {
+                    id: i as u32,
+                    start_ms: i as u64 * 5000,
+                    end_ms: i as u64 * 5000 + 4000,
+                    speaker_id: Some(format!("voice:{}", t + 1)),
+                    text: format!("Frase {i}."),
+                    embedding: Some(sample(&mut rng, &v[t], 0.9)),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        create_item(archive, &m, &segments).unwrap()
+    }
+
+    #[test]
+    fn speaker_moves_and_renames_persist_in_segments_and_markdown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = voiced_meeting(archive);
+        let item = read_item(archive, &id).unwrap();
+        assert_eq!(item.embedded_segments, 6);
+        assert!(item.body.contains("**[00:00:05] Voice 2:** Frase 1."), "{}", item.body);
+
+        let move_to = |seg: u32, sp: &str| SpeakerEdit::Move {
+            segment_id: seg,
+            speaker_id: sp.into(),
+        };
+        edit_speakers(archive, &id, move_to(1, "voice:1")).unwrap();
+        let rename = SpeakerEdit::Rename {
+            speaker_id: "voice:1".into(),
+            label: "Anna".into(),
+        };
+        let item = edit_speakers(archive, &id, rename).unwrap();
+        assert!(item.body.contains("**[00:00:05] Anna:** Frase 1."), "{}", item.body);
+        assert!(!item.edited_externally);
+
+        // On disk, not only in the returned item.
+        let dir = archive.join(&id);
+        let saved = read_segments(&dir).unwrap();
+        assert_eq!(saved.segments[1].speaker_id.as_deref(), Some("voice:1"));
+        assert_eq!(saved.speakers[0].label, "Anna");
+        assert!(saved.segments.iter().all(|s| s.embedding.is_some()));
+        let markdown = std::fs::read_to_string(dir.join(TRANSCRIPT_FILE)).unwrap();
+        assert!(markdown.contains("**[00:00:00] Anna:** Frase 0."), "{markdown}");
+
+        // A bad target changes nothing.
+        let before = std::fs::read(dir.join(META_DIR).join(SEGMENTS_FILE)).unwrap();
+        assert!(edit_speakers(archive, &id, move_to(1, "voice:9")).is_err());
+        assert_eq!(std::fs::read(dir.join(META_DIR).join(SEGMENTS_FILE)).unwrap(), before);
+    }
+
+    #[test]
+    fn redetect_undoes_a_wrong_move_and_is_idempotent_on_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = voiced_meeting(archive);
+        let original = read_segments(&archive.join(&id)).unwrap();
+        edit_speakers(
+            archive,
+            &id,
+            SpeakerEdit::Move {
+                segment_id: 2,
+                speaker_id: "voice:2".into(),
+            },
+        )
+        .unwrap();
+        let item = edit_speakers(archive, &id, SpeakerEdit::Redetect).unwrap();
+        assert_eq!(item.segments, original);
+        let again = edit_speakers(archive, &id, SpeakerEdit::Redetect).unwrap();
+        assert_eq!(again.segments, original);
+        assert_eq!(again.body, item.body);
+        // The UI copy carries no embeddings; the file keeps them.
+        let ui = again.without_embeddings();
+        assert!(ui.segments.segments.iter().all(|s| s.embedding.is_none()));
+        assert_eq!(ui.embedded_segments, 6);
+    }
+
+    #[test]
+    fn speaker_edits_follow_the_freshness_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = voiced_meeting(archive);
+        let path = archive.join(&id).join(TRANSCRIPT_FILE);
+        let seg_path = archive.join(&id).join(META_DIR).join(SEGMENTS_FILE);
+        let before = std::fs::read(&seg_path).unwrap();
+
+        // Saved in another app between the check and the write: the
+        // markdown wins and the re-detect is not kept.
+        let external = "---\ntitle: Riunione\n---\nRiscritto.\n";
+        let err = edit_speakers_with(archive, &id, SpeakerEdit::Redetect, &|p| {
+            std::fs::write(p, external).unwrap()
+        })
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("changed on disk"), "{err:#}");
+        assert_eq!(std::fs::read(&seg_path).unwrap(), before);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
+
+        // From now on the item counts as edited outside: refused up front.
+        let rename = SpeakerEdit::Rename {
+            speaker_id: "voice:1".into(),
+            label: "Anna".into(),
+        };
+        let err = edit_speakers(archive, &id, rename).unwrap_err();
+        assert!(format!("{err:#}").contains(EDITED_OUTSIDE_ERROR), "{err:#}");
+        assert_eq!(std::fs::read(&seg_path).unwrap(), before);
+    }
+
+    #[test]
+    fn speaker_edits_wait_for_a_live_session() {
+        use crate::archive::live;
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let mut m = meta("Live", DATE);
+        m.item_type = ItemType::Meeting;
+        let id = live::begin_session(archive, &m).unwrap();
+        let err = edit_speakers(archive, &id, SpeakerEdit::Redetect).unwrap_err();
+        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
     }
 }

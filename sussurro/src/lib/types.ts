@@ -131,7 +131,7 @@ export interface Settings {
    *  every save. Meetings and transcriptions only (P10). */
   subtitles: SubtitlesMode;
   /** 0.9 meetings (#126, E12): the browser-extension routes of the local
-   *  API. Off until 0.9 ships. */
+   *  API, speaker labels and the speaker panel (#130). Off until 0.9 ships. */
   meetings_enabled: boolean;
   /** Browser-extension pairing token (#126); set only by the backend
    *  (`extension_token_get` / `extension_token_regenerate`). */
@@ -238,9 +238,18 @@ export interface Segment {
   stt_error?: string;
 }
 
+/** A speaker as known to one document (#130): `you`, `meet:<name>` or
+ *  `voice:<n>`, with this document's label and colour. */
+export interface DocSpeaker {
+  id: string;
+  label: string;
+  color: string;
+  person_id?: string;
+}
+
 export interface SegmentsFile {
   version: number;
-  speakers: { id: string; label: string; color: string }[];
+  speakers: DocSpeaker[];
   segments: Segment[];
 }
 
@@ -257,6 +266,9 @@ export interface Item {
   /** Hosts its text was sent to by an external LLM profile (#122); empty =
    *  it never left the machine. */
   external_hosts?: string[];
+  /** Lines with voice data (#130): "Re-detect speakers" needs some. The
+   *  embeddings themselves stay in the backend. */
+  embedded_segments?: number;
 }
 
 export interface ItemSummary {

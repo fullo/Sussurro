@@ -985,7 +985,7 @@ pub async fn archive_search(
 #[tauri::command]
 pub async fn archive_get(state: State<'_, AppState>, id: String) -> Result<Item, String> {
     let (dir, _) = archive_paths(&state)?;
-    blocking(move || archive::read_item(&dir, &id)).await
+    blocking(move || archive::read_item(&dir, &id).map(Item::without_embeddings)).await
 }
 
 /// Replace an item's frontmatter; returns the updated item. Participants
@@ -1008,7 +1008,7 @@ pub async fn archive_update_meta(
         reindex(&dir, &db, |idx| idx.index_item(&id));
         // Speaker labels and the item type shape the subtitles too.
         refresh_subtitles_if(always, &dir, &id);
-        Ok(item)
+        Ok(item.without_embeddings())
     })
     .await
 }
@@ -1052,7 +1052,68 @@ async fn edit_segment_command(
         let item = archive::edit_segment(&dir, &id, segment_id, edit)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         refresh_subtitles_if(always, &dir, &id);
-        Ok(item)
+        Ok(item.without_embeddings())
+    })
+    .await
+}
+
+/// Speaker panel (#130): move one line to another speaker of the item —
+/// an existing speaker id, or `voice:new` for a new "Voice N". Returns the
+/// updated item. Same rules as a line edit (refused when edited outside
+/// or still being recorded).
+#[tauri::command]
+pub async fn archive_move_segment_speaker(
+    state: State<'_, AppState>,
+    id: String,
+    segment_id: u32,
+    speaker_id: String,
+) -> Result<Item, String> {
+    let edit = archive::SpeakerEdit::Move {
+        segment_id,
+        speaker_id,
+    };
+    edit_speakers_command(&state, id, edit).await
+}
+
+/// Speaker panel (#130): rename a speaker for this item only (an empty
+/// label gives a voice back its "Voice N" name). Returns the updated item.
+#[tauri::command]
+pub async fn archive_rename_speaker(
+    state: State<'_, AppState>,
+    id: String,
+    speaker_id: String,
+    label: String,
+) -> Result<Item, String> {
+    let edit = archive::SpeakerEdit::Rename { speaker_id, label };
+    edit_speakers_command(&state, id, edit).await
+}
+
+/// Speaker panel (#130): "Re-detect speakers" — re-cluster the whole item
+/// offline from the embeddings stored with its lines. Returns the updated
+/// item; refused when no line has voice data.
+#[tauri::command]
+pub async fn archive_redetect_speakers(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Item, String> {
+    edit_speakers_command(&state, id, archive::SpeakerEdit::Redetect).await
+}
+
+async fn edit_speakers_command(
+    state: &AppState,
+    id: String,
+    edit: archive::SpeakerEdit,
+) -> Result<Item, String> {
+    let (dir, db) = archive_paths(state)?;
+    let journal = crate::engine::session::journal_path(state);
+    let always = subtitles_always(state);
+    blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        let item = archive::edit_speakers(&dir, &id, edit)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        // Speaker names and moves change the subtitles too.
+        refresh_subtitles_if(always, &dir, &id);
+        Ok(item.without_embeddings())
     })
     .await
 }

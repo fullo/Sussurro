@@ -224,9 +224,38 @@ function npmPackages() {
   return out;
 }
 
+// Models Sussurro downloads on first use and runs locally. They are not
+// packages, so no manifest lists them: their licences and attribution
+// lines live here. CC-BY-4.0 requires the attribution below (#130).
+function downloadedModels() {
+  return [
+    {
+      name: "WeSpeaker ResNet34-LM (speaker embeddings)",
+      version: "voxceleb_resnet34_LM.onnx",
+      license: "CC-BY-4.0",
+      spdx: "",
+      repository: "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM",
+      text:
+        "Speaker labels (\"Voice 1, Voice 2…\") use the WeSpeaker ResNet34-LM speaker " +
+        "embedding model (file voxceleb_resnet34_LM.onnx, trained on VoxCeleb2) by the " +
+        "WeSpeaker project, https://github.com/wenet-e2e/wespeaker — Wang et al., " +
+        "\"Wespeaker: A research and production oriented speaker embedding learning " +
+        "toolkit\", ICASSP 2023. Downloaded unmodified from " +
+        "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM on first use. " +
+        "Licensed under the Creative Commons Attribution 4.0 International licence " +
+        "(CC BY 4.0): https://creativecommons.org/licenses/by/4.0/",
+      ecosystem: "model",
+    },
+  ];
+}
+
 const byName = (a, b) =>
   a.name.localeCompare(b.name) || a.version.localeCompare(b.version);
-const collected = [...rustCrates().sort(byName), ...npmPackages().sort(byName)];
+const collected = [
+  ...rustCrates().sort(byName),
+  ...npmPackages().sort(byName),
+  ...downloadedModels(),
+];
 
 // Deduplicate license texts by content: Apache-2.0 (identical everywhere)
 // collapses to one entry, while MIT texts — which embed each project's own
@@ -254,7 +283,8 @@ const packages = collected.map((p) => {
 });
 
 const rust = packages.filter((p) => p.ecosystem === "rust").length;
-const npm = packages.length - rust;
+const models = packages.filter((p) => p.ecosystem === "model").length;
+const npm = packages.length - rust - models;
 // public/ (not src/) so Vite serves it as a static asset the About dialog
 // fetches on demand — it never enters the main JS bundle.
 writeFileSync(
@@ -263,5 +293,5 @@ writeFileSync(
 );
 console.log(
   `Wrote public/licenses.json — ${rust} Rust crates, ${npm} npm packages, ` +
-    `${texts.length} unique license texts`,
+    `${models} downloaded models, ${texts.length} unique license texts`,
 );
