@@ -7,7 +7,8 @@ import {
   splitParticipantInput,
   updateParticipant,
 } from "../lib/participants";
-import type { Participant } from "../lib/types";
+import { canAddToPeople, linkEmail, linkParticipant, matchPerson } from "../lib/people";
+import type { Participant, Person } from "../lib/types";
 
 /** Participant chips (#124): name plus email when known. "+ participant"
  *  opens an input ("Anna Rossi <anna@example.com>", a name, or an email;
@@ -16,19 +17,25 @@ import type { Participant } from "../lib/types";
  *
  *  `suggestions` is where the People registry (#132) plugs in: they are
  *  offered as the input's autocomplete list, and a picked one is parsed like
- *  typed text. */
+ *  typed text. With `people`, a chip without an email whose name matches a
+ *  person offers a one-click "link" (adds the email), and with
+ *  `onAddToPeople` a chip that is nobody in the registry offers "+ People". */
 export function ParticipantEditor({
   label,
   values,
   onChange,
   disabled = false,
   suggestions = [],
+  people,
+  onAddToPeople,
 }: {
   label: string;
   values: Participant[];
   onChange: (values: Participant[]) => void;
   disabled?: boolean;
   suggestions?: Participant[];
+  people?: Person[];
+  onAddToPeople?: (p: Participant) => void;
 }) {
   /** index null = adding a new one. */
   const [draft, setDraft] = useState<{ index: number | null; text: string } | null>(null);
@@ -123,6 +130,28 @@ export function ParticipantEditor({
               </button>
             )}
             {p.email && <span className="pchip-em">· {p.email}</span>}
+            {!disabled && people && linkEmail(people, p) && (
+              <button
+                type="button"
+                className="pchip-act"
+                title={`Link to ${matchPerson(people, p.name)?.name} <${linkEmail(people, p)}> from People`}
+                aria-label={`Link ${p.name} to ${linkEmail(people, p)}`}
+                onClick={() => onChange(linkParticipant(values, i, people))}
+              >
+                link
+              </button>
+            )}
+            {!disabled && people && onAddToPeople && canAddToPeople(people, p) && (
+              <button
+                type="button"
+                className="pchip-act"
+                title="Add to People, so this name gets its email in other items too"
+                aria-label={`Add ${p.name} to People`}
+                onClick={() => onAddToPeople(p)}
+              >
+                + People
+              </button>
+            )}
             {!disabled && (
               <button type="button" className="mtag-x" aria-label={`Remove ${p.name}`} onClick={() => onChange(removeParticipant(values, i))}>
                 ×

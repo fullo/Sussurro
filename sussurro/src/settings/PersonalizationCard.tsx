@@ -15,6 +15,8 @@ export function PersonalizationCard({ ctl, collapsible }: CardProps) {
    *  dictionary changes elsewhere (learned words, portable config import).
    */
   const [dictText, setDictText] = useState("");
+  /** People hold other people's emails (#132): opt-in per export, off by default. */
+  const [includePeople, setIncludePeople] = useState(false);
   const dictRef = useRef<HTMLTextAreaElement>(null);
   const dictionaryKey = settings.dictionary.join("\n");
 
@@ -206,7 +208,7 @@ export function PersonalizationCard({ ctl, collapsible }: CardProps) {
               });
               if (!path) return;
               try {
-                await invoke("export_config", { path });
+                await invoke("export_config", { path, includePeople });
                 ctl.flash("Config exported.", 3000);
               } catch (e) {
                 setBusy(String(e));
@@ -235,6 +237,13 @@ export function PersonalizationCard({ ctl, collapsible }: CardProps) {
             Import
           </button>
         </div>
+        <label className="check-row">
+          <input type="checkbox" checked={includePeople} onChange={(e) => setIncludePeople(e.target.checked)} />
+          <span>
+            Include People in the export
+            <small> Names, emails and aliases of other people, from your archive. Off by default: tick it only if the file stays with you.</small>
+          </span>
+        </label>
       </div>
     </CollapsibleCard>
   );
