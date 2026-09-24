@@ -646,6 +646,9 @@ fn work(
                     cleaner,
                 )
             }
+            // Cancelled while waiting for the model (a dictation had it,
+            // #158): not a failed segment — the run ends below.
+            Err(_) if cancel.load(Ordering::Relaxed) => break,
             Err(e) => {
                 failures += 1;
                 // Nothing has ever worked (model missing, broken install):

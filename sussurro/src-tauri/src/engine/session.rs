@@ -222,13 +222,16 @@ pub(crate) fn start_meta(
 /// model is (re)loaded for the settings current when the lock is taken, so
 /// a model change mid-session reloads the same engine the dictation uses;
 /// the dictionary is re-read per segment too. The language is the run's.
-fn app_transcriber(app: AppHandle) -> impl FnMut(&[f32], &str) -> Result<TimedTranscript> + Send {
+fn app_transcriber(
+    app: AppHandle,
+    cancel: Arc<AtomicBool>,
+) -> impl FnMut(&[f32], &str) -> Result<TimedTranscript> + Send {
     move |samples, language| {
         let state = app.state::<AppState>();
         // A hotkey dictation recording or waiting for its final pass goes
         // first; one pressed while this segment runs waits for it only
-        // (see `priority` for the bound).
-        let mut model = super::priority::acquire_yielding(&state.dictation, || {
+        // (see `priority` for the bound). A cancel ends the wait (#158).
+        let mut model = super::priority::acquire_yielding(&state.dictation, &cancel, || {
             crate::pipeline::lock_transcriber(&state)
         })?;
         let dictionary = state.settings.lock().unwrap().dictionary.clone();
@@ -338,7 +341,7 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
     let (settings, mut stt, cleaner) = run_parts(
         &global,
         &req.options,
-        app_transcriber(app.clone()),
+        app_transcriber(app.clone(), req.cancel.clone()),
         crate::cleanup::ollama::cleanup_with_context,
     );
     let prepared = (|| -> Result<Job> {

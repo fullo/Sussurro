@@ -1133,6 +1133,8 @@ fn long_file_decoding_stays_a_bounded_distance_ahead_of_stt() {
 /// model through the dictation gate, like `session::app_transcriber`.
 struct GatedStt {
     gate: Arc<priority::DictationGate>,
+    /// The run's cancel flag, as `session::app_transcriber` holds it.
+    cancel: Arc<AtomicBool>,
     model: Arc<Mutex<Vec<String>>>,
     calls: usize,
     /// Run inside the first segment, with the model held.
@@ -1141,7 +1143,9 @@ struct GatedStt {
 
 impl SegmentStt for GatedStt {
     fn transcribe(&mut self, _samples: &[f32]) -> Result<TimedTranscript> {
-        let mut model = priority::acquire_yielding(&self.gate, || Ok(self.model.lock().unwrap()))?;
+        let mut model = priority::acquire_yielding(&self.gate, &self.cancel, || {
+            Ok(self.model.lock().unwrap())
+        })?;
         self.calls += 1;
         model.push(format!("segment {}", self.calls));
         if let Some(f) = self.during_first.take() {
@@ -1180,14 +1184,16 @@ fn a_dictation_during_a_run_is_served_before_the_next_segment() {
             }));
         })
     };
+    let j = job(dir.path(), audio, Policy::Block { max_queued: 4 });
     let mut stt = GatedStt {
         gate: gate.clone(),
+        cancel: j.cancel.clone(),
         model: model.clone(),
         calls: 0,
         during_first: Some(during_first),
     };
     let r = run(
-        job(dir.path(), audio, Policy::Block { max_queued: 4 }),
+        j,
         &mut stt,
         &FakeCleaner::default(),
         Arc::new(VecSink::default()),
@@ -1207,6 +1213,54 @@ fn a_dictation_during_a_run_is_served_before_the_next_segment() {
         ]
     );
     assert!(!gate.is_pending());
+}
+
+/// #158 finding 4: Cancel pressed while the engine waits for a dictation
+/// (one that outlives the run here) ends the run at once, with no failed
+/// segment and nothing left in the archive.
+#[test]
+fn cancel_while_waiting_for_a_dictation_ends_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = bursts(&[(true, 2.0), (false, 2.5)].repeat(3));
+    let gate = Arc::new(priority::DictationGate::default());
+    gate.begin(); // the hotkey is held: every segment has to wait
+    let j = job(dir.path(), audio, Policy::Block { max_queued: 4 });
+    let cancel = j.cancel.clone();
+    let mut stt = GatedStt {
+        gate: gate.clone(),
+        cancel: cancel.clone(),
+        model: Arc::new(Mutex::new(Vec::new())),
+        calls: 0,
+        during_first: None,
+    };
+    let sink = Arc::new(VecSink::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    {
+        let sink = sink.clone();
+        std::thread::spawn(move || {
+            let r = run(j, &mut stt, &FakeCleaner::default(), sink);
+            tx.send((r.map(|_| ()).map_err(|e| e.to_string()), stt.calls))
+                .unwrap();
+        });
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while gate.waiting() == 0 {
+        assert!(Instant::now() < deadline, "the engine never waited");
+        std::thread::yield_now();
+    }
+    cancel.store(true, Ordering::Relaxed);
+    let (r, calls) = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the engine ignored Cancel while waiting for the dictation");
+    assert_eq!(r, Err("cancelled".to_string()));
+    assert_eq!(calls, 0, "no segment was transcribed");
+    let events = sink.0.lock().unwrap();
+    assert!(
+        !events.iter().any(|e| matches!(e, EngineEvent::Segment(_))),
+        "a cancelled wait is not a failed segment"
+    );
+    assert!(archive::list_items(&dir.path().join("archive")).is_empty());
+    assert!(gate.is_pending(), "the dictation itself is untouched");
 }
 
 /// #157: a session started with a language and a cleanup level from New
