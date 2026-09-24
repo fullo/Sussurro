@@ -215,6 +215,7 @@ pub fn run() {
             commands::archive_dir,
             commands::archive_list,
             commands::archive_search,
+            commands::archive_facets,
             commands::archive_get,
             commands::archive_update_meta,
             commands::archive_update_segment,

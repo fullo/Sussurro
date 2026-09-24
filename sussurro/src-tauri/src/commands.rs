@@ -1010,6 +1010,22 @@ pub async fn archive_search(
     blocking(move || archive::with_index(&dir, &db, |idx| idx.search(&query, &filters))).await
 }
 
+/// The Library's search (#135): the items of [`archive_search`] plus the
+/// facet counts (type, tag, category, participant, date) for the same
+/// query and filters, from one synced snapshot of the index. Not behind
+/// `meetings_enabled`: facets serve notes and transcriptions too.
+#[tauri::command]
+pub async fn archive_facets(
+    state: State<'_, AppState>,
+    query: String,
+    filters: Option<SearchFilters>,
+) -> Result<archive::facets::FacetedSearch, String> {
+    let (dir, db) = archive_paths(&state)?;
+    let filters = filters.unwrap_or_default();
+    blocking(move || archive::with_index(&dir, &db, |idx| idx.search_faceted(&query, &filters)))
+        .await
+}
+
 #[tauri::command]
 pub async fn archive_get(state: State<'_, AppState>, id: String) -> Result<Item, String> {
     let (dir, _) = archive_paths(&state)?;
