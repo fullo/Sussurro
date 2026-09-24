@@ -81,7 +81,7 @@ export function useEngineRuns() {
     setMicStarting(true);
     try {
       const id = await invoke<number>("engine_start_mic", { itemType, title: title.trim() || null, ...options });
-      dispatch({ type: "started", kind: "mic", sessionId: id, label: title.trim(), now: Date.now() });
+      dispatch({ type: "started", kind: "mic", sessionId: id, label: title.trim(), now: Date.now(), itemType });
       return null;
     } catch (e) {
       return String(e);
@@ -114,7 +114,7 @@ export function useEngineRuns() {
         cleanupLevel: options.cleanupLevel,
         saveAudio: options.saveAudio,
       });
-      dispatch({ type: "started", kind: "system", sessionId: id, label: title.trim(), now: Date.now() });
+      dispatch({ type: "started", kind: "system", sessionId: id, label: title.trim(), now: Date.now(), itemType: "meeting" });
       return null;
     } catch (e) {
       return String(e);
