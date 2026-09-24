@@ -44,6 +44,15 @@ project decisions here, not in per-machine memory.**
 - **macOS is Apple Silicon only (min 11.0)**: `ort` (ONNX Runtime) has no
   prebuilt binaries for `x86_64-apple-darwin`. Don't re-add the Intel
   target to the release matrix.
+- **LLM profiles replace the flat cleanup settings (0.8, #119)**:
+  `Settings.llm_profiles` + `cleanup_profile` (`llm/profile.rs`). A pre-0.8
+  `settings.json` is migrated on load (`Settings::normalize`) into one
+  "Local" profile selected for cleanup, and saved once; the old
+  `cleanup_api`/`ollama_url`/`ollama_model`/`api_key` keys are read for the
+  migration and **never written again**. Consequence, accepted: downgrading
+  to ≤ 0.7 loses a custom cleanup server (the old build falls back to its
+  defaults, Ollama on localhost) — the updater only moves forward. API keys
+  stay in `settings.json` in clear, as before.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 
 ## Release process
