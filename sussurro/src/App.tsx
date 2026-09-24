@@ -16,6 +16,25 @@ import {
 } from "./utils";
 import "./App.css";
 
+/** `transcribe_file` result: the archive item written by the long-form engine. */
+interface EngineResult {
+  item_id: string;
+  item_type: string;
+  title: string;
+  text: string;
+  segments: number;
+  duration_s: number;
+}
+
+/** `engine-progress` event payload. */
+interface EngineProgress {
+  session_id: number;
+  processed_s: number;
+  total_s: number;
+  backlog_s: number;
+  queue_len: number;
+}
+
 interface OllamaStatus {
   installed: boolean;
   running: boolean;
@@ -551,6 +570,12 @@ export default function App() {
    */
   const [dictText, setDictText] = useState("");
   const dictRef = useRef<HTMLTextAreaElement>(null);
+  /** Audio-file card (long-form engine, #113): item type for the archive
+   *  (P10 — note by default, or transcription), the running file, and the
+   *  last result. The full Library UI arrives with the new shell (#114). */
+  const [fileItemType, setFileItemType] = useState<"note" | "transcription">("note");
+  const [fileRunning, setFileRunning] = useState<string | null>(null);
+  const [fileResult, setFileResult] = useState<EngineResult | null>(null);
   const dictionaryKey = settings ? settings.dictionary.join("\n") : "";
 
   useEffect(() => {
@@ -558,6 +583,19 @@ export default function App() {
     // external updates show up without fighting the user's cursor.
     if (document.activeElement !== dictRef.current) setDictText(dictionaryKey);
   }, [dictionaryKey]);
+
+  // Progress of the file being transcribed, shown in the status line.
+  useEffect(() => {
+    if (!fileRunning) return;
+    const unlisten = listen<EngineProgress>("engine-progress", (e) => {
+      const p = e.payload;
+      const pct = p.total_s > 0 ? Math.min(100, Math.round((p.processed_s / p.total_s) * 100)) : 0;
+      setBusy(`Transcribing ${fileRunning}… ${pct}%`);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [fileRunning]);
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => setVersion(""));
@@ -1858,27 +1896,60 @@ export default function App() {
       >
         <p className="card-hint">
           Transcribe a .wav / .mp3 / .m4a file with the current engine and cleanup — no dictation needed.
-          <Tip text="Something Wispr Flow doesn't do: it's dictation-only. The result is cleaned with your current settings and added to History (not injected anywhere)." />
+          <Tip text="Something Wispr Flow doesn't do: it's dictation-only. Long files are split at pauses and cleaned part by part; the result is saved in your archive (Documents/Sussurro) as a markdown file, not injected anywhere." />
         </p>
-        <input
-          type="file"
-          accept="audio/*,.wav,.mp3,.m4a,.aac,.flac,.ogg"
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
-            e.target.value = "";
-            if (!file) return;
-            setBusy(`Transcribing ${file.name}…`);
+        <div className="field">
+          <div className="field-label">
+            <span>Save as <Tip text="Note: your own voice. Transcription: audio recorded by others (a podcast, an interview, a lecture) — shown with timestamps." /></span>
+            <small>archive item type</small>
+          </div>
+          <select
+            value={fileItemType}
+            disabled={fileRunning !== null}
+            onChange={(e) => setFileItemType(e.target.value as "note" | "transcription")}
+          >
+            <option value="note">Note</option>
+            <option value="transcription">Transcription</option>
+          </select>
+        </div>
+        <button
+          disabled={fileRunning !== null}
+          onClick={async () => {
+            const path = await openDialog({
+              title: "Transcribe an audio file",
+              multiple: false,
+              directory: false,
+              filters: [{ name: "Audio", extensions: ["wav", "mp3", "m4a", "aac", "flac", "ogg"] }],
+            });
+            if (!path || typeof path !== "string") return;
+            const name = path.split(/[\\/]/).pop() ?? path;
+            setFileResult(null);
+            setFileRunning(name);
+            setBusy(`Transcribing ${name}…`);
             try {
-              const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-              const ext = file.name.split(".").pop() ?? "";
-              await invoke<HistoryEntry>("transcribe_audio_file", { bytes, ext });
+              const result = await invoke<EngineResult>("transcribe_file", {
+                path,
+                itemType: fileItemType,
+              });
+              setFileResult(result);
               setBusy("");
-              refresh();
             } catch (err) {
               setBusy(String(err));
+            } finally {
+              setFileRunning(null);
             }
           }}
-        />
+        >
+          {fileRunning ? `Transcribing ${fileRunning}…` : "Choose audio file…"}
+        </button>
+        {fileResult && (
+          <div className="history">
+            <p className="cleaned">{fileResult.text}</p>
+            <p className="card-hint">
+              Saved to the archive as a {fileResult.item_type}: <code>{fileResult.item_id}</code>
+            </p>
+          </div>
+        )}
       </CollapsibleCard>
 
       <footer>
