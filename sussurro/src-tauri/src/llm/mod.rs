@@ -7,6 +7,6 @@ pub mod consent;
 pub mod profile;
 
 pub use profile::{
-    infer_external, LlmProfile, DEFAULT_CONTEXT_TOKENS, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL,
+    infer_external, KeyStorage, LlmProfile, DEFAULT_CONTEXT_TOKENS, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL,
     LOCAL_PROFILE_ID, MIN_CONTEXT_TOKENS,
 };

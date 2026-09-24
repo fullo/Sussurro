@@ -1,4 +1,4 @@
-use crate::llm::{LlmProfile, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, LOCAL_PROFILE_ID};
+use crate::llm::{KeyStorage, LlmProfile, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, LOCAL_PROFILE_ID};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -309,13 +309,33 @@ impl Settings {
     /// Serialization failures are mapped into the returned `io::Error` instead
     /// of panicking — a settings write must degrade to an error the caller can
     /// report, never take down the app.
+    ///
+    /// API keys kept in the OS credential store are left out (#159): see
+    /// [`Settings::for_disk`].
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let json = serde_json::to_string_pretty(self)
+        let json = serde_json::to_string_pretty(&self.for_disk())
             .map_err(|e| std::io::Error::other(format!("serialize settings: {e}")))?;
         std::fs::write(path, json)
+    }
+
+    /// The settings as `settings.json` stores them (#159): a profile whose
+    /// key is in the credential store keeps only the reference
+    /// (`api_key_storage: "keychain"`, also for a key that could not be read
+    /// this session, so its entry is not forgotten) and no key. A key that
+    /// is not in the store (fallback, or not migrated yet) stays in clear
+    /// text — dropping it would lose it.
+    pub fn for_disk(&self) -> Settings {
+        let mut out = self.clone();
+        for p in &mut out.llm_profiles {
+            if p.api_key_storage.in_store() {
+                p.api_key.clear();
+                p.api_key_storage = KeyStorage::Keychain;
+            }
+        }
+        out
     }
 }
 
@@ -550,6 +570,7 @@ mod tests {
                 api: CleanupApi::Openai,
                 base_url: "http://localhost:8080/v1".into(),
                 api_key: "sk-local".into(),
+                api_key_storage: KeyStorage::None,
                 model: "qwen2.5-3b-instruct".into(),
                 external: false,
                 context_tokens: 0,
