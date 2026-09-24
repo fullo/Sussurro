@@ -11,8 +11,10 @@
 //!   it removes it, whether the run then starts or not),
 //! - is younger than [`CONSENT_TTL`], and
 //! - was issued for exactly this run ([`RunTarget`]): the same item, the
-//!   same recipe (or question), the same profile, host and model. Editing
-//!   the profile's server or model after confirming voids it.
+//!   same recipe (or question), the same profile, host and model, and the
+//!   same choice of participant emails (#143: names only unless the user
+//!   ticked them for this run). Editing the profile's server or model after
+//!   confirming voids it.
 //!
 //! A run on an external profile without such a token is refused before
 //! anything is sent. Local profiles need no token.
@@ -45,10 +47,14 @@ pub struct RunTarget {
     pub profile_id: String,
     pub host: String,
     pub model: String,
+    /// Participant emails go along (#143): a confirmation given for names
+    /// only never lets their emails out.
+    pub emails: bool,
 }
 
 impl RunTarget {
-    /// The target of running `recipe` on item `item_id` with `profile`.
+    /// The target of running `recipe` on item `item_id` with `profile`
+    /// (participant names only).
     pub fn new(item_id: &str, recipe: &crate::recipes::Recipe, profile: &LlmProfile) -> Self {
         let digest = crate::archive::store::sha256_hex(recipe.prompt.as_bytes());
         Self {
@@ -57,7 +63,14 @@ impl RunTarget {
             profile_id: profile.id.clone(),
             host: profile.host(),
             model: profile.model.trim().to_string(),
+            emails: false,
         }
+    }
+
+    /// The same target with participant emails sent (`true`) or not.
+    pub fn with_emails(mut self, emails: bool) -> Self {
+        self.emails = emails;
+        self
     }
 }
 
@@ -255,6 +268,27 @@ mod tests {
             // A mismatch burns the token: it can't be retried on the right run.
             assert!(store.consume(&t, &base).is_err());
         }
+    }
+
+    /// #143: participant emails are part of what the user confirmed.
+    #[test]
+    fn a_token_is_bound_to_the_email_choice() {
+        let store = ConsentStore::default();
+        let names = target("a");
+        assert!(!names.emails);
+        let emails = target("a").with_emails(true);
+        // Confirmed for names only: a run that would send emails is refused.
+        let t = store.issue(names.clone());
+        let err = store.consume(&t, &emails).unwrap_err();
+        assert!(format!("{err}").contains("another run"), "{err}");
+        // And the other way round.
+        let t = store.issue(emails.clone());
+        assert!(store.consume(&t, &names).is_err());
+        // Matching choices pass.
+        let t = store.issue(emails.clone());
+        let grant = store.consume(&t, &emails).unwrap();
+        assert!(authorize(&work(), &emails, Some(&grant)).is_ok());
+        assert!(authorize(&work(), &names, Some(&grant)).is_err());
     }
 
     #[test]

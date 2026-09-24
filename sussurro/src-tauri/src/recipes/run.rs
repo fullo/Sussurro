@@ -9,13 +9,20 @@
 //! run is recorded in the item's external-send log before the first
 //! request, and its document carries `external: true` and the host.
 //!
+//! Speakers (#143): a speakers-only recipe (*Meeting minutes*, *Who said
+//! what*) runs only on a meeting or transcription whose transcript names
+//! its speakers ([`item_has_speakers`]). Participants go to the model by
+//! name only; their emails only when the user opts in for this run
+//! ([`RunOptions::include_emails`]) — on an external profile that choice is
+//! part of what the confirmation was given for.
+//!
 //! Also the registry of runs in flight (one per item), for progress and
 //! cancel from the UI.
 
-use super::chunk::{has_speakers, lines_from_body, lines_from_segments, InputLine};
+use super::chunk::{has_speakers, lines_from_body, lines_from_segments, speaker_names, InputLine};
 use super::engine::{self, ChatModel, Progress};
-use super::prompt::Context;
-use super::{companion_file_name, Recipe, RecipeTarget};
+use super::prompt::{participant_lines, Context};
+use super::{applies, companion_file_name, Recipe, RecipeTarget};
 use crate::archive::companion::{write_companion, CompanionMeta};
 use crate::archive::external::{ExternalSend, SendKind};
 use crate::archive::store::TRANSCRIPT_FILE;
@@ -30,6 +37,14 @@ use std::sync::{Arc, Mutex};
 
 /// Per-step timeout: a long chunk on a laptop CPU can take minutes.
 pub const STEP_TIMEOUT_SECS: u64 = 600;
+
+/// Per-run choices the user makes where the run starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RunOptions {
+    /// Send the participants' emails along with their names (#143). Off
+    /// by default: names only.
+    pub include_emails: bool,
+}
 
 /// What a finished run produced.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -70,6 +85,14 @@ pub struct ExternalRunPreview {
     pub approx_tokens: usize,
     /// The profile is external: the run needs a confirmation.
     pub external: bool,
+    /// Speaker names the transcript carries (sent with it), in order (#143).
+    pub speakers: Vec<String>,
+    /// Participants whose names are sent.
+    pub participants: usize,
+    /// Participant emails the item has…
+    pub emails_available: usize,
+    /// …and how many of them this run sends (0 unless opted in).
+    pub emails_sent: usize,
 }
 
 /// Rough token count of `chars` characters of text (≈ 4 per token).
@@ -86,10 +109,31 @@ pub fn preview(
     question: Option<&str>,
     profile: &LlmProfile,
 ) -> Result<ExternalRunPreview> {
+    preview_with(archive, id, recipe, question, profile, &RunOptions::default())
+}
+
+/// [`preview`] for a run with `opts` (participant emails included or not).
+pub fn preview_with(
+    archive: &Path,
+    id: &str,
+    recipe: &Recipe,
+    question: Option<&str>,
+    profile: &LlmProfile,
+    opts: &RunOptions,
+) -> Result<ExternalRunPreview> {
     let item = crate::archive::read_item(archive, id)?;
     let input = item_input(&item);
+    let participants = participant_lines(&item.meta, opts.include_emails);
+    let people_chars = if participants.is_empty() { 0 } else { participants.join(", ").chars().count() };
     let chars = input.iter().map(|l| l.format().chars().count() + 1).sum::<usize>()
-        + recipe.prompt.chars().count();
+        + recipe.prompt.chars().count()
+        + people_chars;
+    let emails_available = item
+        .meta
+        .participants
+        .iter()
+        .filter(|p| !p.name.trim().is_empty() && p.email.as_deref().is_some_and(|e| !e.trim().is_empty()))
+        .count();
     Ok(ExternalRunPreview {
         item_id: id.to_string(),
         item_title: item.meta.title.trim().to_string(),
@@ -104,6 +148,10 @@ pub fn preview(
         chars,
         approx_tokens: approx_tokens(chars),
         external: profile.external,
+        speakers: speaker_names(&input),
+        participants: participants.len(),
+        emails_available,
+        emails_sent: if opts.include_emails { emails_available } else { 0 },
     })
 }
 
@@ -150,6 +198,13 @@ pub fn item_input(item: &crate::archive::Item) -> Vec<InputLine> {
     }
 }
 
+/// Whether the item is a meeting or transcription whose transcript names
+/// its speakers — what a speakers-only recipe needs (#143). Notes never
+/// count (P10: the user's own voice).
+pub fn item_has_speakers(item: &crate::archive::Item) -> bool {
+    item.meta.item_type != crate::archive::ItemType::Note && has_speakers(&item_input(item))
+}
+
 /// Run `recipe` on item `id` with `model` (the chat side of `profile`).
 /// `now` stamps the document (RFC 3339). Nothing is sent when the profile
 /// is refused, when an external profile comes without a matching
@@ -166,11 +221,38 @@ pub fn run_on_item(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<RunOutput> {
+    run_on_item_with(archive, id, recipe, profile, consent, model, now, cancel, progress, &RunOptions::default())
+}
+
+/// [`run_on_item`] with the run's options (#143). Also refused, before
+/// anything is sent, when a speakers-only recipe meets an item without
+/// speakers, or when the consent was given for another choice of
+/// participant emails.
+#[allow(clippy::too_many_arguments)]
+pub fn run_on_item_with(
+    archive: &Path,
+    id: &str,
+    recipe: &Recipe,
+    profile: &LlmProfile,
+    consent: Option<&ConsentGrant>,
+    model: &dyn ChatModel,
+    now: &str,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(Progress),
+    opts: &RunOptions,
+) -> Result<RunOutput> {
     check_profile(profile)?;
-    authorize(profile, &RunTarget::new(id, recipe, profile), consent)?;
+    let target = RunTarget::new(id, recipe, profile).with_emails(opts.include_emails);
+    authorize(profile, &target, consent)?;
     let item = crate::archive::read_item(archive, id)?;
     if item.recording {
         bail!("'{id}' is still being recorded — run recipes when the session ends");
+    }
+    if !applies(recipe, item_has_speakers(&item)) {
+        bail!(
+            "“{}” needs a meeting or transcription whose transcript names its speakers — this one has none",
+            recipe.name
+        );
     }
     if profile.external {
         // Before the first request: a run that then fails or is cancelled
@@ -179,13 +261,12 @@ pub fn run_on_item(
             .context("could not record the external run, so nothing was sent")?;
     }
     let input = item_input(&item);
-    let ctx = Context::from_meta(&item.meta, has_speakers(&input));
-    let lines: Vec<String> = input.iter().map(InputLine::format).collect();
-    let out = engine::run(
+    let ctx = Context::for_input(&item.meta, &input, opts.include_emails);
+    let out = engine::run_input(
         model,
         recipe,
         &ctx,
-        &lines,
+        &input,
         profile.effective_context_tokens(),
         cancel,
         progress,
@@ -392,7 +473,7 @@ mod tests {
             name: "Q".into(),
             prompt: "Who sends the file?".into(),
             target: RecipeTarget::Answer,
-            builtin: false,
+            ..Default::default()
         };
         let model = FakeModel::new("Anna.");
         let out = run_on_item(&archive, &id, &ask, &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
@@ -603,5 +684,236 @@ mod tests {
         }
         let doc = read_companion(&archive, &id, "document.md").unwrap();
         assert!(doc.body.to_lowercase().contains("tl;dr"), "{}", doc.body);
+    }
+
+    // ---- #143: speaker-aware recipes on the fixed corpus ----
+
+    use super::super::corpus;
+    use super::super::{find_recipe, MEETING_MINUTES_ID, WHO_SAID_WHAT_ID};
+
+    fn minutes() -> Recipe {
+        find_recipe(&[], MEETING_MINUTES_ID).unwrap()
+    }
+
+    fn with(opts: RunOptions, archive: &Path, id: &str, r: &Recipe, p: &LlmProfile, m: &FakeModel) -> Result<RunOutput> {
+        run_on_item_with(archive, id, r, p, None, m, NOW, &AtomicBool::new(false), &mut |_| {}, &opts)
+    }
+
+    fn all_text(m: &FakeModel) -> String {
+        m.calls.borrow().iter().flatten().filter_map(|x| x["content"].as_str()).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn meeting_minutes_on_a_corpus_meeting_are_speaker_aware() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let f = corpus::fixture("it-standup");
+        let id = f.create(&archive);
+        let model = FakeModel::new("## Partecipanti\n- Marco Bianchi");
+        let out = with(RunOptions::default(), &archive, &id, &minutes(), &local(), &model).unwrap();
+        assert_eq!(out.file.as_deref(), Some("meeting-minutes.md"));
+        assert_eq!(model.calls.borrow().len(), 1, "a short meeting is one call");
+        let system = model.calls.borrow()[0][0]["content"].as_str().unwrap().to_string();
+        assert!(system.contains("only to the speaker who said it") && system.contains("never guess who they are"));
+        assert!(system.contains("Write in Italian."));
+        let user = model.user(0);
+        assert!(user.starts_with("Task:\nWrite the minutes of this meeting"));
+        assert!(user.contains("Participants: Marco Bianchi, Giulia Verdi, Paolo Neri\nSpeakers: Marco Bianchi, Giulia Verdi, Voice 1\n"), "{user}");
+        assert!(user.contains("[00:00:46] Voice 1: Io però non rilascerei"), "Voice N passed as-is");
+        assert!(!all_text(&model).contains('@'), "names only by default");
+        let doc = read_companion(&archive, &id, "meeting-minutes.md").unwrap();
+        assert_eq!(doc.meta.recipe, MEETING_MINUTES_ID);
+    }
+
+    #[test]
+    fn participant_emails_are_sent_only_when_opted_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let id = corpus::fixture("en-planning").create(&archive);
+        let who = find_recipe(&[], WHO_SAID_WHAT_ID).unwrap();
+
+        let names = FakeModel::new("## Anna Rossi\n- a");
+        with(RunOptions::default(), &archive, &id, &who, &local(), &names).unwrap();
+        let sent = all_text(&names);
+        assert!(!sent.contains("anna@example.com") && !sent.contains('@'), "{sent}");
+        assert!(sent.contains("Participants: Anna Rossi, Ben Carter, Chris Doyle\n"));
+
+        let emails = FakeModel::new("## Anna Rossi\n- a");
+        with(RunOptions { include_emails: true }, &archive, &id, &who, &local(), &emails).unwrap();
+        let sent = all_text(&emails);
+        assert!(
+            sent.contains("Participants: Anna Rossi <anna@example.com>, Ben Carter <ben.carter@example.com>, Chris Doyle\n"),
+            "{sent}"
+        );
+
+        // The confirmation dialog's summary says the same.
+        let p = preview(&archive, &id, &who, None, &work()).unwrap();
+        assert_eq!((p.participants, p.emails_available, p.emails_sent), (3, 2, 0));
+        assert_eq!(p.speakers, ["Anna Rossi", "Ben Carter", "Chris Doyle", "Voice 2"]);
+        let pe = preview_with(&archive, &id, &who, None, &work(), &RunOptions { include_emails: true }).unwrap();
+        assert_eq!((pe.emails_available, pe.emails_sent), (2, 2));
+        assert!(pe.chars > p.chars, "the emails are counted");
+    }
+
+    /// An external run confirmed for names only can't send emails.
+    #[test]
+    fn external_email_opt_in_needs_its_own_confirmation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let id = corpus::fixture("en-planning").create(&archive);
+        let store = crate::llm::consent::ConsentStore::default();
+        let names = RunTarget::new(&id, &minutes(), &work());
+        let grant = store.consume(&store.issue(names.clone()), &names).unwrap();
+        let model = FakeModel::new("never");
+        let opts = RunOptions { include_emails: true };
+        let r = run_on_item_with(&archive, &id, &minutes(), &work(), Some(&grant), &model, NOW, &AtomicBool::new(false), &mut |_| {}, &opts);
+        assert!(r.is_err());
+        assert!(model.calls.borrow().is_empty());
+        assert!(crate::archive::external::read_log(&archive, &id).unwrap().is_empty());
+
+        let with_emails = names.with_emails(true);
+        let grant = store.consume(&store.issue(with_emails.clone()), &with_emails).unwrap();
+        let model = FakeModel::new("## Attendees\n- Anna Rossi <anna@example.com>");
+        run_on_item_with(&archive, &id, &minutes(), &work(), Some(&grant), &model, NOW, &AtomicBool::new(false), &mut |_| {}, &opts)
+            .unwrap();
+        assert!(all_text(&model).contains("<anna@example.com>"));
+    }
+
+    #[test]
+    fn speakers_only_recipes_are_refused_without_speakers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        // A meeting whose lines name nobody.
+        let plain = ItemMeta { item_type: ItemType::Meeting, title: "Plain".into(), date: NOW.into(), ..Default::default() };
+        let segs = SegmentsFile {
+            segments: vec![Segment { id: 0, start_ms: 0, end_ms: 900, text: "Hello.".into(), ..Default::default() }],
+            ..Default::default()
+        };
+        let no_speakers = create_item(&archive, &plain, &segs).unwrap();
+        // A note with the user's own voice: notes never count.
+        let note = ItemMeta { item_type: ItemType::Note, title: "Idea".into(), date: NOW.into(), ..Default::default() };
+        let segs = SegmentsFile {
+            speakers: vec![DocSpeaker { id: "you".into(), label: "You".into(), ..Default::default() }],
+            segments: vec![Segment { id: 0, speaker_id: Some("you".into()), text: "An idea.".into(), ..Default::default() }],
+            ..Default::default()
+        };
+        let note_id = create_item(&archive, &note, &segs).unwrap();
+        for id in [&no_speakers, &note_id] {
+            assert!(!item_has_speakers(&crate::archive::read_item(&archive, id).unwrap()));
+            for r in [minutes(), find_recipe(&[], WHO_SAID_WHAT_ID).unwrap()] {
+                let model = FakeModel::new("never");
+                let err = with(RunOptions::default(), &archive, id, &r, &local(), &model).unwrap_err();
+                assert!(format!("{err:#}").contains("names its speakers"), "{err:#}");
+                assert!(model.calls.borrow().is_empty());
+            }
+            // The general recipes still run there.
+            with(RunOptions::default(), &archive, id, &recipe(1), &local(), &FakeModel::new("ok")).unwrap();
+        }
+        // Every corpus item has speakers, also once edited outside Sussurro.
+        for f in corpus::all() {
+            let id = f.create(&archive);
+            assert!(item_has_speakers(&crate::archive::read_item(&archive, &id).unwrap()), "{}", f.name);
+            let path = archive.join(&id).join("transcript.md");
+            let raw = std::fs::read_to_string(&path).unwrap();
+            std::fs::write(&path, format!("{raw}\nA line added by hand.\n")).unwrap();
+            let item = crate::archive::read_item(&archive, &id).unwrap();
+            assert!(item.edited_externally && item_has_speakers(&item), "{}", f.name);
+        }
+    }
+
+    /// Map-reduce on a corpus meeting (a small window forces it): the
+    /// chunks start on speaker turns and every step keeps the speakers.
+    #[test]
+    fn a_corpus_meeting_is_chunked_on_speaker_turns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let f = corpus::fixture("en-planning");
+        let id = f.create(&archive);
+        let mut small = local();
+        small.context_tokens = crate::llm::profile::MIN_CONTEXT_TOKENS;
+        let mut model = FakeModel::new("## Attendees\n- Anna Rossi");
+        model.map_reply = Box::new(|i| format!("- [00:00:0{}] Anna Rossi: note {i}", i % 10));
+        with(RunOptions::default(), &archive, &id, &minutes(), &small, &model).unwrap();
+        let calls = model.calls.borrow().len();
+        let maps: Vec<String> = (0..calls).map(|i| model.user(i)).filter(|u| u.starts_with("This is part ")).collect();
+        assert!(maps.len() > 1, "{} map calls", maps.len());
+        let turn_starts: Vec<String> = {
+            let item = crate::archive::read_item(&archive, &id).unwrap();
+            let input = item_input(&item);
+            super::super::chunk::speaker_turns(&input).iter().map(|t| t[0].format()).collect()
+        };
+        for u in &maps {
+            assert!(u.contains("Speakers: Anna Rossi, Ben Carter, Chris Doyle, Voice 2\n"), "every chunk knows every speaker");
+            let first = u.split("\">\n").nth(1).unwrap().lines().find(|l| l.starts_with('[')).unwrap();
+            assert!(turn_starts.iter().any(|t| t == first), "chunk starts mid-turn: {first}");
+        }
+        let reduce = model.user(calls - 1);
+        assert!(reduce.starts_with("Task:\nWrite the minutes") && reduce.contains("keep that attribution exactly"));
+    }
+
+    /// Needs a running Ollama with the model pulled (default llama3.2:3b;
+    /// `SUSSURRO_LIVE_MODEL`, `SUSSURRO_LIVE_URL` to change). Runs *Meeting
+    /// minutes* and *Who said what* on every transcript of the fixed corpus,
+    /// once in a single call and once forced through map-reduce, and checks
+    /// the structure: an attendees section naming someone real, action-item
+    /// owners only among the speakers and participants, one section per
+    /// real speaker. Prints every document. Run:
+    /// cargo test live_meeting_recipes_on_ollama -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_meeting_recipes_on_ollama() {
+        let url = std::env::var("SUSSURRO_LIVE_URL").unwrap_or_else(|_| "http://localhost:11434".into());
+        let name = std::env::var("SUSSURRO_LIVE_MODEL").unwrap_or_else(|_| "llama3.2:3b".into());
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let mut problems = Vec::new();
+        for f in corpus::all() {
+            let id = f.create(&archive);
+            let known = f.people();
+            for window in [0, crate::llm::profile::MIN_CONTEXT_TOKENS] {
+                let mut profile = LlmProfile::new("local", "Local", CleanupApi::Ollama, &url, "", &name);
+                profile.context_tokens = window;
+                let model = ProfileModel { profile: profile.clone() };
+                let tag = format!("{} / window {}", f.name, profile.effective_context_tokens());
+                for r in [minutes(), find_recipe(&[], WHO_SAID_WHAT_ID).unwrap()] {
+                    let mut steps = 0;
+                    let out = run_on_item(&archive, &id, &r, &profile, None, &model, NOW, &AtomicBool::new(false), &mut |_| {
+                        steps += 1
+                    })
+                    .unwrap();
+                    let doc = read_companion(&archive, &id, out.file.as_deref().unwrap()).unwrap().body;
+                    println!("==== {tag} · {} ({steps} progress events) ====\n{doc}\n", r.name);
+                    if r.id == MEETING_MINUTES_ID {
+                        match corpus::section(&doc, &corpus::ATTENDEES) {
+                            None => problems.push(format!("{tag}: no attendees section")),
+                            Some(body) if !body.iter().any(|l| known.iter().any(|k| l.contains(k.as_str()))) => {
+                                problems.push(format!("{tag}: the attendees name nobody known"))
+                            }
+                            _ => {}
+                        }
+                        match corpus::action_owners(&doc) {
+                            // The interview has no meeting actions to speak of.
+                            None if f.meta.item_type == ItemType::Meeting => {
+                                problems.push(format!("{tag}: no action-item table"))
+                            }
+                            None => {}
+                            Some(owners) => {
+                                for o in owners.iter().filter(|o| !corpus::owner_known(o, &known)) {
+                                    problems.push(format!("{tag}: action owner “{o}” is not a speaker or participant"));
+                                }
+                            }
+                        }
+                    } else {
+                        let speakers = f.speakers();
+                        for h in corpus::h2_names(&doc) {
+                            if !corpus::owner_known(&h, &speakers) {
+                                problems.push(format!("{tag}: “Who said what” section for unknown “{h}”"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(problems.is_empty(), "structural problems:\n{}", problems.join("\n"));
     }
 }
