@@ -52,18 +52,31 @@ export interface Run {
 export interface RunsState {
   mic: Run | null;
   file: Run | null;
+  /** Events of session ids no run has claimed yet, oldest first (#158): a
+   *  mic session's `engine-started` can arrive before `engine_start_mic`
+   *  resolves with its id. Replayed when a run starts with that id; capped
+   *  at {@link MAX_BUFFERED} (events of sessions we never start — another
+   *  window, the local API — are dropped from the front). */
+  pending: EngineEventAction[];
 }
 
-export const initialRuns: RunsState = { mic: null, file: null };
+export const initialRuns: RunsState = { mic: null, file: null, pending: [] };
 
-export type RunsAction =
-  | { type: "started"; kind: RunKind; sessionId: number | null; label: string; now: number }
-  | { type: "stopping"; kind: RunKind }
+/** How many unclaimed events {@link RunsState.pending} keeps. */
+export const MAX_BUFFERED = 64;
+
+/** An engine-* event, routed by its session id. */
+export type EngineEventAction =
   | { type: "engine-started"; payload: EngineStarted }
   | { type: "progress"; payload: EngineProgress }
   | { type: "segment"; payload: EngineSegmentEvent }
   | { type: "done"; payload: EngineDone }
-  | { type: "error"; payload: EngineError }
+  | { type: "error"; payload: EngineError };
+
+export type RunsAction =
+  | { type: "started"; kind: RunKind; sessionId: number | null; label: string; now: number }
+  | { type: "stopping"; kind: RunKind }
+  | EngineEventAction
   /** transcribe_file resolved: its result, even if no event was routed. */
   | { type: "resolved"; kind: RunKind; result: EngineResult }
   /** transcribe_file / engine_start_mic rejected. */
@@ -99,8 +112,8 @@ function finalId(run: Run, itemId: string): Pick<Run, "itemId" | "previousItemId
 
 export function runsReducer(state: RunsState, action: RunsAction): RunsState {
   switch (action.type) {
-    case "started":
-      return {
+    case "started": {
+      const started: RunsState = {
         ...state,
         [action.kind]: {
           kind: action.kind,
@@ -116,6 +129,14 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
           error: null,
         } satisfies Run,
       };
+      // Replay what this session emitted before its id was known here.
+      const id = action.sessionId;
+      if (id === null) return started;
+      const mine = state.pending.filter((e) => e.payload.session_id === id);
+      if (mine.length === 0) return started;
+      const rest = state.pending.filter((e) => e.payload.session_id !== id);
+      return mine.reduce<RunsState>(runsReducer, { ...started, pending: rest });
+    }
     case "stopping":
       return update(state, action.kind, (r) => (r.status === "running" ? { ...r, status: "stopping" } : r));
     case "engine-started":
@@ -124,7 +145,7 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
     case "done":
     case "error": {
       const kind = routeEvent(state, action.payload.session_id);
-      if (!kind) return state;
+      if (!kind) return { ...state, pending: [...state.pending, action].slice(-MAX_BUFFERED) };
       return update(state, kind, (r) => {
         const run = { ...r, sessionId: action.payload.session_id };
         switch (action.type) {

@@ -4,6 +4,7 @@ import {
   describeProgress,
   discardStep,
   initialRuns,
+  MAX_BUFFERED,
   routeEvent,
   runsReducer,
   showDiscard,
@@ -54,8 +55,36 @@ describe("runsReducer routing", () => {
     expect(routeEvent(s, 4)).toBeNull();
   });
 
-  it("ignores events when nothing is running", () => {
-    expect(run([{ type: "progress", payload: progress(1) }])).toEqual(initialRuns);
+  it("routes no event when nothing is running (it is only buffered)", () => {
+    const s = run([{ type: "progress", payload: progress(1) }]);
+    expect(s.mic).toBeNull();
+    expect(s.file).toBeNull();
+    expect(s.pending).toHaveLength(1);
+  });
+
+  // #158 finding 6: the engine thread emits engine-started as soon as the
+  // item exists, which can beat engine_start_mic's reply to the webview.
+  it("replays a mic session's early events once its id is known", () => {
+    const started = {
+      type: "engine-started" as const,
+      payload: { session_id: 9, item_id: "2026/09/2026-09-24-untitled", item_type: "note" as const, title: "", source: "mic" },
+    };
+    const s = run([
+      started,
+      { type: "progress", payload: progress(9, { processed_s: 3 }) },
+      { type: "progress", payload: progress(12) }, // someone else's session
+      { type: "started", kind: "mic", sessionId: 9, label: "", now: 0 },
+    ]);
+    expect(s.mic?.itemId).toBe("2026/09/2026-09-24-untitled");
+    expect(s.mic?.progress?.processed_s).toBe(3);
+    expect(s.pending.map((e) => e.payload.session_id)).toEqual([12]);
+  });
+
+  it("keeps a bounded buffer of unclaimed events", () => {
+    const flood = Array.from({ length: MAX_BUFFERED + 10 }, (_, i) => ({ type: "progress" as const, payload: progress(100 + i) }));
+    const s = run(flood);
+    expect(s.pending).toHaveLength(MAX_BUFFERED);
+    expect(s.pending[0].payload.session_id).toBe(110); // oldest dropped
   });
 
   it("collects segments in time order, dedups by id, drops word timings", () => {
