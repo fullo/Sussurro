@@ -1,17 +1,48 @@
 /* Speakers of a document (#130): the pure logic behind the speaker panel
    and the line chips. Components only wire these to invoke(). */
 
-import type { DocSpeaker, Item, Segment, Settings } from "./types";
+import { canAddToPeople, isGenericSpeaker, matchPerson } from "./people";
+import type { DocSpeaker, Item, Person, Segment, Settings, VoiceSource } from "./types";
 
 /** Line-move target that opens a new "Voice N" (speakers/doc.rs NEW_VOICE). */
 export const NEW_VOICE = "voice:new";
 /** Longest speaker name (speakers/doc.rs MAX_LABEL_CHARS). */
 export const MAX_LABEL_CHARS = 60;
 
-/** The speaker panel and line chips are part of the 0.9 preview (E12):
- *  shown only with `meetings_enabled`, and never on notes (P10). */
+/** Whether an item shows the speaker panel (and, once it has speakers, the
+ *  line chips and "Move to speaker"):
+ *  - notes never (P10: the user's own voice);
+ *  - transcriptions always (P11, #134) — "Identify voices" lives in the
+ *    panel — whatever the 0.9 preview flag says;
+ *  - meetings only with the 0.9 preview (`meetings_enabled`, E12). */
 export function speakersEnabled(settings: Pick<Settings, "meetings_enabled">, item: Pick<Item, "meta">): boolean {
-  return !!settings.meetings_enabled && item.meta.type !== "note";
+  switch (item.meta.type) {
+    case "note":
+      return false;
+    case "transcription":
+      return true;
+    default:
+      return !!settings.meetings_enabled;
+  }
+}
+
+/** The run's "Identify voices" argument (#134): only transcriptions are
+ *  labelled; a note never is, whatever the checkbox said before the type
+ *  changed. */
+export function identifyVoicesArg(itemType: string, checked: boolean): boolean {
+  return itemType === "transcription" && checked;
+}
+
+/** What the speaker panel offers for a transcription without voice data
+ *  (#134): "identify" = the button; "explain" = why not (the backend's
+ *  reason); "none" = nothing to offer (it has voice data — Re-detect — or
+ *  is not a transcription). */
+export function identifyOffer(
+  item: Pick<Item, "meta" | "embedded_segments">,
+  source: VoiceSource | null,
+): "identify" | "explain" | "none" {
+  if (item.meta.type !== "transcription" || (item.embedded_segments ?? 0) > 0 || !source) return "none";
+  return source.available ? "identify" : "explain";
 }
 
 /** Where a speaker's name comes from, for the panel's small print. */
@@ -90,4 +121,36 @@ export function redetectBlocked(item: Pick<Item, "recording" | "edited_externall
   if (item.edited_externally) return "The transcript was edited outside Sussurro.";
   if (!item.embedded_segments) return "This recording has no voice data: speakers can only be detected on recordings made with speaker labels on.";
   return "";
+}
+
+/* ---------- People links (#132) ---------- */
+
+/** The registry entry a speaker is linked to, if it is still there. */
+export function linkedPerson(speaker: DocSpeaker, people: Person[]): Person | null {
+  return speaker.person_id ? (people.find((p) => p.id === speaker.person_id) ?? null) : null;
+}
+
+/** The person to suggest for an unlinked speaker: its label (a Meet name,
+ *  or a name the user typed) matches exactly one person. Generic labels
+ *  ("Voice 2", "You") never suggest anyone. */
+export function linkSuggestion(speaker: DocSpeaker, people: Person[]): Person | null {
+  if (speaker.person_id || isGenericSpeaker(speaker.label)) return null;
+  return matchPerson(people, speaker.label);
+}
+
+/** "Add to People" is offered for an unlinked speaker the user named
+ *  (not a generic "Voice N") who is nobody in the registry yet. */
+export function canAddSpeakerToPeople(speaker: DocSpeaker, people: Person[]): boolean {
+  return !speaker.person_id && canAddToPeople(people, { name: speaker.label });
+}
+
+/** People offered by "Link to person…", sorted by name; the suggested one
+ *  (if any) first. */
+export function linkChoices(speaker: DocSpeaker, people: Person[]): Person[] {
+  const first = linkSuggestion(speaker, people);
+  const rest = people
+    .filter((p) => p.id !== first?.id)
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return first ? [first, ...rest] : rest;
 }

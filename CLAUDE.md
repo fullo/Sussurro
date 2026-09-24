@@ -108,7 +108,25 @@ project decisions here, not in per-machine memory.**
   by default); runs turn it on only with `Settings.meetings_enabled` for
   meetings — one channel is clustered as is; a browser meeting's mic is
   always "You" and only its remote channel is clustered. Embeddings never
-  go to the UI (`Item::without_embeddings`).
+  go to the UI (`Item::without_embeddings`). Linking a speaker to a person
+  (`SpeakerEdit::Link`) sets `person_id`, takes the person's name unless
+  the user renamed the speaker (old label kept in `label_before_link` for
+  Unlink) and adds/completes the participant (never replaces an email).
+- **"Identify voices" on transcriptions (0.9, #134, P11)**: a per-run
+  option (`RunOptions.identify_voices`, New → File when the type is
+  Transcription, and New → Link), off by default, **not** behind
+  `meetings_enabled` — that flag gates meeting pieces only (browser/live,
+  "Meeting in the room", meeting speaker labels). Gating
+  (`session::speaker_options`): note never; transcription = the toggle;
+  meeting = the flag. The speaker panel shows on every transcription.
+  After the fact, "Identify voices" in the panel re-reads the original
+  file (`engine/identify.rs`: same tracker + end-of-run fold as a run),
+  so it needs the file's path: kept **only on this machine** in
+  `<app data>/source-files.json` (`engine/source_files.rs`, transcriptions
+  only, path + size, forgotten on delete) — never in the frontmatter,
+  the item folder or an export. Items from before #134 and link items
+  (download deleted; re-downloading is out of scope) get an explanation
+  instead of the button.
 - **Local API for the browser extension (0.9, #126)** (`api/`): new routes
   (`GET /app/version`, `WS /live`, `POST /items/{id}/open`,
   `GET /items/{id}/export`) exist only with `Settings.meetings_enabled`

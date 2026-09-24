@@ -673,7 +673,7 @@ fn edit_segment_with(
     edit: SegmentEdit,
     before_commit: &dyn Fn(&Path),
 ) -> Result<Item> {
-    modify_segments_with(archive, id, before_commit, |segments| {
+    modify_segments_with(archive, id, before_commit, |_, segments| {
         let pos = segments
             .segments
             .iter()
@@ -713,6 +713,12 @@ pub enum SpeakerEdit {
     /// "Re-detect speakers": re-cluster the whole document offline from
     /// the stored embeddings.
     Redetect,
+    /// Link a speaker to a person of the People registry (#132): the
+    /// person's name as label (unless renamed) and a participant with
+    /// name + email in the frontmatter.
+    Link { speaker_id: String, person_id: String },
+    /// Undo a link; the speaker gets its previous label back.
+    Unlink { speaker_id: String },
 }
 
 /// Apply a [`SpeakerEdit`] and regenerate `transcript.md`, under the same
@@ -731,7 +737,17 @@ fn edit_speakers_with(
     before_commit: &dyn Fn(&Path),
 ) -> Result<Item> {
     use crate::speakers::doc;
-    modify_segments_with(archive, id, before_commit, |segments| {
+    // Read before taking the item lock (the registry has its own).
+    let person = match &edit {
+        SpeakerEdit::Link { person_id, .. } => Some(
+            super::people::list_people(archive)?
+                .into_iter()
+                .find(|p| &p.id == person_id)
+                .ok_or_else(|| anyhow::anyhow!("that person is no longer in People"))?,
+        ),
+        _ => None,
+    };
+    modify_segments_with(archive, id, before_commit, |meta, segments| {
         match edit {
             SpeakerEdit::Move {
                 segment_id,
@@ -745,13 +761,33 @@ fn edit_speakers_with(
             SpeakerEdit::Redetect => {
                 doc::redetect(segments)?;
             }
+            SpeakerEdit::Link { speaker_id, .. } => {
+                let person = person.as_ref().expect("resolved above");
+                doc::link_speaker(segments, meta, &speaker_id, person)?;
+            }
+            SpeakerEdit::Unlink { speaker_id } => {
+                doc::unlink_speaker(segments, &speaker_id)?;
+            }
         }
         Ok(())
     })
 }
 
+/// [`modify_segments_with`] for the app's editors outside this module
+/// ("Identify voices" on a transcription, #134): same rules as
+/// [`edit_speakers`]. Returns the updated item.
+pub(crate) fn modify_segments(
+    archive: &Path,
+    id: &str,
+    change: impl FnOnce(&mut SegmentsFile) -> Result<()>,
+) -> Result<Item> {
+    modify_segments_with(archive, id, &|_| {}, |_meta, segments| change(segments))
+}
+
 /// Read-modify-write of an item's `segments.json` from the app's editors
-/// (lines, speakers), with `transcript.md` regenerated in step. Refused
+/// (lines, speakers), with `transcript.md` regenerated in step; `change`
+/// may also edit the frontmatter (a speaker link adds a participant; the
+/// capture-session marker is never touched). Refused
 /// when the transcript was edited outside the app (the content-hash rule:
 /// the markdown wins, so a change that could never reach it is not saved
 /// either) and while a capture session writes the item (#153). `change`
@@ -760,7 +796,7 @@ fn modify_segments_with(
     archive: &Path,
     id: &str,
     before_commit: &dyn Fn(&Path),
-    change: impl FnOnce(&mut SegmentsFile) -> Result<()>,
+    change: impl FnOnce(&mut ItemMeta, &mut SegmentsFile) -> Result<()>,
 ) -> Result<Item> {
     // Same lock as the engine's checkpoints and update_meta: the check and
     // the write must not interleave with another writer of this item.
@@ -773,14 +809,14 @@ fn modify_segments_with(
             "'{id}' was {EDITED_OUTSIDE_ERROR}: its transcript.md is kept as is — edit it there"
         );
     }
-    let (meta, _) = frontmatter::parse(&String::from_utf8_lossy(&bytes))?;
+    let (mut meta, _) = frontmatter::parse(&String::from_utf8_lossy(&bytes))?;
     // A live item is still being written by its capture session (#153).
     if meta.session_state() == Some(SessionState::Recording) {
         bail!("'{id}' is still being recorded — edit it when the session ends");
     }
     let original = read_segments(&dir)?;
     let mut segments = original.clone();
-    change(&mut segments)?;
+    change(&mut meta, &mut segments)?;
     // Rendered from the very bytes checked above, and replaced only if the
     // file still holds them (#155): an external save that lands meanwhile
     // wins, and the change is undone in segments.json too — it could
@@ -1673,6 +1709,57 @@ mod tests {
         let err = edit_speakers(archive, &id, rename).unwrap_err();
         assert!(format!("{err:#}").contains(EDITED_OUTSIDE_ERROR), "{err:#}");
         assert_eq!(std::fs::read(&seg_path).unwrap(), before);
+    }
+
+    #[test]
+    fn linking_a_voice_updates_segments_and_frontmatter() {
+        use crate::archive::people::{add_person, modify, Person};
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = voiced_meeting(archive);
+        let anna = modify(archive, |ps| {
+            add_person(
+                ps,
+                &Person {
+                    name: "Anna Rossi".into(),
+                    email: Some("anna@example.com".into()),
+                    ..Default::default()
+                },
+            )
+        })
+        .unwrap();
+        let link = SpeakerEdit::Link {
+            speaker_id: "voice:2".into(),
+            person_id: anna.id.clone(),
+        };
+        let item = edit_speakers(archive, &id, link).unwrap();
+        assert!(item.body.contains("**[00:00:05] Anna Rossi:** Frase 1."), "{}", item.body);
+        assert_eq!(item.meta.participants.len(), 1);
+        assert_eq!(item.meta.participants[0].email.as_deref(), Some("anna@example.com"));
+        // On disk: the frontmatter and segments.json agree.
+        let again = read_item(archive, &id).unwrap();
+        assert_eq!(again.meta.participants, item.meta.participants);
+        assert_eq!(again.segments.speakers[1].person_id.as_deref(), Some(anna.id.as_str()));
+        assert!(!again.edited_externally);
+
+        let item = edit_speakers(
+            archive,
+            &id,
+            SpeakerEdit::Unlink {
+                speaker_id: "voice:2".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(item.segments.speakers[1].label, "Voice 2");
+        assert!(item.segments.speakers[1].person_id.is_none());
+
+        // A person no longer in People: refused, nothing written.
+        let gone = SpeakerEdit::Link {
+            speaker_id: "voice:1".into(),
+            person_id: "p-gone".into(),
+        };
+        let err = edit_speakers(archive, &id, gone).unwrap_err();
+        assert!(format!("{err:#}").contains("no longer in People"), "{err:#}");
     }
 
     #[test]

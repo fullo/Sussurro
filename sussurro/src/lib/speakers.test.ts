@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  canAddSpeakerToPeople,
+  identifyOffer,
+  identifyVoicesArg,
+  linkChoices,
+  linkSuggestion,
+  linkedPerson,
   isVoice,
   labelProblem,
   redetectBlocked,
@@ -8,7 +14,7 @@ import {
   speakerSource,
   speakersEnabled,
 } from "./speakers";
-import type { DocSpeaker, Item, Segment } from "./types";
+import type { DocSpeaker, Item, Person, Segment, VoiceSource } from "./types";
 
 const v1: DocSpeaker = { id: "voice:1", label: "Voice 1", color: "#0f766e" };
 const v2: DocSpeaker = { id: "voice:2", label: "Anna", color: "#7e22ce" };
@@ -23,15 +29,50 @@ function item(speakers: DocSpeaker[], segments: Segment[]): Pick<Item, "segments
 }
 
 describe("speakersEnabled", () => {
-  it("needs the 0.9 preview and is never on for notes", () => {
-    const meeting = { meta: { type: "meeting" } } as Pick<Item, "meta">;
-    const note = { meta: { type: "note" } } as Pick<Item, "meta">;
-    const transcription = { meta: { type: "transcription" } } as Pick<Item, "meta">;
-    expect(speakersEnabled({ meetings_enabled: false }, meeting)).toBe(false);
-    
-    expect(speakersEnabled({ meetings_enabled: true }, meeting)).toBe(true);
-    expect(speakersEnabled({ meetings_enabled: true }, transcription)).toBe(true);
-    expect(speakersEnabled({ meetings_enabled: true }, note)).toBe(false);
+  const meeting = { meta: { type: "meeting" } } as Pick<Item, "meta">;
+  const note = { meta: { type: "note" } } as Pick<Item, "meta">;
+  const transcription = { meta: { type: "transcription" } } as Pick<Item, "meta">;
+
+  it("follows the gating matrix: note × transcription × meeting, flag off and on", () => {
+    for (const flag of [false, true]) {
+      const settings = { meetings_enabled: flag };
+      // Notes never have speakers (P10).
+      expect(speakersEnabled(settings, note)).toBe(false);
+      // Transcriptions always (P11, #134): the flag gates meeting pieces only.
+      expect(speakersEnabled(settings, transcription)).toBe(true);
+      // Meetings are the 0.9 preview (E12).
+      expect(speakersEnabled(settings, meeting)).toBe(flag);
+    }
+  });
+});
+
+describe("identifyVoicesArg", () => {
+  it("is on only for a transcription with the box ticked", () => {
+    expect(identifyVoicesArg("transcription", true)).toBe(true);
+    expect(identifyVoicesArg("transcription", false)).toBe(false);
+    // Ticked, then the type went back to Note: never sent.
+    expect(identifyVoicesArg("note", true)).toBe(false);
+    expect(identifyVoicesArg("meeting", true)).toBe(false);
+  });
+});
+
+describe("identifyOffer", () => {
+  const ok: VoiceSource = { available: true, reason: "", file_name: "a.wav" };
+  const gone: VoiceSource = { available: false, reason: "The original file is gone.", file_name: "a.wav" };
+  const t = (embedded = 0) => ({ meta: { type: "transcription" }, embedded_segments: embedded }) as Pick<Item, "meta" | "embedded_segments">;
+
+  it("offers the button when the file is there, explains otherwise", () => {
+    expect(identifyOffer(t(), ok)).toBe("identify");
+    expect(identifyOffer(t(), gone)).toBe("explain");
+  });
+
+  it("offers nothing while unknown, with voice data, or off transcriptions", () => {
+    expect(identifyOffer(t(), null)).toBe("none");
+    expect(identifyOffer(t(3), ok)).toBe("none");
+    const note = { meta: { type: "note" }, embedded_segments: 0 } as Pick<Item, "meta" | "embedded_segments">;
+    const meeting = { meta: { type: "meeting" }, embedded_segments: 0 } as Pick<Item, "meta" | "embedded_segments">;
+    expect(identifyOffer(note, ok)).toBe("none");
+    expect(identifyOffer(meeting, ok)).toBe("none");
   });
 });
 
@@ -91,5 +132,32 @@ describe("redetectBlocked", () => {
     expect(redetectBlocked({ edited_externally: false })).toMatch(/no voice data/);
     expect(redetectBlocked({ embedded_segments: 4, edited_externally: true })).toMatch(/outside/);
     expect(redetectBlocked({ embedded_segments: 4, edited_externally: false, recording: true })).toMatch(/recording ends/);
+  });
+});
+
+describe("people links", () => {
+  const anna: Person = { id: "p-anna", name: "Anna Rossi", email: "anna@example.com", aliases: ["Anna R."] };
+  const bob: Person = { id: "p-bob", name: "Bob", aliases: [] };
+  const people = [bob, anna];
+
+  it("suggests the person a Meet name or a rename matches, never for generic voices", () => {
+    expect(linkSuggestion({ id: "meet:Anna R.", label: "Anna R.", color: "" }, people)).toEqual(anna);
+    expect(linkSuggestion({ id: "voice:1", label: "  anna rossi ", color: "" }, people)).toEqual(anna);
+    expect(linkSuggestion({ id: "voice:1", label: "Voice 1", color: "" }, people)).toBeNull();
+    expect(linkSuggestion({ id: "voice:1", label: "Anna Rossi", color: "", person_id: "p-anna" }, people)).toBeNull();
+  });
+
+  it("finds the linked person and offers Add to People only for new names", () => {
+    expect(linkedPerson({ id: "voice:1", label: "x", color: "", person_id: "p-anna" }, people)).toEqual(anna);
+    expect(linkedPerson({ id: "voice:1", label: "x", color: "", person_id: "p-gone" }, people)).toBeNull();
+    expect(canAddSpeakerToPeople({ id: "voice:1", label: "Luca", color: "" }, people)).toBe(true);
+    expect(canAddSpeakerToPeople({ id: "voice:1", label: "Voice 1", color: "" }, people)).toBe(false);
+    expect(canAddSpeakerToPeople({ id: "voice:1", label: "Anna R.", color: "" }, people)).toBe(false);
+    expect(canAddSpeakerToPeople({ id: "voice:1", label: "Luca", color: "", person_id: "p-x" }, people)).toBe(false);
+  });
+
+  it("lists the suggested person first, then the rest by name", () => {
+    expect(linkChoices({ id: "voice:1", label: "Anna R.", color: "" }, people).map((p) => p.id)).toEqual(["p-anna", "p-bob"]);
+    expect(linkChoices({ id: "voice:1", label: "Voice 1", color: "" }, people).map((p) => p.id)).toEqual(["p-anna", "p-bob"]);
   });
 });
