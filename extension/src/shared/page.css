@@ -45,3 +45,20 @@ body {
   color: var(--c-text-light);
 }
 .tx-scroll { overflow-y: auto; }
+
+/* Capture controls (side panel, #128). */
+.tone-live { border-color: var(--brand); color: var(--c-text); background: var(--brand-soft); }
+.tone-problem { border-color: var(--border-strong); color: var(--c-dark); }
+.capture-controls { display: flex; gap: 8px; }
+.capture-controls button {
+  font: inherit; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong); background: var(--c-surface); color: var(--c-dark); cursor: pointer;
+}
+.capture-controls .btn-start:not(:disabled) { background: var(--brand); border-color: var(--brand); color: #fff; }
+.capture-controls button:disabled { opacity: 0.5; cursor: default; }
+.meters { display: flex; flex-direction: column; gap: 6px; }
+.meter { display: grid; grid-template-columns: 52px 1fr; gap: 2px 8px; align-items: center; font-size: 12.5px; }
+.meter-label { font-family: var(--f-mono); color: var(--c-text-light); }
+.meter-bar { height: 6px; border-radius: 3px; background: var(--c-surface-alt); overflow: hidden; }
+.meter-bar > span { display: block; height: 100%; background: var(--brand); transition: width 0.2s; }
+.meter-via { grid-column: 2; color: var(--c-text-light); }

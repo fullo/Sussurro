@@ -50,7 +50,12 @@ await build(
   config({
     build: {
       rollupOptions: {
-        input: { sidepanel: join(EXT, "sidepanel.html"), options: join(EXT, "options.html") },
+        input: {
+          sidepanel: join(EXT, "sidepanel.html"),
+          options: join(EXT, "options.html"),
+          // Chrome only: the tab-capture fallback (Firefox has no tabCapture).
+          ...(target === "chrome" ? { offscreen: join(EXT, "offscreen.html") } : {}),
+        },
       },
     },
   }),
@@ -69,10 +74,6 @@ for (const [name, entry] of scripts) {
         rollupOptions: {
           input: join(EXT, entry),
           output: { format: "iife", entryFileNames: `${name}.js`, inlineDynamicImports: true },
-          // A scaffold entry may be empty on purpose (content-main until #128).
-          onwarn(warning, warn) {
-            if (warning.code !== "EMPTY_BUNDLE") warn(warning);
-          },
         },
       },
     }),

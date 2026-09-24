@@ -3,12 +3,24 @@
 /** Build target, replaced at build time (see vite.config.ts). */
 declare const __BROWSER__: "chrome" | "firefox";
 
-/** The one Chrome-only API the scaffold touches (the side panel); the rest
- *  goes through `webextension-polyfill`'s `browser`. */
+/** The few Chrome-only APIs the extension touches (the side panel, and the
+ *  tab-capture fallback through an offscreen document); the rest goes
+ *  through `webextension-polyfill`'s `browser`. */
 declare const chrome:
   | {
       sidePanel?: {
         setPanelBehavior(behavior: { openPanelOnActionClick: boolean }): Promise<void>;
+      };
+      tabCapture?: {
+        getMediaStreamId(options: { targetTabId: number }): Promise<string>;
+      };
+      offscreen?: {
+        createDocument(options: { url: string; reasons: string[]; justification: string }): Promise<void>;
+        closeDocument(): Promise<void>;
+        hasDocument?(): Promise<boolean>;
+      };
+      runtime: {
+        sendMessage(message: unknown): Promise<unknown>;
       };
     }
   | undefined;
