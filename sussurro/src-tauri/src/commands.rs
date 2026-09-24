@@ -1099,6 +1099,34 @@ pub async fn archive_redetect_speakers(
     edit_speakers_command(&state, id, archive::SpeakerEdit::Redetect).await
 }
 
+/// Speaker panel (#130): link a speaker to a person of the People registry
+/// (#132) — the person's name as label unless renamed, and the person as a
+/// participant (name + email). Returns the updated item.
+#[tauri::command]
+pub async fn archive_link_speaker(
+    state: State<'_, AppState>,
+    id: String,
+    speaker_id: String,
+    person_id: String,
+) -> Result<Item, String> {
+    let edit = archive::SpeakerEdit::Link {
+        speaker_id,
+        person_id,
+    };
+    edit_speakers_command(&state, id, edit).await
+}
+
+/// Speaker panel (#130): undo a link; the speaker gets its previous label
+/// back. Returns the updated item.
+#[tauri::command]
+pub async fn archive_unlink_speaker(
+    state: State<'_, AppState>,
+    id: String,
+    speaker_id: String,
+) -> Result<Item, String> {
+    edit_speakers_command(&state, id, archive::SpeakerEdit::Unlink { speaker_id }).await
+}
+
 async fn edit_speakers_command(
     state: &AppState,
     id: String,

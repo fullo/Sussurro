@@ -221,6 +221,8 @@ pub fn run() {
             commands::archive_move_segment_speaker,
             commands::archive_rename_speaker,
             commands::archive_redetect_speakers,
+            commands::archive_link_speaker,
+            commands::archive_unlink_speaker,
             commands::archive_delete,
             commands::archive_reveal,
             commands::archive_rebuild_index,

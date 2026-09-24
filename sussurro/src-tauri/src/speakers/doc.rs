@@ -6,7 +6,9 @@
 
 use super::cluster::{agglomerative, fold_small, renumber_by_first_appearance};
 use super::{MIN_VOICE_SPEECH_MS, REDETECT_THRESHOLD};
-use crate::archive::{DocSpeaker, Segment, SegmentsFile};
+use crate::archive::people::{name_key, Person};
+use crate::archive::types::{normalize_participants, Participant};
+use crate::archive::{DocSpeaker, ItemMeta, Segment, SegmentsFile};
 use anyhow::{bail, Result};
 
 /// Speaker id of the user on the mic channel of a two-channel session.
@@ -53,6 +55,7 @@ pub fn voice_speaker(n: u32) -> DocSpeaker {
         label: voice_label(n),
         color: voice_color(n),
         person_id: None,
+        label_before_link: None,
     }
 }
 
@@ -63,6 +66,7 @@ pub fn you_speaker() -> DocSpeaker {
         label: "You".to_string(),
         color: YOU_COLOR.to_string(),
         person_id: None,
+        label_before_link: None,
     }
 }
 
@@ -128,7 +132,132 @@ pub fn rename_speaker(file: &mut SegmentsFile, speaker_id: &str, label: &str) ->
         (true, Some(n)) => voice_label(n),
         (true, None) => bail!("a speaker needs a name"),
     };
+    // A name chosen by hand is the one an unlink keeps.
+    sp.label_before_link = None;
     Ok(())
+}
+
+/// The label a speaker gets without a user's choice: "Voice N", "You",
+/// or the name the meeting page showed (`meet:<name>`).
+pub fn default_label(id: &str) -> Option<String> {
+    if let Some(n) = voice_number(id) {
+        return Some(voice_label(n));
+    }
+    if id == YOU_ID {
+        return Some("You".to_string());
+    }
+    id.strip_prefix("meet:").map(str::to_string)
+}
+
+/// Whether the user named this speaker (its label is not the default).
+pub fn renamed(sp: &DocSpeaker) -> bool {
+    default_label(&sp.id).is_none_or(|d| name_key(&d) != name_key(&sp.label))
+}
+
+/// Link a speaker to a person of the People registry (#132): it gets the
+/// person's id and — unless the user named the speaker — the person's name
+/// as its label (the old label is kept for [`unlink_speaker`]). The
+/// person becomes a participant of the item with name and email: a
+/// participant already naming them (or carrying the speaker's old generic
+/// label, like "Voice 2") is completed, otherwise one is added. An
+/// existing email is never replaced. Notes have no participants (P10).
+pub fn link_speaker(
+    file: &mut SegmentsFile,
+    meta: &mut ItemMeta,
+    speaker_id: &str,
+    person: &Person,
+) -> Result<()> {
+    let sp = file
+        .speakers
+        .iter_mut()
+        .find(|s| s.id == speaker_id)
+        .ok_or_else(|| anyhow::anyhow!("no speaker '{speaker_id}' in this document"))?;
+    let old_label = sp.label.clone();
+    if sp.person_id.as_deref() != Some(person.id.as_str()) {
+        if sp.person_id.is_some() {
+            // Re-linking to someone else starts from the pre-link label.
+            if let Some(before) = sp.label_before_link.take() {
+                sp.label = before;
+            }
+        }
+        sp.person_id = Some(person.id.clone());
+        if !renamed(sp) {
+            sp.label_before_link = Some(std::mem::replace(&mut sp.label, person.name.clone()));
+        }
+    }
+    if meta.item_type.has_participants() {
+        link_participant(&mut meta.participants, person, &old_label);
+    }
+    Ok(())
+}
+
+/// Add `person` to the participants, or complete the entry that is them.
+fn link_participant(list: &mut Vec<Participant>, person: &Person, old_label: &str) {
+    let email_of = |p: &Participant| p.email.as_deref().map(|e| e.trim().to_lowercase());
+    let person_email = person.email.as_deref().map(|e| e.trim().to_lowercase());
+    let generic_old = !old_label.trim().is_empty() && name_key(old_label) != name_key(&person.name);
+    let at = list
+        .iter()
+        .position(|p| {
+            person.matches(&p.name) || (person_email.is_some() && email_of(p) == person_email)
+        })
+        .or_else(|| {
+            generic_old
+                .then(|| {
+                    list.iter()
+                        .position(|p| name_key(&p.name) == name_key(old_label))
+                })
+                .flatten()
+        });
+    match at {
+        Some(i) => {
+            let p = &mut list[i];
+            // "Voice 2" becomes the person; a real name stays as typed.
+            if !person.matches(&p.name) && name_key(&p.name) == name_key(old_label) {
+                p.name = person.name.clone();
+            }
+            if p.email.as_deref().is_none_or(|e| e.trim().is_empty()) {
+                p.email = person.email.clone();
+            }
+        }
+        None => list.push(Participant {
+            name: person.name.clone(),
+            email: person.email.clone(),
+        }),
+    }
+    *list = normalize_participants(list);
+}
+
+/// Undo [`link_speaker`]: the speaker forgets the person and gets back the
+/// label it had before the link (a name the user gave it stays).
+/// Participants are left as they are: the person was still in the room.
+pub fn unlink_speaker(file: &mut SegmentsFile, speaker_id: &str) -> Result<()> {
+    let sp = file
+        .speakers
+        .iter_mut()
+        .find(|s| s.id == speaker_id)
+        .ok_or_else(|| anyhow::anyhow!("no speaker '{speaker_id}' in this document"))?;
+    sp.person_id = None;
+    if let Some(before) = sp.label_before_link.take() {
+        sp.label = before;
+    }
+    Ok(())
+}
+
+/// Speakers worth offering a link to (#130): not linked yet, and whose
+/// label matches exactly one person — a name from the meeting page (#131)
+/// or a rename that is someone in People. Returns `(speaker id, person)`.
+pub fn link_suggestions<'a>(
+    file: &SegmentsFile,
+    people: &'a [Person],
+) -> Vec<(String, &'a Person)> {
+    file.speakers
+        .iter()
+        .filter(|s| s.person_id.is_none())
+        .filter_map(|s| {
+            crate::archive::people::match_person(people, &s.label).map(|p| (s.id.clone(), p))
+        })
+        .collect()
 }
 
 /// What "Re-detect speakers" did.
@@ -531,6 +660,130 @@ mod tests {
         rename_speaker(&mut f, "you", "Francesco").unwrap();
         assert!(rename_speaker(&mut f, "voice:7", "X").is_err());
         assert!(rename_speaker(&mut f, "voice:1", &"x".repeat(61)).is_err());
+    }
+
+    fn anna() -> Person {
+        Person {
+            id: "p-anna".into(),
+            name: "Anna Rossi".into(),
+            email: Some("anna@example.com".into()),
+            aliases: vec!["Anna R.".into()],
+        }
+    }
+
+    fn meeting_meta(participants: Vec<Participant>) -> ItemMeta {
+        ItemMeta {
+            item_type: crate::archive::ItemType::Meeting,
+            participants,
+            ..Default::default()
+        }
+    }
+
+    fn part(name: &str, email: Option<&str>) -> Participant {
+        Participant {
+            name: name.into(),
+            email: email.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn linking_a_voice_names_it_and_adds_the_participant() {
+        let mut f = doc(&[0, 1], &[Some(1), Some(2)], 2);
+        let mut meta = meeting_meta(vec![part("Marco", None)]);
+        link_speaker(&mut f, &mut meta, "voice:2", &anna()).unwrap();
+        let sp = &f.speakers[1];
+        assert_eq!(sp.person_id.as_deref(), Some("p-anna"));
+        assert_eq!(sp.label, "Anna Rossi");
+        assert_eq!(sp.label_before_link.as_deref(), Some("Voice 2"));
+        assert_eq!(
+            meta.participants,
+            vec![
+                part("Marco", None),
+                part("Anna Rossi", Some("anna@example.com"))
+            ]
+        );
+        // Linking again changes nothing (no duplicate participant).
+        let (f1, m1) = (f.clone(), meta.clone());
+        link_speaker(&mut f, &mut meta, "voice:2", &anna()).unwrap();
+        assert_eq!((f, meta), (f1, m1));
+    }
+
+    #[test]
+    fn unlink_restores_the_previous_label_and_keeps_participants() {
+        let mut f = doc(&[0, 1], &[Some(1), Some(2)], 2);
+        let mut meta = meeting_meta(vec![]);
+        link_speaker(&mut f, &mut meta, "voice:1", &anna()).unwrap();
+        unlink_speaker(&mut f, "voice:1").unwrap();
+        assert_eq!(f.speakers[0], voice_speaker(1));
+        assert_eq!(meta.participants.len(), 1);
+        assert!(unlink_speaker(&mut f, "voice:9").is_err());
+    }
+
+    #[test]
+    fn a_renamed_voice_keeps_its_name_when_linked() {
+        let mut f = doc(&[0, 1], &[Some(1), Some(2)], 2);
+        rename_speaker(&mut f, "voice:1", "Anna").unwrap();
+        let mut meta = meeting_meta(vec![]);
+        link_speaker(&mut f, &mut meta, "voice:1", &anna()).unwrap();
+        assert_eq!(f.speakers[0].label, "Anna");
+        assert_eq!(f.speakers[0].label_before_link, None);
+        unlink_speaker(&mut f, "voice:1").unwrap();
+        assert_eq!(f.speakers[0].label, "Anna");
+        // Renaming after a link: the new name is what unlink keeps.
+        link_speaker(&mut f, &mut meta, "voice:2", &anna()).unwrap();
+        rename_speaker(&mut f, "voice:2", "Annina").unwrap();
+        unlink_speaker(&mut f, "voice:2").unwrap();
+        assert_eq!(f.speakers[1].label, "Annina");
+    }
+
+    #[test]
+    fn linking_completes_an_existing_participant_without_replacing_emails() {
+        let mut f = doc(&[0], &[Some(2)], 2);
+        // "Voice 2" typed as a participant becomes the person.
+        let mut meta = meeting_meta(vec![part("Voice 2", None)]);
+        link_speaker(&mut f, &mut meta, "voice:2", &anna()).unwrap();
+        assert_eq!(
+            meta.participants,
+            vec![part("Anna Rossi", Some("anna@example.com"))]
+        );
+        // An alias with its own email: completed by name, email kept.
+        let mut f = doc(&[0], &[Some(1)], 2);
+        let mut meta = meeting_meta(vec![part("anna r.", Some("a.rossi@work.example"))]);
+        link_speaker(&mut f, &mut meta, "voice:1", &anna()).unwrap();
+        assert_eq!(
+            meta.participants,
+            vec![part("anna r.", Some("a.rossi@work.example"))]
+        );
+        // A note never gets participants.
+        let mut note = ItemMeta::default();
+        link_speaker(&mut f, &mut note, "voice:1", &anna()).unwrap();
+        assert!(note.participants.is_empty());
+    }
+
+    #[test]
+    fn meet_names_and_renames_matching_a_person_are_suggested() {
+        let mut f = doc(&[0, 1], &[Some(1), Some(2)], 2);
+        f.speakers.push(DocSpeaker {
+            id: "meet:Anna R.".into(),
+            label: "Anna R.".into(),
+            ..Default::default()
+        });
+        let people = vec![anna()];
+        let ids = |f: &SegmentsFile| -> Vec<String> {
+            link_suggestions(f, &people)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect()
+        };
+        assert_eq!(ids(&f), ["meet:Anna R."]);
+        rename_speaker(&mut f, "voice:1", "anna rossi").unwrap();
+        assert_eq!(ids(&f), ["voice:1", "meet:Anna R."]);
+        let mut meta = meeting_meta(vec![]);
+        link_speaker(&mut f, &mut meta, "voice:1", &anna()).unwrap();
+        assert_eq!(ids(&f), ["meet:Anna R."]);
+        // A Meet name's default label is the name itself.
+        assert_eq!(default_label("meet:Anna R.").as_deref(), Some("Anna R."));
+        assert!(!renamed(&f.speakers[2]));
     }
 
     #[test]
