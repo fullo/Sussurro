@@ -19,6 +19,9 @@ pub fn set_settings(
 ) -> Result<(), String> {
     // Valid LLM profiles and a cleanup selection that names one (#119).
     settings.normalize();
+    // The extension token changes only through its own commands (#126): a
+    // UI holding an older copy of the settings must not undo a regenerate.
+    settings.extension_token = state.settings.lock().unwrap().extension_token.clone();
     // The model name flows into models_dir.join(name) for download and load —
     // reject traversal/absolute paths before anything touches the filesystem.
     models::validate_model_name(&settings.whisper_model).map_err(|e| e.to_string())?;
@@ -47,6 +50,34 @@ pub fn set_settings(
         crate::apply_main_window_layout(&app, on);
     }
     Ok(())
+}
+
+/// The browser extension's pairing token (#126, E6), created on first use.
+/// The pairing UI (#127) shows it for copying into the extension.
+#[tauri::command]
+pub fn extension_token_get(state: State<'_, AppState>) -> Result<String, String> {
+    let mut settings = state.settings.lock().unwrap();
+    if !settings.extension_token.trim().is_empty() {
+        return Ok(settings.extension_token.clone());
+    }
+    let token = settings.ensure_extension_token().map_err(|e| e.to_string())?;
+    settings
+        .save(&state.paths.settings_file)
+        .map_err(|e| e.to_string())?;
+    Ok(token)
+}
+
+/// Replace the extension token: a paired extension must be paired again.
+#[tauri::command]
+pub fn extension_token_regenerate(state: State<'_, AppState>) -> Result<String, String> {
+    let mut settings = state.settings.lock().unwrap();
+    let token = settings
+        .regenerate_extension_token()
+        .map_err(|e| e.to_string())?;
+    settings
+        .save(&state.paths.settings_file)
+        .map_err(|e| e.to_string())?;
+    Ok(token)
 }
 
 /// Drive dictation from the in-app Dictate button: mirrors the global hotkey

@@ -166,6 +166,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::set_settings,
+            commands::extension_token_get,
+            commands::extension_token_regenerate,
             commands::get_history,
             commands::search_history,
             commands::clear_history,
