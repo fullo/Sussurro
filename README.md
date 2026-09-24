@@ -158,6 +158,20 @@ computer. Sussurro never falls back from a local profile to an external one.
 - Anything sent to an external server is processed under that provider's
   terms; over plain `http` it also travels unencrypted.
 
+### Recording meetings and consent
+
+Meeting recordings capture other people's voices: the browser extension's
+*Start recording*, *System audio + mic* and *Meeting in the room*. Depending
+on where you and the other participants are, and on your organisation's
+rules, you may need to tell them that you are recording, and some may have to
+agree first. Sussurro can't tell which rules apply to you, so it doesn't try:
+before the first such recording, the app and the extension's side panel show
+a short notice saying so (hide it with *Don't show this again*; bring it back
+from Settings → Browser extension or the extension's options), and a
+"Recording other people" line stays visible while you record. The audio is
+transcribed on this computer and is not sent anywhere; a saved `.wav` is
+kept only if you ask for it.
+
 ## Local API (scripting)
 
 Enable it in Behavior → Advanced (off by default; loopback only; applied at
