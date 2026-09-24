@@ -568,3 +568,121 @@ pub async fn download_model(state: State<'_, AppState>) -> Result<String, String
     .await
     .map_err(|e| e.to_string())?
 }
+
+// ---- Archive (0.7): notes, meetings and transcriptions as markdown files ----
+
+use crate::archive::{self, Item, ItemMeta, ItemSummary, SearchFilters};
+use std::path::{Path, PathBuf};
+
+/// Archive folder and index path for the current settings, cloned out of the
+/// state so the blocking work doesn't hold the settings lock.
+fn archive_paths(state: &AppState) -> Result<(PathBuf, PathBuf), String> {
+    let settings = state.settings.lock().unwrap();
+    let dir = crate::state::resolve_archive_dir(&state.paths, &settings)
+        .map_err(|e| format!("{e:#}"))?;
+    Ok((dir, state.paths.archive_index.clone()))
+}
+
+/// Filesystem and SQLite work runs off the async runtime.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || f().map_err(|e| format!("{e:#}")))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Keep the index in step after the app changed an item. The files are
+/// already written, so an index failure is only logged: the next search
+/// re-syncs (or rebuilds) from the folder anyway.
+fn reindex(
+    root: &Path,
+    db: &Path,
+    f: impl FnOnce(&mut archive::Index) -> anyhow::Result<()>,
+) {
+    let result = archive::Index::open(root, db).and_then(|mut idx| f(&mut idx));
+    if let Err(e) = result {
+        eprintln!("archive index: update failed ({e:#})");
+    }
+}
+
+/// The resolved archive folder (not created — just the path).
+#[tauri::command]
+pub fn archive_dir(state: State<'_, AppState>) -> Result<String, String> {
+    archive_paths(&state).map(|(dir, _)| dir.display().to_string())
+}
+
+/// Every item, newest first, by scanning the archive folder.
+#[tauri::command]
+pub async fn archive_list(state: State<'_, AppState>) -> Result<Vec<ItemSummary>, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || Ok(archive::list_items(&dir))).await
+}
+
+/// Full-text search with facets over the index (synced with the folder
+/// first). Empty query = all items passing the filters, newest first.
+#[tauri::command]
+pub async fn archive_search(
+    state: State<'_, AppState>,
+    query: String,
+    filters: Option<SearchFilters>,
+) -> Result<Vec<ItemSummary>, String> {
+    let (dir, db) = archive_paths(&state)?;
+    let filters = filters.unwrap_or_default();
+    blocking(move || archive::with_index(&dir, &db, |idx| idx.search(&query, &filters))).await
+}
+
+#[tauri::command]
+pub async fn archive_get(state: State<'_, AppState>, id: String) -> Result<Item, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || archive::read_item(&dir, &id)).await
+}
+
+/// Replace an item's frontmatter; returns the updated item.
+#[tauri::command]
+pub async fn archive_update_meta(
+    state: State<'_, AppState>,
+    id: String,
+    meta: ItemMeta,
+) -> Result<Item, String> {
+    let (dir, db) = archive_paths(&state)?;
+    blocking(move || {
+        let item = archive::update_meta(&dir, &id, &meta)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        Ok(item)
+    })
+    .await
+}
+
+/// Move an item folder to the OS trash (never a hard delete).
+#[tauri::command]
+pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let (dir, db) = archive_paths(&state)?;
+    blocking(move || {
+        archive::delete_item(&dir, &id)?;
+        reindex(&dir, &db, |idx| idx.remove_from_index(&id));
+        Ok(())
+    })
+    .await
+}
+
+/// Open the item's folder in the OS file manager.
+#[tauri::command]
+pub fn archive_reveal(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let (dir, _) = archive_paths(&state)?;
+    let item = archive::paths::item_dir(&dir, &id).map_err(|e| format!("{e:#}"))?;
+    if !item.is_dir() {
+        return Err(format!("no archive item '{id}'"));
+    }
+    app.opener()
+        .open_path(item.display().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+/// Drop and rebuild the search index from the folder; returns the item count.
+#[tauri::command]
+pub async fn archive_rebuild_index(state: State<'_, AppState>) -> Result<usize, String> {
+    let (dir, db) = archive_paths(&state)?;
+    blocking(move || archive::rebuild_index(&dir, &db)).await
+}

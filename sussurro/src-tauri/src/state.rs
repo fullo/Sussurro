@@ -10,6 +10,12 @@ pub struct AppPaths {
     pub models_dir: PathBuf,
     pub history_file: PathBuf,
     pub stats_file: PathBuf,
+    /// SQLite search index of the archive (derived data, app data dir).
+    pub archive_index: PathBuf,
+    /// OS Documents folder, `None` when the platform can't tell (Linux
+    /// without XDG user dirs) — the archive then falls back to `$HOME`.
+    pub documents_dir: Option<PathBuf>,
+    pub home_dir: Option<PathBuf>,
 }
 
 impl AppPaths {
@@ -21,6 +27,9 @@ impl AppPaths {
             models_dir: data.join("models"),
             history_file: data.join("history.jsonl"),
             stats_file: data.join("stats.json"),
+            archive_index: data.join(crate::archive::INDEX_FILE),
+            documents_dir: app.path().document_dir().ok(),
+            home_dir: app.path().home_dir().ok(),
         }
     }
 }
@@ -33,6 +42,17 @@ pub fn resolve_models_dir(paths: &AppPaths, settings: &Settings) -> PathBuf {
     } else {
         PathBuf::from(custom)
     }
+}
+
+/// The archive folder honouring the user override (empty = `<Documents>/Sussurro`).
+/// Pure path resolution: nothing is created or touched on disk, so asking for
+/// it never triggers the macOS Documents permission prompt.
+pub fn resolve_archive_dir(paths: &AppPaths, settings: &Settings) -> anyhow::Result<PathBuf> {
+    crate::archive::resolve_archive_dir(
+        paths.documents_dir.clone(),
+        paths.home_dir.clone(),
+        &settings.archive_dir,
+    )
 }
 
 pub struct AppState {
