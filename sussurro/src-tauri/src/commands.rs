@@ -1373,6 +1373,48 @@ pub async fn archive_delete_audio(state: State<'_, AppState>, id: String) -> Res
     .await
 }
 
+/// One request of the saved-audio scheme (#142, [`archive::playback`]):
+/// the Audio tab's `<audio>` element streams an item's WAV through it, with
+/// range support. Only the main window may use it.
+pub fn serve_audio(
+    app: &AppHandle,
+    webview: &str,
+    request: &tauri::http::Request<Vec<u8>>,
+) -> tauri::http::Response<Vec<u8>> {
+    use tauri::Manager;
+    let reply = if webview != "main" {
+        archive::playback::Reply {
+            status: 403,
+            headers: Vec::new(),
+            body: Vec::new(),
+        }
+    } else {
+        let archive = match app.try_state::<AppState>() {
+            Some(state) => archive_paths(&state).map(|(dir, _)| dir),
+            None => Err("starting".to_string()),
+        };
+        let range = request
+            .headers()
+            .get(tauri::http::header::RANGE)
+            .and_then(|v| v.to_str().ok());
+        archive::playback::handle(
+            archive,
+            request.method().as_str(),
+            request.uri().path(),
+            range,
+        )
+    };
+    let mut response = tauri::http::Response::builder().status(reply.status);
+    for (k, v) in &reply.headers {
+        response = response.header(*k, v);
+    }
+    response.body(reply.body).unwrap_or_else(|_| {
+        let mut r = tauri::http::Response::new(Vec::new());
+        *r.status_mut() = tauri::http::StatusCode::INTERNAL_SERVER_ERROR;
+        r
+    })
+}
+
 /// Open the item's folder in the OS file manager — or, without an id, the
 /// archive folder itself (created if missing, so the empty Library can show
 /// the user where items will go).

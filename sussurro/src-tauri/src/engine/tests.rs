@@ -2184,10 +2184,13 @@ fn started_id(sink: &VecSink) -> String {
         .unwrap()
 }
 
-/// A mic that fails after `after` samples, like an unplugged device.
+/// A mic that fails after `after` samples, like an unplugged device — once a
+/// segment is finished (so the interrupted item always exists: without the
+/// wait a slow worker made these tests flaky, ~1 run in 10).
 struct BreaksAfter {
     inner: VecSource,
     after: usize,
+    sink: Arc<VecSink>,
 }
 
 impl Source for BreaksAfter {
@@ -2199,6 +2202,19 @@ impl Source for BreaksAfter {
     }
     fn next_frame(&mut self) -> Result<Option<Frame>> {
         if self.inner.pos >= self.after {
+            // Bounded only to turn a hang into a failure.
+            let deadline = Instant::now() + Duration::from_secs(120);
+            while !self
+                .sink
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| matches!(e, EngineEvent::Segment(_)))
+            {
+                assert!(Instant::now() < deadline, "no segment was ever finished");
+                std::thread::sleep(Duration::from_millis(1));
+            }
             anyhow::bail!("microphone unplugged");
         }
         self.inner.next_frame()
@@ -2234,17 +2250,13 @@ fn save_audio_off_writes_no_audio_anywhere() {
 fn save_audio_off_writes_nothing_on_a_failed_run_either() {
     let dir = tempfile::tempdir().unwrap();
     let mut j = job(dir.path(), Vec::new(), Policy::Spill { max_in_ram: 1 });
+    let sink = Arc::new(VecSink::default());
     j.source = Box::new(BreaksAfter {
         inner: VecSource::new(bursts(&[(true, 3.0), (false, 2.5)].repeat(4)), Channel::Mic),
         after: 16_000 * 10,
+        sink: sink.clone(),
     });
-    assert!(run(
-        j,
-        &mut fake_stt(),
-        &FakeCleaner::default(),
-        Arc::new(VecSink::default())
-    )
-    .is_err());
+    assert!(run(j, &mut fake_stt(), &FakeCleaner::default(), sink).is_err());
     assert_eq!(archive::list_items(&dir.path().join("archive")).len(), 1);
     assert!(wavs_under(dir.path()).is_empty());
 }
@@ -2424,18 +2436,14 @@ fn a_run_with_no_speech_trashes_rather_than_removes_saved_audio() {
 fn a_failed_run_keeps_its_audio_with_the_interrupted_item() {
     let dir = tempfile::tempdir().unwrap();
     let mut j = job(dir.path(), Vec::new(), Policy::Spill { max_in_ram: 2 });
+    let sink = Arc::new(VecSink::default());
     j.source = Box::new(BreaksAfter {
         inner: VecSource::new(bursts(&[(true, 3.0), (false, 2.5)].repeat(4)), Channel::Mic),
         after: 16_000 * 11,
+        sink: sink.clone(),
     });
     j.save_audio = true;
-    assert!(run(
-        j,
-        &mut fake_stt(),
-        &FakeCleaner::default(),
-        Arc::new(VecSink::default())
-    )
-    .is_err());
+    assert!(run(j, &mut fake_stt(), &FakeCleaner::default(), sink).is_err());
     let archive_dir = dir.path().join("archive");
     let items = archive::list_items(&archive_dir);
     assert_eq!(items.len(), 1);

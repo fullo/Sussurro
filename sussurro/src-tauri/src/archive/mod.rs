@@ -13,6 +13,7 @@
 //! - [`store`]: create / read / list / update / delete items
 //! - [`live`]: items written while a session runs (checkpoints, #153)
 //! - [`meeting`]: what the meeting page said during a browser session (#126)
+//! - [`playback`]: saved audio served to the Audio tab's player (#142)
 //! - [`subtitles`]: SRT/WebVTT writers (pure, #133)
 //! - [`index`]: search index (rebuildable)
 //! - [`facets`]: the Library's facet filters and counts (#135)
@@ -28,6 +29,7 @@ pub mod live;
 pub mod meeting;
 pub mod paths;
 pub mod people;
+pub mod playback;
 pub mod render;
 pub mod store;
 pub mod subtitles;

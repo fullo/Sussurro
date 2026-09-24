@@ -313,6 +313,28 @@ project decisions here, not in per-machine memory.**
   end at the first 300 ms VAD pause after 8 s
   (`SegmenterParams::for_engine`). Whisper is untouched. Re-check (and
   maybe drop) this when transcribe-rs changes its decode loop.
+- **Per-speaker replay (0.10, #142)** (`archive/playback.rs`,
+  `src/lib/replay.ts`, `src/lib/replayPlayer.ts`, `shell/AudioTab.tsx`):
+  the document pane's *Audio* tab plays saved audio only (#141) — there is
+  no temporary audio cache (runs never buffer audio to disk unless Save
+  audio is on), so an item without saved audio gets an explanation
+  pointing to Save audio; while recording the player waits for the end.
+  Audio reaches `<audio>` through the custom scheme `sussurro-audio:`
+  (`convertFileSrc("<id>/<file>", "sussurro-audio")`), **not** Tauri's
+  asset protocol (which would need the whole archive in its scope): the URL
+  names an item id + an audio file name, resolved through the archive's id
+  validation/confinement, regular files only (no links), GET/HEAD with
+  `Range`, 1 MiB chunks, main window only. The CSP gained only
+  `media-src sussurro-audio: http://sussurro-audio.localhost`.
+  "Play only: X" plays X's lines back to back (lines ≤ 250 ms apart
+  joined), each from **its own channel's file** (no crosstalk);
+  "All speakers" plays every channel file together, kept within 150 ms
+  (the browser mixes them — no Web Audio, which would mute cross-origin
+  media without CORS). The seek bar is the playlist's timeline. Word
+  highlight only when the displayed text has as many words as the timed
+  raw words (else the line is lit as a whole). The clock is a 40 ms timer,
+  not rAF (frames stop in a hidden window and the audio would run into
+  other speakers' lines).
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`
