@@ -1,7 +1,8 @@
 name: Release
 
 # Builds signed installers for Windows / macOS / Linux and publishes a GitHub
-# release (with the updater's latest.json) whenever a v* tag is pushed.
+# release (with the updater's latest.json) whenever a v* tag is pushed; the
+# browser-extension zips are attached to the same draft release.
 on:
   push:
     tags:
@@ -105,3 +106,31 @@ jobs:
           releaseBody: "Local voice dictation. See README for setup (Ollama + a Whisper/Parakeet model)."
           releaseDraft: true
           args: ${{ matrix.args }}
+
+  # Browser extension zips (Chrome/Edge/Brave + Firefox), attached to the draft
+  # release the build job created. Store listings are not part of the release.
+  extension:
+    needs: build
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Build and lint
+        working-directory: extension
+        run: |
+          npm ci
+          npm test
+          npm run build
+          npm run lint
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" extension/dist/*.zip --clobber --repo "${{ github.repository }}"

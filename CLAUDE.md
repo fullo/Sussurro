@@ -8,6 +8,11 @@ project decisions here, not in per-machine memory.**
 
 - `sussurro/` — the Tauri 2 app (React + TypeScript frontend, Rust backend
   in `sussurro/src-tauri/`). The repo root only holds docs and CI.
+- `extension/` — the 0.9 browser extension (Vite + TS + React, one build per
+  browser, `web-ext lint` in CI; see `extension/README.md`). It shares
+  `sussurro/src/transcript/` via the `@sussurro/transcript` alias and takes
+  its version from `sussurro/package.json`. Its third-party license list is
+  separate from the app's `licenses.json` (lands with #138).
 - Build instructions per OS live in `docs/compile/{windows,macos,linux}.md`
   — keep them updated when build requirements change.
 - The About dialog's third-party license list is `sussurro/public/licenses.json`,
