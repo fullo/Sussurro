@@ -47,6 +47,7 @@ export function SettingsScreen({
   onOpenModels,
   onOpenRecipes,
   onAbout,
+  onRunSetup,
 }: {
   ctl: Ctl;
   section: SectionId;
@@ -54,6 +55,8 @@ export function SettingsScreen({
   onOpenModels: () => void;
   onOpenRecipes: () => void;
   onAbout: () => void;
+  /** Reopen the first-run setup (#115). */
+  onRunSetup: () => void;
 }) {
   return (
     <div className="sh-screen">
@@ -112,7 +115,7 @@ export function SettingsScreen({
           {section === "history" && <HistoryCard ctl={ctl} />}
           {section === "archive" && <ArchiveCard ctl={ctl} />}
           {section === "extension" && <ExtensionCard ctl={ctl} />}
-          {section === "about" && <AboutCard ctl={ctl} onAbout={onAbout} />}
+          {section === "about" && <AboutCard ctl={ctl} onAbout={onAbout} onRunSetup={onRunSetup} />}
         </div>
       </div>
     </div>
@@ -218,7 +221,7 @@ function ArchiveCard({ ctl }: { ctl: Ctl }) {
   );
 }
 
-function AboutCard({ ctl, onAbout }: { ctl: Ctl; onAbout: () => void }) {
+function AboutCard({ ctl, onAbout, onRunSetup }: { ctl: Ctl; onAbout: () => void; onRunSetup: () => void }) {
   return (
     <Card title={<>Sussurro {ctl.version}</>}>
       <p className="card-hint">Local dictation and transcription. Your voice never leaves this machine.</p>
@@ -233,6 +236,13 @@ function AboutCard({ ctl, onAbout }: { ctl: Ctl; onAbout: () => void }) {
           Copy diagnostics
         </button>
         <button type="button" className="btn-ghost" onClick={ctl.checkForUpdates}>Check for updates</button>
+      </div>
+      <div className="field">
+        <div className="field-label">
+          <span>First-run setup</span>
+          <small>permissions, archive folder, speech model, cleanup and shortcut</small>
+        </div>
+        <button type="button" className="btn-ghost" onClick={onRunSetup}>Run the setup again</button>
       </div>
     </Card>
   );
