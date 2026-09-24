@@ -399,6 +399,25 @@ mod tests {
         assert!(!s.cleanup_blocked() && !s.cleanup_sends_externally());
     }
 
+    /// #118: the bundled profile never goes to its stored address (no
+    /// server listens on port 80 of loopback) — it asks the app's sidecar,
+    /// which unit tests don't have: cleanup keeps the raw text, and the
+    /// profile reads as a local one that needs no opt-in.
+    #[test]
+    fn bundled_profile_without_the_sidecar_keeps_the_raw_text() {
+        let mut s = crate::settings::Settings {
+            cleanup_level: CleanupLevel::Light,
+            voice_commands: false,
+            ..Default::default()
+        };
+        s.use_bundled_for_cleanup();
+        assert!(!s.cleanup_blocked() && !s.cleanup_sends_externally());
+        assert_eq!(cleanup(&s, None, "um raw text"), "um raw text");
+        let err = list_models(&s.cleanup_llm()).unwrap_err();
+        assert!(format!("{err:#}").contains("no bundled llama-server"), "{err:#}");
+        assert!(!crate::llm::bundled::global().is_running());
+    }
+
     #[test]
     fn unreachable_openai_falls_back_to_raw_transcript() {
         let s = cfg_api(CleanupLevel::Light, CleanupApi::Openai, "http://127.0.0.1:9");

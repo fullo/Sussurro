@@ -19,6 +19,11 @@ pub fn set_settings(
 ) -> Result<Settings, String> {
     // Valid LLM profiles and a cleanup selection that names one (#119).
     settings.normalize();
+    // The built-in bundled profile stays listed where the build can run it
+    // (#118) — a UI holding older settings must not drop it.
+    if crate::stt::sidecar::sidecar_available(&app) {
+        settings.ensure_bundled_profile();
+    }
     // The extension token changes only through its own commands (#126): a
     // UI holding an older copy of the settings must not undo a regenerate.
     settings.extension_token = state.settings.lock().unwrap().extension_token.clone();
@@ -331,6 +336,63 @@ pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
 #[tauri::command]
 pub fn stt_sidecar_available(app: AppHandle) -> bool {
     crate::stt::sidecar::sidecar_available(&app)
+}
+
+/// The bundled LLM (#118): whether this build can run it, whether its
+/// model is downloaded, whether its server runs now.
+#[tauri::command]
+pub async fn bundled_llm_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::llm::bundled::BundledStatus, String> {
+    let models_dir = {
+        let settings = state.settings.lock().unwrap();
+        crate::state::resolve_models_dir(&state.paths, &settings)
+    };
+    let available = crate::stt::sidecar::sidecar_available(&app);
+    // The server's lock is held while it starts (seconds): off the main thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::llm::bundled::BundledStatus::new(
+            available,
+            crate::llm::bundled::model_exists(&models_dir),
+            crate::llm::bundled::global().is_running(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Download the bundled LLM's model (~2.2 GB, blocking, off the async
+/// runtime) without changing any setting.
+#[tauri::command]
+pub async fn bundled_llm_download(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if !crate::stt::sidecar::sidecar_available(&app) {
+        return Err("this build has no bundled llama-server".into());
+    }
+    let dir = {
+        let settings = state.settings.lock().unwrap();
+        crate::state::resolve_models_dir(&state.paths, &settings)
+    };
+    tauri::async_runtime::spawn_blocking(move || crate::llm::bundled::ensure_model(&dir))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(drop)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// "Use the bundled model" (#118): download it if needed, then make the
+/// "Local (bundled)" profile the cleanup profile — only ever on this
+/// explicit request. Returns the saved settings.
+#[tauri::command]
+pub async fn bundled_llm_use(app: AppHandle, state: State<'_, AppState>) -> Result<Settings, String> {
+    bundled_llm_download(app, state.clone()).await?;
+    let mut settings = state.settings.lock().unwrap().clone();
+    settings.use_bundled_for_cleanup();
+    settings
+        .save(&state.paths.settings_file)
+        .map_err(|e| e.to_string())?;
+    crate::pipeline::swap_settings(&state, settings.clone());
+    Ok(settings)
 }
 
 /// GGML whisper models (`ggml-*.bin`) already present in the models folder, so
@@ -869,9 +931,15 @@ pub async fn ollama_status(state: State<'_, AppState>) -> Result<OllamaStatus, S
 /// "Copy diagnostics" button puts this on the clipboard. Configuration only:
 /// no history content, no dictionary words, no snippet texts.
 #[tauri::command]
-pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
+pub async fn diagnostics(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     let settings = state.settings.lock().unwrap().clone();
     let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
+    let bundled = format!(
+        "Bundled LLM: {} · model {} (downloaded: {})",
+        if crate::stt::sidecar::sidecar_available(&app) { "available" } else { "not in this build" },
+        crate::llm::bundled::MODEL_FILE,
+        crate::llm::bundled::model_exists(&models_dir),
+    );
     let (engine, stt_model, model_ready) = match settings.engine {
         crate::settings::SttEngine::Whisper => (
             "whisper",
@@ -933,6 +1001,7 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
             crate::secrets::key_summary(&profile),
             settings.llm_profiles.len()
         );
+        let _ = writeln!(r, "{bundled}");
         let _ = writeln!(
             r,
             "Translate to: {}",
@@ -2046,6 +2115,30 @@ mod recipe_tests {
         assert_eq!(recipe_profile(&s, None).unwrap().id, "lan");
         assert_eq!(recipe_profile(&s, Some("work")).unwrap().id, "work", "an explicit choice is kept");
         assert!(recipe_profile(&s, Some("nope")).is_err());
+    }
+
+    /// #118: recipes can run on the bundled profile — picked by id, or as
+    /// the local default when the only other profiles are external. It
+    /// needs no consent (local).
+    #[test]
+    fn recipes_can_run_on_the_bundled_profile() {
+        use crate::llm::bundled::{profile, PROFILE_ID};
+        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
+        let mut s = Settings {
+            llm_profiles: vec![work],
+            cleanup_profile: "work".into(),
+            ..Default::default()
+        };
+        assert!(s.ensure_bundled_profile());
+        assert_eq!(s.cleanup_profile, "work");
+        assert_eq!(recipe_profile(&s, Some(PROFILE_ID)).unwrap(), profile());
+        assert_eq!(default_recipe_profile(&s).unwrap().id, PROFILE_ID);
+        assert!(!recipe_profile(&s, None).unwrap().external);
+        // Recipes size their chunks for the server's window.
+        assert_eq!(
+            profile().effective_context_tokens(),
+            crate::llm::bundled::CONTEXT_TOKENS
+        );
     }
 
     /// #122: with no profile named, a run never falls back from local to

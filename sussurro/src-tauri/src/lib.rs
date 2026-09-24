@@ -108,10 +108,14 @@ pub fn run() {
             // them, and move clear-text ones in (settings.json then keeps
             // only the reference). Only profiles with a key touch the store.
             let keys_moved = secrets::load_keys(&mut settings, &secrets::OsStore);
+            // Builds with the llama-server sidecar list the built-in
+            // "Local (bundled)" LLM profile (#118) — added, never selected.
+            let bundled_added =
+                stt::sidecar::sidecar_available(handle) && settings.ensure_bundled_profile();
             // Pre-0.8 cleanup settings became the "Local" LLM profile (#119):
             // write the new shape once. Best effort — the in-memory settings
             // are already migrated, and the next load would migrate again.
-            if migrated || keys_moved {
+            if migrated || keys_moved || bundled_added {
                 if let Err(e) = settings.save(&paths.settings_file) {
                     eprintln!("could not save the migrated settings: {e}");
                 }
@@ -162,12 +166,16 @@ pub fn run() {
                 }
             }
             // Idle model unload: a loaded transcriber holds up to GBs of RAM
-            // while the app lives in the tray — check once a minute.
+            // while the app lives in the tray — check once a minute. The
+            // bundled LLM's server (#118) stops on its own idle clock.
             {
                 let handle = handle.clone();
                 std::thread::spawn(move || loop {
                     std::thread::sleep(std::time::Duration::from_secs(60));
                     pipeline::unload_transcriber_if_idle(&handle.state::<state::AppState>());
+                    if llm::bundled::global().stop_if_idle(llm::bundled::IDLE_STOP) {
+                        eprintln!("bundled LLM stopped after 15 min idle");
+                    }
                 });
             }
             // Launched at login: live in the tray, don't pop the window.
@@ -199,6 +207,9 @@ pub fn run() {
             commands::model_is_downloaded,
             commands::list_whisper_models,
             commands::stt_sidecar_available,
+            commands::bundled_llm_status,
+            commands::bundled_llm_download,
+            commands::bundled_llm_use,
             commands::download_model,
             commands::list_ollama_models,
             commands::llm_list_models,

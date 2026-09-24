@@ -280,6 +280,7 @@ impl Settings {
         self.legacy_ollama_model = None;
         self.legacy_cleanup_api = None;
         self.legacy_api_key = None;
+        self.normalize_bundled();
 
         let all: std::collections::HashSet<String> =
             self.llm_profiles.iter().map(|p| p.id.clone()).collect();
@@ -303,6 +304,60 @@ impl Settings {
         }
         crate::recipes::normalize_user_recipes(&mut self.recipes);
         migrated
+    }
+
+    /// The built-in "Local (bundled)" profile (#118): at most one, always in
+    /// its fixed shape ([`crate::llm::bundled::profile`]: never external,
+    /// no key, the sidecar's model) whatever the file or the UI sent. A user
+    /// profile holding its reserved id gets a fresh one, and a cleanup
+    /// selection on it follows it — unless the built-in profile is there,
+    /// which then owns the id.
+    fn normalize_bundled(&mut self) {
+        use crate::llm::bundled::{profile, PROFILE_ID};
+        let mut kept = false;
+        self.llm_profiles
+            .retain(|p| !p.bundled || !std::mem::replace(&mut kept, true));
+        let has_builtin = kept;
+        if let Some(i) = self
+            .llm_profiles
+            .iter()
+            .position(|p| !p.bundled && p.id == PROFILE_ID)
+        {
+            let taken: std::collections::HashSet<&str> =
+                self.llm_profiles.iter().map(|p| p.id.as_str()).collect();
+            let fresh = (2..)
+                .map(|n| format!("{PROFILE_ID}-{n}"))
+                .find(|id| !taken.contains(id.as_str()))
+                .expect("an unused id");
+            if !has_builtin && self.cleanup_profile == PROFILE_ID {
+                self.cleanup_profile = fresh.clone();
+            }
+            self.llm_profiles[i].id = fresh;
+        }
+        for p in self.llm_profiles.iter_mut().filter(|p| p.bundled) {
+            *p = profile();
+        }
+    }
+
+    /// Add the built-in "Local (bundled)" profile if it is missing (#118;
+    /// builds that ship the sidecar). Never selects it: the user's cleanup
+    /// profile stays what it was. Returns whether it was added.
+    pub fn ensure_bundled_profile(&mut self) -> bool {
+        if self.llm_profiles.iter().any(|p| p.bundled) {
+            return false;
+        }
+        // Frees the reserved id first, keeping the cleanup selection on a
+        // user profile that had it.
+        self.normalize();
+        self.llm_profiles.push(crate::llm::bundled::profile());
+        true
+    }
+
+    /// The user chose the bundled model for cleanup: add the profile if
+    /// needed and select it.
+    pub fn use_bundled_for_cleanup(&mut self) {
+        self.ensure_bundled_profile();
+        self.cleanup_profile = crate::llm::bundled::PROFILE_ID.into();
     }
 
     /// The "Local" profile a pre-0.8 settings file describes.
@@ -816,6 +871,89 @@ mod tests {
         let before = s.clone();
         s.normalize();
         assert_eq!(s, before);
+    }
+
+    // ------------------------------------------ bundled LLM profile (#118) --
+
+    #[test]
+    fn the_bundled_profile_is_added_but_never_selected() {
+        use crate::llm::bundled::{profile, PROFILE_ID};
+        let mut s = Settings::default();
+        assert_eq!(s.cleanup_profile, "local");
+        assert!(s.ensure_bundled_profile());
+        assert_eq!(s.llm_profiles, vec![LlmProfile::default(), profile()]);
+        assert_eq!(s.cleanup_profile, "local", "the user's choice stays");
+        assert!(!s.ensure_bundled_profile(), "only once");
+        assert_eq!(s.llm_profiles.len(), 2);
+
+        // Picking it is the user's explicit action.
+        s.use_bundled_for_cleanup();
+        assert_eq!(s.cleanup_profile, PROFILE_ID);
+        let p = s.cleanup_llm();
+        assert!(p.bundled && !p.external && p.cleanup_allowed());
+        assert!(!s.cleanup_blocked() && !s.cleanup_sends_externally());
+
+        // Saved and loaded as is; normalize keeps it.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        s.save(&path).unwrap();
+        let (back, migrated) = Settings::load_migrating(&path);
+        assert!(!migrated);
+        assert_eq!(back.llm_profiles, s.llm_profiles);
+        assert_eq!(back.cleanup_profile, PROFILE_ID);
+    }
+
+    #[test]
+    fn use_bundled_adds_it_when_missing() {
+        let mut s = Settings::default();
+        s.use_bundled_for_cleanup();
+        assert_eq!(s.llm_profiles.len(), 2);
+        assert_eq!(s.cleanup_llm(), crate::llm::bundled::profile());
+    }
+
+    #[test]
+    fn normalize_restores_the_bundled_profile_shape() {
+        use crate::llm::bundled::{profile, PROFILE_ID};
+        // A hand-edited file or a stale UI: other URL, key, model, external,
+        // and a duplicate.
+        let tampered = LlmProfile {
+            base_url: "https://api.example.com/v1".into(),
+            api_key: "sk-x".into(),
+            model: "gpt".into(),
+            external: true,
+            name: "Renamed".into(),
+            ..profile()
+        };
+        let dup = LlmProfile { id: "other".into(), ..profile() };
+        let mut s = Settings {
+            llm_profiles: vec![LlmProfile::default(), tampered, dup],
+            cleanup_profile: PROFILE_ID.into(),
+            ..Default::default()
+        };
+        s.normalize();
+        assert_eq!(s.llm_profiles, vec![LlmProfile::default(), profile()]);
+        assert_eq!(s.cleanup_profile, PROFILE_ID);
+        assert!(!s.cleanup_llm().external);
+        let before = s.clone();
+        s.normalize();
+        assert_eq!(s, before, "idempotent");
+    }
+
+    #[test]
+    fn a_user_profile_with_the_reserved_id_is_renamed_and_keeps_cleanup() {
+        use crate::llm::bundled::PROFILE_ID;
+        let mine = LlmProfile::new(PROFILE_ID, "Bundled", CleanupApi::Openai, "http://localhost:8080/v1", "", "m");
+        let mut s = Settings {
+            llm_profiles: vec![LlmProfile::default(), mine.clone()],
+            cleanup_profile: PROFILE_ID.into(),
+            ..Default::default()
+        };
+        assert!(s.ensure_bundled_profile());
+        let ids: Vec<_> = s.llm_profiles.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["local", "bundled-2", PROFILE_ID]);
+        assert_eq!(s.cleanup_profile, "bundled-2", "cleanup stays on the user's profile");
+        assert_eq!(s.cleanup_llm().base_url, mine.base_url);
+        assert!(s.llm_profiles.iter().filter(|p| p.bundled).count() == 1);
     }
 
     /// A manual `external` override survives save/load: normalize never

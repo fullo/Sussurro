@@ -269,7 +269,7 @@ impl BundledLlm {
         if g.in_flight > 0 || g.sidecar.is_none() {
             return false;
         }
-        if !g.last_used.is_some_and(|t| t.elapsed() >= threshold) {
+        if g.last_used.is_none_or(|t| t.elapsed() < threshold) {
             return false;
         }
         g.sidecar = None; // Drop kills the process
