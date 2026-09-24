@@ -96,6 +96,45 @@ impl EngineSink for VecSink {
     }
 }
 
+/// Replays audio, then fails like an unplugged mic or a corrupt file —
+/// but only once the run has finished a segment (its `Segment` event is
+/// emitted after the segment is saved into the item). A source error
+/// aborts the queue, so without this wait a loaded machine could fail the
+/// source before the worker transcribed anything (#187).
+struct BreaksAfterASegment {
+    inner: VecSource,
+    after: usize,
+    sink: Arc<VecSink>,
+}
+
+impl Source for BreaksAfterASegment {
+    fn channel(&self) -> Channel {
+        self.inner.channel()
+    }
+    fn total_samples(&self) -> Option<u64> {
+        None
+    }
+    fn next_frame(&mut self) -> Result<Option<Frame>> {
+        if self.inner.pos >= self.after {
+            // Bounded only to turn a hang into a failure.
+            let deadline = Instant::now() + Duration::from_secs(120);
+            while !self
+                .sink
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|e| matches!(e, EngineEvent::Segment(_)))
+            {
+                assert!(Instant::now() < deadline, "no segment was ever finished");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            anyhow::bail!("decode error at packet 42");
+        }
+        self.inner.next_frame()
+    }
+}
+
 /// Speech-like bursts (a loud tone) separated by silence.
 fn bursts(pattern: &[(bool, f32)]) -> Vec<f32> {
     let mut out = Vec::new();
@@ -405,34 +444,16 @@ fn stt_that_never_works_fails_fast_and_writes_nothing() {
 
 #[test]
 fn source_failure_mid_run_keeps_the_segments_done_as_interrupted() {
-    /// Replays audio, then fails like an unplugged mic or a corrupt file.
-    struct Breaks {
-        inner: VecSource,
-        after: usize,
-    }
-    impl Source for Breaks {
-        fn channel(&self) -> Channel {
-            self.inner.channel()
-        }
-        fn total_samples(&self) -> Option<u64> {
-            None
-        }
-        fn next_frame(&mut self) -> Result<Option<Frame>> {
-            if self.inner.pos >= self.after {
-                anyhow::bail!("decode error at packet 42");
-            }
-            self.inner.next_frame()
-        }
-    }
     let dir = tempfile::tempdir().unwrap();
     let audio = bursts(&[(true, 3.0), (false, 2.5)].repeat(6));
     let mut j = job(dir.path(), Vec::new(), Policy::Block { max_queued: 4 });
+    let sink = Arc::new(VecSink::default());
     // Three bursts get through before the source breaks.
-    j.source = Box::new(Breaks {
+    j.source = Box::new(BreaksAfterASegment {
         inner: VecSource::new(audio, Channel::File),
         after: (16_000.0 * 5.5 * 3.0) as usize,
+        sink: sink.clone(),
     });
-    let sink = Arc::new(VecSink::default());
     let mut stt = FakeStt {
         calls: 0,
         fail_on: None,
@@ -635,35 +656,19 @@ impl Cleaner for ExternalLlm {
 /// sent, once per run), so the kept item is marked.
 #[test]
 fn external_cleanup_is_logged_before_the_first_send_even_if_the_run_fails() {
-    struct Breaks {
-        inner: VecSource,
-        after: usize,
-    }
-    impl Source for Breaks {
-        fn channel(&self) -> Channel {
-            self.inner.channel()
-        }
-        fn total_samples(&self) -> Option<u64> {
-            None
-        }
-        fn next_frame(&mut self) -> Result<Option<Frame>> {
-            if self.inner.pos >= self.after {
-                anyhow::bail!("decode error at packet 42");
-            }
-            self.inner.next_frame()
-        }
-    }
     let dir = tempfile::tempdir().unwrap();
     let archive_dir = dir.path().join("archive");
     let mut j = job(dir.path(), Vec::new(), Policy::Block { max_queued: 4 });
-    j.source = Box::new(Breaks {
+    let sink = Arc::new(VecSink::default());
+    j.source = Box::new(BreaksAfterASegment {
         inner: VecSource::new(bursts(&[(true, 3.0), (false, 2.5)].repeat(6)), Channel::File),
         after: (16_000.0 * 5.5 * 3.0) as usize,
+        sink: sink.clone(),
     });
     j.external_cleanup = Some(external_entry());
     let llm = ExternalLlm { archive: archive_dir.clone(), logged_at_call: Mutex::new(Vec::new()), cancel_after_first: None };
     let mut stt = FakeStt { calls: 0, fail_on: None };
-    let err = run(j, &mut stt, &llm, Arc::new(VecSink::default())).unwrap_err();
+    let err = run(j, &mut stt, &llm, sink).unwrap_err();
     assert!(format!("{err:#}").contains("decode error"));
     let calls = llm.logged_at_call.lock().unwrap().clone();
     assert!(!calls.is_empty(), "a segment was cleaned before the failure");
@@ -1268,8 +1273,10 @@ fn long_file_decoding_stays_a_bounded_distance_ahead_of_stt() {
     impl SegmentStt for SlowFirst {
         fn transcribe(&mut self, samples: &[f32]) -> Result<TimedTranscript> {
             if self.inner.calls == 0 {
-                // In flight + a full queue behind it.
-                let deadline = Instant::now() + Duration::from_secs(10);
+                // In flight + a full queue behind it. The deadline only
+                // guards against a hang (a loaded CI runner can be slow):
+                // what the test waits for is a sample position, not time.
+                let deadline = Instant::now() + Duration::from_secs(120);
                 while self.max_lead.load(Ordering::SeqCst) < self.fill {
                     assert!(
                         Instant::now() < deadline,
@@ -1284,6 +1291,29 @@ fn long_file_decoding_stays_a_bounded_distance_ahead_of_stt() {
             r
         }
     }
+    // How far the first STT call waits for the decoder (#187). The source
+    // records its lead when a chunk is *read*; the segment ending in that
+    // chunk reaches the queue only after the ingest thread has fed the
+    // chunk's VAD batch. Waiting for just `(Q + 1)` caps let the worker
+    // race the last push on a loaded runner (peak queue Q - 1). So wait
+    // until the last queued segment is surely pushed: the onset the
+    // detector misses (< `ONSET`, checked by `missed` below), `Q + 1`
+    // segments of at most one cap, the frame that crossed the cap, one
+    // VAD batch and one source chunk. That point is always reached: the
+    // decoder only blocks when pushing segment `Q + 2`, which it can't cut
+    // before `(Q + 2)` caps minus a cap search (plus a frame) per segment.
+    const ONSET: u64 = 16_000;
+    const CHUNK: u64 = 4_000;
+    let batch = (VAD_BATCH_FRAMES * segmenter::FRAME) as u64;
+    let frame = segmenter::FRAME as u64;
+    let q = FILE_MAX_QUEUED as u64;
+    let fill = ONSET + (q + 1) * max_segment + frame + batch + CHUNK;
+    let search = segmenter::ms_to_samples(SegmenterParams::default().cap_search_ms) as u64;
+    let blocks_at_least = (q + 2) * max_segment - (q + 1) * (search + frame) - frame;
+    assert!(
+        fill < blocks_at_least,
+        "fill {fill} must come before the decoder blocks ({blocks_at_least})"
+    );
     let mut stt = SlowFirst {
         inner: FakeStt {
             calls: 0,
@@ -1291,7 +1321,7 @@ fn long_file_decoding_stays_a_bounded_distance_ahead_of_stt() {
         },
         transcribed: transcribed.clone(),
         max_lead: max_lead.clone(),
-        fill: (FILE_MAX_QUEUED as u64 + 1) * max_segment,
+        fill,
     };
     let r = run(
         j,
@@ -1304,7 +1334,7 @@ fn long_file_decoding_stays_a_bounded_distance_ahead_of_stt() {
     // Everything but the detector's onset reached STT (the few frames it
     // missed only make the measured lead below more pessimistic).
     let missed = 12 * max_segment - transcribed.load(Ordering::SeqCst);
-    assert!(missed < 16_000, "{missed} samples never transcribed");
+    assert!(missed < ONSET, "{missed} samples never transcribed");
     assert_bounded_file_queue(&r.queue);
     assert_eq!(r.queue.peak_len, FILE_MAX_QUEUED, "the bound was reached");
     // Ahead of STT: the segment in flight, the queue, the segment waiting
