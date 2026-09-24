@@ -2,7 +2,8 @@
    Red stays reserved for the recording moment; selection, editing and focus
    use ink (--c-dark). */
 
-html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; }
+/* The workspace fills the window: panes scroll, never the page. */
+html, body, #root { height: 100%; overflow: hidden; }
 
 .shell {
   --rail-w: 168px;
@@ -124,7 +125,7 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
 .row-gap.end { justify-content: flex-end; }
 .push { margin-left: auto; }
 
-/* Buttons local to the shell (the classic .btn-ghost is 30 px; here 36–44). */
+/* Buttons local to the shell (the shared .btn-ghost is 30 px; here 36–44). */
 .sh-btn { min-height: 36px; padding: 0.3rem 0.9rem; }
 .btn-dark, .btn-rec, .btn-stop, .btn-danger {
   font: inherit;
@@ -229,7 +230,7 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
 .opt-grid select { min-width: 0; width: 100%; }
 .opt-grid .segmented { justify-self: start; max-width: 100%; }
 .opt-grid .segmented button { padding: 0.3rem 0.6rem; font-size: 0.82rem; }
-/* Card headings in the workspace are ink, not the classic red. */
+/* Card headings in the workspace are ink, not App.css's red. */
 .shell .card h2 { color: var(--c-dark); }
 .shell .card h2.sh-sect { color: var(--c-text-light); font-size: 11.5px; letter-spacing: 0.08em; }
 .opt-k { color: var(--c-text-light); font-size: 12.5px; }

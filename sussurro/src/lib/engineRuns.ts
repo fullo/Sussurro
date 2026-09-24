@@ -173,8 +173,8 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
       return mine.reduce<RunsState>(runsReducer, { ...started, pending: rest });
     }
     case "adopt": {
-      // Sessions that outlive the UI that started them — a window reload,
-      // or ui_v2 switched mid-run (#158): the mic session, the oldest file
+      // Sessions that outlive the UI that started them — a window reload
+      // mid-run (#158): the mic session, the oldest file
       // and link transcriptions, unless a run of that kind is live here.
       const { status, now } = action;
       const adopt: { kind: RunKind; sessionId: number; label: string }[] = [];

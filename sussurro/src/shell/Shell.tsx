@@ -28,7 +28,7 @@ function loadScreen(): Screen {
   return "library";
 }
 
-/** Workspace preview (proposal A, #114): left rail with New · Library ·
+/** The workspace (proposal A, #114): left rail with New · Library ·
  *  People · Recipes · Models · Settings. Dictation stays tray-first and is
  *  configured under Settings → Dictation. Recipes hosts the LLM profiles
  *  (#119) next to the recipes (#120); People is the registry that gives
@@ -58,12 +58,6 @@ export function Shell({ ctl }: { ctl: Ctl }) {
     } catch {
       /* ignore */
     }
-  }, []);
-
-  // The workspace fills the window; the classic page scrolls the body.
-  useEffect(() => {
-    document.documentElement.classList.add("ui-v2");
-    return () => document.documentElement.classList.remove("ui-v2");
   }, []);
 
   const refreshLibrary = useCallback(() => setLibraryVersion((v) => v + 1), []);

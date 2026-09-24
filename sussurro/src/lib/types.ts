@@ -137,8 +137,9 @@ export interface Settings {
   output_file: string;
   /** Archive folder; "" = the default `<Documents>/Sussurro`. */
   archive_dir: string;
-  /** Workspace preview (#114): the new shell instead of the classic window. */
-  ui_v2: boolean;
+  /** First-run onboarding (#115): the full setup on a fresh install, a
+   *  "What's new" screen on an upgrade from 0.6.x, nothing once done. */
+  onboarding: Onboarding;
   /** Subtitles setting (P7, #133): `transcript.srt` only when asked, or on
    *  every save. Meetings and transcriptions only (P10). */
   subtitles: SubtitlesMode;
@@ -158,6 +159,9 @@ export interface Settings {
 }
 
 export type SubtitlesMode = "on_request" | "always";
+
+/** `Settings.onboarding` (settings.rs `Onboarding`). */
+export type Onboarding = "welcome" | "whats_new" | "done";
 
 /** `local_api_status` (#127): whether this run serves the local API. Its
  *  settings apply at startup, so this can differ from them until a restart. */

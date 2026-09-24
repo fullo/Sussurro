@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CollapsibleCard, Tip } from "../components/ui";
+import { Card, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import {
   TARGET_LABELS,
@@ -29,10 +29,8 @@ export function RecipesCard({ ctl }: { ctl: Ctl }) {
   }, [settings.recipes]);
 
   return (
-    <CollapsibleCard
-      storageKey="recipesList"
+    <Card
       title={<>Recipes <span className="via">prompts that write documents</span></>}
-      collapsible={false}
       headerExtra={
         <button type="button" className="btn-ghost" onClick={() => setEditing(newRecipe(all))} disabled={editing?.id === ""}>
           Add recipe
@@ -79,7 +77,7 @@ export function RecipesCard({ ctl }: { ctl: Ctl }) {
           onDone={() => setEditing(null)}
         />
       )}
-    </CollapsibleCard>
+    </Card>
   );
 }
 
