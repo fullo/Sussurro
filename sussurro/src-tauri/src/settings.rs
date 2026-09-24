@@ -126,6 +126,9 @@ pub struct Settings {
     /// Dictate-to-file mode: when set, completed dictations are APPENDED to
     /// this file (note-taking) instead of being pasted into the focused app.
     pub output_file: String,
+    /// Archive folder for notes, meetings and transcriptions. Empty = the
+    /// default `<Documents>/Sussurro` (see `archive::resolve_archive_dir`).
+    pub archive_dir: String,
 }
 
 impl Default for Settings {
@@ -158,6 +161,7 @@ impl Default for Settings {
             api_enabled: false,
             api_port: 4525,
             output_file: String::new(),
+            archive_dir: String::new(),
         }
     }
 }
@@ -336,6 +340,18 @@ mod tests {
         let saved = std::fs::read_to_string(&path).unwrap();
         assert!(!saved.contains("command_hotkey"), "{saved}");
         assert!(!serde_json::to_string(&s).unwrap().contains("command_hotkey"));
+    }
+
+    /// Settings files written before 0.7 have no `archive_dir`: they must
+    /// still load (serde default) and get the default archive location.
+    #[test]
+    fn settings_without_archive_dir_load_with_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"hotkey":"Alt+Space","models_dir":"/m"}"#).unwrap();
+        let s = Settings::load(&path);
+        assert_eq!(s.hotkey, "Alt+Space");
+        assert_eq!(s.archive_dir, "");
     }
 
     #[test]

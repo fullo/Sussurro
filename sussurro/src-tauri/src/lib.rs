@@ -143,7 +143,15 @@ pub fn run() {
             commands::pull_ollama_model,
             commands::translate_entry,
             commands::check_permissions,
-            commands::open_settings
+            commands::open_settings,
+            commands::archive_dir,
+            commands::archive_list,
+            commands::archive_search,
+            commands::archive_get,
+            commands::archive_update_meta,
+            commands::archive_delete,
+            commands::archive_reveal,
+            commands::archive_rebuild_index
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
