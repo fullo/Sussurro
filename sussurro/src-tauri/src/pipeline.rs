@@ -779,6 +779,7 @@ mod tests {
             stream: Default::default(),
             engine: Default::default(),
             dictation: Default::default(),
+            recipe_runs: Default::default(),
         }
     }
 
