@@ -59,7 +59,7 @@ export async function startServer(token: string) {
           .end();
       }
       if (req.headers.authorization !== `Bearer ${token}`) return void res.writeHead(401, cors).end();
-      return void res.writeHead(200, { ...cors, "Content-Type": "application/json" }).end(JSON.stringify({ app: "e2e", protocol: 1 }));
+      return void res.writeHead(200, { ...cors, "Content-Type": "application/json" }).end(JSON.stringify({ app: "e2e", protocol: 2, protocol_min: 1 }));
     }
     const file = STATIC[url.pathname];
     if (!file) return void res.writeHead(404).end();
@@ -94,7 +94,7 @@ export async function startServer(token: string) {
     const s: LiveSession = { origin, start: null, controls: [], channels: new Map(), badFrames: 0, stopped: false, closed: false };
     sessions.push(s);
     const reply = (m: object) => ws.send(JSON.stringify({ type: "status", ...m }));
-    reply({ state: "ready", protocol: 1, app: "e2e" });
+    reply({ state: "ready", protocol: 2, app: "e2e" });
     ws.on("message", (data, isBinary) => {
       if (!isBinary) {
         const m = JSON.parse(data.toString());

@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- Synthetic fixture (#131), written by hand for the selector-set tests:
+     the structure the provisional set expects, not a copy of Meet's markup.
+     A grid of three tiles: the user (self marker), one remote participant
+     speaking (audio level > 0), one silent. Nested wrappers stand for
+     layout containers; the names are made up. -->
+<html>
+  <body>
+    <main>
+      <div class="grid">
+        <div data-participant-id="spaces/abc/devices/1" data-self-name="Ada Test">
+          <div class="frame">
+            <span class="notranslate">Ada Test</span>
+          </div>
+          <div data-audio-level="0"></div>
+        </div>
+        <div data-participant-id="spaces/abc/devices/2">
+          <div class="frame">
+            <div class="label"><span class="notranslate">  Bruno   Esempio </span></div>
+          </div>
+          <div data-audio-level="0.62"></div>
+        </div>
+        <div data-participant-id="spaces/abc/devices/3">
+          <div class="frame">
+            <span class="notranslate">Chiara Prova</span>
+          </div>
+          <div data-audio-level="0"></div>
+        </div>
+      </div>
+      <!-- The same participant again in another layout (a sidebar strip). -->
+      <aside>
+        <div data-participant-id="spaces/abc/devices/2">
+          <span class="notranslate">Bruno Esempio</span>
+        </div>
+      </aside>
+    </main>
+  </body>
+</html>

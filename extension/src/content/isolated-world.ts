@@ -10,6 +10,7 @@
  *   (negotiated with the background's probe, shared/transport.ts), else as
  *   base64. Buffers from the page are copied into this world first
  *   (Firefox Xray wrappers).
+ * - Meet speaker events (#131) are relayed as they come (JSON data).
  * - The runtime port closing (tab navigating, extension reloaded, service
  *   worker gone) disarms the hook: no capture without a listener. */
 import browser, { type Runtime } from "webextension-polyfill";
@@ -17,6 +18,7 @@ import { offerPort } from "../shared/handshake";
 import { detectPlatform } from "../shared/platform";
 import { detectMode, encodePayload, ownBuffer, type TransportMode } from "../shared/transport";
 import type { CaptureSnapshot, FromBackground, FromMain, PageInfo, ToBackground, ToMain, ToPage } from "../shared/messages";
+import type { PageSpeakerMsg } from "../shared/speakers";
 
 const platform = detectPlatform(location.href);
 const targetOrigin = location.origin === "null" ? "*" : location.origin;
@@ -67,6 +69,13 @@ void mainPort.then((p) => {
         state = structuredClone(field(m, "state")) as CaptureSnapshot;
         toBg({ type: "state", state });
         return;
+      case "speaker": {
+        // Meet names (#131): plain data, made this world's own (Firefox).
+        if (!bg) return;
+        const msg = structuredClone(field(m, "msg")) as PageSpeakerMsg;
+        if (msg && typeof msg === "object" && typeof msg.type === "string") toBg({ type: "speaker", msg });
+        return;
+      }
       case "armed":
         toBg({ type: "armed", rate: Number(field(m, "rate")), title: document.title, url: location.href, platform, transport: mode });
         return;

@@ -13,6 +13,9 @@
  *   sends `ping` when no audio went out for a while;
  * - sends `stop` on Stop, tab close or navigation;
  * - shows a REC badge on the toolbar button of a tab being captured;
+ * - relays the Meet page's speaker events (#131) on the connection's
+ *   audio clock, and replays what the page already said to a new
+ *   connection (shared/speakers.ts);
  * - (Chrome) falls back to `tabCapture` through an offscreen document for
  *   the remote channel when the page shows no remote audio at all.
  *
@@ -26,6 +29,7 @@ import { decodePayload, makeProbe, type TransportMode } from "../shared/transpor
 import type { CaptureSnapshot, FromBackground, PageInfo, PanelBroadcast, PanelRequest, PanelState, ToBackground, ToOffscreen, ToPage } from "../shared/messages";
 import type { Platform } from "../shared/platform";
 import { initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
+import { SpeakerRelay, sanitizePageSpeaker } from "../shared/speakers";
 
 // ---- toolbar button → panel ----------------------------------------------------
 
@@ -80,6 +84,8 @@ interface Tab {
   tabCapture: PanelState["tabCapture"];
   tabCaptureTried: boolean;
   removed: boolean;
+  /** Meet names (#131): the page's speaker state and clock mapping. */
+  speakers: SpeakerRelay;
 }
 
 const tabs = new Map<number, Tab>();
@@ -102,6 +108,7 @@ function tabState(tabId: number): Tab {
       tabCapture: "off",
       tabCaptureTried: false,
       removed: false,
+      speakers: new SpeakerRelay(),
     };
     tabs.set(tabId, t);
   }
@@ -149,6 +156,8 @@ function run(t: Tab, e: Effect) {
       toPage(t, { type: "disarm" });
       stopTabCapture(t);
       t.queue = [];
+      // The page's observer stops with the capture (#131).
+      t.speakers.clear();
       return;
     case "connect":
       void connect(t);
@@ -278,6 +287,9 @@ function sendStart(t: Tab) {
     rate: t.session.rate,
     channels: 2,
   });
+  // What the page already said about speakers goes to the new item first
+  // (#131); timed events wait for this connection's first frame.
+  for (const m of t.speakers.begin(t.session.rate ?? 48_000)) sendText(t, m);
   // A new connection is a new meeting on the app: `seq` restarts.
   t.seq = new SeqCounter();
   const queued = t.queue;
@@ -293,12 +305,16 @@ function sendFrame(t: Tab, q: Queued) {
     if (t.queue.length > MAX_QUEUE) t.queue.splice(0, t.queue.length - MAX_QUEUE);
     return;
   }
+  const seq = t.seq.take(q.ch, q.producer, q.pseq);
+  if (q.ch === CHANNEL.mic && q.producer === "page") {
+    // The page's frames set the clock of its speaker events (#131).
+    for (const m of t.speakers.frame(q.pseq, seq)) sendText(t, m);
+  }
   if (ws.bufferedAmount > MAX_BUFFERED_BYTES) {
     // The app can't keep up: drop, and let the gap become silence.
-    t.seq.take(q.ch, q.producer, q.pseq);
     return;
   }
-  ws.send(encodeFrame(q.ch, t.seq.take(q.ch, q.producer, q.pseq), q.buf));
+  ws.send(encodeFrame(q.ch, seq, q.buf));
   t.lastSentAt = Date.now();
 }
 
@@ -355,6 +371,15 @@ function onPagePort(port: Runtime.Port) {
         maybeTabCapture(t);
         void broadcastState(t);
         return;
+      case "speaker": {
+        // Meet names (#131): kept per tab, sent on the connection's clock.
+        const msg = sanitizePageSpeaker(m.msg);
+        if (!msg || !acceptsAudio(t)) return;
+        const live = t.session.phase === "live" && t.ws?.readyState === WebSocket.OPEN;
+        for (const w of t.speakers.page(msg, live)) sendText(t, w);
+        if (msg.type === "observer_health") void broadcastState(t);
+        return;
+      }
       case "pcm": {
         if (!acceptsAudio(t)) return;
         const mic = m.mic !== undefined ? decodePayload(m.mic) : null;
@@ -369,6 +394,7 @@ function onPagePort(port: Runtime.Port) {
     if (t.port !== port) return;
     t.port = null;
     t.capture = null;
+    t.speakers.clear();
     // The page unloaded (navigation, reload, tab closed, bfcache).
     dispatch(t, { type: "page-gone" });
   });
@@ -515,6 +541,7 @@ async function panelState(t: Tab, info?: PageInfo | null): Promise<PanelState> {
     capture: t.capture ?? info?.state ?? null,
     tabCapture: t.tabCapture,
     transport: t.transport,
+    names: t.speakers.lastHealth,
   };
 }
 
