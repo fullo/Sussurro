@@ -594,6 +594,17 @@ pub const EDITED_OUTSIDE_ERROR: &str = "edited outside Sussurro";
 /// markdown wins, so a line edit that could never reach it is not saved
 /// either. Returns the updated item.
 pub fn edit_segment(archive: &Path, id: &str, segment_id: u32, edit: SegmentEdit) -> Result<Item> {
+    edit_segment_with(archive, id, segment_id, edit, &|_| {})
+}
+
+/// [`edit_segment`] with the [`commit_transcript`] test hook.
+fn edit_segment_with(
+    archive: &Path,
+    id: &str,
+    segment_id: u32,
+    edit: SegmentEdit,
+    before_commit: &dyn Fn(&Path),
+) -> Result<Item> {
     // Same lock as the engine's checkpoints and update_meta: the check and
     // the write must not interleave with another writer of this item.
     let _lock = lock_items();
@@ -605,13 +616,13 @@ pub fn edit_segment(archive: &Path, id: &str, segment_id: u32, edit: SegmentEdit
             "'{id}' was {EDITED_OUTSIDE_ERROR}: its transcript.md is kept as is — edit it there"
         );
     }
+    let (meta, _) = frontmatter::parse(&String::from_utf8_lossy(&bytes))?;
     // A live item is still being written by its capture session (#153).
-    if let Ok((meta, _)) = frontmatter::parse(&String::from_utf8_lossy(&bytes)) {
-        if meta.session_state() == Some(SessionState::Recording) {
-            bail!("'{id}' is still being recorded — edit it when the session ends");
-        }
+    if meta.session_state() == Some(SessionState::Recording) {
+        bail!("'{id}' is still being recorded — edit it when the session ends");
     }
-    let mut segments = read_segments(&dir)?;
+    let original = read_segments(&dir)?;
+    let mut segments = original.clone();
     let pos = segments
         .segments
         .iter()
@@ -635,8 +646,24 @@ pub fn edit_segment(archive: &Path, id: &str, segment_id: u32, edit: SegmentEdit
             segments.segments.remove(pos);
         }
     }
+    // Rendered from the very bytes checked above, and replaced only if the
+    // file still holds them (#155): an external save that lands meanwhile
+    // wins, and the line edit is undone in segments.json too — it could
+    // never reach the markdown, so it is not kept anywhere.
+    let doc = render_transcript(&meta, &segments)?;
     write_segments(&dir, &segments)?;
-    rerender_if_unchanged(&dir, &segments)?;
+    if let Err(e) = commit_transcript(
+        &dir,
+        doc.as_bytes(),
+        &sha256_hex(&bytes),
+        true,
+        before_commit,
+    ) {
+        if let Err(undo) = write_segments(&dir, &original) {
+            return Err(e.context(format!("segments.json could not be restored ({undo:#})")));
+        }
+        return Err(e);
+    }
     read_item_at(id, &dir)
 }
 
@@ -934,6 +961,50 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
         let after = std::fs::read(archive.join(&id).join(".sussurro/segments.json")).unwrap();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn edit_segment_does_not_overwrite_a_concurrent_external_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = create_item(archive, &meta("Gara", DATE), &segs(&["Uno.", "Due."])).unwrap();
+        let path = archive.join(&id).join("transcript.md");
+        let seg_path = archive.join(&id).join(".sussurro/segments.json");
+        let before = std::fs::read(&seg_path).unwrap();
+        // Obsidian saves the file between the line edit's check and its write.
+        let external = "---\ntitle: Gara\n---\nRiscritto a mano.\n";
+        let err = edit_segment_with(
+            archive,
+            &id,
+            1,
+            SegmentEdit::Text("Due, corretto.".into()),
+            &|p| std::fs::write(p, external).unwrap(),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("changed on disk"), "{err:#}");
+        // The markdown wins, and the line edit is not kept in segments.json.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
+        assert_eq!(std::fs::read(&seg_path).unwrap(), before);
+        assert!(temp_leftovers(&archive.join(&id)).is_empty());
+        assert!(read_item(archive, &id).unwrap().edited_externally);
+    }
+
+    #[test]
+    fn edit_segment_waits_for_a_live_session_to_finish() {
+        use crate::archive::live;
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = live::begin_session(archive, &meta("Live", DATE)).unwrap();
+        live::checkpoint(archive, &id, &segs(&["Uno.", "Due."]), true).unwrap();
+        let err = edit_segment(archive, &id, 0, SegmentEdit::Delete).unwrap_err();
+        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
+        assert_eq!(read_item(archive, &id).unwrap().segments.segments.len(), 2);
+
+        let fallback = meta("Live", DATE);
+        live::finish_session(archive, &id, &segs(&["Uno.", "Due."]), &fallback, |m| m).unwrap();
+        let item = edit_segment(archive, &id, 0, SegmentEdit::Text("Uno!".into())).unwrap();
+        assert!(!item.recording && !item.edited_externally);
+        assert!(item.body.contains("Uno!"), "{}", item.body);
     }
 
     #[test]
