@@ -40,6 +40,8 @@ export interface AskAnswer {
   profile: string;
   model: string;
   external: boolean;
+  /** Server the transcript went to, on an external profile (#122). */
+  host: string;
   saving: boolean;
   /** File it was saved as. */
   saved: string | null;
@@ -61,6 +63,8 @@ export type AskAction =
    *  one); a document run leaves an unsaved answer where it is. */
   | { type: "start"; recipeId: string; recipeName: string; question: string | null; answerRun: boolean }
   | { type: "refused"; error: string }
+  /** The user cancelled the external-profile confirmation (#122). */
+  | { type: "declined"; notice: string }
   | { type: "adopt"; status: RecipeRunStatus }
   | { type: "progress"; event: RecipeProgress }
   | { type: "cancel" }
@@ -94,6 +98,8 @@ export function askReducer(s: AskState, a: AskAction): AskState {
       };
     case "refused":
       return { ...s, run: null, error: a.error };
+    case "declined":
+      return { ...s, run: null, error: "", notice: a.notice, written: null };
     case "adopt":
       if (s.run) return s;
       return {
@@ -143,6 +149,7 @@ export function askReducer(s: AskState, a: AskAction): AskState {
             profile: e.profile ?? "",
             model: e.model ?? "",
             external: !!e.external,
+            host: e.host ?? "",
             saving: false,
             saved: null,
           },
@@ -221,7 +228,7 @@ export function defaultAskProfile(s: Settings, remembered: string | null): LlmPr
 /** The notice under the profile list when `p` is external. */
 export function externalNote(p: LlmProfile | null): string {
   if (!p?.external) return "";
-  return `“${p.name}” is external: the transcript would go to ${host(p.base_url)}. Runs on external profiles need a confirmation each time, which arrives in a later update — pick a local profile for now.`;
+  return `“${p.name}” is external: each run asks for your confirmation before the transcript goes to ${host(p.base_url)}.`;
 }
 
 /** File "Save as document" asks for (mirrors recipes::answer::answer_file_name;

@@ -91,7 +91,17 @@ fn handle(app: &AppHandle, mut request: tiny_http::Request) {
             let state = app.state::<AppState>();
             let settings = state.settings.lock().unwrap().clone();
             let cleaned = crate::cleanup::ollama::cleanup(&settings, None, &text);
-            respond_json(request, 200, serde_json::json!({"cleaned": cleaned}));
+            // #122: an external cleanup profile without the opt-in returns
+            // the text unchanged — say why instead of looking broken.
+            let body = if settings.cleanup_blocked() {
+                serde_json::json!({
+                    "cleaned": cleaned,
+                    "warning": "cleanup profile is external and not enabled for cleanup in Settings: text returned unchanged, nothing sent"
+                })
+            } else {
+                serde_json::json!({"cleaned": cleaned})
+            };
+            respond_json(request, 200, body);
         }
         Route::Transcribe => {
             let mut bytes = Vec::new();

@@ -1,4 +1,4 @@
-use crate::settings::{is_local_endpoint, CleanupApi};
+use crate::settings::{endpoint_host, is_local_endpoint, CleanupApi};
 use serde::{Deserialize, Serialize};
 
 /// Server of the default "Local" profile (Ollama on this machine).
@@ -44,6 +44,14 @@ pub struct LlmProfile {
     /// own default can be smaller than the model's.
     #[serde(default)]
     pub context_tokens: u32,
+    /// Persistent opt-in for cleanup on an external profile (#122): the
+    /// host the user agreed to send dictations and transcriptions to for
+    /// cleanup, set in Settings → Cleanup. Empty = not agreed, and cleanup
+    /// on this profile keeps the raw text. Bound to the host, so pointing
+    /// the profile at another server needs a new opt-in. Unused on local
+    /// profiles.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cleanup_opt_in: String,
 }
 
 /// Context window assumed when a profile doesn't state one: small enough
@@ -91,7 +99,34 @@ impl LlmProfile {
             model: model.to_string(),
             external: infer_external(base_url),
             context_tokens: 0,
+            cleanup_opt_in: String::new(),
         }
+    }
+
+    /// Host of the server (`api.example.com`), lowercased, without port;
+    /// empty when the URL has none.
+    pub fn host(&self) -> String {
+        endpoint_host(&self.base_url).unwrap_or_default()
+    }
+
+    /// [`LlmProfile::host`] for messages: the quoted URL when it has no host.
+    pub fn host_label(&self) -> String {
+        match self.host() {
+            h if h.is_empty() => format!("“{}”", self.base_url.trim()),
+            h => h,
+        }
+    }
+
+    /// Whether cleanup may send text to this profile: always for a local
+    /// one; for an external one only with the opt-in given for its current
+    /// host (#122). Without it cleanup keeps the raw text — it never falls
+    /// back to another profile.
+    pub fn cleanup_allowed(&self) -> bool {
+        if !self.external {
+            return true;
+        }
+        let host = self.host();
+        !host.is_empty() && self.cleanup_opt_in.trim().eq_ignore_ascii_case(&host)
     }
 
     /// The context window recipes plan for: the stated one (at least
@@ -187,6 +222,43 @@ mod tests {
         assert_eq!(json["external"], true);
         let back: LlmProfile = serde_json::from_value(json).unwrap();
         assert_eq!(back, p);
+    }
+
+    #[test]
+    fn host_is_the_lowercased_hostname() {
+        let p = LlmProfile::new("w", "W", CleanupApi::Openai, "https://API.Example.com:443/v1", "", "m");
+        assert_eq!(p.host(), "api.example.com");
+        assert_eq!(p.host_label(), "api.example.com");
+        let odd = LlmProfile { base_url: "".into(), ..Default::default() };
+        assert_eq!(odd.host(), "");
+        assert_eq!(odd.host_label(), "“”");
+    }
+
+    #[test]
+    fn cleanup_needs_an_opt_in_bound_to_the_host_on_external_profiles() {
+        // Local: always.
+        assert!(LlmProfile::default().cleanup_allowed());
+        let mut p = LlmProfile::new("w", "W", CleanupApi::Openai, "https://api.example.com/v1", "", "m");
+        assert!(!p.cleanup_allowed(), "external without opt-in");
+        p.cleanup_opt_in = "api.example.com".into();
+        assert!(p.cleanup_allowed());
+        // Another server voids it: the opt-in is not carried over.
+        p.set_base_url("https://llm.other.example/v1");
+        assert!(!p.cleanup_allowed());
+        // A port or path change on the same host keeps it.
+        p.set_base_url("https://api.example.com:8443/openai/v1");
+        assert!(p.cleanup_allowed());
+        // A local URL marked external by hand needs it too.
+        let mut lan = LlmProfile { external: true, ..Default::default() };
+        assert!(!lan.cleanup_allowed());
+        lan.cleanup_opt_in = "localhost".into();
+        assert!(lan.cleanup_allowed());
+        // Not serialized when empty; a pre-#122 profile has none.
+        let json = serde_json::to_value(LlmProfile::default()).unwrap();
+        assert!(json.get("cleanup_opt_in").is_none());
+        let old: LlmProfile =
+            serde_json::from_str(r#"{"id":"w","base_url":"https://api.example.com","external":true}"#).unwrap();
+        assert!(!old.cleanup_allowed());
     }
 
     /// A hand-edited profile missing fields still loads (so the settings file

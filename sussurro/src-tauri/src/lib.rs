@@ -124,6 +124,7 @@ pub fn run() {
                 dictation: Default::default(),
                 recipe_runs: Default::default(),
                 recipe_answers: Default::default(),
+                consents: Default::default(),
             });
             // Long-form sessions the last run never finished (crash, forced
             // quit): keep their items as "interrupted" (#153). Off the main
@@ -219,7 +220,9 @@ pub fn run() {
             commands::recipe_dismiss_answer,
             commands::recipe_cancel,
             commands::recipe_status,
-            commands::recipe_reveal_document
+            commands::recipe_reveal_document,
+            commands::external_run_preview,
+            commands::prepare_external_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

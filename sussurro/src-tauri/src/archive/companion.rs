@@ -54,6 +54,10 @@ pub struct CompanionMeta {
     /// in the Library).
     #[serde(default)]
     pub external: bool,
+    /// Server the transcript went to (`api.example.com`), for a document
+    /// generated on an external profile (#122); absent otherwise.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub host: String,
     /// RFC 3339.
     #[serde(default)]
     pub date: String,
@@ -179,6 +183,7 @@ fn meta_from_map(mut map: BTreeMap<String, serde_json::Value>) -> CompanionMeta 
     let recipe = take("recipe");
     let profile = take("profile");
     let model = take("model");
+    let host = take("host");
     let date = take("date");
     let transcript = take("transcript");
     let external = match map.remove("external") {
@@ -193,10 +198,37 @@ fn meta_from_map(mut map: BTreeMap<String, serde_json::Value>) -> CompanionMeta 
         profile,
         model,
         external,
+        host,
         date,
         transcript,
         extra: map,
     }
+}
+
+/// Hosts the companions in item folder `dir` say the transcript was sent
+/// to: every document whose provenance is `external: true` (its `host`, or
+/// "" when it doesn't name one). For the Library marker (#122).
+pub fn external_hosts_at(dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut hosts = Vec::new();
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if validate_companion_name(&name).is_err() || !is_plain_file(&entry.path()) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(entry.path()) else {
+            continue;
+        };
+        let (meta, _) = parse_companion(&String::from_utf8_lossy(&bytes));
+        if meta.external {
+            hosts.push(meta.host.trim().to_lowercase());
+        }
+    }
+    hosts
 }
 
 /// Write a companion document for item `id`, preferring the file name
@@ -378,10 +410,42 @@ mod tests {
             profile: "Local".into(),
             model: "llama3.2:3b".into(),
             external: false,
+            host: String::new(),
             date: "2026-09-24T11:00:00+02:00".into(),
             transcript: TRANSCRIPT_FILE.into(),
             extra: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn external_provenance_carries_the_host() {
+        let local = render_companion(&meta(), "x").unwrap();
+        assert!(!local.contains("host:"), "no host line on a local document: {local}");
+        let ext = CompanionMeta { external: true, host: "api.example.com".into(), ..meta() };
+        let doc = render_companion(&ext, "x").unwrap();
+        assert!(doc.contains("external: true\n") && doc.contains("host: api.example.com\n"), "{doc}");
+        let (back, _) = parse_companion(&doc);
+        assert_eq!(back, ext);
+        assert!(!back.extra.contains_key("host"));
+    }
+
+    #[test]
+    fn external_hosts_come_from_external_companions_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let id = item(&archive);
+        let dir = archive.join(&id);
+        assert!(external_hosts_at(&dir).is_empty());
+        write_companion(&archive, &id, "document.md", &meta(), "local").unwrap();
+        let ext = CompanionMeta { external: true, host: "API.example.com".into(), recipe: "summary".into(), ..meta() };
+        write_companion(&archive, &id, "summary.md", &ext, "sent").unwrap();
+        // A file written by hand that says it was external, without a host.
+        std::fs::write(dir.join("notes.md"), "---\nexternal: true\n---\nx").unwrap();
+        // Not a companion: ignored.
+        std::fs::write(dir.join("notes.txt"), "---\nexternal: true\nhost: x\n---\n").unwrap();
+        let mut hosts = external_hosts_at(&dir);
+        hosts.sort();
+        assert_eq!(hosts, ["", "api.example.com"]);
     }
 
     #[test]

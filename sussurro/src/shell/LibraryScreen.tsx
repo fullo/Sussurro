@@ -11,6 +11,7 @@ import {
   TYPE_LABEL,
   type TypeFilter,
 } from "../lib/library";
+import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import type { ItemSummary } from "../lib/types";
 import { DocumentPane } from "./DocumentPane";
 
@@ -154,6 +155,15 @@ export function LibraryScreen({
                     )}
                     {it.edited_externally && (
                       <span className="ext" title="transcript.md was changed outside Sussurro">✎ Edited outside</span>
+                    )}
+                    {sentExternally(it) && (
+                      <span
+                        className="ext sent-ext"
+                        title={externalHostsTitle(it.external_hosts)}
+                        aria-label={externalHostsTitle(it.external_hosts)}
+                      >
+                        ↗ Sent externally
+                      </span>
                     )}
                   </span>
                   {it.snippet && (

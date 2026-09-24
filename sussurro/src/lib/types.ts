@@ -33,6 +33,34 @@ export interface LlmProfile {
   /** Model context window in tokens; 0 / absent = unknown (recipes then
    *  plan for 4096). */
   context_tokens?: number;
+  /** Cleanup opt-in on an external profile (#122): the host the user agreed
+   *  to send dictations and transcriptions to. Absent/"" = not agreed, and
+   *  cleanup keeps the raw text. Bound to the host. */
+  cleanup_opt_in?: string;
+}
+
+/** What a run on an external profile would send, and where
+ *  (`external_run_preview`, #122). */
+export interface ExternalRunPreview {
+  item_id: string;
+  item_title: string;
+  recipe_id: string;
+  recipe_name: string;
+  question: string | null;
+  profile_id: string;
+  profile_name: string;
+  host: string;
+  base_url: string;
+  model: string;
+  chars: number;
+  approx_tokens: number;
+  external: boolean;
+}
+
+/** `prepare_external_run`: the one-time token a confirmed run needs. */
+export interface ExternalRunConsent {
+  token: string;
+  expires_in_secs: number;
 }
 
 /** Where a recipe's output goes (recipes/mod.rs). */
@@ -175,6 +203,9 @@ export interface Item {
   recording?: boolean;
   /** The app stopped before the session was finalized (#153). */
   interrupted?: boolean;
+  /** Hosts its text was sent to by an external LLM profile (#122); empty =
+   *  it never left the machine. */
+  external_hosts?: string[];
 }
 
 export interface ItemSummary {
@@ -185,6 +216,8 @@ export interface ItemSummary {
   snippet?: string;
   recording?: boolean;
   interrupted?: boolean;
+  /** See Item.external_hosts (the Library's "sent externally" marker). */
+  external_hosts?: string[];
 }
 
 /* ---------- Long-form engine (engine/mod.rs, commands.rs) ---------- */
@@ -296,6 +329,8 @@ export interface CompanionMeta {
   profile: string;
   model: string;
   external: boolean;
+  /** Server the transcript went to, on an external profile (#122). */
+  host?: string;
   date: string;
   transcript: string;
   [extra: string]: unknown;
@@ -351,6 +386,8 @@ export interface RecipeFinished {
   profile?: string;
   model?: string;
   external?: boolean;
+  /** Server the transcript went to, on an external profile (#122). */
+  host?: string;
   error: string | null;
   cancelled: boolean;
 }

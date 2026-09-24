@@ -223,7 +223,7 @@ pub(crate) struct RunCleaner<C> {
 
 impl<C> Cleaner for RunCleaner<C>
 where
-    C: Fn(&Settings, Option<&str>, &str) -> String + Send,
+    C: Fn(&Settings, Option<&str>, &str) -> String + Send + Sync,
 {
     fn clean(&self, previous: Option<&str>, raw: &str) -> String {
         (self.clean)(&self.settings, previous, raw)
@@ -427,7 +427,7 @@ pub(crate) fn run_request_with<T, C>(
 ) -> Result<RunResult>
 where
     T: FnMut(&[f32], &str) -> Result<TimedTranscript> + Send,
-    C: Fn(&Settings, Option<&str>, &str) -> String + Send,
+    C: Fn(&Settings, Option<&str>, &str) -> String + Send + Sync,
 {
     let global = shared.lock().unwrap().clone();
     // This run's settings: the dictation's plus the choices made in New
@@ -462,6 +462,7 @@ where
             archive_dir,
             index_db: Some(paths.archive_index.clone()),
             journal: Some(app_data_file(paths, super::checkpoint::JOURNAL_FILE)),
+            external_cleanup: external_cleanup_entry(&settings),
             meta: start_meta(
                 &settings,
                 req.item_type,
@@ -483,6 +484,25 @@ where
         }
     };
     super::run(job, &mut stt, &cleaner, sink)
+}
+
+/// The external-send entry of a run whose cleanup goes to an external
+/// profile the user opted in for (#122), recorded by the engine before the
+/// first segment is cleaned; `None` when cleanup stays on this machine or
+/// sends nothing (level None, no translation, no opt-in).
+fn external_cleanup_entry(settings: &Settings) -> Option<crate::archive::external::ExternalSend> {
+    if !settings.cleanup_sends_externally() {
+        return None;
+    }
+    let p = settings.cleanup_llm();
+    Some(crate::archive::external::ExternalSend {
+        date: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+        host: p.host(),
+        profile: p.name.trim().to_string(),
+        model: p.model.trim().to_string(),
+        kind: crate::archive::external::SendKind::Cleanup,
+        recipe: String::new(),
+    })
 }
 
 /// Start a long microphone session (separate from the hotkey). Returns the
@@ -618,7 +638,7 @@ pub(crate) fn run_link_with<T, C>(
 ) -> Result<RunResult>
 where
     T: FnMut(&[f32], &str) -> Result<TimedTranscript> + Send,
-    C: Fn(&Settings, Option<&str>, &str) -> String + Send,
+    C: Fn(&Settings, Option<&str>, &str) -> String + Send + Sync,
 {
     use crate::sources::url;
     let LinkRequest {

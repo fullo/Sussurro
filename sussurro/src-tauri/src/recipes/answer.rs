@@ -78,6 +78,8 @@ pub struct PendingAnswer {
     pub profile: String,
     pub model: String,
     pub external: bool,
+    /// Server the transcript went to, for an external profile (#122).
+    pub host: String,
     /// When it was generated, RFC 3339.
     pub date: String,
     /// The answer (markdown).
@@ -135,6 +137,7 @@ pub fn answer_document(item_title: &str, answer: &PendingAnswer) -> (String, Com
         profile: answer.profile.trim().to_string(),
         model: answer.model.trim().to_string(),
         external: answer.external,
+        host: if answer.external { answer.host.trim().to_string() } else { String::new() },
         date: answer.date.clone(),
         transcript: TRANSCRIPT_FILE.to_string(),
         extra,
@@ -286,6 +289,7 @@ mod tests {
             &id,
             &question_recipe("Who sends the file?").unwrap(),
             &local(),
+            None,
             &model,
             NOW,
             &AtomicBool::new(false),
@@ -311,9 +315,23 @@ mod tests {
             profile: "Local".into(),
             model: "llama3.2:3b".into(),
             external: false,
+            host: String::new(),
             date: NOW.into(),
             text: "Anna, on Friday.\n".into(),
         }
+    }
+
+    #[test]
+    fn a_saved_external_answer_records_its_host() {
+        let mut a = answer("x", Some("Who?"));
+        a.external = true;
+        a.host = "api.example.com".into();
+        let (_, meta, _) = answer_document("T", &a);
+        assert!(meta.external);
+        assert_eq!(meta.host, "api.example.com");
+        // A local answer never carries a host, whatever the field says.
+        a.external = false;
+        assert_eq!(answer_document("T", &a).1.host, "");
     }
 
     #[test]

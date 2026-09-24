@@ -17,8 +17,10 @@ import {
   questionProblem,
   runName,
 } from "../lib/ask";
+import { profileHostOf } from "../lib/privacy";
 import { companionFileName, progressFraction, progressLabel } from "../lib/recipes";
 import type { Item, Recipe, RecipeFinished, RecipeProgress, RecipeRunStatus } from "../lib/types";
+import { useExternalConsent } from "./ConsentDialog";
 import { Markdown } from "./Markdown";
 
 const PROFILE_KEY = "askProfile";
@@ -99,6 +101,7 @@ export function ContextPane({
   const idRef = useRef(id);
   idRef.current = id;
   const paneRef = useRef<HTMLElement>(null);
+  const { consentFor, dialog, asking } = useExternalConsent();
 
   useEffect(() => {
     invoke<Recipe[]>("recipes_list")
@@ -122,7 +125,8 @@ export function ContextPane({
         const f = e.payload;
         if (f.item_id !== idRef.current) return;
         dispatch({ type: "finished", event: f, answerRun: isAnswerRun(f.recipe_id, recipesRef.current) });
-        if (f.file) onDocsChanged();
+        // An external run also changes the item's "sent externally" marker.
+        if (f.file || f.external) onDocsChanged();
       }),
     ];
     return () => {
@@ -151,16 +155,31 @@ export function ContextPane({
   };
 
   const start = async (r: Recipe | null, q: string | null) => {
-    if (!profile || busy || blocked) return;
+    if (!profile || busy || blocked || asking) return;
     const answerRun = q !== null || r?.target === "answer";
+    // An external profile asks first, every time (#122); Cancel sends nothing.
+    let consent: string | null = null;
+    try {
+      const got = await consentFor(profile, { id, recipeId: r?.id ?? null, question: q, profileId: profile.id });
+      if (!got) {
+        dispatch({ type: "declined", notice: `Nothing was sent to ${profileHostOf(profile) || profile.name}.` });
+        if (q !== null) setQuestion((cur) => cur || q);
+        return;
+      }
+      consent = got.consent;
+    } catch (e) {
+      dispatch({ type: "refused", error: String(e) });
+      if (q !== null) setQuestion((cur) => cur || q);
+      return;
+    }
     // A new answer replaces the one shown; a document run leaves it.
     if (answerRun) dropAnswer();
     dispatch({ type: "start", recipeId: r?.id ?? QUESTION_RECIPE_ID, recipeName: r?.name ?? "Question", question: q, answerRun });
     try {
       // Progress and the end arrive as events; the reply matters only for
       // refusals, which happen before anything is sent.
-      if (q !== null) await invoke<RecipeFinished>("recipe_ask", { id, question: q, profileId: profile.id });
-      else if (r) await invoke<RecipeFinished>("recipe_run", { id, recipeId: r.id, profileId: profile.id });
+      if (q !== null) await invoke<RecipeFinished>("recipe_ask", { id, question: q, profileId: profile.id, consent });
+      else if (r) await invoke<RecipeFinished>("recipe_run", { id, recipeId: r.id, profileId: profile.id, consent });
     } catch (e) {
       dispatch({ type: "refused", error: String(e) });
       // Give a refused question back to edit or re-ask.
@@ -354,7 +373,11 @@ export function ContextPane({
             </div>
             <p className="ctx-answer-prov">
               {[answer.profile, answer.model].filter(Boolean).join(" · ")}
-              {answer.external && <span className="ext">↗ External</span>}
+              {answer.external && (
+                <span className="ext" title={answer.host ? `The transcript was sent to ${answer.host}` : "The transcript was sent to an external LLM"}>
+                  ↗ External
+                </span>
+              )}
               {!answer.saved && <span className="sh-muted"> · not saved</span>}
             </p>
             <div className="ctx-answer-actions">
@@ -414,6 +437,7 @@ export function ContextPane({
         </div>
         <p className="ctx-note">Subtitles (.srt, .vtt) arrive in a later release.</p>
       </section>
+      {dialog}
     </aside>
   );
 }

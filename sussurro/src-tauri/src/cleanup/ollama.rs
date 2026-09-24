@@ -39,12 +39,26 @@ pub fn cleanup_with_context(
 
 /// Send the messages and apply the fallbacks shared by every cleanup: any
 /// error, an empty reply or a hallucinated one returns `transcript`.
+///
+/// The privacy gate for cleanup (#122) sits here, the one place every
+/// cleanup goes through (hotkey dictation, streaming, the long-form engine,
+/// `/clean`, re-clean, translate): on an external profile without the
+/// user's opt-in nothing is sent and the raw text comes back. There is no
+/// fallback to another profile.
 fn run_cleanup(
     settings: &crate::settings::Settings,
     messages: &[Value],
     transcript: &str,
 ) -> String {
-    match chat(&settings.cleanup_llm(), messages) {
+    let profile = settings.cleanup_llm();
+    if !profile.cleanup_allowed() {
+        eprintln!(
+            "cleanup: “{}” is external and not enabled for cleanup — keeping the raw text, nothing sent",
+            profile.name
+        );
+        return transcript.to_string();
+    }
+    match chat(&profile, messages) {
         Ok(text) if !text.trim().is_empty() => {
             let cleaned = text.trim().to_string();
             // Small models sometimes ANSWER short dictations instead of
@@ -284,6 +298,61 @@ mod tests {
     fn list_models_errors_when_unreachable() {
         assert!(list_models(&profile(CleanupApi::Ollama, "http://127.0.0.1:9")).is_err());
         assert!(list_models(&profile(CleanupApi::Openai, "http://127.0.0.1:9")).is_err());
+    }
+
+    /// A loopback server that counts connections and drops each one (the
+    /// cleanup then fails fast and falls back to the raw text).
+    fn counting_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                h.fetch_add(1, Ordering::SeqCst);
+                drop(conn);
+            }
+        });
+        (url, hits)
+    }
+
+    /// #122: cleanup on an external profile without the opt-in sends
+    /// nothing and keeps the raw text — and never falls back to the other
+    /// (local) profile. With the opt-in for its host it does send.
+    #[test]
+    fn external_cleanup_needs_the_opt_in_and_never_falls_back() {
+        use std::sync::atomic::Ordering;
+        let (external_url, external_hits) = counting_server();
+        let (local_url, local_hits) = counting_server();
+        let mut ext = profile(CleanupApi::Openai, &external_url);
+        ext.external = true; // e.g. a LAN box, or a URL marked by hand
+        let local = LlmProfile::new("local", "Local", CleanupApi::Ollama, &local_url, "", "m");
+        let mut s = crate::settings::Settings {
+            cleanup_level: CleanupLevel::Light,
+            llm_profiles: vec![local, ext],
+            cleanup_profile: "t".into(),
+            voice_commands: false,
+            ..Default::default()
+        };
+        assert!(s.cleanup_blocked() && !s.cleanup_sends_externally());
+        assert_eq!(cleanup(&s, None, "um raw text"), "um raw text");
+        assert_eq!(cleanup_with_context(&s, Some("before"), "um segment"), "um segment");
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(external_hits.load(Ordering::SeqCst), 0, "nothing may reach the external host");
+        assert_eq!(local_hits.load(Ordering::SeqCst), 0, "no fallback to the local profile");
+
+        // Opted in for its host: cleanup goes there (and only there).
+        s.llm_profiles[1].cleanup_opt_in = "127.0.0.1".into();
+        assert!(!s.cleanup_blocked() && s.cleanup_sends_externally());
+        assert_eq!(cleanup(&s, None, "um raw text"), "um raw text");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(external_hits.load(Ordering::SeqCst) >= 1);
+        assert_eq!(local_hits.load(Ordering::SeqCst), 0);
+
+        // Cleanup None (no translation) sends nothing either way.
+        s.cleanup_level = CleanupLevel::None;
+        assert!(!s.cleanup_blocked() && !s.cleanup_sends_externally());
     }
 
     #[test]

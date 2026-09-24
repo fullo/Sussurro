@@ -284,6 +284,27 @@ impl Settings {
             .unwrap_or_else(|| self.legacy_profile())
     }
 
+    /// Cleanup calls an LLM at all: a level other than None, or a
+    /// translation (which runs even with cleanup None).
+    pub fn cleanup_active(&self) -> bool {
+        self.cleanup_level != CleanupLevel::None
+            || crate::cleanup::prompt::output_language_name(&self.output_language).is_some()
+    }
+
+    /// Cleanup text leaves this machine: cleanup is active on an external
+    /// profile the user opted in for (#122). Items cleaned this way are
+    /// recorded in their external-send log.
+    pub fn cleanup_sends_externally(&self) -> bool {
+        let p = self.cleanup_llm();
+        self.cleanup_active() && p.external && p.cleanup_allowed()
+    }
+
+    /// Cleanup is held back: active, on an external profile without the
+    /// opt-in — dictations and transcriptions keep their raw text (#122).
+    pub fn cleanup_blocked(&self) -> bool {
+        self.cleanup_active() && !self.cleanup_llm().cleanup_allowed()
+    }
+
     /// Save settings as pretty JSON, creating parent directories as needed.
     /// Serialization failures are mapped into the returned `io::Error` instead
     /// of panicking — a settings write must degrade to an error the caller can
@@ -312,7 +333,7 @@ pub fn is_local_endpoint(url: &str) -> bool {
 /// Host of a user-entered endpoint URL, or `None` when there is none. Accepts
 /// an optional scheme (`localhost:11434` works), and strips the port,
 /// userinfo and any path/query/fragment.
-fn endpoint_host(url: &str) -> Option<String> {
+pub fn endpoint_host(url: &str) -> Option<String> {
     let s = url.trim();
     // Drop an optional "scheme://" prefix so bare hosts parse too.
     let rest = s.split_once("://").map(|(_, r)| r).unwrap_or(s);
@@ -532,6 +553,7 @@ mod tests {
                 model: "qwen2.5-3b-instruct".into(),
                 external: false,
                 context_tokens: 0,
+                cleanup_opt_in: String::new(),
             }]
         );
         assert_eq!(s.cleanup_profile, "local");

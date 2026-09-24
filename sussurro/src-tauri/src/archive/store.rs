@@ -50,6 +50,10 @@ pub struct Item {
     /// The app stopped before the session was finalized (`status:
     /// interrupted`): the item holds the segments saved until then.
     pub interrupted: bool,
+    /// Hosts its text was sent to by an external LLM profile (#122),
+    /// sorted; empty = it never left the machine. See
+    /// [`super::external::sent_hosts_at`].
+    pub external_hosts: Vec<String>,
 }
 
 /// A list/search row.
@@ -65,6 +69,8 @@ pub struct ItemSummary {
     pub recording: bool,
     /// See [`Item::interrupted`].
     pub interrupted: bool,
+    /// See [`Item::external_hosts`] (the Library's "sent externally" marker).
+    pub external_hosts: Vec<String>,
 }
 
 impl ItemSummary {
@@ -82,7 +88,17 @@ impl ItemSummary {
             snippet,
             recording: state == Some(SessionState::Recording),
             interrupted: state == Some(SessionState::Interrupted),
+            external_hosts: Vec::new(),
         }
+    }
+
+    /// Fill [`ItemSummary::external_hosts`] from the item folder (search
+    /// rows come from the index, which doesn't store them).
+    pub(crate) fn with_external_hosts(mut self, archive: &Path) -> Self {
+        if let Ok(dir) = item_dir(archive, &self.id) {
+            self.external_hosts = super::external::sent_hosts_at(&dir);
+        }
+        self
     }
 }
 
@@ -379,6 +395,7 @@ fn read_item_at(id: &str, dir: &Path) -> Result<Item> {
         edited_externally: is_edited_externally(dir, &bytes),
         recording: state == Some(SessionState::Recording),
         interrupted: state == Some(SessionState::Interrupted),
+        external_hosts: super::external::sent_hosts_at(dir),
     })
 }
 
@@ -454,7 +471,10 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
     let mut items: Vec<ItemSummary> = scan_item_dirs(archive)
         .into_iter()
         .filter_map(|(id, dir)| match summary_at(&id, &dir) {
-            Ok((s, _)) => Some(s),
+            Ok((mut s, _)) => {
+                s.external_hosts = super::external::sent_hosts_at(&dir);
+                Some(s)
+            }
             Err(e) => {
                 eprintln!("archive: skipping broken item {id}: {e:#}");
                 None

@@ -11,6 +11,8 @@ import {
   provenance,
 } from "../lib/recipes";
 import { isAnswerRun, runName } from "../lib/ask";
+import { profileHostOf } from "../lib/privacy";
+import { useExternalConsent } from "./ConsentDialog";
 import type {
   CompanionDoc,
   Item,
@@ -80,6 +82,7 @@ export function DocumentTab({
   const recipesRef = useRef<Recipe[]>([]);
   recipesRef.current = recipes;
   const mounted = useRef({ select: false, version: false });
+  const { consentFor, dialog, asking } = useExternalConsent();
 
   const loadDocs = async (select?: string | null) => {
     try {
@@ -168,19 +171,33 @@ export function DocumentTab({
 
   const docRecipes = useMemo(() => recipes.filter((r) => r.target === "companion_document"), [recipes]);
   const recipe = docRecipes.find((r) => r.id === recipeId) ?? docRecipes[0] ?? null;
-  const profile = settings.llm_profiles.find((p) => p.id === profileId && !p.external) ?? defaultRecipeProfile(settings, profileId);
-  const hasLocal = settings.llm_profiles.some((p) => !p.external);
+  // An external profile is used only when the user picked it here; the
+  // default is always a local one (no silent fallback, #122).
+  const profile = settings.llm_profiles.find((p) => p.id === profileId) ?? defaultRecipeProfile(settings, profileId);
   const doc = docs?.find((d) => d.file === selected) ?? null;
   const regenerate = !!recipe && !!docs?.some((d) => d.meta.recipe === recipe.id && !d.edited_externally);
 
   const start = async (r: Recipe | null = recipe) => {
-    if (!r || !profile) return;
+    if (!r || !profile || asking) return;
     setError("");
+    // An external profile asks first, every time (#122); Cancel sends nothing.
+    let consent: string | null = null;
+    try {
+      const got = await consentFor(profile, { id, recipeId: r.id, question: null, profileId: profile.id });
+      if (!got) {
+        ctl.flash(`${r.name} not run — nothing was sent to ${profileHostOf(profile) || profile.name}.`);
+        return;
+      }
+      consent = got.consent;
+    } catch (e) {
+      setError(String(e));
+      return;
+    }
     setRun({ recipeName: r.name, step: null, cancelling: false });
     try {
       // Progress and the end arrive as events; the reply only matters for
       // refusals, which happen before anything is sent.
-      await invoke<RecipeFinished>("recipe_run", { id, recipeId: r.id, profileId: profile.id });
+      await invoke<RecipeFinished>("recipe_run", { id, recipeId: r.id, profileId: profile.id, consent });
     } catch (e) {
       setRun(null);
       setError(String(e));
@@ -195,11 +212,10 @@ export function DocumentTab({
   const reveal = (file: string) =>
     invoke("recipe_reveal_document", { id, file }).catch((e) => ctl.setBusy(String(e)));
 
-  const blocked = item.recording
-    ? "This item is being recorded — recipes run when the session ends."
-    : !hasLocal
-      ? "Every LLM profile is external. Recipes on external profiles need a confirmation for each run, which arrives in a later update; add a local profile in Recipes to run one now."
-      : "";
+  const blocked = item.recording ? "This item is being recorded — recipes run when the session ends." : "";
+  const extNote = profile?.external
+    ? `“${profile.name}” is external: each run asks for your confirmation before the transcript goes to ${profileHostOf(profile) || profile.base_url}.`
+    : "";
 
   return (
     <div className="rc-tab">
@@ -240,12 +256,12 @@ export function DocumentTab({
                 remember(PROFILE_KEY, e.target.value);
               }}
             >
-              {!profile && <option value="">No local profile</option>}
+              {!profile && <option value="">Choose a profile</option>}
               {settings.llm_profiles.map((p) => (
-                <option key={p.id} value={p.id} disabled={p.external}>
+                <option key={p.id} value={p.id}>
                   {p.name}
                   {p.model ? ` · ${p.model}` : ""}
-                  {p.external ? " · ↗ external (confirmation coming)" : ""}
+                  {p.external ? ` · ↗ external (${profileHostOf(p) || "asks each run"})` : ""}
                 </option>
               ))}
             </select>
@@ -261,6 +277,8 @@ export function DocumentTab({
         )}
       </div>
       {blocked && !run && <p className="rc-note" role="note">{blocked}</p>}
+      {extNote && !blocked && !run && <p className="rc-note warn" role="note">{extNote}</p>}
+      {dialog}
       {error && (
         <div className="notice-warn" role="alert">
           {error}{" "}
@@ -301,7 +319,11 @@ export function DocumentTab({
               ) : (
                 <span>Written outside Sussurro</span>
               )}
-              {doc.meta.external && <span className="ext" title="The transcript was sent to an external LLM">↗ External</span>}
+              {doc.meta.external && (
+                <span className="ext" title={doc.meta.host ? `The transcript was sent to ${doc.meta.host}` : "The transcript was sent to an external LLM"}>
+                  ↗ External{doc.meta.host ? ` · ${doc.meta.host}` : ""}
+                </span>
+              )}
               <span className="mono">{doc.file}</span>
               <button type="button" className="link-btn push" onClick={() => reveal(doc.file)} title={`Show the file in ${fileManagerName()}`}>
                 Show file
@@ -321,7 +343,8 @@ export function DocumentTab({
             <p className="sh-muted">
               A recipe writes a markdown file next to the transcript. <b>Formatted document</b> turns it into a
               readable document with a tl;dr, headings and tables; <b>Summary</b>, <b>Action items</b> and{" "}
-              <b>Decisions</b> pull out just that. Recipes run on a local LLM profile; you can add your own in Recipes.
+              <b>Decisions</b> pull out just that. Recipes run on a local LLM profile unless you pick an external one,
+              which asks before every run; you can add your own recipes in Recipes.
             </p>
             {!run && !blocked && docRecipes.some((r) => r.id === "formatted-document") && profile && (
               <button

@@ -66,6 +66,16 @@ project decisions here, not in per-machine memory.**
   Homebrew/winget/scoop/pip folders (E10, not bundled), argument vector
   only, `bestaudio[ext=m4a]/bestaudio`, `--ignore-config --no-playlist`;
   opus-only videos are refused (no ffmpeg bundled).
+- **Privacy gate for external LLM profiles (0.8, #122)**: enforced in the
+  backend, never only in the UI. Recipes/questions on an external profile
+  need a one-time consent token (`prepare_external_run`, bound to item +
+  recipe/question + profile + host + model, single use, 120 s) consumed by
+  `recipe_run`/`recipe_ask`; cleanup on an external profile needs the
+  per-profile, host-bound `cleanup_opt_in`, else it keeps the raw text
+  (checked in `cleanup::ollama::run_cleanup`, the one path every cleanup
+  takes). No fallback from local to external anywhere. External sends are
+  logged per item in `.sussurro/external-log.json` (metadata only, never
+  content) and drive the Library's "sent externally" marker.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 
 ## Release process

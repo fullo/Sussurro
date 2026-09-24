@@ -112,6 +112,8 @@ pub struct AppState {
     pub recipe_runs: crate::recipes::run::Runs,
     /// Ask panel answers not saved yet, in memory only (#121).
     pub recipe_answers: crate::recipes::answer::Answers,
+    /// One-time confirmations for runs on external LLM profiles (#122).
+    pub consents: crate::llm::consent::ConsentStore,
 }
 
 /// What streaming injection has already done for the current recording.
