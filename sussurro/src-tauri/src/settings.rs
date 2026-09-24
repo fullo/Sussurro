@@ -446,6 +446,21 @@ mod tests {
         assert_eq!(s.cleanup_profile, "local");
         assert!(s.dictionary.is_empty());
         assert!(!s.autostart);
+        // Qwen3-ASR is optional, never the default (#152).
+        assert_eq!(s.engine, SttEngine::Whisper);
+    }
+
+    #[test]
+    fn engines_serialize_as_the_frontend_names_them() {
+        for (engine, name) in [
+            (SttEngine::Whisper, "whisper"),
+            (SttEngine::Parakeet, "parakeet"),
+            (SttEngine::Qwen3Asr, "qwen3_asr"),
+        ] {
+            let json = serde_json::to_string(&engine).unwrap();
+            assert_eq!(json, format!("\"{name}\""));
+            assert_eq!(serde_json::from_str::<SttEngine>(&json).unwrap(), engine);
+        }
     }
 
     #[test]

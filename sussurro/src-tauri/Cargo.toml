@@ -84,7 +84,9 @@ keyring-core = "1"
 whisper-rs = { version = "0.16.0", features = ["vulkan"] }
 # Is the process owning a session-journal entry still running (#158)?
 # OpenProcess + GetExitCodeProcess. Already in the tree (via tauri).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+# Qwen3-ASR sidecar (#117): a kill-on-close job object so llama-server never
+# outlives the app (JobObjects; CreateJobObjectW takes Security's attributes).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_Security"] }
 # Windows Credential Manager for the profile API keys (#159).
 windows-native-keyring-store = { version = "1", default-features = false }
 
