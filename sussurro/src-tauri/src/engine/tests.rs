@@ -1557,6 +1557,7 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
     let (langs, levels, recorded) = run_with(RunOptions {
         language: Some("en".into()),
         cleanup_level: Some(CleanupLevel::High),
+        ..Default::default()
     });
     assert_eq!(langs, ["en", "en"]);
     assert_eq!(levels, [CleanupLevel::High, CleanupLevel::High]);
@@ -1566,7 +1567,7 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
     // settings as they were when the run started, not the mid-run change.
     let (langs, levels, recorded) = run_with(RunOptions {
         language: Some("  ".into()),
-        cleanup_level: None,
+        ..Default::default()
     });
     assert_eq!(langs, ["it", "it"]);
     assert_eq!(levels, [CleanupLevel::Light, CleanupLevel::Light]);
@@ -1746,7 +1747,10 @@ fn external_cleanup_marks_the_item_only_when_it_was_sent() {
             item_type: ItemType::Transcription,
             title: "Esterno".into(),
             source_label: "file:test.wav".into(),
-            options: RunOptions { language: None, cleanup_level: level },
+            options: RunOptions {
+                cleanup_level: level,
+                ..Default::default()
+            },
         };
         let r = run_request_with(
             &shared,
@@ -1997,4 +2001,100 @@ fn two_channels_segment_separately_on_one_clock_in_time_order() {
     assert_eq!(ids, [0, 1], "ids stay unique");
     // The run lasts as long as the furthest channel (15.5 s), not the sum.
     assert!((15_000..16_500).contains(&r.duration_ms), "{}", r.duration_ms);
+}
+
+/// #134: the "Identify voices" run option reaches the engine — through the
+/// real `session::run_request_with_speakers`, for every item type × 0.9
+/// flag × toggle: voices (and embeddings) exactly when the gating says so,
+/// and with the toggle off the speaker model is never even loaded.
+#[test]
+fn identify_voices_run_option_reaches_the_engine() {
+    use crate::settings::Settings;
+    use crate::speakers::tracker::tests::fake_loader;
+    use crate::state::AppPaths;
+    use session::{run_request_with_speakers, Request, RunOptions};
+
+    let run_with = |item_type: ItemType, flag: bool, identify: bool| -> (usize, usize, usize) {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("appdata");
+        let paths = AppPaths {
+            settings_file: dir.path().join("settings.json"),
+            models_dir: data.join("models"),
+            history_file: data.join("history.jsonl"),
+            stats_file: data.join("stats.json"),
+            archive_index: data.join("index.sqlite"),
+            documents_dir: Some(dir.path().join("Documents")),
+            home_dir: Some(dir.path().to_path_buf()),
+        };
+        let shared = Mutex::new(Settings {
+            meetings_enabled: flag,
+            ..Default::default()
+        });
+        let (load, calls) = fake_loader(5);
+        let req = Request {
+            id: 11,
+            cancel: Arc::new(AtomicBool::new(false)),
+            source: Box::new(VecSource::new(
+                voiced(&[(None, 1.0), (Some(0), 3.0), (None, 3.0), (Some(1), 3.0), (None, 1.0)]),
+                Channel::File,
+            )),
+            policy: Policy::Block { max_queued: 2 },
+            defer: false,
+            item_type,
+            title: "Voci".into(),
+            source_label: "file:voci.wav".into(),
+            options: RunOptions {
+                identify_voices: identify,
+                ..Default::default()
+            },
+        };
+        let r = run_request_with_speakers(
+            &shared,
+            &paths,
+            req,
+            |_: &[f32], _: &str| -> Result<TimedTranscript> {
+                Ok(TimedTranscript {
+                    text: "parole".into(),
+                    ..Default::default()
+                })
+            },
+            |_: &Settings, _: Option<&str>, raw: &str| raw.to_string(),
+            |_| Box::new(EnergyDetector::default()),
+            move |_| load,
+            Arc::new(VecSink::default()),
+        )
+        .unwrap();
+        let archive_dir = dir.path().join("Documents").join("Sussurro");
+        let item = archive::read_item(&archive_dir, &r.item_id).unwrap();
+        (
+            item.embedded_segments,
+            item.segments.speakers.len(),
+            calls.load(Ordering::Relaxed),
+        )
+    };
+
+    for flag in [false, true] {
+        for identify in [false, true] {
+            let expected = |t: ItemType| match t {
+                ItemType::Note => false,
+                ItemType::Transcription => identify,
+                ItemType::Meeting => flag,
+            };
+            for t in [ItemType::Note, ItemType::Transcription, ItemType::Meeting] {
+                let (embedded, speakers, calls) = run_with(t, flag, identify);
+                let case = format!("{t:?}, flag {flag}, toggle {identify}");
+                if expected(t) {
+                    assert_eq!(embedded, 2, "{case}");
+                    assert!(speakers >= 1, "{case}");
+                    assert!(calls > 0, "{case}");
+                } else {
+                    assert_eq!(
+                        (embedded, speakers, calls),
+                        (0, 0, 0),
+                        "{case}: nothing computed"
+                    );
+                }
+            }
+        }
+    }
 }

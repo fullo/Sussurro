@@ -163,7 +163,8 @@ pub struct Settings {
     pub ui_v2: bool,
     /// 0.9 meetings (E12): the browser-extension routes of the local API
     /// (`/app/version`, `/live`, `/items/…`) answer only when this is on,
-    /// and so do speaker labels ("Voice N") and the speaker panel (#130).
+    /// and so do meeting speaker labels ("Voice N") and the speaker panel on
+    /// meetings (#130). Transcriptions don't need it (P11, #134).
     /// Removed when 0.9 ships (#138).
     pub meetings_enabled: bool,
     /// Pairing token of the browser extension (E6): `Authorization: Bearer`
