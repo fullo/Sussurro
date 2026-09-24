@@ -161,6 +161,15 @@ pub struct Settings {
     /// Preview of the 0.7 workspace UI (left rail: New, Library, Models,
     /// Settings). Off = today's single-column window. Removed when 0.7 ships.
     pub ui_v2: bool,
+    /// 0.9 meetings (E12): the browser-extension routes of the local API
+    /// (`/app/version`, `/live`, `/items/…`) answer only when this is on.
+    /// Removed when 0.9 ships (#138).
+    pub meetings_enabled: bool,
+    /// Pairing token of the browser extension (E6): `Authorization: Bearer`
+    /// on HTTP, `?token=` on the `/live` WebSocket. Empty = not paired yet.
+    /// Only the backend sets it ([`Settings::regenerate_extension_token`]);
+    /// a save from the UI keeps the current one.
+    pub extension_token: String,
     /// Subtitles setting (P7, #133): `transcript.srt` on request (default)
     /// or on every save. Meetings and transcriptions only.
     pub subtitles: SubtitlesMode,
@@ -201,6 +210,8 @@ impl Default for Settings {
             output_file: String::new(),
             archive_dir: String::new(),
             ui_v2: false,
+            meetings_enabled: false,
+            extension_token: String::new(),
             subtitles: SubtitlesMode::OnRequest,
         }
     }
@@ -320,6 +331,21 @@ impl Settings {
     /// opt-in — dictations and transcriptions keep their raw text (#122).
     pub fn cleanup_blocked(&self) -> bool {
         self.cleanup_active() && !self.cleanup_llm().cleanup_allowed()
+    }
+
+    /// Replace the extension token with a fresh random one (the old pairing
+    /// stops working) and return it.
+    pub fn regenerate_extension_token(&mut self) -> anyhow::Result<String> {
+        self.extension_token = crate::api::auth::generate_token()?;
+        Ok(self.extension_token.clone())
+    }
+
+    /// The extension token, generated on first use.
+    pub fn ensure_extension_token(&mut self) -> anyhow::Result<String> {
+        if self.extension_token.trim().is_empty() {
+            return self.regenerate_extension_token();
+        }
+        Ok(self.extension_token.clone())
     }
 
     /// Save settings as pretty JSON, creating parent directories as needed.
@@ -548,6 +574,22 @@ mod tests {
         assert!(!Settings::default().ui_v2);
         let on: Settings = serde_json::from_str(r#"{"ui_v2":true}"#).unwrap();
         assert!(on.ui_v2);
+    }
+
+    /// #126: meetings stay off and unpaired until the user opts in; the
+    /// token is generated once and replaced only on request.
+    #[test]
+    fn meetings_are_off_and_unpaired_by_default() {
+        let s: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert!(!s.meetings_enabled);
+        assert!(s.extension_token.is_empty());
+        let mut s = Settings::default();
+        let first = s.ensure_extension_token().unwrap();
+        assert_eq!(first.len(), 64);
+        assert_eq!(s.ensure_extension_token().unwrap(), first, "stable once created");
+        let second = s.regenerate_extension_token().unwrap();
+        assert_ne!(second, first);
+        assert_eq!(s.extension_token, second);
     }
 
     /// A settings.json exactly as 0.6.3 writes it (every field, pretty

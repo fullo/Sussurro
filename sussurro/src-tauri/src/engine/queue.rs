@@ -32,6 +32,7 @@ enum Payload {
 
 struct Queued {
     start: u64,
+    channel: crate::archive::Channel,
     len: usize,
     payload: Payload,
 }
@@ -149,6 +150,7 @@ impl SegmentQueue {
         };
         g.items.push_back(Queued {
             start: seg.start,
+            channel: seg.channel,
             len,
             payload,
         });
@@ -200,6 +202,7 @@ impl SegmentQueue {
         Ok(Some(SegmentAudio {
             start: item.start,
             samples,
+            channel: item.channel,
         }))
     }
 
@@ -227,9 +230,11 @@ impl SegmentQueue {
         self.len() == 0
     }
 
-    /// Clock start of the oldest waiting segment.
+    /// Clock start of the oldest waiting segment. With one channel that is
+    /// the front of the queue; with several (#126) segments are queued in
+    /// the order they close, so take the minimum.
     pub fn oldest_start(&self) -> Option<u64> {
-        self.inner.lock().unwrap().items.front().map(|q| q.start)
+        self.inner.lock().unwrap().items.iter().map(|q| q.start).min()
     }
 
     /// Audio waiting in the queue, in samples.
@@ -294,6 +299,7 @@ mod tests {
         SegmentAudio {
             start,
             samples: (0..n).map(|i| (start as usize + i) as f32).collect(),
+            channel: crate::archive::Channel::File,
         }
     }
 

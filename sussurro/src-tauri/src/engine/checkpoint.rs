@@ -226,9 +226,16 @@ impl LiveItem {
         self.file.segments.iter().any(|s| !s.text.trim().is_empty())
     }
 
-    /// Add a finished segment and checkpoint it to disk.
+    /// Add a finished segment and checkpoint it to disk. Segments stay in
+    /// time order: one channel finishes them in order, but with two
+    /// channels (#126) a short reply can close before the other side's
+    /// long sentence that started earlier.
     pub fn push(&mut self, segment: Segment) {
-        self.file.segments.push(segment);
+        let at = self
+            .file
+            .segments
+            .partition_point(|s| s.start_ms <= segment.start_ms);
+        self.file.segments.insert(at, segment);
         self.since_render += 1;
         let render = self.since_render >= RENDER_EVERY_SEGMENTS
             || self.last_render.elapsed() >= RENDER_EVERY;

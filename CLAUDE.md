@@ -94,6 +94,21 @@ project decisions here, not in per-machine memory.**
   takes). No fallback from local to external anywhere. External sends are
   logged per item in `.sussurro/external-log.json` (metadata only, never
   content) and drive the Library's "sent externally" marker.
+- **Local API for the browser extension (0.9, #126)** (`api/`): new routes
+  (`GET /app/version`, `WS /live`, `POST /items/{id}/open`,
+  `GET /items/{id}/export`) exist only with `Settings.meetings_enabled`
+  (E12) and need `Settings.extension_token` — `Authorization: Bearer` on
+  HTTP, `?token=` plus an extension `Origin` on the WebSocket; web-page
+  origins are refused even with the token; CORS only for
+  `chrome-extension://` / `moz-extension://`. `/clean`, `/transcribe`,
+  `/history` stay token-less and CORS-less. The token changes only via
+  `extension_token_get`/`_regenerate` (`set_settings` keeps the current
+  one). WebSocket = `tiny_http` upgrade + `tungstenite` on one blocking
+  thread: replies are flushed after each client message (audio streams
+  continuously; idle clients send `ping`), so no tokio/axum needed.
+  A meeting is a two-channel engine run (`mic`, `remote`) into a `meeting`
+  item, `source: browser:<host>`; page events go to
+  `.sussurro/meeting-events.jsonl` for attribution (#131).
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`

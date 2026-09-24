@@ -62,7 +62,14 @@ const settings: Settings = {
   archive_dir: "",
   ui_v2: params.get("ui") !== "legacy",
   subtitles: "on_request",
+  meetings_enabled: false,
+  extension_token: "",
 };
+
+/** A fake pairing token (#126): 64 hex characters, like the backend's. */
+function fakeToken(): string {
+  return Array.from({ length: 64 }, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("");
+}
 
 const ARCHIVE = "/Users/demo/Documents/Sussurro";
 
@@ -689,6 +696,8 @@ function handle(cmd: string, a: Args): unknown {
       const next = a.settings as Settings;
       Object.assign(settings, {
         ...next,
+        // Only the token commands change it, as in the backend.
+        extension_token: settings.extension_token,
         llm_profiles: next.llm_profiles.map((p) => ({ ...p, api_key_storage: p.api_key ? "keychain" : "none" })),
       });
       return { ...settings };
@@ -803,10 +812,17 @@ function handle(cmd: string, a: Args): unknown {
     }
     case "export_history":
       return "Entries exported.";
+    case "extension_token_get":
+      if (!settings.extension_token) settings.extension_token = fakeToken();
+      return settings.extension_token;
+    case "extension_token_regenerate":
+      settings.extension_token = fakeToken();
+      return settings.extension_token;
     case "engine_status":
       return {
         active: (mic ? 1 : 0) + (fileRun ? 1 : 0) + (linkRun ? 1 : 0),
         mic_session: mic?.id ?? null,
+        meeting_session: null,
         file_sessions: fileRun ? [{ session_id: fileRun.id, label: "mock.wav" }] : [],
         link_sessions: linkRun ? [{ session_id: linkRun.id, label: linkRun.label }] : [],
       };
