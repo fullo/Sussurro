@@ -15,9 +15,8 @@ into any app.
 
 - **100% local, private by design.** Audio is captured, transcribed and cleaned
   entirely on your device. No account, no telemetry, no network round-trip —
-  it works on a plane. The one exception: if you point the cleanup server at a
-  remote endpoint (Settings → Cleanup), your transcripts are sent there — over
-  plain http unless the URL is https.
+  it works on a plane. Text leaves the machine only when you send it to an
+  **external LLM profile** yourself — see [Privacy](#privacy).
 - **AI cleanup, not just transcription.** A small local model removes fillers,
   fixes punctuation and adapts tone — with graceful fallback to the raw
   transcript if the model isn't running.
@@ -129,6 +128,36 @@ the wordmark is hollow when idle and painted red while recording.
 - **Copy diagnostics** — a footer button copies version + OS + configuration
   for bug reports (configuration only — never dictated text or dictionary).
 
+## Privacy
+
+Speech-to-text always runs on your device, and the default LLM profile is
+Ollama on this machine. An LLM profile whose server is not on this machine
+(anything but `localhost`, a loopback address or a `.local` host — or one you
+mark *external* by hand) is **external**: text sent to it leaves your
+computer. Sussurro never falls back from a local profile to an external one.
+
+- **Recipes and Ask questions** on an external profile show a confirmation
+  **every time**: which document, roughly how much text (characters and
+  tokens), which server and which model. Nothing is sent until you click
+  *Send*; Cancel sends nothing. The app enforces this in the backend, not
+  just in the UI: a run on an external profile needs a one-time token issued
+  for that exact run (item, recipe or question, server, model), valid once
+  and for two minutes.
+- **Cleanup** (hotkey dictation, microphone sessions, file transcriptions,
+  re-clean, translate and the local API's `/clean`) has no moment for a
+  dialog, so an external cleanup profile needs a **persistent opt-in** in
+  Settings → Cleanup ("Send dictations to *host* for cleanup"), stored per
+  profile and tied to its server — pointing the profile elsewhere turns it
+  off. Without the opt-in, cleanup keeps the **raw text** and sends nothing.
+- **The Library marks** every item whose text went to an external server
+  (*↗ Sent externally*, with the hosts in the tooltip). The marker comes from
+  each item's `.sussurro/external-log.json` — date, host, profile, model and
+  recipe of every external send, **never the content** — and from the
+  provenance of its generated documents, which record `external: true` and
+  the `host` in their frontmatter.
+- Anything sent to an external server is processed under that provider's
+  terms; over plain `http` it also travels unencrypted.
+
 ## Local API (scripting)
 
 Enable it in Behavior → Advanced (off by default; loopback only; applied at
@@ -188,12 +217,15 @@ Current version **0.4.1**. Full detail (and standing decisions) in
   pasted, not what Sussurro does.
 - **The global hotkey works over password fields too.** It fires wherever
   focus is — including another app's password field — and starts recording
-  there (as designed); the audio goes only to local STT and your configured
-  cleanup endpoint.
-- **A remote cleanup endpoint sends transcripts off-machine.** Pointing
-  Cleanup at a server that isn't on this machine means the raw transcript is
-  sent there for cleanup; Sussurro shows a warning in Settings when the
-  endpoint is not local ([issue #92](https://github.com/fullo/Sussurro/issues/92)).
+  there (as designed); the audio goes only to local STT, and the text only to
+  your cleanup profile (an external one only with your opt-in).
+- **An external cleanup profile sends transcripts off-machine — once you opt
+  in.** Choosing a cleanup profile whose server isn't on this machine holds
+  cleanup back (raw text, nothing sent) until you allow that server in
+  Settings → Cleanup; from then on every dictation is sent there
+  ([issue #92](https://github.com/fullo/Sussurro/issues/92),
+  [issue #122](https://github.com/fullo/Sussurro/issues/122)). See
+  [Privacy](#privacy).
 
 ## Documentation
 
