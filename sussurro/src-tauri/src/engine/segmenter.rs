@@ -108,11 +108,14 @@ pub struct SegmenterParams {
 }
 
 impl SegmenterParams {
-    /// The segmentation for an STT engine: whisper keeps the defaults,
+    /// The segmentation for an STT engine: whisper and Qwen3-ASR keep the defaults,
     /// Parakeet gets the #194 soft cap.
     pub fn for_engine(engine: &crate::settings::SttEngine) -> Self {
         match engine {
-            crate::settings::SttEngine::Whisper => Self::default(),
+            // Qwen3-ASR (#117) is fine up to the 30 s cap (#109).
+            crate::settings::SttEngine::Whisper | crate::settings::SttEngine::Qwen3Asr => {
+                Self::default()
+            }
             crate::settings::SttEngine::Parakeet => Self {
                 soft_max_ms: Some(crate::stt::pauses::PARAKEET.soft_max_ms),
                 soft_silence_ms: crate::stt::pauses::PARAKEET.min_pause_ms,

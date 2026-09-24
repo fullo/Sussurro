@@ -120,6 +120,19 @@ fn to_i16(s: f32) -> i16 {
     (s.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
 }
 
+/// A whole mono 16-bit 16 kHz WAV in memory: the upload format of the
+/// sidecar STT client (`stt::remote`, #117). Callers keep the input short
+/// (≤ 30 s, ~1 MB); longer input is capped at [`MAX_DATA_BYTES`]. Pure.
+pub fn wav_bytes(samples: &[f32]) -> Vec<u8> {
+    let n = samples.len().min((MAX_DATA_BYTES / 2) as usize);
+    let mut out = Vec::with_capacity(HEADER_LEN as usize + n * 2);
+    out.extend_from_slice(&header((n * 2) as u32));
+    for &s in &samples[..n] {
+        out.extend_from_slice(&to_i16(s).to_le_bytes());
+    }
+    out
+}
+
 /// Incremental mono 16-bit WAV writer (see the module docs).
 pub struct WavWriter {
     path: PathBuf,
@@ -460,6 +473,26 @@ mod tests {
             out.extend(chunk);
         }
         out
+    }
+
+    #[test]
+    fn in_memory_wav_is_a_valid_16k_mono_file() {
+        let samples = tone(1_000);
+        let bytes = wav_bytes(&samples);
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..16], b"WAVEfmt ");
+        assert_eq!(u32_at(&bytes, 24), RATE);
+        assert_eq!(u32_at(&bytes, 40), 2_000, "data size");
+        assert_eq!(u32_at(&bytes, 4), 36 + 2_000, "RIFF size");
+        assert_eq!(bytes.len(), HEADER_LEN as usize + 2_000);
+        // Same bytes as the file writer produces for the same samples.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.wav");
+        let mut w = WavWriter::create(&path).unwrap();
+        w.write(&samples).unwrap();
+        w.finish().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(wav_bytes(&[]).len(), HEADER_LEN as usize);
     }
 
     #[test]

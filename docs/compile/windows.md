@@ -89,7 +89,9 @@ Without the `--config` there is no sidecar in the installer; `cargo test`
 and clippy never need it. It installs as `sussurro-llama-server.exe` next to
 `sussurro.exe`, with its DLLs (llama, ggml, the Vulkan and CPU backends,
 `libomp.dll`) in `llama-server-libs\`; the app starts it with that folder as
-working directory and prepended to `PATH`. It needs the Visual C++ runtime
+working directory and prepended to `PATH`, in a kill-on-close job object so
+it never outlives the app (not even a crash or the updater's install). It
+needs the Visual C++ runtime
 (`MSVCP140.dll`, already required by Sussurro itself) and, for the GPU, the
 Vulkan loader that comes with the graphics driver — without it ggml falls
 back to the CPU. Antivirus tools may flag an unsigned helper executable the

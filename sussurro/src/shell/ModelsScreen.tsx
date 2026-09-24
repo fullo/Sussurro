@@ -1,6 +1,7 @@
 import { AdvancedGroup, CollapsibleCard } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { EngineField, ModelField, ModelsFolderField } from "../settings/SpeechCard";
+import { QWEN3_ASR_NOTE } from "../lib/engines";
 import { cleanupProfile, profileHost } from "../lib/llmProfiles";
 import { cleanupGate } from "../lib/privacy";
 import { cleanupLabel } from "./labels";
@@ -17,7 +18,8 @@ export function ModelsScreen({
   onOpenSettings: (s: SectionId) => void;
   onOpenRecipes: () => void;
 }) {
-  const { settings, installedWhisper, modelReady } = ctl;
+  const { settings, save, installedWhisper, modelReady, sidecarAvailable } = ctl;
+  const qwenInUse = settings.engine === "qwen3_asr";
   const profile = cleanupProfile(settings);
   return (
     <div className="sh-screen">
@@ -45,6 +47,32 @@ export function ModelsScreen({
           <AdvancedGroup>
             <ModelsFolderField ctl={ctl} />
           </AdvancedGroup>
+        </CollapsibleCard>
+
+        <CollapsibleCard storageKey="modelsQwen" title={<>Qwen3-ASR <span className="via">optional engine</span></>} collapsible={false}>
+          <p className="card-hint">{QWEN3_ASR_NOTE}</p>
+          {!sidecarAvailable && !qwenInUse ? (
+            <p className="card-hint" role="status">
+              Not available in this build: it has no bundled llama-server.
+            </p>
+          ) : (
+            <div className="row-gap">
+              {qwenInUse ? (
+                <>
+                  <span className="sh-muted" role="status">
+                    In use{modelReady ? "" : " — download it with the button next to the model above"}.
+                  </span>
+                  <button type="button" className="btn-ghost sh-btn" onClick={() => save({ ...settings, engine: "whisper" })}>
+                    Back to Whisper
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn-ghost sh-btn" onClick={() => save({ ...settings, engine: "qwen3_asr" })}>
+                  Use Qwen3-ASR
+                </button>
+              )}
+            </div>
+          )}
         </CollapsibleCard>
 
         <CollapsibleCard storageKey="modelsLlm" title={<>Cleanup <span className="via">LLM profile</span></>} collapsible={false}>

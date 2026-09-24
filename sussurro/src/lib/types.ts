@@ -107,7 +107,8 @@ export interface Settings {
   hotkey: string;
   push_to_talk: boolean;
   whisper_model: string;
-  engine: "whisper" | "parakeet";
+  /** `qwen3_asr` (#117) needs the bundled llama-server sidecar. */
+  engine: "whisper" | "parakeet" | "qwen3_asr";
   /** LLM profiles (#119): cleanup (and later recipes, Ask) pick one. */
   llm_profiles: LlmProfile[];
   /** Id of the profile cleanup runs on. */

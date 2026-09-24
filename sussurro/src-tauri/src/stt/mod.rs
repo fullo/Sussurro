@@ -1,6 +1,7 @@
 pub mod models;
 pub mod parakeet;
 pub mod pauses;
+pub mod remote;
 pub mod sidecar;
 pub mod whisper;
 
@@ -8,11 +9,14 @@ pub mod whisper;
 pub enum AnyTranscriber {
     Whisper(whisper::Transcriber),
     Parakeet(parakeet::ParakeetTranscriber),
+    /// Qwen3-ASR in the `llama-server` sidecar (#117): owns the process,
+    /// so dropping the transcriber (idle unload, engine change) stops it.
+    Remote(remote::RemoteTranscriber),
 }
 
 impl AnyTranscriber {
     /// Unified transcription: whisper honours the dictionary prompt and
-    /// language hint, parakeet auto-detects and ignores both.
+    /// language hint, parakeet and Qwen3-ASR auto-detect and ignore both.
     pub fn transcribe(
         &mut self,
         samples: &[f32],
@@ -22,12 +26,14 @@ impl AnyTranscriber {
         match self {
             AnyTranscriber::Whisper(t) => t.transcribe(samples, initial_prompt, language),
             AnyTranscriber::Parakeet(t) => t.transcribe(samples),
+            AnyTranscriber::Remote(t) => t.transcribe(samples),
         }
     }
 
-    /// Long-form transcription with word timings (engine, #113). Both
-    /// engines report real timings; `words` can still come back empty (e.g.
-    /// no tokens), and the engine then falls back to a proportional split.
+    /// Long-form transcription with word timings (engine, #113). Whisper
+    /// and Parakeet report real timings; Qwen3-ASR none, and `words` can
+    /// come back empty from any engine — the engine then falls back to a
+    /// proportional split.
     pub fn transcribe_timed(
         &mut self,
         samples: &[f32],
@@ -37,6 +43,7 @@ impl AnyTranscriber {
         match self {
             AnyTranscriber::Whisper(t) => t.transcribe_timed(samples, initial_prompt, language),
             AnyTranscriber::Parakeet(t) => t.transcribe_timed(samples),
+            AnyTranscriber::Remote(t) => t.transcribe_timed(samples),
         }
     }
 }

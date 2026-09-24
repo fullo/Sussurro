@@ -20,6 +20,10 @@ pub enum SttEngine {
     /// NVIDIA Parakeet TDT v3 (ONNX) — CPU-optimized, ~10x faster than
     /// Whisper on CPU, auto-detects 25 European languages.
     Parakeet,
+    /// Qwen3-ASR 1.7B Q8 in the bundled `llama-server` sidecar (#117):
+    /// optional, never the default (#152) — no dictionary prompt, and
+    /// whisper large-v3-turbo is more accurate on Italian (#109).
+    Qwen3Asr,
 }
 
 /// Which chat API the cleanup LLM is driven through.
@@ -448,6 +452,21 @@ mod tests {
         assert_eq!(s.cleanup_profile, "local");
         assert!(s.dictionary.is_empty());
         assert!(!s.autostart);
+        // Qwen3-ASR is optional, never the default (#152).
+        assert_eq!(s.engine, SttEngine::Whisper);
+    }
+
+    #[test]
+    fn engines_serialize_as_the_frontend_names_them() {
+        for (engine, name) in [
+            (SttEngine::Whisper, "whisper"),
+            (SttEngine::Parakeet, "parakeet"),
+            (SttEngine::Qwen3Asr, "qwen3_asr"),
+        ] {
+            let json = serde_json::to_string(&engine).unwrap();
+            assert_eq!(json, format!("\"{name}\""));
+            assert_eq!(serde_json::from_str::<SttEngine>(&json).unwrap(), engine);
+        }
     }
 
     #[test]

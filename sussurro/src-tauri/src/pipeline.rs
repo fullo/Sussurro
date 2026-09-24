@@ -227,6 +227,29 @@ fn load_model(key: &ModelKey) -> anyhow::Result<AnyTranscriber> {
             let dir = models_dir.join(crate::stt::parakeet::PARAKEET_DIR);
             AnyTranscriber::Parakeet(ParakeetTranscriber::load(&dir)?)
         }
+        SttEngine::Qwen3Asr => {
+            if !models::qwen3_asr_exists(models_dir) {
+                anyhow::bail!(
+                    "Qwen3-ASR model not downloaded — open Models and click 'Download model'"
+                );
+            }
+            let app = crate::app_handle();
+            let paths = match &app {
+                Some(app) => crate::stt::sidecar::locate(app),
+                None => crate::stt::sidecar::dev_paths(),
+            }
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "this build has no llama-server sidecar, which Qwen3-ASR needs — pick Whisper or Parakeet (developers: `npm run sidecar`)"
+                )
+            })?;
+            let log = app
+                .and_then(|a| a.path().app_log_dir().ok())
+                .map(|d| d.join("llama-server.log"));
+            let cfg = crate::stt::remote::qwen3_asr_config(&paths, models_dir, log);
+            // Starts the sidecar and waits for its health check (seconds).
+            AnyTranscriber::Remote(crate::stt::remote::RemoteTranscriber::start(cfg)?)
+        }
     })
 }
 
@@ -353,7 +376,7 @@ pub fn unload_transcriber_if_idle(state: &AppState) -> bool {
 /// logic without loading a real model. Lock order (slot → last_used) matches
 /// `ensure_transcriber`, and `last_used` is only read under the slot lock —
 /// no unload can race a load that just refreshed the clock.
-fn unload_if_idle<T>(
+pub(crate) fn unload_if_idle<T>(
     slot: &std::sync::Mutex<Option<T>>,
     last_used: &std::sync::Mutex<Option<std::time::Instant>>,
     threshold: std::time::Duration,

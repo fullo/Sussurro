@@ -68,8 +68,24 @@ with `--config src-tauri/tauri.sidecar.conf.json` (`tauri build`/`tauri dev`)
 the download. The release workflow always merges it and then runs
 `scripts/verify-sidecar-bundle.sh` on every bundle; `test.yml` does the same
 for the Linux `.deb` + AppImage. Per-OS layout and runtime notes are in
-`docs/compile/*.md`; the Rust side only locates it (`stt::sidecar`), the
-lifecycle is #117.
+`docs/compile/*.md`. The Rust side locates it (`stt::sidecar`; debug builds
+also find `npm run sidecar`'s output in `src-tauri/binaries/`, so a plain
+`tauri dev` can use Qwen3-ASR) and runs it (`stt::remote`, #117: spawn on a
+random loopback port, health check, restart with backoff, stop on idle
+unload / engine change / exit, output sanitiser). Its tests run the test
+binary itself as a fake `llama-server`; the real one is an `#[ignore]` test
+that downloads nothing:
+
+```bash
+SUSSURRO_TEST_LLAMA_SERVER=/path/to/llama-server \
+SUSSURRO_TEST_QWEN3_ASR_DIR=/folder/with/Qwen3-ASR-1.7B-Q8_0.gguf+mmproj \
+SUSSURRO_TEST_FLEURS_WAV=/path/to/clip.wav \
+cargo test live_qwen3_asr -- --ignored --nocapture
+```
+
+(`SUSSURRO_TEST_LLAMA_LIBS` when the libraries are not next to the binary,
+e.g. `src-tauri/binaries/llama-server-libs`.) The server log of the app is
+`llama-server.log` in the app's log folder.
 
 **Bumping llama.cpp**: change `release`/`commit`/`version` and every target's
 `asset`/`url`/`sha256`/`size` (the GitHub release lists each asset's

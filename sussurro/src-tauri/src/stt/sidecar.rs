@@ -1,7 +1,7 @@
 //! Where the bundled `llama-server` sidecar lives (plan E9, #116).
 //!
-//! Packaging only: this module finds the files, it never starts them (the
-//! lifecycle is #117). The sidecar is a pinned upstream llama.cpp build
+//! This module finds the files; [`super::remote`] starts and stops them
+//! (#117). The sidecar is a pinned upstream llama.cpp build
 //! (`sidecar/llama-server.lock.json`), fetched and SHA-256-verified by
 //! `npm run sidecar` and merged into bundling builds by
 //! `tauri.sidecar.conf.json`. A build without that config simply has no
@@ -54,12 +54,51 @@ pub fn resolve(exe_dir: &Path, resource_dir: &Path) -> Option<SidecarPaths> {
     (binary.is_file() && lib_dir.is_dir()).then_some(SidecarPaths { binary, lib_dir })
 }
 
-/// The sidecar's paths in the running app, if it was bundled.
+/// The sidecar's paths in the running app: bundled, else (debug builds)
+/// the checkout's `npm run sidecar` output ([`dev_paths`]).
 pub fn locate<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<SidecarPaths> {
+    bundled(app).or_else(dev_paths)
+}
+
+fn bundled<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<SidecarPaths> {
     use tauri::Manager;
     let exe = std::env::current_exe().ok()?;
     let resource_dir = app.path().resource_dir().ok()?;
     resolve(exe.parent()?, &resource_dir)
+}
+
+/// `npm run sidecar`'s output in `src-tauri/binaries/`, still carrying the
+/// target triple: a plain `tauri dev` (without the sidecar `--config`)
+/// then runs Qwen3-ASR too. Debug builds only — a release build never
+/// looks into the source checkout.
+pub fn dev_paths() -> Option<SidecarPaths> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    dev_resolve(&Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries"))
+}
+
+/// The target triple `npm run sidecar` names the host's file after: one
+/// per target in `sidecar/llama-server.lock.json`. Pure.
+pub fn host_triple() -> String {
+    let rest = if cfg!(target_os = "macos") {
+        "apple-darwin"
+    } else if cfg!(windows) {
+        "pc-windows-msvc"
+    } else {
+        "unknown-linux-gnu"
+    };
+    format!("{}-{rest}", std::env::consts::ARCH)
+}
+
+fn dev_resolve(binaries: &Path) -> Option<SidecarPaths> {
+    let binary = binaries.join(format!(
+        "{SIDECAR_NAME}-{}{}",
+        host_triple(),
+        std::env::consts::EXE_SUFFIX
+    ));
+    let lib_dir = binaries.join(LIB_DIR);
+    (binary.is_file() && lib_dir.is_dir()).then_some(SidecarPaths { binary, lib_dir })
 }
 
 /// Whether this build ships the `llama-server` sidecar.
@@ -92,6 +131,43 @@ mod tests {
                 lib_dir: res_dir.join(LIB_DIR),
             })
         );
+    }
+
+    #[test]
+    fn dev_checkout_layout_keeps_the_target_triple() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(dev_resolve(tmp.path()), None);
+        let binary = tmp.path().join(format!(
+            "{SIDECAR_NAME}-{}{}",
+            host_triple(),
+            std::env::consts::EXE_SUFFIX
+        ));
+        fs::write(&binary, b"bin").unwrap();
+        assert_eq!(dev_resolve(tmp.path()), None, "libs missing");
+        fs::create_dir(tmp.path().join(LIB_DIR)).unwrap();
+        assert_eq!(
+            dev_resolve(tmp.path()),
+            Some(SidecarPaths {
+                binary,
+                lib_dir: tmp.path().join(LIB_DIR),
+            })
+        );
+    }
+
+    #[test]
+    fn the_host_triple_is_one_the_lock_file_pins() {
+        let lock: serde_json::Value =
+            serde_json::from_str(include_str!("../../sidecar/llama-server.lock.json")).unwrap();
+        let targets = lock["targets"].as_object().unwrap();
+        // Only the release targets need to match; other hosts (Intel Mac,
+        // ARM Linux) have no sidecar and dev_paths finds nothing.
+        let host = host_triple();
+        let release_host = cfg!(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "linux", target_arch = "x86_64"),
+        ));
+        assert_eq!(targets.contains_key(&host), release_host, "{host}");
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { detectsLanguage, engineLabel } from "../lib/engines";
 import { invoke } from "@tauri-apps/api/core";
 import { TranscriptView, toLines } from "@sussurro/transcript";
 import type { Ctl } from "../hooks/useAppController";
@@ -193,7 +194,7 @@ function OptionsCard({
       </div>
       <p className="sh-note">
         Language and cleanup level apply to these runs only and start from your dictation settings
-        {settings.engine !== "whisper" && " (Parakeet detects the language itself)"}.
+        {detectsLanguage(settings.engine) && ` (${engineLabel(settings.engine)} detects the language itself)`}.
         {differsFromDictation(settings, defaults) && (
           <>
             {" "}
