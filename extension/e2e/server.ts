@@ -65,7 +65,14 @@ function reject(socket: Duplex, status: number) {
   socket.destroy();
 }
 
-export async function startServer(token: string) {
+export interface ServerOptions {
+  /** After the first session's `stop`, keep "finishing" this long (a
+   *  status every 500 ms, as the app does while it works through its
+   *  backlog) before `done`. */
+  finishMs?: number;
+}
+
+export async function startServer(token: string, opts: ServerOptions = {}) {
   const sessions: LiveSession[] = [];
   const items: ItemRequest[] = [];
   const rooms = new Map<string, Set<WebSocket>>();
@@ -141,8 +148,15 @@ export async function startServer(token: string) {
           for (const msg of LIVE_SCRIPT) ws.send(JSON.stringify(msg));
         } else if (m.type === "stop") {
           s.stopped = true;
-          reply({ state: "done", item_id: `e2e-${sessions.length}` });
-          ws.close(1000);
+          const itemId = `e2e-${sessions.indexOf(s) + 1}`;
+          const done = () => {
+            reply({ state: "done", item_id: itemId });
+            ws.close(1000);
+          };
+          const finishMs = sessions[0] === s ? (opts.finishMs ?? 0) : 0;
+          if (!finishMs) return done();
+          reply({ state: "finishing", item_id: itemId, backlog_s: 1, processed_s: 5, queue_len: 1 });
+          setTimeout(() => ws.readyState === ws.OPEN && done(), finishMs);
         } else if (m.type === "ping") {
           reply({ state: s.start ? "recording" : "ready" });
         }

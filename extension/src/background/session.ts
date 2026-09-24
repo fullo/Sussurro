@@ -64,6 +64,14 @@ export function isCapturing(s: Session): boolean {
   return s.phase === "arming" || s.phase === "connecting" || s.phase === "live" || s.phase === "reconnecting";
 }
 
+/** Must the background stay loaded for this session? From Start until the
+ *  app's `done` (including `stopping`, while the app finishes and the
+ *  socket may carry nothing for a while): unloading it would drop the
+ *  WebSocket it owns and the panel's transcript. */
+export function holdsBackground(s: Session): boolean {
+  return isCapturing(s) || s.phase === "checking" || s.phase === "stopping";
+}
+
 export function step(s: Session, ev: SessionEvent, random: () => number = Math.random): { s: Session; effects: Effect[] } {
   const same = { s, effects: [] as Effect[] };
   const to = (patch: Partial<Session>, ...effects: Effect[]) => ({ s: { ...s, ...patch }, effects });

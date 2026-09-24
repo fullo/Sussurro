@@ -9,8 +9,9 @@ app (plan decision E3).
 **Status: preview.** Pairing with the app (#127), capture (#128) and the
 live transcript in the side panel (#129) work; Meet names (#131) are
 implemented and wait for a live check. Capture is
-verified automatically against a local two-peer call (see *Capture
-harness*); real Meet / Teams / Zoom calls are still checked by hand (#184).
+verified automatically against a local two-peer call in Chromium, Firefox
+and Edge (see *Browsers* and *Capture harness*); real Meet / Teams / Zoom
+calls are still checked by hand (#184).
 Build it only to work on it.
 
 ## Pairing
@@ -208,6 +209,54 @@ The app attributes each remote line to the name active for most of it
 **Not done yet**: Meet's live captions as an opt-in name fallback (a
 follow-up); lag numbers and the real hooks come from the live check (#184).
 
+## Browsers (#137)
+
+One Chrome build for the Chromium family (Chrome, Edge, Brave; ≥ 116) and
+one Firefox build (≥ 128). Every feature above works in both; where they
+differ:
+
+| | Chrome / Edge / Brave | Firefox |
+|---|---|---|
+| Panel | `side_panel`, opened by the toolbar button | `sidebar_action`, toggled by the toolbar button |
+| Which tab the panel follows | the window's active tab | the sidebar's window's active tab |
+| Background | service worker | event page (`background.scripts`; MV3 Firefox has no persistent background) |
+| Audio to the background | `ArrayBuffer`s (Chrome ≥ 148 with `message_serialization`), else base64 | `ArrayBuffer`s |
+| Extension CSP | the default | its own: the MV3 default's `upgrade-insecure-requests` breaks `ws://127.0.0.1` (#104) |
+| Host access | granted at install (users can restrict it) | can be withheld per site |
+| Tab-capture fallback | yes (`tabCapture` + offscreen document) | none: not built, never shown |
+
+Identical in both: pairing in `storage.local`, the MAIN-world hook
+(`world: "MAIN"`, Firefox ≥ 128), the Meet name observer
+(`getContributingSources()` exists in both), the recording notice, the
+live lines and the item buttons; without host access to the meeting
+sites, the panel offers **Allow access** in both.
+
+**Staying loaded.** Both browsers unload an idle background after about
+30 s, and the background owns the meeting's WebSocket and the panel's
+transcript. Chrome (≥ 116) counts WebSocket traffic as activity; Firefox
+counts only extension events and API calls — the page's audio messages
+keep it loaded while capturing, but a quiet stretch (the app finishing a
+long backlog after Stop, when the socket may carry nothing for a while)
+would unload it: the socket drops and the panel stays on "Stopping". So
+from Start until the app's `done` the background makes a trivial API call
+(`runtime.getPlatformInfo`) every second (`holdsBackground` in
+`session.ts`); otherwise nothing keeps it loaded. The harness runs Firefox
+with a 2 s idle timeout to prove it (see *Capture harness*).
+
+**Edge** runs the Chrome build unchanged and is in the harness (and CI).
+**Brave** too; its Shields and its *Localhost access* permission (1.54+)
+govern web pages' requests to `127.0.0.1`, while Sussurro's socket and
+requests come from the extension's own background and panel, and the
+harness passes in Brave 1.95 with default Shields. If the options page's
+**Test connection** says the app is not reachable while it runs, check
+`brave://settings/content/localhostAccess` and whether trackers & ads
+blocking is set to *aggressive*, and report it on #184.
+
+**Copy as text** writes the clipboard, which needs the click's user
+activation: the harness checks the export request, but its Firefox clicks
+are scripted (no user activation), so the clipboard itself is a manual
+check there (#184).
+
 ## Layout
 
 | Path | What it is |
@@ -272,28 +321,51 @@ side panel showing the fake app's scripted lines (a correction applied,
 speaker chips, timestamps, the backlog) and reaching `open` / `export`
 (txt, then srt after Stop), a new Start clearing it, the
 `start` message, both channels arriving with their own tone, `seq` from 0
-without gaps, the call unaffected both ways, Stop, and `stop` when the tab
-closes. On a fake Meet page (`e2e/meet.html`, served at `meet.google.com` by
-a route; Chromium configurations only) it checks the Meet name observer:
-CSRC `speaker_active`/`speaker_idle`, bound names, participants without
-the user, healthy observer. Configurations: `chromium` (binary messaging, Meet-like
-`replaceTrack`), `chromium-json` (the manifest key removed: base64, as on
-Chrome < 148) and `firefox` (installed as a temporary add-on and driven
-over the remote debugging protocol, which Playwright lacks for Firefox
-extensions). About 30 s headless.
+without gaps, the call unaffected both ways, Stop (the fake app then
+stays silent for 5 s before `done`, as a busy app can), and `stop` when
+the tab closes; also the not-paired panel, which follows the pairing once
+stored. On a fake Meet page (`e2e/meet.html`, served at
+`https://meet.google.com/` by a Playwright route, so the shipped
+content-script patterns match it) it checks the Meet name observer, in
+every configuration: CSRC `speaker_active`/`speaker_idle`, bound names,
+participants without the user, healthy observer.
+
+Configurations: `chromium` (binary messaging, Meet-like `replaceTrack`),
+`chromium-json` (the manifest key removed: base64, as on Chrome < 148) and
+`firefox` — installed as a temporary add-on and driven over the remote
+debugging protocol (Playwright can't load Firefox extensions), through the
+parent process where no extension page can: Firefox runs with a 2 s
+event-page idle timeout and is told to ignore the harness's own DevTools
+attachment (which would otherwise keep the page loaded), and the checks
+count suspensions (suspended when idle, never from Start to `done`,
+suspended again afterwards); and it opens the **real sidebar** mid-meeting
+(lines so far, follows the window's active tab, closed and reopened, Stop
+pressed there). Only when named: `edge` (the installed Edge, Playwright's
+`msedge` channel; also in CI) and `brave` (the installed Brave, or
+`BRAVE_PATH`), both with the Chrome build. About 90 s headless for the
+default three.
 
 ```bash
 npx playwright install chromium firefox   # once (PLAYWRIGHT_BROWSERS_PATH to choose where)
-npm run build && npm run test:e2e         # or: npm run test:e2e -- firefox
+npm run build && npm run test:e2e         # chromium, chromium-json, firefox
+npm run test:e2e -- firefox edge brave    # a choice
 HEADED=1 npm run test:e2e -- chromium     # watch it
 ```
 
 Temporary profiles go under `$E2E_TMPDIR` (default: the OS temp folder). The
 release workflow attaches both zips to the GitHub release.
 
-`web-ext lint` passes with a few expected warnings. `innerHTML` comes from
-React DOM. `data_collection_permissions` postdates Firefox 128: newer
-Firefox reads it (AMO requires it) and older versions ignore it.
+`web-ext lint` passes with 0 errors and four expected warnings:
+
+- `UNSAFE_VAR_ASSIGNMENT` ×2 (`assets/page-*.js`): React DOM's own
+  `innerHTML` writes for `dangerouslySetInnerHTML`,
+  which our code never uses.
+- `KEY_FIREFOX_UNSUPPORTED_BY_MIN_VERSION`:
+  `data_collection_permissions` postdates Firefox 128 (it came in 140).
+  AMO requires it; Firefox 140+ reads it, 128–139 ignore it. The minimum
+  stays 128 (MAIN-world content scripts, plan decision E4).
+- `KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION`: the same key on
+  Firefox for Android (142). Android is not a target: it has no sidebar.
 
 ## Load it unpacked
 

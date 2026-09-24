@@ -6,18 +6,22 @@
  * capture sends `stop`. The side panel (#129) shows the fake app's live
  * lines with their speaker chips and backlog, and its Open in Sussurro /
  * Copy as text / Create .srt reach the app's item routes. On a fake Meet
- * page (Chromium), the Meet name observer (#131) sends the contributing-
+ * page, the Meet name observer (#131) sends the contributing-
  * source timeline, the bound names, the participants and its health.
  *
- *   npm run build && npm run test:e2e            (all configurations)
- *   npm run test:e2e -- chromium firefox          (a subset)
+ *   npm run build && npm run test:e2e            (chromium, chromium-json, firefox)
+ *   npm run test:e2e -- chromium firefox edge     (a choice)
  *   HEADED=1 npm run test:e2e -- chromium
  *
  * Configurations: `chromium` (structured-clone messaging, Meet-like
  * `replaceTrack`), `chromium-json` (the manifest key removed: base64 over
  * JSON messaging, as on Chrome < 148), `firefox` (a temporary add-on
  * installed over the remote debugging protocol — Playwright can't load
- * Firefox extensions itself; the harness drives its background over RDP).
+ * Firefox extensions itself; the harness drives its background over RDP,
+ * with a short event-page idle timeout, and also opens the real sidebar).
+ * Only when named: `edge` (the installed Microsoft Edge, Playwright's
+ * `msedge` channel) and `brave` (the installed Brave, or BRAVE_PATH), both
+ * with the Chrome build.
  *
  * Needs the Playwright browsers (`npx playwright install chromium firefox`;
  * set PLAYWRIGHT_BROWSERS_PATH to keep them out of the home folder).
@@ -36,13 +40,35 @@ const EXT = fileURLToPath(new URL("..", import.meta.url));
 const TOKEN = "e2e0".repeat(16);
 const GECKO_ID = "sussurro@darumahq.it";
 const FIREFOX_UUID = "5b7f3a52-6c1e-4f0e-9c1a-2d8b3c4e5f60";
+/** Firefox's id for the add-on's sidebar (its widget id + a suffix). */
+const SIDEBAR_ID = "sussurro_darumahq_it-sidebar-action";
+const SIDEBAR_URL = `moz-extension://${FIREFOX_UUID}/sidepanel.html`;
 const headless = !process.env.HEADED;
 const CAPTURE_MS = 6000;
+/** A tab id no tab has. */
+const NO_TAB = 999_999;
+/** Firefox's event-page idle timeout in the harness (default 30 s): short,
+ *  so that everything the extension does while capturing, and while the app
+ *  finishes after Stop (FINISH_MS), outlasts it several times over. */
+const FIREFOX_IDLE_MS = 2000;
+const FINISH_MS = 5000;
 
-type Config = "chromium" | "chromium-json" | "firefox";
+type Config = "chromium" | "chromium-json" | "firefox" | "edge" | "brave";
+/** Run by default (and in CI). `edge` and `brave` (the Chrome build in the
+ *  installed browsers) run only when named. */
 const ALL: Config[] = ["chromium", "chromium-json", "firefox"];
+const EXTRA: Config[] = ["edge", "brave"];
 const wanted = process.argv.slice(2).filter((a) => !a.startsWith("-")) as Config[];
+const unknown = wanted.filter((c) => !ALL.includes(c) && !EXTRA.includes(c));
+if (unknown.length) throw new Error(`unknown configuration(s): ${unknown.join(", ")} (${[...ALL, ...EXTRA].join(", ")})`);
 const configs = wanted.length ? wanted : ALL;
+
+/** Where Brave lives when BRAVE_PATH is not set. */
+const BRAVE_DEFAULT: Partial<Record<NodeJS.Platform, string>> = {
+  darwin: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  linux: "/usr/bin/brave-browser",
+  win32: "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+};
 
 const tmpRoot = mkdtempSync(join(process.env.E2E_TMPDIR ?? tmpdir(), "sussurro-e2e-"));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -113,6 +139,14 @@ function pagePanel(p: Page): Panel {
   };
 }
 
+interface Sidebar extends Panel {
+  hide(): Promise<void>;
+  show(): Promise<void>;
+  /** Make a new blank tab the window's active one (true), or go back to
+   *  the first tab and close it (false). */
+  otherTab(on: boolean): Promise<void>;
+}
+
 interface Launched {
   ctx: BrowserContext;
   /** Store the pairing, as the options page does (#127's keys). */
@@ -121,14 +155,23 @@ interface Launched {
   tabIdOf(part: string): Promise<number>;
   /** The side panel, opened as a tab controlling `tabId`. */
   openPanel(tabId: number): Promise<Panel>;
+  /** Firefox: the real sidebar, in the window of the first tab whose URL
+   *  contains `part`. */
+  openSidebar?(part: string): Promise<Sidebar>;
   micTone: number;
+  /** Firefox: how many times the event page was suspended so far (it
+   *  runs with a short idle timeout, see FIREFOX_IDLE_MS). */
+  suspends?(): Promise<number>;
   close(): Promise<void>;
 }
 
 async function launchChromium(config: Config): Promise<Launched> {
   const ext = testExtension("chrome", config);
   const ctx = await chromium.launchPersistentContext(join(tmpRoot, `profile-${config}`), {
-    channel: "chromium",
+    // Playwright's Chromium; Edge through its `msedge` channel (the
+    // installed Edge); Brave by path. Branded builds ignore --load-extension
+    // unless this feature is switched off.
+    ...(config === "edge" ? { channel: "msedge" } : config === "brave" ? { executablePath: process.env.BRAVE_PATH ?? BRAVE_DEFAULT[process.platform] } : { channel: "chromium" }),
     headless,
     // "Create .srt" downloads a file: keep it in the temp dir.
     downloadsPath: join(tmpRoot, "downloads"),
@@ -139,6 +182,7 @@ async function launchChromium(config: Config): Promise<Launched> {
       "--use-fake-device-for-media-stream",
       `--use-file-for-fake-audio-capture=${toneWav()}`,
       "--autoplay-policy=no-user-gesture-required",
+      ...(config === "edge" || config === "brave" ? ["--disable-features=DisableLoadExtensionCommandLineSwitch"] : []),
     ],
   });
   const sw = ctx.serviceWorkers()[0] ?? (await ctx.waitForEvent("serviceworker", { timeout: 15_000 }));
@@ -191,42 +235,122 @@ async function launchFirefox(config: Config): Promise<Launched> {
       "media.navigator.permission.disabled": true,
       "media.autoplay.default": 0,
       "media.autoplay.block-webaudio": false,
+      "extensions.background.idle.timeout": FIREFOX_IDLE_MS,
       // A fixed internal UUID, so the harness knows the moz-extension:// URL.
       "extensions.webextensions.uuids": JSON.stringify({ [GECKO_ID]: FIREFOX_UUID }),
     },
   });
   const rdpc = await Rdp.connect(rdp);
+  // The parent process (chrome privileges), for two things no extension
+  // document can do. Firefox never suspends an event page while DevTools
+  // are attached to its add-on, and the harness is attached (RDP): make
+  // Firefox ignore that for this add-on, so its idle timeout applies as it
+  // does for users. And count the suspensions.
+  const parent = await rdpc.parentProcessConsole();
+  const chromeJs = (code: string) => rdpc.evaluate(parent, code);
+  await chromeJs(`(() => {
+    const { ExtensionParent } = ChromeUtils.importESModule("resource://gre/modules/ExtensionParent.sys.mjs");
+    const du = ExtensionParent.DebugUtils;
+    const attached = du.hasDevToolsAttached.bind(du);
+    du.hasDevToolsAttached = (id) => id !== ${JSON.stringify(GECKO_ID)} && attached(id);
+    return 0;
+  })()`);
   const id = await rdpc.installTemporaryAddon(ext);
+  const extension = `WebExtensionPolicy.getByID(${JSON.stringify(id)}).extension`;
+  await chromeJs(`(() => {
+    globalThis.__e2eSuspends = 0;
+    ${extension}.on("background-script-suspend", () => { globalThis.__e2eSuspends++; });
+    return 0;
+  })()`);
   const targets = await rdpc.watchAddon(id);
   const target = (part: string): Promise<string> => until(`the ${part} document`, () => [...targets].find(([url]) => url.includes(part))?.[1] ?? "");
-  // Looked up per call: Firefox may suspend and restart the event page.
-  const bg = async (code: string) => rdpc.evaluate(await target("background"), code);
+  /** A panel document scripted over RDP (found per call: the sidebar's
+   *  document goes away when it is closed). */
+  const rdpPanel = (urlEnd: string): Panel => {
+    const js = async (code: string) => rdpc.evaluate(await until(`the ${urlEnd} document`, () => [...targets].find(([url]) => url.endsWith(urlEnd))?.[1] ?? ""), code);
+    const q = (id: string) => `document.querySelector('[data-testid="${id}"]')`;
+    return {
+      async click(id) {
+        await until(`${id} to be clickable`, async () => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true);
+        await js(`${q(id)}.click(); 0`);
+      },
+      status: async (attr) => ((await js(`${q("status")}?.getAttribute("data-${attr}") ?? null`)) as string | null) ?? null,
+      canClick: async (id) => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true,
+      text: async () => String(await js(`document.querySelector("main")?.innerText ?? ""`)),
+      texts: async (selector) => JSON.parse(String(await js(`JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.innerText))`))) as string[],
+    };
+  };
+  // The event page may be suspended (idle) or just restarting: wake it,
+  // then evaluate in its current document.
+  const bg = async (code: string): Promise<unknown> => {
+    for (let attempt = 0; ; attempt++) {
+      await chromeJs(`${extension}.wakeupBackground(); 0`);
+      try {
+        return await rdpc.evaluate(await target("_generated_background_page"), code);
+      } catch (e) {
+        if (attempt >= 20) throw e;
+        await sleep(200);
+      }
+    }
+  };
+  // The value of a promise-valued expression: RDP's evaluation returns at
+  // once, so the result is parked under a key of its own and polled.
+  let parked = 0;
+  const bgAwait = async (expr: string): Promise<unknown> => {
+    const key = `__e2e${++parked}`;
+    await bg(`Promise.resolve().then(() => ${expr}).then((v) => { globalThis.${key} = JSON.stringify({ v: v ?? null }); }, (e) => { globalThis.${key} = JSON.stringify({ e: String(e) }); }); 0`);
+    const r = JSON.parse(String(await until(`the background to answer ${expr}`, () => bg(`globalThis.${key} ?? ""`)))) as { v?: unknown; e?: string };
+    if (r.e !== undefined) throw new Error(`background: ${r.e}`);
+    return r.v;
+  };
   return {
     ctx,
     micTone: 1000,
+    suspends: async () => Number(await chromeJs("globalThis.__e2eSuspends")),
     async pair(port, token) {
       await bg(`browser.storage.local.set(${JSON.stringify({ port, token })}); 0`);
-      await until("the pairing to be stored", async () => (await bg("browser.storage.local.get('token').then(r => globalThis.__e2eToken = r.token); globalThis.__e2eToken")) === token);
+      await until("the pairing to be stored", async () => (await bgAwait("browser.storage.local.get('token').then((r) => r.token)")) === token);
     },
     async tabIdOf(part) {
-      const code = `browser.tabs.query({}).then(ts => globalThis.__e2eTab = (ts.find(t => (t.url || "").includes(${JSON.stringify(part)})) || {}).id); globalThis.__e2eTab`;
-      return (await until("the tab id", async () => (await bg(code)) as number)) as number;
+      const code = `browser.tabs.query({}).then((ts) => (ts.find((t) => (t.url || "").includes(${JSON.stringify(part)})) || {}).id)`;
+      return (await until("the tab id", async () => (await bgAwait(code)) as number)) as number;
     },
     async openPanel(tabId) {
       // Playwright doesn't see moz-extension:// tabs: script the panel over RDP.
       await bg(`browser.tabs.create({ url: browser.runtime.getURL("sidepanel.html?tabId=${tabId}") }); 0`);
-      const c = await target("sidepanel.html");
-      const js = (code: string) => rdpc.evaluate(c, code);
-      const q = (id: string) => `document.querySelector('[data-testid="${id}"]')`;
+      return rdpPanel(`sidepanel.html?tabId=${tabId}`);
+    },
+    async openSidebar(part) {
+      // The real sidebar, as the toolbar button opens it (sidebarAction
+      // .open() needs a user action, so through the browser window), in
+      // the window of that tab. It has no ?tabId=: it follows the window's
+      // active tab, made the page's tab here (Playwright gives each page a
+      // window of its own, where openPanel's tab may be the active one).
+      await chromeJs(`(() => {
+        const has = (t) => t.linkedBrowser.currentURI.spec.includes(${JSON.stringify(part)});
+        const w = [...Services.wm.getEnumerator("navigator:browser")].find((w) => w.gBrowser.tabs.some(has));
+        globalThis.__e2eSidebarWindow = w;
+        globalThis.__e2eSidebarTab = w.gBrowser.tabs.find(has);
+        w.gBrowser.selectedTab = globalThis.__e2eSidebarTab;
+        w.SidebarController.show(${JSON.stringify(SIDEBAR_ID)});
+        return 0;
+      })()`);
+      const sidebar = rdpPanel(SIDEBAR_URL);
+      const w = "globalThis.__e2eSidebarWindow";
       return {
-        async click(id) {
-          await until(`${id} to be clickable`, async () => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true);
-          await js(`${q(id)}.click(); 0`);
+        ...sidebar,
+        async hide() {
+          await chromeJs(`${w}.SidebarController.hide(); 0`);
+          await until("the sidebar to close", () => ![...targets.keys()].some((url) => url.endsWith(SIDEBAR_URL)));
         },
-        status: async (attr) => ((await js(`${q("status")}?.getAttribute("data-${attr}") ?? null`)) as string | null) ?? null,
-        canClick: async (id) => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true,
-        text: async () => String(await js(`document.querySelector("main")?.innerText ?? ""`)),
-        texts: async (selector) => JSON.parse(String(await js(`JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.innerText))`))) as string[],
+        show: async () => void (await chromeJs(`${w}.SidebarController.show(${JSON.stringify(SIDEBAR_ID)}); 0`)),
+        async otherTab(on) {
+          await chromeJs(
+            on
+              ? `(() => { const g = ${w}.gBrowser; g.selectedTab = g.addTab("about:blank", { triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal() }); return 0; })()`
+              : `(() => { const g = ${w}.gBrowser; const extra = g.selectedTab; g.selectedTab = globalThis.__e2eSidebarTab; g.removeTab(extra); return 0; })()`,
+          );
+        },
       };
     },
     async close() {
@@ -249,11 +373,29 @@ async function runConfig(config: Config): Promise<Check[]> {
   const check = (name: string, ok: boolean, detail?: unknown) => {
     checks.push({ name, ok, detail: detail === undefined ? undefined : typeof detail === "string" ? detail : JSON.stringify(detail) });
   };
-  const server = await startServer(TOKEN);
+  const server = await startServer(TOKEN, { finishMs: FINISH_MS });
   const b = config === "firefox" ? await launchFirefox(config) : await launchChromium(config);
   let shownPanel: Panel | null = null;
   try {
+    // Not paired yet: the panel says so, and follows the pairing once it
+    // is stored (storage.local change events).
+    const unpaired = await b.openPanel(NO_TAB);
+    const unpairedText = await until("the not-paired note", async () => ((await unpaired.text()).includes("Not paired") ? await unpaired.text() : ""), 10_000).catch(() => "");
+    check("before pairing, the panel says it is not paired", unpairedText.includes("Not paired with the Sussurro app"), unpairedText);
     await b.pair(server.port, TOKEN);
+    const paired = await until("the panel to see the pairing", async () => {
+      const text = await unpaired.text();
+      return !text.includes("Not paired") && text.includes("Open a Google Meet") ? text : "";
+    }).catch(async () => unpaired.text());
+    check("once paired, the panel drops the note and follows the tab", paired.includes("Open a Google Meet"), paired);
+
+    // 0. Firefox's event page (#137): with nothing going on it is suspended
+    //    after the idle timeout — so the lifetime checks below mean something.
+    if (b.suspends) {
+      const before = await b.suspends();
+      await sleep(FIREFOX_IDLE_MS * 2 + 1000);
+      check("Firefox: the event page is suspended when idle", (await b.suspends()) > before);
+    }
 
     const room = `${config}-${Date.now()}`;
     const base = `http://127.0.0.1:${server.port}/call.html?room=${room}&add=${config === "chromium" ? "replace" : "track"}`;
@@ -285,6 +427,7 @@ async function runConfig(config: Config): Promise<Check[]> {
     // 2. Start → notice → Start recording → live, both channels.
     await panel.click("start");
     await until("the recording notice again", () => panel.canClick("notice-proceed"));
+    const suspendsAtStart = await b.suspends?.();
     await panel.click("notice-proceed");
     await until("phase live", async () => (await phase()) === "live", 15_000);
     const reminder = (await panel.texts("[data-testid=reminder]"))[0] ?? "";
@@ -316,11 +459,40 @@ async function runConfig(config: Config): Promise<Check[]> {
     const copied = await until("Copy as text", () => server.items.find((r) => r.path === "/items/e2e-1/export" && r.format === "txt"), 5000).catch(() => null);
     check("Copy as text → GET /items/{id}/export?format=txt", !!copied, server.items);
 
+    // 2c. Firefox: the real sidebar (#137), opened mid-meeting in the call
+    //     tab's window, shows the meeting so far and follows the window's
+    //     active tab; Stop is pressed there.
+    let stopFrom: Panel = panel;
+    if (b.openSidebar) {
+      const sidebar = await b.openSidebar("role=A");
+      const lines = () => sidebar.texts("[data-testid=transcript] .tx-text");
+      const restored = await until("the lines in the sidebar", async () => ((await lines()).length === 3 ? await lines() : null), 10_000).catch(() => null);
+      check("sidebar: opened mid-meeting, shows the lines so far", JSON.stringify(restored) === JSON.stringify(await panel.texts("[data-testid=transcript] .tx-text")), restored);
+      check("sidebar: live, with the reminder", (await sidebar.status("phase")) === "live" && (await sidebar.texts("[data-testid=reminder]")).length === 1);
+      await sidebar.otherTab(true);
+      const elsewhere = await until("the sidebar to follow the active tab", async () => ((await sidebar.text()).includes("Open a Google Meet") ? await sidebar.text() : ""), 5000).catch(() => "");
+      check("sidebar: follows the window's active tab", elsewhere !== "" && (await lines()).length === 0, elsewhere);
+      await sidebar.otherTab(false);
+      await until("the sidebar back on the call", async () => (await sidebar.status("phase")) === "live" && (await lines()).length === 3, 5000).catch(() => null);
+      await sidebar.hide();
+      await sidebar.show();
+      const reopened = await until("the reopened sidebar", async () => ((await lines()).length === 3 ? await lines() : null), 10_000).catch(() => null);
+      check("sidebar: closed and reopened, the lines are back", !!reopened, reopened);
+      stopFrom = sidebar;
+    }
+
     await sleep(Math.max(0, CAPTURE_MS - (Date.now() - t0)));
     const a = await A.evaluate(() => (window as any).callState());
     const bs = await B.evaluate(() => (window as any).callState());
-    await panel.click("stop");
-    await until("phase done", async () => (await phase()) === "done", 10_000);
+    await stopFrom.click("stop");
+    // The app works through its backlog for FINISH_MS before `done`.
+    const finishing = await until("phase stopping", async () => (await phase()) === "stopping", 5000).catch(() => false);
+    check("Stop → stopping while the app finishes", !!finishing);
+    await until("phase done", async () => (await phase()) === "done", FINISH_MS + 10_000);
+    if (b.suspends) {
+      const n = (await b.suspends()) - (suspendsAtStart ?? 0);
+      check(`Firefox: the event page stays up from Start until the app is done (${FIREFOX_IDLE_MS / 1000} s idle timeout)`, n === 0, `${n} suspension(s)`);
+    }
     await panel.click("action-srt");
     const srt = await until("Create .srt", () => server.items.find((r) => r.path === "/items/e2e-1/export" && r.format === "srt"), 5000).catch(() => null);
     const note = await until("the .srt note", async () => (await panel.texts("[data-testid=action-note]")).find((x) => x.includes(".srt")) ?? "", 5000).catch(() => "");
@@ -370,11 +542,16 @@ async function runConfig(config: Config): Promise<Check[]> {
     await B.close();
 
     // 4. Meet names (#131): a fake Meet page (served at meet.google.com by
-    //    a route) with tiles and faked contributing sources. Chromium only:
-    //    Firefox does not run the temporary add-on's content scripts in a
-    //    page Playwright fulfils from a route (the observer's logic is
-    //    browser-independent and unit tested).
-    if (config !== "firefox") await meetNames();
+    //    a route, so the shipped content-script patterns match it) with
+    //    tiles and faked contributing sources, in every browser.
+    await meetNames();
+
+    // 5. Firefox: the keep-alive lets go once no meeting is on.
+    if (b.suspends) {
+      const before = await b.suspends();
+      await sleep(FIREFOX_IDLE_MS * 2 + 1000);
+      check("Firefox: the event page is suspended again after the meetings", (await b.suspends()) > before);
+    }
   } catch (e) {
     const shown = shownPanel ? await shownPanel.text().catch(() => "") : "";
     check("harness ran", false, `${String(e instanceof Error ? e.stack : e)}\n    side panel: ${shown.replace(/\s+/g, " ")}`);

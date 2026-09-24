@@ -1,5 +1,6 @@
 /* A minimal Firefox remote debugging protocol client for the harness:
- * install a temporary add-on and evaluate code in its background page.
+ * install a temporary add-on, evaluate code in its documents (background
+ * page, extension tabs) and in the parent process.
  * (Playwright can neither load a Firefox extension nor open its
  * moz-extension:// pages.) Packets are `<length>:<json>` over TCP. */
 import net from "node:net";
@@ -103,13 +104,31 @@ export class Rdp {
     // Current Firefox: descriptor → watcher → one target per document.
     const { actor: watcher } = await this.request(addon.actor, "getWatcher", { isServerTargetSwitchingEnabled: true });
     const targets = new Map<string, string>();
+    const urls = new Map<string, string>(); // target actor → URL
     this.listeners.push((p) => {
       if (p.from !== watcher) return;
-      if (p.type === "target-available-form") targets.set(String(p.target.url), p.target.consoleActor);
-      if (p.type === "target-destroyed-form") targets.delete(String(p.target?.url));
+      if (p.type === "target-available-form") {
+        targets.set(String(p.target.url), p.target.consoleActor);
+        urls.set(p.target.actor, String(p.target.url));
+      }
+      // The destroyed form names the actor only (no URL): e.g. an event
+      // page suspended when idle.
+      if (p.type === "target-destroyed-form") {
+        const url = urls.get(p.target?.actor);
+        urls.delete(p.target?.actor);
+        if (url !== undefined && ![...urls.values()].includes(url)) targets.delete(url);
+      }
     });
     await this.request(watcher, "watchTargets", { targetType: "frame" });
     return targets;
+  }
+
+  /** The parent process's console (chrome privileges: needs the
+   *  `devtools.chrome.enabled` pref), for what no add-on document can do. */
+  async parentProcessConsole(): Promise<string> {
+    const { processDescriptor } = await this.request("root", "getProcess", { id: 0 });
+    const { process } = await this.request(processDescriptor.actor, "getTarget");
+    return process.consoleActor;
   }
 
   /** Evaluate `text` in a document of the add-on; returns the result

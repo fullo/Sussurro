@@ -20,7 +20,8 @@
  *   the remote channel when the page shows no remote audio at all;
  * - keeps each tab's live transcript (the app's `segment` / `speaker` /
  *   `status` messages, `shared/live.ts`) for the side panel, which takes a
- *   snapshot and then follows the broadcast changes (#129).
+ *   snapshot and then follows the broadcast changes (#129);
+ * - stays loaded from Start until the app's `done` (keep-alive, #137).
  *
  * Nothing is captured before an explicit Start. */
 import browser, { type Runtime } from "webextension-polyfill";
@@ -32,7 +33,7 @@ import { decodePayload, makeProbe, type TransportMode } from "../shared/transpor
 import type { CaptureSnapshot, FromBackground, PageInfo, PanelBroadcast, PanelRequest, PanelState, ToBackground, ToOffscreen, ToPage } from "../shared/messages";
 import type { Platform } from "../shared/platform";
 import { applyLive, initialTranscript, parseAppMessage, type LiveAction, type LiveTranscript } from "../shared/live";
-import { initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
+import { holdsBackground, initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
 import { SpeakerRelay, sanitizePageSpeaker } from "../shared/speakerEvents";
 
 // ---- toolbar button → panel ----------------------------------------------------
@@ -152,7 +153,10 @@ function dispatch(t: Tab, ev: SessionEvent) {
   // A new Start is a new meeting: the panel starts from a blank page.
   if (ev.type === "start" && s.phase === "checking" && before !== "checking") live(t, { kind: "reset" });
   for (const e of effects) run(t, e);
-  if (s.phase !== before) updateBadge(t);
+  if (s.phase !== before) {
+    updateBadge(t);
+    updateKeepAlive();
+  }
   void broadcastState(t);
   if (t.removed && !isCapturing(s) && s.phase !== "stopping" && s.phase !== "checking") forget(t);
 }
@@ -348,6 +352,31 @@ function forget(t: Tab) {
   closeSocket(t);
   clearTimeout(t.retryTimer);
   tabs.delete(t.tabId);
+  updateKeepAlive();
+}
+
+// ---- staying loaded while a meeting is on ---------------------------------------------
+
+/** Both browsers unload an idle background after ~30 s: Chrome its service
+ *  worker, Firefox its event page (MV3 has no persistent background there).
+ *  What counts as activity differs: Chrome ≥ 116 counts WebSocket traffic,
+ *  Firefox only extension events and API calls — not the socket, so a
+ *  quiet stretch (the app finishing a backlog after Stop, say) would unload
+ *  the page and drop the socket and the panel's transcript. From Start until
+ *  the app's `done`, a trivial API call every second resets the idle timer
+ *  in both (the harness runs Firefox with a 2 s timeout); nothing is kept
+ *  alive otherwise. */
+const KEEP_ALIVE_MS = 1000;
+let keepAliveTimer: ReturnType<typeof setInterval> | undefined;
+
+function updateKeepAlive() {
+  const hold = [...tabs.values()].some((t) => holdsBackground(t.session));
+  if (hold && keepAliveTimer === undefined) {
+    keepAliveTimer = setInterval(() => void browser.runtime.getPlatformInfo().catch(() => {}), KEEP_ALIVE_MS);
+  } else if (!hold && keepAliveTimer !== undefined) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = undefined;
+  }
 }
 
 // ---- the page's port ------------------------------------------------------------------
@@ -492,7 +521,7 @@ function onOffscreenPort(port: Runtime.Port) {
 
 browser.runtime.onConnect.addListener((port) => {
   if (port.name === "capture") onPagePort(port);
-  else if (port.name === "offscreen" && port.sender?.url?.startsWith(browser.runtime.getURL(""))) onOffscreenPort(port);
+  else if (__BROWSER__ === "chrome" && port.name === "offscreen" && port.sender?.url?.startsWith(browser.runtime.getURL(""))) onOffscreenPort(port);
   else port.disconnect();
 });
 

@@ -354,6 +354,9 @@ function Capture({ tabId, pairing }: { tabId: number; pairing: Pairing }) {
   const { t, announce } = useTranscript(tabId);
   const view = panelView(state);
   const cap = state?.capture;
+  // The tab-capture fallback is Chrome's only (Firefox has no tabCapture):
+  // compiled out of the Firefox build.
+  const tabAudio = __BROWSER__ === "chrome" ? state?.tabCapture : "off";
   const capturing = !!state && ["arming", "connecting", "live", "reconnecting"].includes(state.phase);
   const backlog = t && (capturing || state?.phase === "stopping") ? backlogView(t) : null;
   const start = () => (startStep(noticeNeeded) === "ask" ? setAsking(true) : send("panel:start"));
@@ -399,9 +402,9 @@ function Capture({ tabId, pairing }: { tabId: number; pairing: Pairing }) {
       {capturing && cap?.armed && (
         <div className="meters">
           <Meter label="mic" via={cap.mic.via} level={cap.mic.level} />
-          <Meter label="remote" via={state?.tabCapture === "on" ? "tab audio" : cap.remote.via} level={cap.remote.level} />
+          <Meter label="remote" via={tabAudio === "on" ? "tab audio" : cap.remote.via} level={cap.remote.level} />
           {cap.ctxState === "suspended" && <p className="page-note">Click anywhere in the meeting page to let the browser start the audio.</p>}
-          {state?.tabCapture === "failed" && <p className="page-note">Could not capture the tab's audio: the other participants may be missing.</p>}
+          {tabAudio === "failed" && <p className="page-note">Could not capture the tab's audio: the other participants may be missing.</p>}
         </div>
       )}
       {backlog && (
