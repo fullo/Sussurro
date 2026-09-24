@@ -231,6 +231,7 @@ pub fn run() {
             commands::archive_voice_source,
             commands::archive_identify_voices,
             commands::archive_delete,
+            commands::archive_delete_audio,
             commands::archive_reveal,
             commands::archive_rebuild_index,
             commands::people_list,

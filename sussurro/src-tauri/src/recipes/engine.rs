@@ -3,7 +3,9 @@
 //! 1. If the whole transcript fits the model's window (see
 //!    [`chunk::input_budget_chars`]), one call does it.
 //! 2. Otherwise the transcript lines are packed into chunks that fit
-//!    (**map**): each chunk yields notes for the task.
+//!    (**map**): each chunk yields notes for the task. Chunks follow speaker
+//!    turns when the transcript names speakers (#143, see
+//!    [`super::chunk::chunk_turns`]).
 //! 3. **Reduce**: when all notes fit, one last call turns them into the
 //!    result; when they don't, consecutive notes are merged in groups that
 //!    fit, level by level, until they do.
@@ -12,7 +14,7 @@
 //! (or times out) first. The model is behind [`ChatModel`] so the
 //! orchestration is tested with a fake.
 
-use super::chunk::{chunk_lines, input_budget_chars};
+use super::chunk::{chunk_turns, input_budget_chars, InputLine};
 use super::prompt::{
     format_notes, map_messages, merge_messages, messages_chars, reduce_messages, single_messages,
     Context,
@@ -104,8 +106,38 @@ fn truncate_chars(s: &str, max: usize) -> String {
     }
 }
 
+/// Cut notes to at most `max` characters (plus an ellipsis) on whole
+/// lines, so no bullet loses the speaker it starts with (#143); only a
+/// first line longer than `max` is cut inside (it keeps its start, speaker
+/// included).
+fn truncate_notes(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut len = 0;
+    for line in s.lines() {
+        let l = line.chars().count();
+        let sep = usize::from(!out.is_empty());
+        if len + sep + l > max {
+            break;
+        }
+        if sep == 1 {
+            out.push('\n');
+        }
+        out.push_str(line);
+        len += sep + l;
+    }
+    if out.is_empty() {
+        return truncate_chars(s, max);
+    }
+    out.push('…');
+    out
+}
+
 /// Run `recipe` on the formatted transcript `lines` with a model whose
-/// window is `context_tokens`. Returns the cleaned markdown.
+/// window is `context_tokens`. Returns the cleaned markdown. (Plain text
+/// lines; [`run_input`] keeps speaker turns together.)
 pub fn run(
     model: &dyn ChatModel,
     recipe: &Recipe,
@@ -115,6 +147,22 @@ pub fn run(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<String> {
+    let input: Vec<InputLine> = lines.iter().map(|l| InputLine { text: l.clone(), ..Default::default() }).collect();
+    run_input(model, recipe, ctx, &input, context_tokens, cancel, progress)
+}
+
+/// Run `recipe` on the transcript's input lines: as [`run`], with map
+/// chunks cut on speaker turns and every piece keeping its speaker (#143).
+pub fn run_input(
+    model: &dyn ChatModel,
+    recipe: &Recipe,
+    ctx: &Context,
+    input: &[InputLine],
+    context_tokens: u32,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<String> {
+    let lines: Vec<String> = input.iter().map(InputLine::format).collect();
     if recipe.prompt.trim().is_empty() {
         bail!("the recipe “{}” has no prompt — write one in Recipes", recipe.name);
     }
@@ -138,7 +186,7 @@ pub fn run(
     // 2. Map.
     let map_budget =
         input_budget_chars(context_tokens, messages_chars(&map_messages(recipe, ctx, "", 99, 99)));
-    let chunks = chunk_lines(lines, map_budget);
+    let chunks = chunk_turns(input, map_budget);
     let total = chunks.len();
     let mut notes = Vec::with_capacity(total);
     for (i, chunk) in chunks.iter().enumerate() {
@@ -168,7 +216,7 @@ pub fn run(
         if level > MAX_MERGE_LEVELS || notes.len() == 1 {
             // Notes that no merge can shrink enough: cut them to fit.
             let share = (reduce_budget / notes.len()).saturating_sub(16).max(1);
-            notes = notes.iter().map(|n| truncate_chars(n, share)).collect();
+            notes = notes.iter().map(|n| truncate_notes(n, share)).collect();
             continue;
         }
         // Group consecutive notes that fit one merge call together. A group
@@ -177,7 +225,7 @@ pub fn run(
         let half = merge_budget / 2;
         let sized: Vec<String> = notes
             .iter()
-            .map(|n| if n.chars().count() > half { truncate_chars(n, half.saturating_sub(32).max(1)) } else { n.clone() })
+            .map(|n| if n.chars().count() > half { truncate_notes(n, half.saturating_sub(32).max(1)) } else { n.clone() })
             .collect();
         let groups = group_notes(&sized, merge_budget);
         let total = groups.len();
@@ -231,12 +279,18 @@ pub(crate) mod tests {
     use super::*;
     use std::cell::RefCell;
 
+    /// Reply to a merge call, from its user message.
+    pub(crate) type MergeFn = Box<dyn Fn(&str) -> String>;
+
     /// A fake model: records every call and answers by step kind.
     pub(crate) struct FakeModel {
         pub calls: RefCell<Vec<Vec<Value>>>,
         /// Reply for a map call on part N (N = 1-based).
         pub map_reply: Box<dyn Fn(usize) -> String>,
         pub merge_reply: String,
+        /// Reply to a merge call from its user message, when set (else
+        /// `merge_reply`).
+        pub merge_with: Option<MergeFn>,
         pub final_reply: String,
         /// Set the flag after this many calls.
         pub cancel_after: Option<(usize, std::sync::Arc<AtomicBool>)>,
@@ -248,6 +302,7 @@ pub(crate) mod tests {
                 calls: RefCell::new(Vec::new()),
                 map_reply: Box::new(|i| format!("- note {i}")),
                 merge_reply: "- merged".into(),
+                merge_with: None,
                 final_reply: final_reply.into(),
                 cancel_after: None,
             }
@@ -272,6 +327,9 @@ pub(crate) mod tests {
                 return Ok((self.map_reply)(part));
             }
             if u.contains("Merge these notes") {
+                if let Some(f) = &self.merge_with {
+                    return Ok(f(u));
+                }
                 return Ok(self.merge_reply.clone());
             }
             Ok(self.final_reply.clone())
@@ -414,5 +472,124 @@ pub(crate) mod tests {
         for g in &groups {
             assert!(format_notes(g, 1).chars().count() <= 200 || g.len() == 1);
         }
+    }
+
+    // ---- #143: speaker turns and attribution through map-reduce ----
+
+    const SPEAKERS: [&str; 3] = ["Anna Rossi", "Ben", "Voice 1"];
+
+    /// `turns` turns of three lines each, speakers in rotation.
+    fn speaker_input(turns: usize) -> Vec<InputLine> {
+        (0..turns)
+            .flat_map(|t| {
+                (0..3).map(move |k| InputLine {
+                    start_ms: Some(((t * 3 + k) * 1000) as u64),
+                    speaker: Some(SPEAKERS[t % 3].to_string()),
+                    text: format!("turn {t} line {k} {}", "x".repeat(70)),
+                })
+            })
+            .collect()
+    }
+
+    fn speaker_ctx() -> Context {
+        Context {
+            speakers: true,
+            timestamps: true,
+            speaker_names: SPEAKERS.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// The speaker a fake map note attributes point `i.k` to.
+    fn owner(i: usize, k: usize) -> &'static str {
+        SPEAKERS[(i + k) % 3]
+    }
+
+    /// `- [..] Speaker: point i.k` bullets of a message, as (point, speaker).
+    fn attributed(u: &str) -> Vec<(String, String)> {
+        u.lines()
+            .filter_map(|l| l.strip_prefix("- [00:00:00] "))
+            .filter_map(|l| l.split_once(": point "))
+            .map(|(sp, rest)| (rest.split_whitespace().next().unwrap().trim_end_matches('…').to_string(), sp.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn map_chunks_start_on_speaker_turns() {
+        let m = FakeModel::new("final");
+        let input = speaker_input(60);
+        let r = run_input(&m, &recipe(), &speaker_ctx(), &input, 4096, &AtomicBool::new(false), &mut |_| {});
+        assert_eq!(r.unwrap(), "final");
+        let calls = m.calls.borrow().len();
+        let maps: Vec<String> = (0..calls).map(|i| m.user(i)).filter(|u| u.starts_with("This is part ")).collect();
+        assert!(maps.len() > 2);
+        let mut covered = Vec::new();
+        for u in &maps {
+            assert!(u.contains("speaker by speaker"), "map notes are asked per speaker");
+            let body = u.split("\">\n").nth(1).unwrap().trim_end_matches("\n</transcript>");
+            let body: Vec<&str> = body.lines().filter(|l| l.starts_with('[')).collect();
+            assert!(body[0].contains(" line 0 "), "a chunk starts mid-turn: {}", body[0]);
+            covered.extend(body.iter().map(|l| l.to_string()));
+        }
+        let formatted: Vec<String> = input.iter().map(InputLine::format).collect();
+        assert_eq!(covered, formatted, "every line once, in order");
+    }
+
+    #[test]
+    fn merges_and_the_reduce_keep_each_statement_with_its_speaker() {
+        let mut m = FakeModel::new("final");
+        // Verbose attributed notes: 25 bullets per part, so merges are needed.
+        m.map_reply = Box::new(|i| {
+            (0..25)
+                .map(|k| format!("- [00:00:00] {}: point {i}.{k} {}", owner(i, k), "n".repeat(60)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+        // A merge that keeps a few bullets of each part verbatim.
+        m.merge_with = Some(Box::new(|u: &str| {
+            u.split("### Part ")
+                .skip(1)
+                .flat_map(|part| part.lines().filter(|l| l.starts_with("- [")).take(3).map(str::to_string).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }));
+        let input = speaker_input(90);
+        let (tx, mut phases) = (&AtomicBool::new(false), Vec::new());
+        let r = run_input(&m, &recipe(), &speaker_ctx(), &input, 4096, tx, &mut |p| phases.push(p.phase));
+        assert_eq!(r.unwrap(), "final");
+        assert!(phases.contains(&Phase::Merge), "the notes needed merging");
+        let calls = m.calls.borrow().len();
+        let mut checked = 0;
+        for i in 0..calls {
+            let u = m.user(i);
+            if u.starts_with("This is part ") {
+                continue;
+            }
+            if u.contains("Merge these notes") {
+                assert!(u.contains("never combine bullets of different speakers"), "{u}");
+            } else {
+                assert!(u.contains("keep that attribution exactly"), "{u}");
+            }
+            // Every bullet the step reads is whole-headed and still carries
+            // the speaker the map gave it.
+            for (point, sp) in attributed(&u) {
+                let (i, k) = point.split_once('.').unwrap();
+                assert_eq!(sp, owner(i.parse().unwrap(), k.parse().unwrap()), "point {point}");
+                checked += 1;
+            }
+        }
+        assert!(checked > 20, "{checked} attributed bullets checked");
+        let reduce = m.user(calls - 1);
+        assert!(reduce.starts_with("Task:\n") && !attributed(&reduce).is_empty());
+    }
+
+    #[test]
+    fn notes_are_cut_on_whole_lines() {
+        let notes = "- Anna: one\n- Ben: two\n- Voice 1: three";
+        assert_eq!(truncate_notes(notes, 100), notes);
+        assert_eq!(truncate_notes(notes, 22), "- Anna: one\n- Ben: two…");
+        assert_eq!(truncate_notes(notes, 12), "- Anna: one…");
+        // A first line longer than the cut: cut inside, start kept.
+        assert_eq!(truncate_notes(notes, 5), "- Ann…");
     }
 }

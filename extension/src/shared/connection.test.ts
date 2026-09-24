@@ -21,6 +21,12 @@ describe("classifyResponse", () => {
     });
   });
 
+  it("reads the app's subtitles setting (#129), ignoring unknown values", () => {
+    expect(classifyResponse(200, { app: "0.9.0", protocol: PROTOCOL_VERSION, subtitles: "on_request" })).toMatchObject({ kind: "ok", subtitles: "on_request" });
+    expect(classifyResponse(200, { app: "0.9.0", protocol: PROTOCOL_VERSION, subtitles: "always" })).toMatchObject({ kind: "ok", subtitles: "always" });
+    expect(classifyResponse(200, { app: "0.9.0", protocol: PROTOCOL_VERSION, subtitles: "sometimes" })).not.toHaveProperty("subtitles");
+  });
+
   it("refuses another protocol", () => {
     expect(classifyResponse(200, { app: "1.2.0", protocol: PROTOCOL_VERSION + 1 })).toEqual({
       kind: "protocol_mismatch",

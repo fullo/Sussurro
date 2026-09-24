@@ -1,0 +1,32 @@
+# Synthetic corpus (#143): Italian weekly stand-up, two named speakers from
+# Meet and one voice nobody identified. Paolo is a participant who never
+# speaks under his name. Invented people and addresses.
+type: meeting
+title: Stand-up settimanale — rilascio 0.7
+date: 2026-09-21T09:30:00+02:00
+language: it
+participant: Marco Bianchi <marco.bianchi@example.com>
+participant: Giulia Verdi <giulia.verdi@example.com>
+participant: Paolo Neri <paolo.neri@example.org>
+speaker: meet:marco = Marco Bianchi
+speaker: meet:giulia = Giulia Verdi
+speaker: voice:1 = Voice 1
+---
+00:00:03 meet:marco | Buongiorno a tutti, partiamo. Oggi abbiamo tre punti: lo stato del rilascio 0.7, la demo per il cliente e il fornitore delle traduzioni.
+00:00:15 meet:marco | Sul rilascio: i test su Windows sono verdi, su Linux abbiamo ancora il problema degli appunti su Wayland.
+00:00:27 meet:giulia | Su Wayland ho trovato la causa, manca wl-copy nell'immagine di test. Lo aggiungo oggi stesso.
+00:00:38 meet:giulia | Se passa, possiamo chiudere la milestone entro mercoledì.
+00:00:46 voice:1 | Io però non rilascerei prima di aver sentito il cliente sulla demo, rischiamo di dover rifare metà dell'interfaccia.
+00:00:58 meet:marco | Hai ragione. Allora decidiamo così: rimandiamo il rilascio alla 0.7.1 e usciamo dopo la demo.
+00:01:06 meet:giulia | Per me va bene.
+00:01:09 voice:1 | Anche per me.
+00:01:14 meet:marco | Secondo punto, la demo. Giulia, te ne occupi tu?
+00:01:18 meet:giulia | Sì, preparo la demo con i dati finti e la mando a tutti entro giovedì.
+00:01:27 meet:marco | Perfetto. Io aggiorno il budget del progetto entro fine mese, con le ore della demo.
+00:01:36 voice:1 | Terzo punto, il fornitore delle traduzioni: il preventivo è scaduto la settimana scorsa.
+00:01:44 voice:1 | Lo contatto io domani per rinnovarlo, e chiedo anche lo sconto per il volume.
+00:01:52 meet:giulia | Chiedi anche se possono coprire il tedesco, due clienti ce l'hanno chiesto.
+00:01:59 voice:1 | Va bene, lo aggiungo alla richiesta.
+00:02:04 meet:marco | Rimane aperta la questione della documentazione in inglese: chi la rivede? Ne parliamo la prossima settimana.
+00:02:13 meet:giulia | Segno la domanda nel documento condiviso.
+00:02:17 meet:marco | Bene, abbiamo finito. Grazie a tutti, a lunedì.

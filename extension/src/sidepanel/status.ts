@@ -1,6 +1,6 @@
-/* What the side panel says and allows for a tab's state. Pure — unit
- * tested. (#128 ships the capture controls; the live transcript, speaker
- * chips and "Open in Sussurro" come with #129.) */
+/* What the side panel says and allows for a tab's state (#128). Pure —
+ * unit tested. The live transcript and the item buttons (#129) are in
+ * shared/live.ts and actions.ts. */
 import type { PanelState } from "../shared/messages";
 import { problemText } from "../shared/appcheck";
 

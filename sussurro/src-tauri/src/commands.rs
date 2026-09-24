@@ -477,7 +477,9 @@ pub struct EngineResult {
 /// `language` / `cleanup_level`: this run only (#157); omitted = the
 /// dictation settings, which are never modified. `identify_voices`: label
 /// a transcription's voices "Voice N" (P11, #134; off when omitted,
-/// ignored for notes).
+/// ignored for notes). `save_audio`: keep the decoded 16 kHz audio as
+/// `audio.wav` in the item folder (P9, #141; omitted = the per-app default).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn transcribe_file(
     app: AppHandle,
@@ -487,6 +489,7 @@ pub async fn transcribe_file(
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
     identify_voices: Option<bool>,
+    save_audio: Option<bool>,
 ) -> Result<EngineResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let r = crate::engine::session::transcribe_file(
@@ -498,6 +501,7 @@ pub async fn transcribe_file(
                 language,
                 cleanup_level,
                 identify_voices: identify_voices.unwrap_or(false),
+                save_audio,
             },
         )
         .map_err(|e| format!("{e:#}"))?;
@@ -519,7 +523,9 @@ pub async fn transcribe_file(
 /// Returns the session id; the item arrives as `engine-done` after
 /// `engine_stop_mic`. `defer`: transcribe only after the stop, for slow
 /// machines. `language` / `cleanup_level`: this run only (#157); omitted =
-/// the dictation settings, which are never modified.
+/// the dictation settings, which are never modified. `save_audio`: keep the
+/// recording as `audio.wav` in the item folder (P9, #141; omitted = the
+/// per-app default).
 #[tauri::command]
 pub fn engine_start_mic(
     app: AppHandle,
@@ -528,6 +534,7 @@ pub fn engine_start_mic(
     defer: Option<bool>,
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
+    save_audio: Option<bool>,
 ) -> Result<u64, String> {
     crate::engine::session::start_mic(
         &app,
@@ -537,6 +544,7 @@ pub fn engine_start_mic(
         crate::engine::session::RunOptions {
             language,
             cleanup_level,
+            save_audio,
             ..Default::default()
         },
     )
@@ -560,6 +568,7 @@ pub async fn engine_start_system(
     defer: Option<bool>,
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
+    save_audio: Option<bool>,
 ) -> Result<u64, String> {
     // Off the main thread: it enumerates the audio devices first.
     tauri::async_runtime::spawn_blocking(move || {
@@ -572,6 +581,8 @@ pub async fn engine_start_system(
             crate::engine::session::RunOptions {
                 language,
                 cleanup_level,
+                // `audio-mic.wav` + `audio-system.wav` (#141).
+                save_audio,
                 ..Default::default()
             },
         )
@@ -599,7 +610,9 @@ pub fn engine_stop_system(state: State<'_, AppState>) -> Result<u64, String> {
 /// or the local network (refused by default). An invalid link, a missing
 /// yt-dlp or an unwritable archive fail here, before any download.
 /// `identify_voices`: label the voices "Voice N" (P11, #134; off when
-/// omitted).
+/// omitted). `save_audio`: keep the downloaded audio, decoded to 16 kHz, as
+/// `audio.wav` in the item folder (P9, #141; omitted = the per-app default).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn engine_start_link(
     app: AppHandle,
@@ -609,6 +622,7 @@ pub fn engine_start_link(
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
     identify_voices: Option<bool>,
+    save_audio: Option<bool>,
 ) -> Result<u64, String> {
     crate::engine::session::start_link(
         &app,
@@ -619,6 +633,7 @@ pub fn engine_start_link(
             language,
             cleanup_level,
             identify_voices: identify_voices.unwrap_or(false),
+            save_audio,
         },
     )
     .map_err(|e| format!("{e:#}"))
@@ -1341,6 +1356,23 @@ pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<()
     .await
 }
 
+/// "Delete audio, keep transcript" (#141): the item's saved audio goes to
+/// the OS trash (never a hard delete) and the frontmatter stops listing it;
+/// the transcript and everything else stay. Returns the updated item.
+/// Refused for an item a capture session is writing.
+#[tauri::command]
+pub async fn archive_delete_audio(state: State<'_, AppState>, id: String) -> Result<Item, String> {
+    let (dir, db) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
+    blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        archive::audio::delete_audio(&dir, &id)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        Ok(archive::read_item(&dir, &id)?.without_embeddings())
+    })
+    .await
+}
+
 /// Open the item's folder in the OS file manager — or, without an id, the
 /// archive folder itself (created if missing, so the empty Library can show
 /// the user where items will go).
@@ -1598,9 +1630,15 @@ fn run_recipe_of(
     }
 }
 
+/// The per-run options a run command received (#143).
+fn run_options(include_emails: Option<bool>) -> recipes::run::RunOptions {
+    recipes::run::RunOptions { include_emails: include_emails.unwrap_or(false) }
+}
+
 /// What a run on an external profile would send, and where (#122): the
-/// confirmation dialog shows it. Reads the item, sends nothing, issues no
-/// confirmation.
+/// confirmation dialog shows it — with the speakers and whether
+/// participant emails go along (`include_emails`, off by default, #143).
+/// Reads the item, sends nothing, issues no confirmation.
 #[tauri::command]
 pub async fn external_run_preview(
     state: State<'_, AppState>,
@@ -1608,12 +1646,14 @@ pub async fn external_run_preview(
     recipe_id: Option<String>,
     question: Option<String>,
     profile_id: String,
+    include_emails: Option<bool>,
 ) -> Result<recipes::run::ExternalRunPreview, String> {
     let settings = state.settings.lock().unwrap().clone();
     let (recipe, question) = run_recipe_of(&settings, recipe_id.as_deref(), question.as_deref())?;
     let profile = recipe_profile(&settings, Some(&profile_id))?;
     let (archive, _) = archive_paths(&state)?;
-    blocking(move || recipes::run::preview(&archive, &id, &recipe, question.as_deref(), &profile)).await
+    let opts = run_options(include_emails);
+    blocking(move || recipes::run::preview_with(&archive, &id, &recipe, question.as_deref(), &profile, &opts)).await
 }
 
 /// `prepare_external_run` result.
@@ -1627,7 +1667,8 @@ pub struct ExternalRunConsent {
 /// The user confirmed a run on an external profile in the dialog (#122):
 /// issue the one-time token that run needs. It is bound to this item, this
 /// recipe or question, and the profile's current server and model; it
-/// works once, within [`crate::llm::consent::CONSENT_TTL`].
+/// works once, within [`crate::llm::consent::CONSENT_TTL`], and only for
+/// the same choice of participant emails (`include_emails`, #143).
 #[tauri::command]
 pub fn prepare_external_run(
     state: State<'_, AppState>,
@@ -1635,6 +1676,7 @@ pub fn prepare_external_run(
     recipe_id: Option<String>,
     question: Option<String>,
     profile_id: String,
+    include_emails: Option<bool>,
 ) -> Result<ExternalRunConsent, String> {
     let settings = state.settings.lock().unwrap().clone();
     let (recipe, _) = run_recipe_of(&settings, recipe_id.as_deref(), question.as_deref())?;
@@ -1643,7 +1685,8 @@ pub fn prepare_external_run(
         return Err(format!("“{}” is a local profile: its runs need no confirmation", profile.name));
     }
     archive::paths::validate_item_id(&id).map_err(|e| format!("{e:#}"))?;
-    let target = crate::llm::consent::RunTarget::new(&id, &recipe, &profile);
+    let target = crate::llm::consent::RunTarget::new(&id, &recipe, &profile)
+        .with_emails(run_options(include_emails).include_emails);
     Ok(ExternalRunConsent {
         token: state.consents.issue(target),
         expires_in_secs: crate::llm::consent::CONSENT_TTL.as_secs(),
@@ -1659,7 +1702,8 @@ pub fn prepare_external_run(
 /// `recipe-progress` and the end as `recipe-finished`, whose payload this
 /// also returns (with `error` / `cancelled` set when it did not complete).
 /// An answer recipe's result is kept in memory for `recipe_save_answer`
-/// (`answer_id`).
+/// (`answer_id`). Participants go by name only unless `include_emails`
+/// (this run only, #143).
 #[tauri::command]
 pub async fn recipe_run(
     app: AppHandle,
@@ -1668,11 +1712,12 @@ pub async fn recipe_run(
     recipe_id: String,
     profile_id: Option<String>,
     consent: Option<String>,
+    include_emails: Option<bool>,
 ) -> Result<RecipeFinished, String> {
     let settings = state.settings.lock().unwrap().clone();
     let (recipe, _) = run_recipe_of(&settings, Some(&recipe_id), None)?;
     let profile = recipe_profile(&settings, profile_id.as_deref())?;
-    run_recipe(app, &state, id, recipe, None, profile, consent).await
+    run_recipe(app, &state, id, recipe, None, profile, consent, run_options(include_emails)).await
 }
 
 /// Ask a free question about an archive item (the Ask panel, #121): a
@@ -1688,11 +1733,12 @@ pub async fn recipe_ask(
     question: String,
     profile_id: Option<String>,
     consent: Option<String>,
+    include_emails: Option<bool>,
 ) -> Result<RecipeFinished, String> {
     let settings = state.settings.lock().unwrap().clone();
     let (recipe, question) = run_recipe_of(&settings, None, Some(&question))?;
     let profile = recipe_profile(&settings, profile_id.as_deref())?;
-    run_recipe(app, &state, id, recipe, question, profile, consent).await
+    run_recipe(app, &state, id, recipe, question, profile, consent, run_options(include_emails)).await
 }
 
 /// The confirmation a run needs (#122): none on a local profile; on an
@@ -1704,9 +1750,10 @@ fn consent_for(
     recipe: &Recipe,
     profile: &crate::llm::LlmProfile,
     token: Option<&str>,
+    opts: &recipes::run::RunOptions,
 ) -> Result<Option<crate::llm::consent::ConsentGrant>, String> {
     use crate::llm::consent::{authorize, RunTarget};
-    let target = RunTarget::new(id, recipe, profile);
+    let target = RunTarget::new(id, recipe, profile).with_emails(opts.include_emails);
     let grant = match (profile.external, token) {
         (true, Some(t)) => Some(consents.consume(t, &target).map_err(|e| format!("{e:#}"))?),
         _ => None,
@@ -1715,6 +1762,7 @@ fn consent_for(
     Ok(grant)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_recipe(
     app: AppHandle,
     state: &State<'_, AppState>,
@@ -1723,11 +1771,12 @@ async fn run_recipe(
     question: Option<String>,
     profile: crate::llm::LlmProfile,
     consent: Option<String>,
+    opts: recipes::run::RunOptions,
 ) -> Result<RecipeFinished, String> {
     use tauri::{Emitter, Manager};
     let (archive, db) = archive_paths(state)?;
     recipes::run::check_profile(&profile).map_err(|e| format!("{e:#}"))?;
-    let grant = consent_for(&state.consents, &id, &recipe, &profile, consent.as_deref())?;
+    let grant = consent_for(&state.consents, &id, &recipe, &profile, consent.as_deref(), &opts)?;
     {
         let journal = crate::engine::session::journal_path(state);
         let (archive, id) = (archive.clone(), id.clone());
@@ -1752,7 +1801,7 @@ async fn run_recipe(
         let _end = End(&state.recipe_runs, &item_id);
         let now = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
         let model = recipes::run::ProfileModel { profile: p.clone() };
-        let result = recipes::run::run_on_item(
+        let result = recipes::run::run_on_item_with(
             &archive,
             &item_id,
             &r,
@@ -1774,6 +1823,7 @@ async fn run_recipe(
                     },
                 );
             },
+            &opts,
         );
         if result.as_ref().is_ok_and(|o| o.file.is_some()) {
             // Keep the index in step with the item folder.
@@ -1948,15 +1998,25 @@ mod recipe_tests {
         let store = ConsentStore::default();
         let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
         let recipe = recipes::builtin_recipes().remove(1);
-        let err = consent_for(&store, "2026/09/a", &recipe, &work, None).unwrap_err();
+        let names = run_options(None);
+        let err = consent_for(&store, "2026/09/a", &recipe, &work, None, &names).unwrap_err();
         assert!(err.contains("Confirm the run first"), "{err}");
         let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work));
-        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token)).unwrap().is_some());
-        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token)).is_err(), "single use");
+        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &names).unwrap().is_some());
+        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &names).is_err(), "single use");
         let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work));
-        assert!(consent_for(&store, "2026/09/b", &recipe, &work, Some(&token)).is_err(), "bound to the item");
+        assert!(consent_for(&store, "2026/09/b", &recipe, &work, Some(&token), &names).is_err(), "bound to the item");
         let local = LlmProfile::default();
-        assert!(consent_for(&store, "2026/09/a", &recipe, &local, None).unwrap().is_none());
+        assert!(consent_for(&store, "2026/09/a", &recipe, &local, None, &names).unwrap().is_none());
+        // #143: a confirmation for names only doesn't send emails, and back.
+        let emails = run_options(Some(true));
+        assert!(emails.include_emails && !names.include_emails);
+        let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work));
+        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &emails).is_err());
+        let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work).with_emails(true));
+        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &emails).unwrap().is_some());
+        // A local profile needs no confirmation either way.
+        assert!(consent_for(&store, "2026/09/a", &recipe, &local, None, &emails).unwrap().is_none());
     }
 }
 

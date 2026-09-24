@@ -11,7 +11,7 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
 import { DATE_BUCKETS, localToday, type DateBucket, type Facets, type FacetValue } from "../lib/facets";
-import type { CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Person, Recipe, Segment, Settings } from "../lib/types";
+import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Person, Recipe, Segment, Settings } from "../lib/types";
 
 const params = new URLSearchParams(window.location.search);
 
@@ -67,6 +67,7 @@ const settings: Settings = {
   meetings_enabled: params.get("meetings") !== "off",
   subtitles: "on_request",
   extension_token: "",
+  save_audio: false,
 };
 
 /** A fake pairing token (#126): 64 hex characters, like the backend's. */
@@ -91,7 +92,16 @@ interface Stored {
   /** The original file of a transcription, as `source-files.json` knows it
    *  (#134): absent = not recorded (made before #134, or a link). */
   sourceFile?: "available" | "missing" | "changed";
+  /** Saved audio in the item folder (#141). */
+  audio?: AudioFile[];
 }
+
+/** A run's saved audio (#141): 16 kHz 16-bit mono, 32 000 bytes/s. */
+const mockAudio = (seconds: number, names = ["audio.wav"]): AudioFile[] =>
+  names.map((name) => ({ name, bytes: 44 + Math.round(seconds) * 32_000 }));
+
+/** Whether a run saves its audio: New's choice, else the per-app default. */
+const runSavesAudio = (a: Args): boolean => (a.saveAudio as boolean | undefined) ?? !!settings.save_audio;
 
 const VOICE_COLORS = ["#0f766e", "#7e22ce", "#1f6feb", "#c2410c", "#be185d", "#4d7c0f", "#0369a1", "#9a3412"];
 const voice = (n: number): DocSpeaker => ({ id: `voice:${n}`, label: `Voice ${n}`, color: VOICE_COLORS[(n - 1) % VOICE_COLORS.length] });
@@ -181,6 +191,8 @@ let items: Stored[] = params.get("empty")
         ], 21000),
         // Its file is still on disk: the speaker panel offers "Identify voices".
         sourceFile: "available",
+        // Saved with "Save audio" on (#141): the audio bar and Library marker.
+        audio: mockAudio(48 * 60 + 10),
       },
       {
         id: "2026/09/call-con-studio-verdi",
@@ -291,6 +303,8 @@ function toItem(s: Stored): Item {
     interrupted: !!s.interrupted,
     external_hosts: hostsOf(s.id),
     embedded_segments: s.voiceOf ? Object.keys(s.voiceOf).length : 0,
+    audio: (s.audio ?? []).map((f) => ({ ...f })),
+    folder_bytes: 4_096 + body.length + (s.audio ?? []).reduce((n, f) => n + f.bytes, 0),
   };
 }
 
@@ -302,6 +316,7 @@ function toSummary(s: Stored, snippet?: string): ItemSummary {
     recording: !!s.recording,
     interrupted: !!s.interrupted,
     external_hosts: hostsOf(s.id),
+    audio_bytes: (s.audio ?? []).reduce((n, f) => n + f.bytes, 0),
     ...(snippet ? { snippet } : {}),
   };
 }
@@ -422,7 +437,7 @@ function facetSearch(query: string, f: MockFilters): { items: ItemSummary[]; fac
 let nextSession = 1;
 /** The live capture: a mic session, or System audio + mic (#139) when
  *  `system` names the loopback device. */
-let mic: { id: number; itemId: string; timer: number; n: number; started: number; system?: string } | null = null;
+let mic: { id: number; itemId: string; timer: number; n: number; started: number; system?: string; saveAudio?: boolean } | null = null;
 const SYSTEM_DEVICES = {
   default_input: "MacBook Pro Microphone",
   devices: [
@@ -469,11 +484,11 @@ function runLanguage(a: Args): string {
   return (a.language as string | null) || settings.language;
 }
 
-function startMic(title: string | null, language: string): number {
+function startMic(title: string | null, language: string, saveAudio = false): number {
   const id = nextSession++;
   const itemId = `2026/09/${new Date().toISOString().slice(0, 10)}-untitled`;
   items.push({ id: itemId, meta: meta(title || "Untitled", "note", new Date().toISOString(), "", "mic", { language }), segments: [], recording: true });
-  mic = { id, itemId, n: 0, started: Date.now(), timer: window.setInterval(micTick, 2500) };
+  mic = { id, itemId, n: 0, started: Date.now(), timer: window.setInterval(micTick, 2500), saveAudio };
   setTimeout(() => ev("engine-started", { session_id: id, item_id: itemId, item_type: "note", title: title ?? "", source: "mic" }), 50);
   return id;
 }
@@ -501,7 +516,7 @@ function startSystem(a: Args, language: string): number {
     ],
     recording: true,
   });
-  mic = { id, itemId, n: 0, started: Date.now(), timer: window.setInterval(micTick, 2500), system: device };
+  mic = { id, itemId, n: 0, started: Date.now(), timer: window.setInterval(micTick, 2500), system: device, saveAudio: runSavesAudio(a) };
   setTimeout(() => ev("engine-started", { session_id: id, item_id: itemId, item_type: "meeting", title: title ?? "", source: "system" }), 50);
   return id;
 }
@@ -519,6 +534,7 @@ function stopMic(system = false): number {
     s.meta.title = title;
     s.id = m.itemId.replace("untitled", m.system ? "riunione-audio-di-sistema" : "nota-dal-microfono");
     s.meta.duration = `00:00:${String(Math.round((Date.now() - m.started) / 1000) % 60).padStart(2, "0")}`;
+    if (m.saveAudio) s.audio = mockAudio((Date.now() - m.started) / 1000, m.system ? ["audio-mic.wav", "audio-system.wav"] : undefined);
     ev("engine-done", { session_id: m.id, item_id: s.id, item_type: s.meta.type, title, text: "", segments: s.segments.length, duration_s: (Date.now() - m.started) / 1000 });
   }, 1200);
   return m.id;
@@ -545,7 +561,14 @@ function cancel(id: number): boolean {
 
 let fileRun: { id: number; cancelled: boolean } | null = null;
 
-async function transcribeFile(path: string, itemType: "note" | "transcription", title: string | null, language: string, identify: boolean) {
+async function transcribeFile(
+  path: string,
+  itemType: "note" | "transcription",
+  title: string | null,
+  language: string,
+  identify: boolean,
+  saveAudio = false,
+) {
   // Notes never get voices (P10), whatever the toggle said (#134).
   const voices = identify && itemType === "transcription";
   const id = nextSession++;
@@ -572,6 +595,7 @@ async function transcribeFile(path: string, itemType: "note" | "transcription", 
   const s = find(itemId)!;
   s.recording = false;
   s.meta.duration = "00:03:12";
+  if (saveAudio) s.audio = mockAudio(total);
   if (voices) labelVoices(s);
   // A transcription's file path is remembered on this machine (#134).
   if (itemType === "transcription") s.sourceFile = "available";
@@ -607,7 +631,7 @@ function linkInspect(input: string) {
 
 let linkRun: { id: number; cancelled: boolean; label: string } | null = null;
 
-function startLink(url: string, title: string | null, language: string, identify: boolean): number {
+function startLink(url: string, title: string | null, language: string, identify: boolean, saveAudio = false): number {
   if (linkRun) throw "a link is already being transcribed";
   const info = linkInspect(url);
   if (info.error) throw info.error;
@@ -647,6 +671,7 @@ function startLink(url: string, title: string | null, language: string, identify
     const s = find(itemId)!;
     s.recording = false;
     s.meta.duration = "00:02:24";
+    if (saveAudio) s.audio = mockAudio(144);
     if (identify) labelVoices(s);
     linkRun = null;
     ev("engine-done", { session_id: id, item_id: itemId, item_type: "transcription", title: name, text: "", segments: 6, duration_s: 144 });
@@ -671,7 +696,21 @@ const BUILTIN_RECIPES: Recipe[] = [
   { id: "summary", name: "Summary", prompt: "Summarise the transcript in markdown: a short paragraph with the gist, then the key points as a bullet list.", target: "companion_document", builtin: true },
   { id: "action-items", name: "Action items", prompt: "List every action item in the transcript as a markdown task list (`- [ ] …`), with owner and deadline when said.", target: "companion_document", builtin: true },
   { id: "decisions", name: "Decisions", prompt: "List the decisions taken in the transcript as a markdown bullet list, each with its reason.", target: "companion_document", builtin: true },
+  // #143: only where the transcript names its speakers.
+  { id: "meeting-minutes", name: "Meeting minutes", prompt: "Write the minutes of this meeting: Attendees, Agenda, Discussion, Decisions (who decided), Action items as a table Action | Owner | Due.", target: "companion_document", builtin: true, speakers_only: true },
+  { id: "who-said-what", name: "Who said what", prompt: "For each speaker, a ## heading with their name, then what they said, with timestamps.", target: "companion_document", builtin: true, speakers_only: true },
 ];
+
+/** Speaker labels the item's lines carry (#143), in order. */
+function mockSpeakers(item: Stored): string[] {
+  if (item.meta.type === "note") return [];
+  const out: string[] = [];
+  for (const seg of item.segments) {
+    const label = (item.speakers ?? []).find((x) => x.id === seg.speaker_id)?.label.trim();
+    if (label && seg.text.trim() && !out.includes(label)) out.push(label);
+  }
+  return out;
+}
 
 const allRecipes = (): Recipe[] => [...BUILTIN_RECIPES, ...settings.recipes];
 
@@ -759,8 +798,8 @@ function hostOf(p: LlmProfile): string {
 const consents: Record<string, { key: string; at: number }> = {};
 let nextConsent = 1;
 
-function consentKey(id: string, r: Recipe, question: string | null, p: LlmProfile): string {
-  return [id, r.id, question ?? "", p.id, hostOf(p), p.model].join("\u0000");
+function consentKey(id: string, r: Recipe, question: string | null, p: LlmProfile, emails = false): string {
+  return [id, r.id, question ?? "", p.id, hostOf(p), p.model, emails ? "emails" : "names"].join("\u0000");
 }
 
 function resolveRun(a: Args): { item: Stored; recipe: Recipe; question: string | null; profile: LlmProfile } {
@@ -778,7 +817,13 @@ function resolveRun(a: Args): { item: Stored; recipe: Recipe; question: string |
 function preview(a: Args) {
   const { item, recipe, question, profile } = resolveRun(a);
   const chars = item.segments.reduce((n, s) => n + s.text.length + 12, 0) + recipe.prompt.length;
+  const people = item.meta.participants.filter((x) => x.name.trim());
+  const emails = people.filter((x) => (x.email ?? "").trim()).length;
   return {
+    speakers: mockSpeakers(item),
+    participants: people.length,
+    emails_available: emails,
+    emails_sent: a.includeEmails ? emails : 0,
     item_id: item.id,
     item_title: item.meta.title,
     recipe_id: recipe.id,
@@ -799,7 +844,7 @@ function prepare(a: Args) {
   const { item, recipe, question, profile } = resolveRun(a);
   if (!profile.external) throw `“${profile.name}” is a local profile: its runs need no confirmation`;
   const token = `mock-consent-${nextConsent++}`;
-  consents[token] = { key: consentKey(item.id, recipe, question, profile), at: Date.now() };
+  consents[token] = { key: consentKey(item.id, recipe, question, profile, !!a.includeEmails), at: Date.now() };
   return { token, expires_in_secs: 120 };
 }
 
@@ -878,7 +923,7 @@ function saveAnswer(id: string, answerId: number): string {
 
 const QUESTION: Recipe = { id: "question", name: "Question", prompt: "", target: "answer", builtin: true };
 
-async function runRecipe(id: string, recipeId: string, profileId: string | null, question: string | null = null, consent: unknown = null) {
+async function runRecipe(id: string, recipeId: string, profileId: string | null, question: string | null = null, consent: unknown = null, includeEmails = false) {
   const item = find(id);
   if (!item) throw `no archive item '${id}'`;
   const r = question !== null ? QUESTION : allRecipes().find((x) => x.id === recipeId);
@@ -890,8 +935,10 @@ async function runRecipe(id: string, recipeId: string, profileId: string | null,
   // No profile named: a local one, never an external fallback (#122).
   const p = settings.llm_profiles.find((x) => x.id === profileId) ?? settings.llm_profiles.find((x) => !x.external);
   if (!p) throw "no local LLM profile — pick a profile for this run (an external one asks for a confirmation first)";
-  consume(consent, consentKey(id, r, question, p), p);
+  consume(consent, consentKey(id, r, question, p, includeEmails), p);
   if (item.recording) throw `'${id}' is still being recorded — run recipes when the session ends`;
+  if (r.speakers_only && !mockSpeakers(item).length)
+    throw `“${r.name}” needs a meeting or transcription whose transcript names its speakers — this one has none`;
   if (recipeRuns[id]) throw `“${recipeRuns[id].recipe.name}” is already running on this item — wait for it or cancel it`;
   if (p.external) externalSends[id] = [...new Set([...(externalSends[id] ?? []), hostOf(p)])];
   const run = { recipe: r, question, cancelled: false, step: null as { phase: string; done: number; total: number } | null };
@@ -1143,6 +1190,14 @@ function handle(cmd: string, a: Args): unknown {
     case "archive_delete":
       items = items.filter((s) => s.id !== a.id);
       return null;
+    case "archive_delete_audio": {
+      // "Delete audio, keep transcript" (#141): only the audio goes.
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      if (s.recording) throw `'${s.id}' is still being recorded — stop the session before deleting its audio`;
+      delete s.audio;
+      return toItem(s);
+    }
     case "archive_reveal":
       console.info("[mock] reveal", a.id ?? ARCHIVE);
       return null;
@@ -1197,10 +1252,10 @@ function handle(cmd: string, a: Args): unknown {
         ? { found: true, path: "/opt/homebrew/bin/yt-dlp", version: "2025.09.26", install_help: "" }
         : { found: false, path: null, version: null, install_help: "Install yt-dlp with Homebrew: `brew install yt-dlp` (or `pipx install yt-dlp`). It is not bundled with Sussurro: video sites change often and yt-dlp is updated to follow them." };
     case "engine_start_link":
-      return startLink(String(a.url), (a.title as string | null) ?? null, runLanguage(a), !!a.identifyVoices);
+      return startLink(String(a.url), (a.title as string | null) ?? null, runLanguage(a), !!a.identifyVoices, runSavesAudio(a));
     case "engine_start_mic":
       if (mic) throw "a microphone session is already running";
-      return startMic((a.title as string | null) ?? null, runLanguage(a));
+      return startMic((a.title as string | null) ?? null, runLanguage(a), runSavesAudio(a));
     case "engine_stop_mic":
       return stopMic();
     case "engine_start_system":
@@ -1218,6 +1273,7 @@ function handle(cmd: string, a: Args): unknown {
         (a.title as string | null) ?? null,
         runLanguage(a),
         !!a.identifyVoices,
+        runSavesAudio(a),
       );
     case "recipes_list":
       return allRecipes();
@@ -1225,9 +1281,9 @@ function handle(cmd: string, a: Args): unknown {
       if (!find(String(a.id))) throw `no archive item '${a.id}'`;
       return (docs[String(a.id)] ?? []).map((d) => ({ ...d, meta: { ...d.meta } }));
     case "recipe_run":
-      return runRecipe(String(a.id), String(a.recipeId), (a.profileId as string | null) ?? null, null, a.consent);
+      return runRecipe(String(a.id), String(a.recipeId), (a.profileId as string | null) ?? null, null, a.consent, !!a.includeEmails);
     case "recipe_ask":
-      return runRecipe(String(a.id), "question", (a.profileId as string | null) ?? null, String(a.question ?? ""), a.consent);
+      return runRecipe(String(a.id), "question", (a.profileId as string | null) ?? null, String(a.question ?? ""), a.consent, !!a.includeEmails);
     case "external_run_preview":
       return preview(a);
     case "prepare_external_run":

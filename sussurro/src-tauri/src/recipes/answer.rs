@@ -64,6 +64,7 @@ pub fn question_recipe(question: &str) -> Result<Recipe> {
         prompt: question_prompt(&q),
         target: RecipeTarget::Answer,
         builtin: true,
+        speakers_only: false,
     })
 }
 

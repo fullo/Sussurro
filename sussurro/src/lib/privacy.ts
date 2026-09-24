@@ -114,12 +114,34 @@ export interface ConsentRequest {
   recipeId: string | null;
   question: string | null;
   profileId: string;
+  /** Participant emails go along this run (#143); names only otherwise.
+   *  The confirmation is bound to this choice. */
+  includeEmails?: boolean;
 }
 
 /** The invoke() arguments for a consent request (Tauri maps camelCase to
  *  the command's snake_case parameters). */
 export function consentArgs(r: ConsentRequest): Record<string, unknown> {
+  const includeEmails = !!r.includeEmails;
   return r.question !== null
-    ? { id: r.id, recipeId: null, question: r.question, profileId: r.profileId }
-    : { id: r.id, recipeId: r.recipeId, question: null, profileId: r.profileId };
+    ? { id: r.id, recipeId: null, question: r.question, profileId: r.profileId, includeEmails }
+    : { id: r.id, recipeId: r.recipeId, question: null, profileId: r.profileId, includeEmails };
+}
+
+/** The confirmation dialog's line on people (#143): speaker names and
+ *  participants go along; emails only when ticked for this run. "" when
+ *  the item names nobody. */
+export function peopleLabel(p: Pick<ExternalRunPreview, "speakers" | "participants" | "emails_available" | "emails_sent">): string {
+  const speakers = p.speakers ?? [];
+  const participants = p.participants ?? 0;
+  const parts: string[] = [];
+  if (speakers.length) parts.push(`${speakers.length} speaker ${speakers.length === 1 ? "name" : "names"} (${speakers.join(", ")})`);
+  if (participants) parts.push(`${participants} participant ${participants === 1 ? "name" : "names"}`);
+  if (!parts.length) return "";
+  const available = p.emails_available ?? 0;
+  const sent = p.emails_sent ?? 0;
+  let emails = "";
+  if (sent) emails = ` and ${sent} ${sent === 1 ? "email" : "emails"}`;
+  else if (available) emails = ` — ${available === 1 ? "the email is" : "emails are"} not sent`;
+  return `${parts.join(" and ")}${emails}`;
 }
