@@ -161,6 +161,23 @@ project decisions here, not in per-machine memory.**
   Settings → Browser extension never shows the token (Copy puts the code on
   the clipboard) and reads `local_api_status` (the API's settings apply at
   startup) to say when a restart is needed.
+- **Extension capture (0.9, #128)** (`extension/src/{content,background}`):
+  capture starts only on Start in the side panel (REC badge on the tab);
+  before that the MAIN-world hook only observes. Channels: mic = tracks the
+  page *sends* (else its `getUserMedia` track), remote = every received
+  track mixed; one worklet emits both channels together (silence when a
+  channel has no track) so `seq` is gap-free. The background renumbers `seq`
+  per connection; a reconnect is a new `start` (= a new item). Fallbacks:
+  media elements only when the page made no peer connection (own
+  `getUserMedia` only then — a possible second prompt); Chrome-only
+  `tabCapture` via an offscreen document if no remote audio 4 s after
+  Start — the only reason Chrome has the `tabCapture` + `offscreen`
+  permissions. Audio to the background: Chrome manifest
+  `"message_serialization": "structured_clone"` (Chrome ≥ 148), negotiated
+  with a probe, base64 fallback. Firefox manifest keeps its own
+  `content_security_policy` (the MV3 default upgrades `ws://127.0.0.1`).
+  `extension/e2e/` (Playwright, runs in CI) proves both channels in
+  Chromium + Firefox against a local call; real platforms stay manual (#184).
 - **Library facets (0.9, #135)** (`archive/facets.rs`, `archive_facets`):
   not behind `meetings_enabled`. OR within a facet, AND across facets and
   with the text query; counts are disjunctive (a facet ignores its own

@@ -15,7 +15,8 @@
     "build:firefox": "node scripts/build.ts firefox",
     "typecheck": "tsc",
     "lint": "web-ext lint --source-dir dist/firefox",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "node e2e/run.ts"
   },
   "dependencies": {
     "react": "^19.1.0",
@@ -27,11 +28,14 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/webextension-polyfill": "^0.12.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.6.0",
     "fflate": "^0.8.2",
+    "playwright": "^1.63.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vitest": "^4.1.11",
-    "web-ext": "^10.0.0"
+    "web-ext": "^10.0.0",
+    "ws": "^8.21.3"
   }
 }
