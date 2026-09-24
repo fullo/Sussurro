@@ -28,6 +28,9 @@ export const RECORDING_NOTICE = {
   reminder: "Recording other people — let them know.",
   reminderMore: "Why?",
   /** Settings / options: bring the notice back. */
+  settingsTitle: "Recording notice",
+  stateShown: "shown before the next meeting recording",
+  stateHidden: "hidden — you chose not to see it again",
   reshow: "Show the notice again",
   reshowDone: "The notice will be shown before the next meeting recording.",
   reshowHint: "Shown before recording other people, until you tick “Don't show this again”.",

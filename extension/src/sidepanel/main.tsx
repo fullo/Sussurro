@@ -3,7 +3,8 @@
    paired with the app (#127) and, once paired, the explicit Start/Stop of
    capture for the active tab with a level meter per channel (#128), then
    the live lines with speaker chips, the transcript's backlog, and "Open
-   in Sussurro", "Copy as text", "Create .srt" (#129). */
+   in Sussurro", "Copy as text", "Create .srt" (#129). Before the first
+   Start, the recording notice (#136); while recording, a reminder line. */
 import { StrictMode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import browser from "webextension-polyfill";
@@ -11,6 +12,8 @@ import { TranscriptView } from "@sussurro/transcript";
 import { Header } from "../shared/Header";
 import { MEETING_MATCHES } from "../shared/platform";
 import { usePairing } from "../shared/usePairing";
+import { useNoticeNeeded } from "../shared/useNotice";
+import { DONT_SHOW_AGAIN_DEFAULT, RECORDING_NOTICE as N, RECORDING_PRIVACY_URL, answerNotice, startStep } from "../shared/notice";
 import type { Pairing } from "../shared/pairing";
 import type { PanelBroadcast, PanelRequest, PanelState } from "../shared/messages";
 import {
@@ -266,9 +269,52 @@ function ItemActions({ pairing, t, state }: { pairing: Pairing; t: LiveTranscrip
   );
 }
 
+/** "More about it": the README's section, in a new tab. */
+function PrivacyLink({ children }: { children: string }) {
+  return (
+    <a href={RECORDING_PRIVACY_URL} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  );
+}
+
+/** The notice before the first Start (#136): Start goes ahead, Cancel
+ *  starts nothing; "Don't show this again" is remembered in storage.local. */
+function RecordingNotice({ onAnswer }: { onAnswer: (proceed: boolean, dontShowAgain: boolean) => void }) {
+  const [dontShow, setDontShow] = useState(DONT_SHOW_AGAIN_DEFAULT);
+  return (
+    <section className="rec-notice" role="alertdialog" aria-labelledby="rec-notice-title" aria-describedby="rec-notice-desc" data-testid="notice">
+      <h2 id="rec-notice-title">{N.title}</h2>
+      <div id="rec-notice-desc">
+        {N.body.map((p) => (
+          <p key={p}>{p}</p>
+        ))}
+      </div>
+      <p className="rec-notice-small">
+        {N.local} <PrivacyLink>{N.readMore}</PrivacyLink>
+      </p>
+      <label className="check">
+        <input type="checkbox" checked={dontShow} onChange={(e) => setDontShow(e.target.checked)} data-testid="notice-dont-show" />
+        <span>{N.dontShowAgain}</span>
+      </label>
+      <div className="actions">
+        <button type="button" className="btn primary" autoFocus data-testid="notice-proceed" onClick={() => onAnswer(true, dontShow)}>
+          {N.proceed}
+        </button>
+        <button type="button" className="btn" data-testid="notice-cancel" onClick={() => onAnswer(false, dontShow)}>
+          {N.cancel}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Capture({ tabId, pairing }: { tabId: number; pairing: Pairing }) {
   const [state, setState] = useState<PanelState | null>(null);
   const [needsGrant, setNeedsGrant] = useState(false);
+  const noticeNeeded = useNoticeNeeded();
+  const [asking, setAsking] = useState(false);
+  useEffect(() => setAsking(false), [tabId]);
 
   const refresh = useCallback(() => {
     void browser.runtime
@@ -310,6 +356,13 @@ function Capture({ tabId, pairing }: { tabId: number; pairing: Pairing }) {
   const cap = state?.capture;
   const capturing = !!state && ["arming", "connecting", "live", "reconnecting"].includes(state.phase);
   const backlog = t && (capturing || state?.phase === "stopping") ? backlogView(t) : null;
+  const start = () => (startStep(noticeNeeded) === "ask" ? setAsking(true) : send("panel:start"));
+  const answer = (proceed: boolean, dontShowAgain: boolean) => {
+    setAsking(false);
+    if (proceed) send("panel:start");
+    // Best effort: if it can't be stored, the notice only shows again.
+    void answerNotice(proceed, dontShowAgain).catch(() => {});
+  };
   return (
     <>
       {needsGrant && (
@@ -323,17 +376,26 @@ function Capture({ tabId, pairing }: { tabId: number; pairing: Pairing }) {
       <p className={`page-note tone-${view.tone}`} role="status" data-testid="status" data-phase={state?.phase ?? ""} data-transport={state?.transport ?? ""}>
         {view.line}
       </p>
-      <div className="capture-controls">
-        {view.canStop ? (
-          <button type="button" className="btn" data-testid="stop" onClick={() => send("panel:stop")}>
-            Stop
-          </button>
-        ) : (
-          <button type="button" className="btn primary" data-testid="start" disabled={!view.canStart} onClick={() => send("panel:start")}>
-            Start recording
-          </button>
-        )}
-      </div>
+      {asking && view.canStart ? (
+        <RecordingNotice onAnswer={answer} />
+      ) : (
+        <div className="capture-controls">
+          {view.canStop ? (
+            <button type="button" className="btn" data-testid="stop" onClick={() => send("panel:stop")}>
+              Stop
+            </button>
+          ) : (
+            <button type="button" className="btn primary" data-testid="start" disabled={!view.canStart} onClick={start}>
+              Start recording
+            </button>
+          )}
+        </div>
+      )}
+      {capturing && (
+        <p className="rec-reminder" role="note" data-testid="reminder">
+          {N.reminder} <PrivacyLink>{N.reminderMore}</PrivacyLink>
+        </p>
+      )}
       {capturing && cap?.armed && (
         <div className="meters">
           <Meter label="mic" via={cap.mic.via} level={cap.mic.level} />

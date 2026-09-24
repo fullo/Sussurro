@@ -274,9 +274,21 @@ async function runConfig(config: Config): Promise<Check[]> {
     await until("Start to be enabled", () => panel.canClick("start"));
     check("no socket before Start", server.sessions.length === 0);
 
-    // 2. Start → live, both channels.
+    // 1b. The first Start shows the recording notice (#136) and starts
+    //     nothing until it is answered; Cancel starts nothing at all.
     await panel.click("start");
+    await until("the recording notice", () => panel.canClick("notice-proceed"));
+    await panel.click("notice-cancel");
+    await until("Start back after Cancel", () => panel.canClick("start"));
+    check("the first Start shows the notice; Cancel starts nothing", server.sessions.length === 0);
+
+    // 2. Start → notice → Start recording → live, both channels.
+    await panel.click("start");
+    await until("the recording notice again", () => panel.canClick("notice-proceed"));
+    await panel.click("notice-proceed");
     await until("phase live", async () => (await phase()) === "live", 15_000);
+    const reminder = (await panel.texts("[data-testid=reminder]"))[0] ?? "";
+    check("the reminder line shows while recording", reminder.includes("Recording other people"), reminder);
     const transport = await panel.status("transport");
     check(`transport is ${config === "chromium-json" ? "base64" : "binary"}`, transport === (config === "chromium-json" ? "base64" : "binary"), transport);
     const t0 = Date.now();
@@ -343,8 +355,10 @@ async function runConfig(config: Config): Promise<Check[]> {
     check("call unaffected: you hear them", a.inAudioLevel > 0.001 && !a.audioEl.paused && !a.audioEl.muted && a.audioEl.volume === 1, a);
     check("the page's mic track is untouched", a.micLive === true);
 
-    // 3. Teardown: closing the tab mid-capture ends the meeting.
+    // 3. Teardown: closing the tab mid-capture ends the meeting. "Don't
+    //    show this again" was ticked (the default): no notice this time.
     await panel.click("start");
+    check("the notice is not shown again once acknowledged", (await panel.texts("[data-testid=notice]")).length === 0);
     await until("second session live", () => server.sessions[1]?.start && (server.sessions[1].channels.get(0)?.frames ?? 0) > 5, 15_000);
     // A new Start is a new meeting: the panel shows only its lines (the
     // script again), not the first meeting's plus a "connection lost" part.

@@ -81,10 +81,10 @@ export function ExtensionCard({ ctl, collapsible }: CardProps) {
       <div className="field">
         <div className="field-label">
           <span>
-            Recording notice <Tip text={RECORDING_NOTICE.reshowHint} />
+            {RECORDING_NOTICE.settingsTitle} <Tip text={RECORDING_NOTICE.reshowHint} />
           </span>
           <small>
-            {needsMeetingNotice(settings) ? "shown before the next meeting recording" : "hidden — you chose not to see it again"}
+            {needsMeetingNotice(settings) ? RECORDING_NOTICE.stateShown : RECORDING_NOTICE.stateHidden}
             {" · "}
             <RecordingPrivacyLink />
           </small>
