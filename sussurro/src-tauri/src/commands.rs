@@ -552,7 +552,7 @@ pub fn engine_start_mic(
 /// a lost device or realigned device clocks while it records.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn engine_start_system(
+pub async fn engine_start_system(
     app: AppHandle,
     system_device: String,
     mic_device: Option<String>,
@@ -561,19 +561,24 @@ pub fn engine_start_system(
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
 ) -> Result<u64, String> {
-    crate::engine::session::start_system(
-        &app,
-        mic_device,
-        &system_device,
-        title.unwrap_or_default(),
-        defer.unwrap_or(false),
-        crate::engine::session::RunOptions {
-            language,
-            cleanup_level,
-            ..Default::default()
-        },
-    )
-    .map_err(|e| format!("{e:#}"))
+    // Off the main thread: it enumerates the audio devices first.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::engine::session::start_system(
+            &app,
+            mic_device,
+            &system_device,
+            title.unwrap_or_default(),
+            defer.unwrap_or(false),
+            crate::engine::session::RunOptions {
+                language,
+                cleanup_level,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Stop recording the system-audio session (#139); the queued segments

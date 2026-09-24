@@ -271,9 +271,7 @@ impl ChannelSync {
     }
 
     pub fn is_ended(&self, channel: Channel) -> bool {
-        self.lanes
-            .iter()
-            .any(|l| l.channel == channel && l.ended)
+        self.lanes.iter().any(|l| l.channel == channel && l.ended)
     }
 
     /// Some channel delivered audio at some point.
@@ -393,7 +391,11 @@ impl SystemSource {
     /// session) and the system audio device (`system_device`, exact name —
     /// never a fallback, it would record the mic twice). The session ends
     /// when `stop` is set.
-    pub fn start(mic_device: &str, system_device: &str, stop: Arc<AtomicBool>) -> anyhow::Result<Self> {
+    pub fn start(
+        mic_device: &str,
+        system_device: &str,
+        stop: Arc<AtomicBool>,
+    ) -> anyhow::Result<Self> {
         // The clock starts before the devices open, so a device that is
         // slow to open joins late on the timeline, as it should.
         let pacer = WallPacer::new();
@@ -482,7 +484,10 @@ impl SystemSource {
 
     fn stopping(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
-            || self.cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed))
+            || self
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed))
     }
 }
 
@@ -602,15 +607,25 @@ pub fn looks_like_loopback(name: &str) -> bool {
 /// Check the two devices before a session starts: a system device must be
 /// chosen and must not be the microphone (by name, or the default input
 /// when the mic is the default). Pure.
-pub fn validate_devices(mic: &str, system: &str, default_input: Option<&str>) -> anyhow::Result<()> {
+pub fn validate_devices(
+    mic: &str,
+    system: &str,
+    default_input: Option<&str>,
+) -> anyhow::Result<()> {
     let system = system.trim();
     if system.is_empty() {
         anyhow::bail!("choose the system audio device (a loopback device such as BlackHole, VB-Cable or a monitor source)");
     }
     let mic = mic.trim();
-    let mic_name = if mic.is_empty() { default_input.unwrap_or("") } else { mic };
+    let mic_name = if mic.is_empty() {
+        default_input.unwrap_or("")
+    } else {
+        mic
+    };
     if mic_name == system {
-        anyhow::bail!("the system audio device is the microphone — choose a different device for one of them");
+        anyhow::bail!(
+            "the system audio device is the microphone — choose a different device for one of them"
+        );
     }
     Ok(())
 }
@@ -640,7 +655,9 @@ mod tests {
         // wall clock says.
         let c = sync.push(Channel::Mic, vec![0.1; 4_100], 2 * TICK).unwrap();
         assert_eq!(c.start, 4_000);
-        let d = sync.push(Channel::System, vec![0.3; 3_950], 2 * TICK).unwrap();
+        let d = sync
+            .push(Channel::System, vec![0.3; 3_950], 2 * TICK)
+            .unwrap();
         assert_eq!(d.start, 4_000);
         assert!(sync.push(Channel::Mic, Vec::new(), 3 * TICK).is_none());
         assert_eq!(sync.position(Channel::Mic), Some(8_100));
@@ -652,7 +669,9 @@ mod tests {
         sync.push(Channel::System, vec![0.0; 4_000], TICK);
         assert!(sync.end(Channel::System));
         assert!(!sync.end(Channel::System), "only once");
-        assert!(sync.push(Channel::System, vec![0.0; 4_000], 2 * TICK).is_none());
+        assert!(sync
+            .push(Channel::System, vec![0.0; 4_000], 2 * TICK)
+            .is_none());
         assert!(sync.is_ended(Channel::System) && !sync.all_ended());
         assert!(sync.end(Channel::Mic));
         assert!(sync.all_ended());
@@ -673,16 +692,23 @@ mod tests {
                 assert!(f.samples.iter().all(|&x| x == 0.0));
                 resynced.push((now, f.samples.len()));
             }
-            assert!(notices
-                .iter()
-                .all(|n| matches!(n, Notice::Realigned { channel: Channel::System, .. })));
+            assert!(notices.iter().all(|n| matches!(
+                n,
+                Notice::Realigned {
+                    channel: Channel::System,
+                    ..
+                }
+            )));
         }
         // 60 polls × 80 = 4 800 samples (300 ms) of drift: one realignment
         // once it passes 200 ms, not before.
         assert_eq!(resynced.len(), 1, "{resynced:?}");
         let (at, len) = resynced[0];
         assert!(len as i64 > DRIFT_LIMIT && len < 4_000, "{len}");
-        assert!(at >= 40 * TICK, "not before the drift passed the limit ({at})");
+        assert!(
+            at >= 40 * TICK,
+            "not before the drift passed the limit ({at})"
+        );
         let gap = sync.position(Channel::Mic).unwrap() as i64
             - sync.position(Channel::System).unwrap() as i64;
         assert!(gap.abs() <= DRIFT_LIMIT, "{gap}");
@@ -700,7 +726,10 @@ mod tests {
                 sync.push(Channel::System, vec![0.3; 2 * TICK as usize], now);
             }
             let (frames, notices) = sync.check(now);
-            assert!(frames.is_empty() && notices.is_empty(), "poll {t}: {notices:?}");
+            assert!(
+                frames.is_empty() && notices.is_empty(),
+                "poll {t}: {notices:?}"
+            );
         }
         assert_eq!(sync.resyncs(), 0);
     }
@@ -878,7 +907,11 @@ mod tests {
         system.opens_at = 3_000; // ~190 ms after the mic
         let (mic_out, sys_out) = (mic.out.clone(), system.out.clone());
         let r = run(mic, system, &wall, 10);
-        assert!(r.error.is_none() && r.warnings.is_empty(), "{:?}", r.warnings);
+        assert!(
+            r.error.is_none() && r.warnings.is_empty(),
+            "{:?}",
+            r.warnings
+        );
         assert_eq!(r.resyncs, 0);
         // Every frame is tagged with its device: the mic's level on `mic`,
         // the system device's on `system`.
@@ -934,7 +967,10 @@ mod tests {
             } else {
                 (s_sil, m_sil)
             };
-            assert!(pad > DRIFT_LIMIT as u64 && other_pad == 0, "{case}: {pad} / {other_pad}");
+            assert!(
+                pad > DRIFT_LIMIT as u64 && other_pad == 0,
+                "{case}: {pad} / {other_pad}"
+            );
             // The two channels end within the limit of each other.
             assert!(
                 m_end.abs_diff(s_end) <= DRIFT_LIMIT as u64 + TICK,
@@ -979,7 +1015,10 @@ mod tests {
         // While it stalled the mic was realigned with silence, never past
         // the moment it counted as lost.
         let (_, m_end, m_audio, _) = channel(&r.frames, Channel::Mic);
-        assert!(m_audio <= 3 * S + 100 && m_end <= 8 * S + TICK, "{m_audio} {m_end}");
+        assert!(
+            m_audio <= 3 * S + 100 && m_end <= 8 * S + TICK,
+            "{m_audio} {m_end}"
+        );
     }
 
     #[test]
@@ -1009,8 +1048,8 @@ mod tests {
         assert!(wall.load(Ordering::SeqCst) < 4 * S);
         let (_, m_end, ..) = channel(&r.frames, Channel::Mic);
         let (_, s_end, ..) = channel(&r.frames, Channel::System);
-        assert!(m_end >= 2 * S - 100 && m_end <= 2 * S + 100, "{m_end}");
-        assert!(s_end >= 3 * S - 100 && s_end <= 3 * S + 100, "{s_end}");
+        assert!((2 * S - 100..=2 * S + 100).contains(&m_end), "{m_end}");
+        assert!((3 * S - 100..=3 * S + 100).contains(&s_end), "{s_end}");
     }
 
     #[test]
@@ -1056,7 +1095,12 @@ mod tests {
         ] {
             assert!(looks_like_loopback(name), "{name}");
         }
-        for name in ["MacBook Pro Microphone", "USB Audio Device", "default", "Headset (AirPods)"] {
+        for name in [
+            "MacBook Pro Microphone",
+            "USB Audio Device",
+            "default",
+            "Headset (AirPods)",
+        ] {
             assert!(!looks_like_loopback(name), "{name}");
         }
     }
@@ -1065,7 +1109,10 @@ mod tests {
     fn the_two_devices_must_differ() {
         assert!(validate_devices("", "BlackHole 2ch", Some("MacBook Pro Microphone")).is_ok());
         assert!(validate_devices("USB Mic", "BlackHole 2ch", None).is_ok());
-        assert!(validate_devices("", " ", None).is_err(), "a system device is required");
+        assert!(
+            validate_devices("", " ", None).is_err(),
+            "a system device is required"
+        );
         assert!(validate_devices("BlackHole 2ch", "BlackHole 2ch", None).is_err());
         // The mic is the default input, and that is the chosen system device.
         assert!(validate_devices("", "BlackHole 2ch", Some("BlackHole 2ch")).is_err());
