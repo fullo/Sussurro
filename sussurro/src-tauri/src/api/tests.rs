@@ -1,4 +1,4 @@
-//! Local API tests: the route table and gating (pure), then the real
+//! Local API tests: the route table (pure), then the real
 //! `tiny_http` server on a loopback port with a fake host — token-less
 //! routes unchanged, token/Origin/CORS on the meeting routes, and a
 //! WebSocket meeting from a `tungstenite` client through the long-form
@@ -53,7 +53,7 @@ fn routes_map_method_and_path() {
 }
 
 #[test]
-fn meeting_routes_exist_only_with_meetings_enabled() {
+fn only_the_extension_routes_are_meeting_routes() {
     for r in [
         Route::AppVersion,
         Route::Live,
@@ -62,15 +62,11 @@ fn meeting_routes_exist_only_with_meetings_enabled() {
         Route::Preflight,
     ] {
         assert!(r.is_meeting());
-        assert_eq!(gate(r, false), Route::NotFound);
     }
-    assert_eq!(gate(Route::Live, true), Route::Live);
-    // The token-less routes don't depend on the flag.
-    for r in [Route::Clean, Route::Transcribe, Route::History] {
+    // The token-less routes stay outside the token/Origin checks.
+    for r in [Route::Clean, Route::Transcribe, Route::History, Route::NotFound] {
         assert!(!r.is_meeting());
     }
-    assert_eq!(gate(Route::Clean, false), Route::Clean);
-    assert_eq!(gate(Route::History, true), Route::History);
 }
 
 #[test]
@@ -191,7 +187,7 @@ struct Running {
     _dir: tempfile::TempDir,
 }
 
-fn start_server(meetings_enabled: bool) -> Running {
+fn start_server() -> Running {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
@@ -199,8 +195,6 @@ fn start_server(meetings_enabled: bool) -> Running {
     let settings = Settings {
         archive_dir: archive.to_string_lossy().into_owned(),
         language: "en".into(),
-        // Meeting speaker labels (#130, #131) follow the API's flag.
-        meetings_enabled,
         ..Default::default()
     };
     let paths = AppPaths {
@@ -214,7 +208,6 @@ fn start_server(meetings_enabled: bool) -> Running {
     };
     let host = TestHost(Arc::new(Inner {
         config: Mutex::new(ApiConfig {
-            meetings_enabled,
             extension_token: TOKEN.into(),
             ..Default::default()
         }),
@@ -288,8 +281,8 @@ fn bearer() -> String {
 }
 
 #[test]
-fn token_less_routes_are_unchanged_and_meeting_routes_are_off_by_default() {
-    let r = start_server(false);
+fn token_less_routes_are_unchanged() {
+    let r = start_server();
     let clean = http(r.port, "POST", "/clean", &[], "  ciao  ");
     assert_eq!((clean.status, clean.json()["cleaned"].as_str()), (200, Some("ciao")));
     // No token needed, and no CORS for anyone — even an extension.
@@ -300,21 +293,16 @@ fn token_less_routes_are_unchanged_and_meeting_routes_are_off_by_default() {
     let tr = http(r.port, "POST", "/transcribe?ext=wav", &[], "RIFF");
     assert_eq!((tr.status, tr.json()["ext"].as_str()), (200, Some("wav")));
     assert_eq!(http(r.port, "POST", "/clean", &[], " ").status, 400);
-    // Meetings off: the new routes don't exist, even with the token.
-    let auth = bearer();
-    let v = http(r.port, "GET", "/app/version", &[("Authorization", &auth)], "");
-    assert_eq!(v.status, 404);
+    // The token-less routes never answer a preflight (no CORS).
     assert_eq!(
-        http(r.port, "OPTIONS", "/app/version", &[("Origin", EXT)], "").status,
+        http(r.port, "OPTIONS", "/clean", &[("Origin", EXT)], "").status,
         404
     );
-    let ws = ws_connect(r.port, TOKEN, Some(EXT));
-    assert_eq!(ws.err(), Some(404));
 }
 
 #[test]
 fn meeting_routes_check_token_origin_and_send_cors() {
-    let r = start_server(true);
+    let r = start_server();
     let auth = bearer();
     let ok = http(
         r.port,
@@ -400,7 +388,7 @@ fn meeting_routes_check_token_origin_and_send_cors() {
 /// token on every request, so the old one is refused at once.
 #[test]
 fn a_regenerated_token_replaces_the_old_one_at_once() {
-    let r = start_server(true);
+    let r = start_server();
     let old = bearer();
     assert_eq!(
         http(r.port, "GET", "/app/version", &[("Authorization", &old), ("Origin", EXT)], "").status,
@@ -486,7 +474,7 @@ fn frame_48k(t0: usize, amp: f32) -> Vec<i16> {
 
 #[test]
 fn a_websocket_meeting_becomes_an_archive_item() {
-    let r = start_server(true);
+    let r = start_server();
     let mut ws = ws_connect(r.port, TOKEN, Some(EXT)).expect("upgrade");
     let ready = read_json(&mut ws).unwrap();
     assert_eq!((ready["type"].as_str(), ready["state"].as_str()), (Some("status"), Some("ready")));
@@ -685,7 +673,7 @@ fn a_websocket_meeting_becomes_an_archive_item() {
 
 #[test]
 fn a_dropped_connection_still_keeps_the_meeting() {
-    let r = start_server(true);
+    let r = start_server();
     let mut ws = ws_connect(r.port, TOKEN, Some(EXT)).expect("upgrade");
     read_json(&mut ws).unwrap();
     ws.send(Message::text(

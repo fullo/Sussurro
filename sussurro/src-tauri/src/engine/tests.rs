@@ -2039,9 +2039,9 @@ fn two_channels_segment_separately_on_one_clock_in_time_order() {
 }
 
 /// #134: the "Identify voices" run option reaches the engine — through the
-/// real `session::run_request_with_speakers`, for every item type × 0.9
-/// flag × toggle: voices (and embeddings) exactly when the gating says so,
-/// and with the toggle off the speaker model is never even loaded.
+/// real `session::run_request_with_speakers`, for every item type × toggle:
+/// voices (and embeddings) exactly when the gating says so (meetings always,
+/// #138), and otherwise the speaker model is never even loaded.
 #[test]
 fn identify_voices_run_option_reaches_the_engine() {
     use crate::settings::Settings;
@@ -2049,7 +2049,7 @@ fn identify_voices_run_option_reaches_the_engine() {
     use crate::state::AppPaths;
     use session::{run_request_with_speakers, Request, RunOptions};
 
-    let run_with = |item_type: ItemType, flag: bool, identify: bool| -> (usize, usize, usize) {
+    let run_with = |item_type: ItemType, identify: bool| -> (usize, usize, usize) {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("appdata");
         let paths = AppPaths {
@@ -2061,10 +2061,7 @@ fn identify_voices_run_option_reaches_the_engine() {
             documents_dir: Some(dir.path().join("Documents")),
             home_dir: Some(dir.path().to_path_buf()),
         };
-        let shared = Mutex::new(Settings {
-            meetings_enabled: flag,
-            ..Default::default()
-        });
+        let shared = Mutex::new(Settings::default());
         let (load, calls) = fake_loader(5);
         let req = Request {
             id: 11,
@@ -2109,27 +2106,25 @@ fn identify_voices_run_option_reaches_the_engine() {
         )
     };
 
-    for flag in [false, true] {
-        for identify in [false, true] {
-            let expected = |t: ItemType| match t {
-                ItemType::Note => false,
-                ItemType::Transcription => identify,
-                ItemType::Meeting => flag,
-            };
-            for t in [ItemType::Note, ItemType::Transcription, ItemType::Meeting] {
-                let (embedded, speakers, calls) = run_with(t, flag, identify);
-                let case = format!("{t:?}, flag {flag}, toggle {identify}");
-                if expected(t) {
-                    assert_eq!(embedded, 2, "{case}");
-                    assert!(speakers >= 1, "{case}");
-                    assert!(calls > 0, "{case}");
-                } else {
-                    assert_eq!(
-                        (embedded, speakers, calls),
-                        (0, 0, 0),
-                        "{case}: nothing computed"
-                    );
-                }
+    for identify in [false, true] {
+        let expected = |t: ItemType| match t {
+            ItemType::Note => false,
+            ItemType::Transcription => identify,
+            ItemType::Meeting => true,
+        };
+        for t in [ItemType::Note, ItemType::Transcription, ItemType::Meeting] {
+            let (embedded, speakers, calls) = run_with(t, identify);
+            let case = format!("{t:?}, toggle {identify}");
+            if expected(t) {
+                assert_eq!(embedded, 2, "{case}");
+                assert!(speakers >= 1, "{case}");
+                assert!(calls > 0, "{case}");
+            } else {
+                assert_eq!(
+                    (embedded, speakers, calls),
+                    (0, 0, 0),
+                    "{case}: nothing computed"
+                );
             }
         }
     }
@@ -2653,7 +2648,7 @@ impl crate::sources::system::Pacer for ScriptedPacer {
 /// becomes a `meeting` item with `source: system`; the mic channel is
 /// "You", the system channel is clustered into "Voice N"; the system device
 /// disappearing mid-session ends its channel with an `engine-warning` and
-/// the item keeps everything. Without the 0.9 flag, no voices at all.
+/// the item keeps everything.
 #[test]
 fn system_audio_session_labels_you_and_voices_and_survives_a_lost_device() {
     use crate::settings::Settings;
@@ -2662,112 +2657,102 @@ fn system_audio_session_labels_you_and_voices_and_survives_a_lost_device() {
     use crate::state::AppPaths;
     use session::{run_request_with_speakers, system_request, RunOptions};
 
-    for flag in [true, false] {
-        let dir = tempfile::tempdir().unwrap();
-        let data = dir.path().join("appdata");
-        let paths = AppPaths {
-            settings_file: dir.path().join("settings.json"),
-            models_dir: data.join("models"),
-            history_file: data.join("history.jsonl"),
-            stats_file: data.join("stats.json"),
-            archive_index: data.join("index.sqlite"),
-            documents_dir: Some(dir.path().join("Documents")),
-            home_dir: Some(dir.path().to_path_buf()),
-        };
-        let shared = Mutex::new(Settings {
-            meetings_enabled: flag,
-            ..Default::default()
-        });
-        let wall: Arc<std::sync::atomic::AtomicU64> = Arc::default();
-        let stop = Arc::new(AtomicBool::new(false));
-        // The user speaks at 1–4 s and 11–14 s; the others (system audio)
-        // at 5–9 s, then the loopback device disappears at 10 s.
-        let mic = voiced(&[(None, 1.0), (Some(0), 3.0), (None, 7.0), (Some(0), 3.0), (None, 2.0)]);
-        let system = voiced(&[(None, 5.0), (Some(1), 4.0), (None, 7.0)]);
-        let source = SystemSource::from_parts(
-            Box::new(ScriptedDevice {
-                audio: mic,
-                pos: 0,
-                wall: wall.clone(),
-                fails_at: None,
-            }),
-            Box::new(ScriptedDevice {
-                audio: system,
-                pos: 0,
-                wall: wall.clone(),
-                fails_at: Some(10 * 16_000),
-            }),
-            Box::new(ScriptedPacer {
-                wall: wall.clone(),
-                end: 16 * 16_000,
-                stop: stop.clone(),
-            }),
-            stop,
-        );
-        let req = system_request(
-            21,
-            Arc::new(AtomicBool::new(false)),
-            source,
-            "Standup".into(),
-            false,
-            RunOptions::default(),
-        );
-        let (load, _) = fake_loader(5);
-        let sink = Arc::new(VecSink::default());
-        let r = run_request_with_speakers(
-            &shared,
-            &paths,
-            req,
-            |_: &[f32], _: &str| -> Result<TimedTranscript> {
-                Ok(TimedTranscript {
-                    text: "parole".into(),
-                    ..Default::default()
-                })
-            },
-            |_: &Settings, _: Option<&str>, raw: &str| raw.to_string(),
-            |_| Box::new(EnergyDetector::default()),
-            move |_| load,
-            sink.clone(),
-        )
-        .unwrap();
-        let archive_dir = dir.path().join("Documents").join("Sussurro");
-        let item = archive::read_item(&archive_dir, &r.item_id).unwrap();
-        assert_eq!(item.meta.item_type, ItemType::Meeting);
-        assert_eq!(item.meta.source, "system");
-        let segs = &item.segments.segments;
-        let mic: Vec<_> = segs.iter().filter(|s| s.channel == Channel::Mic).collect();
-        let sys: Vec<_> = segs.iter().filter(|s| s.channel == Channel::System).collect();
-        assert_eq!((mic.len(), sys.len()), (2, 1), "flag {flag}: {segs:?}");
-        // Time order across the channels, on one clock.
-        assert!(segs.windows(2).all(|w| w[0].start_ms <= w[1].start_ms));
-        assert!((4_500..5_500).contains(&sys[0].start_ms), "{}", sys[0].start_ms);
-        assert!(mic[1].start_ms > 10_000, "the mic went on after the loss");
-        let warnings: Vec<String> = sink
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .filter_map(|e| match e {
-                EngineEvent::Warning(w) => {
-                    assert_eq!(w.session_id, 21);
-                    assert_eq!(e.name(), "engine-warning");
-                    Some(w.message.clone())
-                }
-                _ => None,
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("appdata");
+    let paths = AppPaths {
+        settings_file: dir.path().join("settings.json"),
+        models_dir: data.join("models"),
+        history_file: data.join("history.jsonl"),
+        stats_file: data.join("stats.json"),
+        archive_index: data.join("index.sqlite"),
+        documents_dir: Some(dir.path().join("Documents")),
+        home_dir: Some(dir.path().to_path_buf()),
+    };
+    let shared = Mutex::new(Settings::default());
+    let wall: Arc<std::sync::atomic::AtomicU64> = Arc::default();
+    let stop = Arc::new(AtomicBool::new(false));
+    // The user speaks at 1–4 s and 11–14 s; the others (system audio)
+    // at 5–9 s, then the loopback device disappears at 10 s.
+    let mic = voiced(&[(None, 1.0), (Some(0), 3.0), (None, 7.0), (Some(0), 3.0), (None, 2.0)]);
+    let system = voiced(&[(None, 5.0), (Some(1), 4.0), (None, 7.0)]);
+    let source = SystemSource::from_parts(
+        Box::new(ScriptedDevice {
+            audio: mic,
+            pos: 0,
+            wall: wall.clone(),
+            fails_at: None,
+        }),
+        Box::new(ScriptedDevice {
+            audio: system,
+            pos: 0,
+            wall: wall.clone(),
+            fails_at: Some(10 * 16_000),
+        }),
+        Box::new(ScriptedPacer {
+            wall: wall.clone(),
+            end: 16 * 16_000,
+            stop: stop.clone(),
+        }),
+        stop,
+    );
+    let req = system_request(
+        21,
+        Arc::new(AtomicBool::new(false)),
+        source,
+        "Standup".into(),
+        false,
+        RunOptions::default(),
+    );
+    let (load, _) = fake_loader(5);
+    let sink = Arc::new(VecSink::default());
+    let r = run_request_with_speakers(
+        &shared,
+        &paths,
+        req,
+        |_: &[f32], _: &str| -> Result<TimedTranscript> {
+            Ok(TimedTranscript {
+                text: "parole".into(),
+                ..Default::default()
             })
-            .collect();
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(warnings[0].contains("system audio device stopped delivering audio at 0:10"));
-        if flag {
-            assert!(mic.iter().all(|s| s.speaker_id.as_deref() == Some("you")));
-            assert!(mic.iter().all(|s| s.embedding.is_none()), "You is never embedded");
-            assert!(sys[0].speaker_id.as_deref().is_some_and(|id| id.starts_with("voice:")));
-            assert!(item.segments.speakers.iter().any(|s| s.id == "you"));
-        } else {
-            assert!(segs.iter().all(|s| s.speaker_id.is_none()));
-            assert!(item.segments.speakers.is_empty());
-        }
-    }
+        },
+        |_: &Settings, _: Option<&str>, raw: &str| raw.to_string(),
+        |_| Box::new(EnergyDetector::default()),
+        move |_| load,
+        sink.clone(),
+    )
+    .unwrap();
+    let archive_dir = dir.path().join("Documents").join("Sussurro");
+    let item = archive::read_item(&archive_dir, &r.item_id).unwrap();
+    assert_eq!(item.meta.item_type, ItemType::Meeting);
+    assert_eq!(item.meta.source, "system");
+    let segs = &item.segments.segments;
+    let mic: Vec<_> = segs.iter().filter(|s| s.channel == Channel::Mic).collect();
+    let sys: Vec<_> = segs.iter().filter(|s| s.channel == Channel::System).collect();
+    assert_eq!((mic.len(), sys.len()), (2, 1), "{segs:?}");
+    // Time order across the channels, on one clock.
+    assert!(segs.windows(2).all(|w| w[0].start_ms <= w[1].start_ms));
+    assert!((4_500..5_500).contains(&sys[0].start_ms), "{}", sys[0].start_ms);
+    assert!(mic[1].start_ms > 10_000, "the mic went on after the loss");
+    let warnings: Vec<String> = sink
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            EngineEvent::Warning(w) => {
+                assert_eq!(w.session_id, 21);
+                assert_eq!(e.name(), "engine-warning");
+                Some(w.message.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("system audio device stopped delivering audio at 0:10"));
+    assert!(mic.iter().all(|s| s.speaker_id.as_deref() == Some("you")));
+    assert!(mic.iter().all(|s| s.embedding.is_none()), "You is never embedded");
+    assert!(sys[0].speaker_id.as_deref().is_some_and(|id| id.starts_with("voice:")));
+    assert!(item.segments.speakers.iter().any(|s| s.id == "you"));
 }
 
 /// A device whose clock runs 1 % slow: by wall time `now` it has delivered
