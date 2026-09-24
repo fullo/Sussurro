@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialSession, isCapturing, shouldTabCapture, step, TAB_CAPTURE_AFTER_MS, type Session, type SessionEvent } from "./session";
+import { holdsBackground, initialSession, isCapturing, shouldTabCapture, step, TAB_CAPTURE_AFTER_MS, type Session, type SessionEvent } from "./session";
 
 const OK = { type: "check", result: { ok: true, app: "0.9.0" } } as const;
 const run = (events: SessionEvent[], from: Session = initialSession()) => {
@@ -122,6 +122,34 @@ describe("capture session", () => {
   it("can start again after done or error", () => {
     const done = run([{ type: "start" }, OK, { type: "armed", rate: 1 }, { type: "ws-open" }, { type: "stop" }, { type: "ws-closed" }]).s;
     expect(step(done, { type: "start" }).s).toEqual({ phase: "checking", attempt: 0 });
+  });
+});
+
+describe("holdsBackground", () => {
+  it("holds from Start until the app is done, including while it finishes", () => {
+    const phases: string[] = [];
+    let s = initialSession();
+    const seen = () => phases.push(`${s.phase}:${holdsBackground(s)}`);
+    seen();
+    const events: SessionEvent[] = [{ type: "start" }, OK, { type: "armed", rate: 1 }, { type: "ws-open" }, { type: "ws-closed" }, { type: "retry" }, OK, { type: "ws-open" }, { type: "stop" }, { type: "ws-closed" }];
+    for (const e of events) {
+      s = step(s, e, () => 0.5).s;
+      seen();
+    }
+    expect(phases).toEqual([
+      "idle:false",
+      "checking:true",
+      "arming:true",
+      "connecting:true",
+      "live:true",
+      "reconnecting:true",
+      "reconnecting:true",
+      "connecting:true",
+      "live:true",
+      "stopping:true",
+      "done:false",
+    ]);
+    expect(holdsBackground({ phase: "error", attempt: 0 })).toBe(false);
   });
 });
 
