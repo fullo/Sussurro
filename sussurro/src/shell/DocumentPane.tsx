@@ -4,6 +4,7 @@ import { TranscriptView, toLines } from "@sussurro/transcript";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, formatDurationLabel, formatLongDate, parseDuration } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
+import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import type { Item, ItemMeta } from "../lib/types";
 import { ChipEditor } from "./ChipEditor";
 import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
@@ -183,6 +184,11 @@ export function DocumentPane({
             }}
           />
           <span className={`tb ${meta.type}`}>{TYPE_LABEL[meta.type] ?? meta.type}</span>
+          {sentExternally(item) && (
+            <span className="ext sent-ext" title={externalHostsTitle(item.external_hosts)}>
+              ↗ Sent to external LLM
+            </span>
+          )}
         </div>
         <p className="doc-facts">{facts.join(" · ")}</p>
         <div className="doc-actions">

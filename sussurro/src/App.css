@@ -244,6 +244,10 @@ details.collapsible:not([open]) .chevron { transform: rotate(-90deg); }
   line-height: 1.4;
 }
 
+/* Cleanup opt-in for an external profile (#122). */
+.ext-optin .row-gap { align-items: center; }
+.ext-optin-label { font-size: 0.85rem; overflow-wrap: anywhere; }
+
 /* ---------- Inputs ---------- */
 
 input, select, textarea {

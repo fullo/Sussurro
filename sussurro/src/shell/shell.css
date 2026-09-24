@@ -526,6 +526,26 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
 .confirm-modal { width: min(440px, 100%); gap: 8px; }
 .confirm-modal h2 { font-size: 16px; margin: 0; color: var(--c-dark); }
 
+/* Per-run confirmation for external LLM profiles (#122). */
+.consent-modal { width: min(500px, 100%); }
+.consent-modal h2 { overflow-wrap: anywhere; }
+.consent-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 4px 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-sm, 8px);
+}
+.consent-facts dt { color: var(--c-text-light); font-weight: 600; }
+.consent-facts dd { margin: 0; color: var(--c-dark); overflow-wrap: anywhere; }
+.rc-note.warn { color: var(--warn); }
+.sent-ext { padding: 0 6px; line-height: 16px; }
+.doc-title-row .sent-ext { align-self: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ---------- Models / Settings ---------- */
 
 .cards-col { padding: 18px; display: flex; flex-direction: column; gap: 16px; }

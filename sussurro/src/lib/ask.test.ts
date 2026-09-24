@@ -191,6 +191,15 @@ describe("profiles", () => {
     expect(note).toContain("llm.example.com");
     expect(note).toContain("confirmation");
   });
+
+  it("a cancelled confirmation starts nothing and says so (#122)", () => {
+    const shown = { ...INITIAL_ASK, error: "old", written: { file: "x.md", recipeName: "X" } };
+    const s = askReducer(shown, { type: "declined", notice: "Nothing was sent to llm.example.com." });
+    expect(s.run).toBeNull();
+    expect(s.error).toBe("");
+    expect(s.written).toBeNull();
+    expect(s.notice).toBe("Nothing was sent to llm.example.com.");
+  });
 });
 
 describe("helpers", () => {

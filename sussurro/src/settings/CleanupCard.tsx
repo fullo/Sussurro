@@ -1,7 +1,8 @@
-import { AdvancedGroup, CollapsibleCard, EndpointNote, Tip } from "../components/ui";
+import { AdvancedGroup, CollapsibleCard, EndpointNote, Switch, Tip } from "../components/ui";
 import { CLEANUP_LEVELS, LANGUAGES } from "../lib/constants";
 import type { Ctl } from "../hooks/useAppController";
 import { API_LABELS, cleanupProfile, patchCleanupProfile, profileSummary } from "../lib/llmProfiles";
+import { cleanupActive, cleanupGate, withCleanupOptIn } from "../lib/privacy";
 import type { CleanupLevel, LlmApi, LlmProfile } from "../lib/types";
 import type { CardProps } from "./DictationCard";
 
@@ -54,7 +55,7 @@ export function CleanupProfileField({ ctl }: { ctl: Ctl }) {
     <div className="field">
       <div className="field-label">
         <span>Profile <Tip text="The LLM profile that cleans your dictations, microphone sessions and files, and the local API's /clean. A profile is a server (Ollama or any OpenAI-compatible /v1 server), a model and an optional API key." /></span>
-        <small>{current?.external ? "external: text leaves this machine" : "runs on this machine"}</small>
+        <small>{current?.external ? "external: needs your opt-in below" : "runs on this machine"}</small>
       </div>
       <select
         value={current?.id ?? ""}
@@ -68,6 +69,37 @@ export function CleanupProfileField({ ctl }: { ctl: Ctl }) {
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+/** Cleanup on an external profile (#122): a persistent, explicit opt-in
+ *  per profile (hotkey dictation has no moment for a per-run dialog).
+ *  Without it cleanup keeps the raw text — never another profile. */
+export function ExternalCleanupOptIn({ ctl }: { ctl: Ctl }) {
+  const { settings, save } = ctl;
+  const gate = cleanupGate(settings);
+  if (gate.state === "local") return null;
+  const on = gate.state === "allowed";
+  const idle = !cleanupActive(settings);
+  return (
+    <div className={`field field-col ext-optin${on ? " on" : " off"}`} role="group" aria-labelledby="ext-optin-label">
+      <div className="row-gap">
+        <Switch
+          checked={on}
+          onChange={(v) => save(withCleanupOptIn(settings, gate.profile.id, v))}
+          label={`Send dictations to ${gate.host} for cleanup`}
+        />
+        <span id="ext-optin-label" className="ext-optin-label">
+          Send dictations to <b>{gate.host}</b> for cleanup
+        </span>
+      </div>
+      <small className="endpoint-note" role="note">
+        {on
+          ? `⚠ Every dictation, microphone session and file transcription — and the local API's /clean — is sent to ${gate.host} to be cleaned. It leaves this machine. Items cleaned this way are marked in the Library.`
+          : `Cleanup is held back: “${gate.profile.name}” is external, so dictations and transcriptions keep their raw text (not cleaned) and nothing is sent. Turn this on to allow ${gate.host}, or pick a local profile.`}
+        {idle && " (Cleanup level is None and no translation is set: nothing is sent either way.)"}
+      </small>
     </div>
   );
 }
@@ -195,6 +227,7 @@ export function CleanupCard({
       </div>
 
       <CleanupProfileField ctl={ctl} />
+      <ExternalCleanupOptIn ctl={ctl} />
 
       {profile && onEditProfiles && (
         <div className="field field-col">
@@ -204,7 +237,7 @@ export function CleanupCard({
               Edit profiles in Recipes
             </button>
           </div>
-          <EndpointNote url={profile.base_url} external={profile.external} />
+          {/* An external profile's warning is the opt-in above (#122). */}
         </div>
       )}
       {profile && !onEditProfiles && <ClassicProfileFields ctl={ctl} profile={profile} />}
