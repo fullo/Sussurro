@@ -6,8 +6,10 @@ import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, formatDurationLabel, formatLongDate, parseDuration } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
 import { hasParticipants } from "../lib/participants";
+import { peopleSuggestions, personFromParticipant } from "../lib/people";
+import { usePeople } from "../hooks/usePeople";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
-import type { Item, ItemMeta } from "../lib/types";
+import type { Item, ItemMeta, Participant } from "../lib/types";
 import { ChipEditor } from "./ChipEditor";
 import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
 import { DocumentTab } from "./DocumentTab";
@@ -50,6 +52,7 @@ export function DocumentPane({
   const [ctxStatus, setCtxStatus] = useState<ContextStatus>("idle");
   const ctxToggleRef = useRef<HTMLButtonElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  const { people, reload: reloadPeople } = usePeople();
 
   const load = async () => {
     try {
@@ -103,6 +106,16 @@ export function DocumentPane({
     } catch (e) {
       ctl.setBusy(String(e));
       load();
+    }
+  };
+
+  const addToPeople = async (p: Participant) => {
+    try {
+      await invoke("people_add", { person: personFromParticipant(p) });
+      reloadPeople();
+      ctl.flash(`${p.name} added to People.`, 3000);
+    } catch (e) {
+      ctl.setBusy(String(e));
     }
   };
 
@@ -274,6 +287,9 @@ export function DocumentPane({
               disabled={!!item.recording}
               values={meta.participants}
               onChange={(participants) => saveMeta({ ...meta, participants })}
+              suggestions={peopleSuggestions(people)}
+              people={people}
+              onAddToPeople={addToPeople}
             />
           </>
         )}

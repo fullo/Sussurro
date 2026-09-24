@@ -190,6 +190,16 @@ export interface Participant {
   email?: string;
 }
 
+/** People registry entry (archive/people.rs, #132), stored in
+ *  `<archive>/.sussurro/people.json`. */
+export interface Person {
+  /** "" for a draft not saved yet. */
+  id: string;
+  name: string;
+  email?: string;
+  aliases: string[];
+}
+
 /** Frontmatter of transcript.md. Unknown keys (Obsidian aliases…) ride along
  *  flattened and must be sent back untouched on update. */
 export interface ItemMeta {

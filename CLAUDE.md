@@ -124,6 +124,17 @@ project decisions here, not in per-machine memory.**
   A meeting is a two-channel engine run (`mic`, `remote`) into a `meeting`
   item, `source: browser:<host>`; page events go to
   `.sussurro/meeting-events.jsonl` for attribution (#131).
+- **People registry (0.9, #132)** (`archive/people.rs`): lives in the
+  archive at `<archive>/.sussurro/people.json` so it travels with it; not
+  behind `meetings_enabled` (transcriptions have participants too). Names
+  match case-, accent- and whitespace-insensitively on name or alias; a name
+  matching two people links to nobody. Linking only *adds* an email, and on
+  save only to participants new to the item (a removed email doesn't come
+  back; the chip offers "link" instead). Deleting/editing a person never
+  edits items. It holds other people's emails: never logged, never in
+  diagnostics, and in the portable config export only when the user ticks
+  "Include People" for that export. An unreadable file reads as empty for
+  linking but is never overwritten.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`
