@@ -6,6 +6,20 @@ export function fmtCount(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+/** File sizes: "812 B", "34 KB", "112.4 MB", "1.2 GB" (decimal units, like
+ *  Finder and Explorer's defaults). */
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 1000) return `${Math.max(0, Math.round(n || 0))} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1000;
+  let i = 0;
+  while (v >= 999.5 && i < units.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  return `${i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
 /** `HH:MM:SS` for a millisecond offset — same as `format_timestamp` in

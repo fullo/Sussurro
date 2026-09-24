@@ -175,6 +175,10 @@ pub struct Settings {
     /// Subtitles setting (P7, #133): `transcript.srt` on request (default)
     /// or on every save. Meetings and transcriptions only.
     pub subtitles: SubtitlesMode,
+    /// "Save audio" preselected in New (P9, #141): WAV is saved only on
+    /// request, so this is off by default. Also applies to runs started
+    /// without a New screen (a browser meeting from the extension).
+    pub save_audio: bool,
 }
 
 impl Default for Settings {
@@ -215,6 +219,7 @@ impl Default for Settings {
             meetings_enabled: false,
             extension_token: String::new(),
             subtitles: SubtitlesMode::OnRequest,
+            save_audio: false,
         }
     }
 }
@@ -565,6 +570,17 @@ mod tests {
             serde_json::to_value(SubtitlesMode::OnRequest).unwrap(),
             "on_request"
         );
+    }
+
+    /// P9 (#141): audio is never saved by default, including for settings
+    /// files written before the option existed.
+    #[test]
+    fn save_audio_defaults_to_off() {
+        assert!(!Settings::default().save_audio);
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert!(!old.save_audio);
+        let on: Settings = serde_json::from_str(r#"{"save_audio":true}"#).unwrap();
+        assert!(on.save_audio);
     }
 
     /// Settings files written before the workspace preview have no `ui_v2`:

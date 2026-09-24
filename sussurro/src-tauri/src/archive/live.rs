@@ -93,7 +93,7 @@ const REWRITE_ATTEMPTS: usize = 3;
 /// on such a race the file is read again — now counted as edited outside,
 /// so the user's body is kept and only the frontmatter is replaced — and
 /// the rewrite is retried.
-fn rewrite_meta(
+pub(super) fn rewrite_meta(
     dir: &Path,
     segments: &SegmentsFile,
     fallback: Option<&ItemMeta>,
@@ -179,8 +179,10 @@ fn finish_session_with(
 
 /// Turn a `recording` item left behind by a crash into an `interrupted`
 /// one, keeping its saved segments; a missing duration is set from the
-/// last saved segment. Returns `false` (and changes nothing) when the item
-/// is not marked `recording`.
+/// last saved segment. Saved audio (#141) is repaired — the WAV headers a
+/// crash left unpatched are rewritten from the file lengths — and listed in
+/// the frontmatter. Returns `false` (and changes nothing) when the item is
+/// not marked `recording`.
 pub fn mark_interrupted(archive: &Path, id: &str) -> Result<bool> {
     let _lock = lock_items();
     let dir = existing_item_dir(archive, id)?;
@@ -201,12 +203,14 @@ pub fn mark_interrupted(archive: &Path, id: &str) -> Result<bool> {
         eprintln!("archive: {id}: unreadable segments kept aside ({e:#})");
         SegmentsFile::default()
     });
+    let audio = super::audio::recover_files(&dir);
     rewrite_meta(
         &dir,
         &segments,
         None,
         &|mut m| {
             m.set_session_state(Some(SessionState::Interrupted));
+            super::audio::set_listed(&mut m, &audio);
             if m.duration.is_none() {
                 if let Some(last) = segments.segments.iter().map(|s| s.end_ms).max() {
                     m.duration = Some(format_timestamp(last));
@@ -234,8 +238,8 @@ pub enum Discarded {
 
 /// Drop a live item the user cancelled (or that captured no speech). Since
 /// #153 the item exists from the session start, so a cancel can hit one
-/// holding minutes of transcript: an item with any transcribed text goes to
-/// the OS trash ([`move_to_trash`], with its macOS trade-off), only an empty
+/// holding minutes of transcript: an item with any transcribed text (or any
+/// saved audio, #141) goes to the OS trash ([`move_to_trash`], with its macOS trade-off), only an empty
 /// one is removed outright. An item whose `transcript.md` the user edited
 /// meanwhile is kept, marked `interrupted`.
 pub fn discard_session(archive: &Path, id: &str) -> Result<Discarded> {
@@ -247,11 +251,12 @@ pub fn discard_session(archive: &Path, id: &str) -> Result<Discarded> {
         mark_interrupted(archive, id)?;
         return Ok(Discarded::Kept);
     }
-    // Unreadable segments count as text: when in doubt, the trash.
+    // Unreadable segments count as text: when in doubt, the trash. Saved
+    // audio (#141) is the user's recording too: never hard-deleted.
     let has_text = read_segments(&dir)
         .map(|s| s.segments.iter().any(|s| !s.text.trim().is_empty()))
         .unwrap_or(true);
-    if has_text {
+    if has_text || !super::audio::files_in(&dir).is_empty() {
         delete_item_with(archive, id, move_to_trash)?;
         return Ok(Discarded::Trashed);
     }

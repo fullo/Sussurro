@@ -209,6 +209,7 @@ fn start_server(meetings_enabled: bool) -> Running {
         config: Mutex::new(ApiConfig {
             meetings_enabled,
             extension_token: TOKEN.into(),
+            ..Default::default()
         }),
         settings: Mutex::new(settings),
         paths,
@@ -319,6 +320,17 @@ fn meeting_routes_check_token_origin_and_send_cors() {
     assert_eq!(ok.json()["protocol"], protocol::PROTOCOL_VERSION);
     assert_eq!(ok.json()["app"], env!("CARGO_PKG_VERSION"));
     assert_eq!(ok.header("Access-Control-Allow-Origin"), Some(EXT));
+    // The subtitles setting, for the side panel's "Create .srt" (#129).
+    assert_eq!(ok.json()["subtitles"], "on_request");
+    r.host.0.config.lock().unwrap().subtitles = crate::settings::SubtitlesMode::Always;
+    let always = http(
+        r.port,
+        "GET",
+        "/app/version",
+        &[("Authorization", &auth), ("Origin", EXT)],
+        "",
+    );
+    assert_eq!(always.json()["subtitles"], "always");
     // A local script: token, no origin.
     let script = http(r.port, "GET", "/app/version", &[("Authorization", &auth)], "");
     assert_eq!(script.status, 200);

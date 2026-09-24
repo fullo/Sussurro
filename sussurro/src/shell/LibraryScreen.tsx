@@ -17,6 +17,7 @@ import {
 } from "../lib/facets";
 import { itemSubtitle, matchesQuery, splitHighlights, TYPE_FILTERS, TYPE_LABEL } from "../lib/library";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
+import { audioBadge } from "../lib/audio";
 import type { ItemSummary } from "../lib/types";
 import { DocumentPane } from "./DocumentPane";
 import { LibraryFacets } from "./LibraryFacets";
@@ -196,6 +197,11 @@ export function LibraryScreen({
                         aria-label={externalHostsTitle(it.external_hosts)}
                       >
                         ↗ Sent externally
+                      </span>
+                    )}
+                    {audioBadge(it) && (
+                      <span className="audio-badge" title="Saved audio in the item folder (size on disk)">
+                        {audioBadge(it)}
                       </span>
                     )}
                   </span>

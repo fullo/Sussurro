@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { CollapsibleCard, Tip } from "../components/ui";
+import { CollapsibleCard, Switch, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, fmtCount } from "../lib/format";
 import type { SubtitlesMode } from "../lib/types";
@@ -166,6 +166,16 @@ function ArchiveCard({ ctl }: { ctl: Ctl }) {
             Show in {fileManagerName()}
           </button>
         </div>
+      </div>
+      <div className="field">
+        <div className="field-label">
+          <span>Save audio <Tip text="Preselects Save audio in New for recordings, files and links (and for meetings from the browser extension). The audio is saved as audio.wav in each item's folder, inside the archive folder above — so it syncs wherever that folder syncs (iCloud Drive, OneDrive…). About 115 MB per hour. Off by default: audio is saved only when you ask." /></span>
+          <small>{settings.save_audio ? "every new item keeps its audio" : "only when ticked in New"}</small>
+        </div>
+        <Switch
+          checked={!!settings.save_audio}
+          onChange={(v) => save({ ...settings, save_audio: v })}
+        />
       </div>
       <div className="field">
         <div className="field-label">
