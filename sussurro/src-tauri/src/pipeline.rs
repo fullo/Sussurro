@@ -781,6 +781,7 @@ mod tests {
             dictation: Default::default(),
             recipe_runs: Default::default(),
             recipe_answers: Default::default(),
+            consents: Default::default(),
         }
     }
 

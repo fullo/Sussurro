@@ -335,9 +335,11 @@ impl Index {
     /// Full-text search with facets. An empty query lists every item that
     /// passes the filters, newest first; a text query ranks by relevance
     /// (BM25), then newest first, and fills `snippet` with the best excerpt
-    /// (matches wrapped in `**`).
+    /// (matches wrapped in `**`). Each row carries the item's external-send
+    /// hosts (#122), read from its folder.
     pub fn search(&self, query: &str, filters: &SearchFilters) -> Result<Vec<ItemSummary>> {
-        self.with_conn(|conn| search_conn(conn, query, filters))
+        let rows = self.with_conn(|conn| search_conn(conn, query, filters))?;
+        Ok(rows.into_iter().map(|s| s.with_external_hosts(&self.archive)).collect())
     }
 }
 

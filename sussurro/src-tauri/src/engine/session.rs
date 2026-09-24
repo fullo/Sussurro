@@ -482,7 +482,31 @@ where
             return Err(e);
         }
     };
-    super::run(job, &mut stt, &cleaner, sink)
+    let archive = job.archive_dir.clone();
+    let result = super::run(job, &mut stt, &cleaner, sink)?;
+    log_external_cleanup(&settings, &archive, &result.item_id);
+    Ok(result)
+}
+
+/// A run cleaned on an external profile the user opted in for (#122):
+/// record it in the item's external-send log, so the Library marks the
+/// item. Best-effort — the item is already written.
+fn log_external_cleanup(settings: &Settings, archive: &Path, item_id: &str) {
+    if !settings.cleanup_sends_externally() {
+        return;
+    }
+    let p = settings.cleanup_llm();
+    let entry = crate::archive::external::ExternalSend {
+        date: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+        host: p.host(),
+        profile: p.name.trim().to_string(),
+        model: p.model.trim().to_string(),
+        kind: crate::archive::external::SendKind::Cleanup,
+        recipe: String::new(),
+    };
+    if let Err(e) = crate::archive::external::record(archive, item_id, &entry) {
+        eprintln!("engine: could not record the external cleanup of {item_id}: {e:#}");
+    }
 }
 
 /// Start a long microphone session (separate from the hotkey). Returns the

@@ -1523,3 +1523,67 @@ fn a_link_run_downloads_transcribes_and_cleans_up() {
     assert_eq!(count_items(), items);
     assert_eq!(std::fs::read_dir(&temp).unwrap().count(), 0);
 }
+
+/// #122: a long-form run cleaned on an external profile the user opted in
+/// for is recorded in the item's external-send log (the Library marks it);
+/// without the opt-in, or with cleanup None for this run, nothing is
+/// recorded (cleanup then keeps the raw text, see `cleanup::ollama`).
+#[test]
+fn external_cleanup_marks_the_item_only_when_it_was_sent() {
+    use crate::llm::LlmProfile;
+    use crate::settings::{CleanupApi, CleanupLevel, Settings};
+    use crate::state::AppPaths;
+    use session::{run_request_with, Request, RunOptions};
+
+    let run_with = |opt_in: &str, level: Option<CleanupLevel>| -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("appdata");
+        let paths = AppPaths {
+            settings_file: dir.path().join("settings.json"),
+            models_dir: data.join("models"),
+            history_file: data.join("history.jsonl"),
+            stats_file: data.join("stats.json"),
+            archive_index: data.join("index.sqlite"),
+            documents_dir: Some(dir.path().join("Documents")),
+            home_dir: Some(dir.path().to_path_buf()),
+        };
+        let mut work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com/v1", "", "gpt");
+        work.cleanup_opt_in = opt_in.into();
+        let shared = Mutex::new(Settings {
+            cleanup_level: CleanupLevel::Light,
+            llm_profiles: vec![LlmProfile::default(), work],
+            cleanup_profile: "work".into(),
+            ..Default::default()
+        });
+        let req = Request {
+            id: 9,
+            cancel: Arc::new(AtomicBool::new(false)),
+            source: Box::new(VecSource::new(bursts(&[(true, 2.0), (false, 1.0)]), Channel::File)),
+            policy: Policy::Block { max_queued: 2 },
+            defer: false,
+            item_type: ItemType::Transcription,
+            title: "Esterno".into(),
+            source_label: "file:test.wav".into(),
+            options: RunOptions { language: None, cleanup_level: level },
+        };
+        let r = run_request_with(
+            &shared,
+            &paths,
+            req,
+            |_: &[f32], _: &str| -> Result<TimedTranscript> {
+                Ok(TimedTranscript { text: "ciao".into(), ..Default::default() })
+            },
+            |_: &Settings, _: Option<&str>, raw: &str| raw.to_string(),
+            |_| Box::new(EnergyDetector::default()),
+            Arc::new(VecSink::default()),
+        )
+        .unwrap();
+        let archive_dir = dir.path().join("Documents").join("Sussurro");
+        archive::read_item(&archive_dir, &r.item_id).unwrap().external_hosts
+    };
+
+    assert_eq!(run_with("api.example.com", None), ["api.example.com"]);
+    assert!(run_with("", None).is_empty(), "no opt-in: nothing sent, nothing recorded");
+    assert!(run_with("other.example", None).is_empty(), "an opt-in for another host doesn't count");
+    assert!(run_with("api.example.com", Some(CleanupLevel::None)).is_empty(), "cleanup None sends nothing");
+}

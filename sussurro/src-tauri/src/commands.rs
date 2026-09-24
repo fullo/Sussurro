@@ -1054,27 +1054,25 @@ pub struct RecipeFinished {
     pub profile: String,
     pub model: String,
     pub external: bool,
+    /// Server the transcript went to, for an external profile (#122).
+    pub host: String,
     pub error: Option<String>,
     pub cancelled: bool,
 }
 
 /// The profile a recipe runs on when the caller names none: the cleanup
-/// profile when it is local, else the first local one, else the cleanup
-/// profile (which the privacy check then refuses with its explanation).
-fn default_recipe_profile(settings: &Settings) -> crate::llm::LlmProfile {
+/// profile when it is local, else the first local one. Never an external
+/// profile (#122): there is no silent fallback from local to external —
+/// an external run is always one the user picked and confirmed.
+fn default_recipe_profile(settings: &Settings) -> Option<crate::llm::LlmProfile> {
     let cleanup = settings.cleanup_llm();
     if !cleanup.external {
-        return cleanup;
+        return Some(cleanup);
     }
-    settings
-        .llm_profiles
-        .iter()
-        .find(|p| !p.external)
-        .cloned()
-        .unwrap_or(cleanup)
+    settings.llm_profiles.iter().find(|p| !p.external).cloned()
 }
 
-/// The profile `profile_id` names, or the default one.
+/// The profile `profile_id` names, or the default (local) one.
 fn recipe_profile(settings: &Settings, profile_id: Option<&str>) -> Result<crate::llm::LlmProfile, String> {
     match profile_id {
         Some(pid) => settings
@@ -1083,18 +1081,96 @@ fn recipe_profile(settings: &Settings, profile_id: Option<&str>) -> Result<crate
             .find(|p| p.id == pid)
             .cloned()
             .ok_or_else(|| format!("no LLM profile '{pid}'")),
-        None => Ok(default_recipe_profile(settings)),
+        None => default_recipe_profile(settings).ok_or_else(|| {
+            "no local LLM profile — pick a profile for this run (an external one asks for a confirmation first)"
+                .to_string()
+        }),
     }
 }
 
+/// The recipe a run asks for: a free question (normalized) when `question`
+/// is given, else the recipe `recipe_id`.
+fn run_recipe_of(
+    settings: &Settings,
+    recipe_id: Option<&str>,
+    question: Option<&str>,
+) -> Result<(Recipe, Option<String>), String> {
+    match question {
+        Some(q) => {
+            let q = recipes::answer::normalize_question(q).map_err(|e| format!("{e:#}"))?;
+            let r = recipes::answer::question_recipe(&q).map_err(|e| format!("{e:#}"))?;
+            Ok((r, Some(q)))
+        }
+        None => {
+            let rid = recipe_id.ok_or("name a recipe or a question")?;
+            let r = recipes::find_recipe(&settings.recipes, rid).ok_or_else(|| format!("no recipe '{rid}'"))?;
+            Ok((r, None))
+        }
+    }
+}
+
+/// What a run on an external profile would send, and where (#122): the
+/// confirmation dialog shows it. Reads the item, sends nothing, issues no
+/// confirmation.
+#[tauri::command]
+pub async fn external_run_preview(
+    state: State<'_, AppState>,
+    id: String,
+    recipe_id: Option<String>,
+    question: Option<String>,
+    profile_id: String,
+) -> Result<recipes::run::ExternalRunPreview, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let (recipe, question) = run_recipe_of(&settings, recipe_id.as_deref(), question.as_deref())?;
+    let profile = recipe_profile(&settings, Some(&profile_id))?;
+    let (archive, _) = archive_paths(&state)?;
+    blocking(move || recipes::run::preview(&archive, &id, &recipe, question.as_deref(), &profile)).await
+}
+
+/// `prepare_external_run` result.
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct ExternalRunConsent {
+    /// One-time token for `recipe_run` / `recipe_ask` (`consent`).
+    pub token: String,
+    pub expires_in_secs: u64,
+}
+
+/// The user confirmed a run on an external profile in the dialog (#122):
+/// issue the one-time token that run needs. It is bound to this item, this
+/// recipe or question, and the profile's current server and model; it
+/// works once, within [`crate::llm::consent::CONSENT_TTL`].
+#[tauri::command]
+pub fn prepare_external_run(
+    state: State<'_, AppState>,
+    id: String,
+    recipe_id: Option<String>,
+    question: Option<String>,
+    profile_id: String,
+) -> Result<ExternalRunConsent, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let (recipe, _) = run_recipe_of(&settings, recipe_id.as_deref(), question.as_deref())?;
+    let profile = recipe_profile(&settings, Some(&profile_id))?;
+    if !profile.external {
+        return Err(format!("“{}” is a local profile: its runs need no confirmation", profile.name));
+    }
+    archive::paths::validate_item_id(&id).map_err(|e| format!("{e:#}"))?;
+    let target = crate::llm::consent::RunTarget::new(&id, &recipe, &profile);
+    Ok(ExternalRunConsent {
+        token: state.consents.issue(target),
+        expires_in_secs: crate::llm::consent::CONSENT_TTL.as_secs(),
+    })
+}
+
 /// Run a recipe on an archive item with an LLM profile (default: see
-/// [`default_recipe_profile`]). Refusals — unknown recipe or profile, an
-/// external profile (#122 adds the per-run confirmation), a live item,
-/// another run on the same item — are errors, and nothing is sent. Once
-/// started, progress arrives as `recipe-progress` and the end as
-/// `recipe-finished`, whose payload this also returns (with `error` /
-/// `cancelled` set when it did not complete). An answer recipe's result is
-/// kept in memory for `recipe_save_answer` (`answer_id`).
+/// [`default_recipe_profile`]). An external profile needs `consent`, the
+/// token `prepare_external_run` issued after the user confirmed (#122).
+/// Refusals — unknown recipe or profile, an external profile without a
+/// valid confirmation, a live item, another run on the same item — are
+/// errors, and nothing is sent. Once started, progress arrives as
+/// `recipe-progress` and the end as `recipe-finished`, whose payload this
+/// also returns (with `error` / `cancelled` set when it did not complete).
+/// An answer recipe's result is kept in memory for `recipe_save_answer`
+/// (`answer_id`).
 #[tauri::command]
 pub async fn recipe_run(
     app: AppHandle,
@@ -1102,18 +1178,18 @@ pub async fn recipe_run(
     id: String,
     recipe_id: String,
     profile_id: Option<String>,
+    consent: Option<String>,
 ) -> Result<RecipeFinished, String> {
     let settings = state.settings.lock().unwrap().clone();
-    let recipe = recipes::find_recipe(&settings.recipes, &recipe_id)
-        .ok_or_else(|| format!("no recipe '{recipe_id}'"))?;
+    let (recipe, _) = run_recipe_of(&settings, Some(&recipe_id), None)?;
     let profile = recipe_profile(&settings, profile_id.as_deref())?;
-    run_recipe(app, &state, id, recipe, None, profile).await
+    run_recipe(app, &state, id, recipe, None, profile, consent).await
 }
 
 /// Ask a free question about an archive item (the Ask panel, #121): a
 /// transient answer recipe whose task is the question, run like any other
-/// recipe (map-reduce on long transcripts, same refusals, same events).
-/// The answer is not written anywhere unless saved with
+/// recipe (map-reduce on long transcripts, same refusals and confirmation,
+/// same events). The answer is not written anywhere unless saved with
 /// `recipe_save_answer`.
 #[tauri::command]
 pub async fn recipe_ask(
@@ -1122,12 +1198,32 @@ pub async fn recipe_ask(
     id: String,
     question: String,
     profile_id: Option<String>,
+    consent: Option<String>,
 ) -> Result<RecipeFinished, String> {
-    let question = recipes::answer::normalize_question(&question).map_err(|e| format!("{e:#}"))?;
-    let recipe = recipes::answer::question_recipe(&question).map_err(|e| format!("{e:#}"))?;
     let settings = state.settings.lock().unwrap().clone();
+    let (recipe, question) = run_recipe_of(&settings, None, Some(&question))?;
     let profile = recipe_profile(&settings, profile_id.as_deref())?;
-    run_recipe(app, &state, id, recipe, Some(question), profile).await
+    run_recipe(app, &state, id, recipe, question, profile, consent).await
+}
+
+/// The confirmation a run needs (#122): none on a local profile; on an
+/// external one the token is consumed (single use, whatever happens next)
+/// and must have been issued for exactly this run.
+fn consent_for(
+    consents: &crate::llm::consent::ConsentStore,
+    id: &str,
+    recipe: &Recipe,
+    profile: &crate::llm::LlmProfile,
+    token: Option<&str>,
+) -> Result<Option<crate::llm::consent::ConsentGrant>, String> {
+    use crate::llm::consent::{authorize, RunTarget};
+    let target = RunTarget::new(id, recipe, profile);
+    let grant = match (profile.external, token) {
+        (true, Some(t)) => Some(consents.consume(t, &target).map_err(|e| format!("{e:#}"))?),
+        _ => None,
+    };
+    authorize(profile, &target, grant.as_ref()).map_err(|e| format!("{e:#}"))?;
+    Ok(grant)
 }
 
 async fn run_recipe(
@@ -1137,10 +1233,12 @@ async fn run_recipe(
     recipe: Recipe,
     question: Option<String>,
     profile: crate::llm::LlmProfile,
+    consent: Option<String>,
 ) -> Result<RecipeFinished, String> {
     use tauri::{Emitter, Manager};
     let (archive, db) = archive_paths(state)?;
     recipes::run::check_profile(&profile).map_err(|e| format!("{e:#}"))?;
+    let grant = consent_for(&state.consents, &id, &recipe, &profile, consent.as_deref())?;
     {
         let journal = crate::engine::session::journal_path(state);
         let (archive, id) = (archive.clone(), id.clone());
@@ -1170,6 +1268,7 @@ async fn run_recipe(
             &item_id,
             &r,
             &p,
+            grant.as_ref(),
             &model,
             &now,
             &cancel,
@@ -1205,6 +1304,7 @@ async fn run_recipe(
         profile: profile.name.trim().to_string(),
         model: profile.model.trim().to_string(),
         external: profile.external,
+        host: if profile.external { profile.host() } else { String::new() },
         error: None,
         cancelled: false,
     };
@@ -1220,6 +1320,7 @@ async fn run_recipe(
                     profile: finished.profile.clone(),
                     model: finished.model.clone(),
                     external: profile.external,
+                    host: finished.host.clone(),
                     date: now,
                     text: text.clone(),
                 }));
@@ -1313,12 +1414,59 @@ mod recipe_tests {
             cleanup_profile: "work".into(),
             ..Default::default()
         };
-        assert_eq!(default_recipe_profile(&s).id, "lan");
+        assert_eq!(default_recipe_profile(&s).unwrap().id, "lan");
         s.cleanup_profile = "lan".into();
-        assert_eq!(default_recipe_profile(&s).id, "lan");
-        // Only external profiles: the run is then refused with the reason.
-        s.llm_profiles = vec![work];
-        s.cleanup_profile = "work".into();
-        assert_eq!(default_recipe_profile(&s).id, "work");
+        assert_eq!(default_recipe_profile(&s).unwrap().id, "lan");
+        assert_eq!(recipe_profile(&s, None).unwrap().id, "lan");
+        assert_eq!(recipe_profile(&s, Some("work")).unwrap().id, "work", "an explicit choice is kept");
+        assert!(recipe_profile(&s, Some("nope")).is_err());
+    }
+
+    /// #122: with no profile named, a run never falls back from local to
+    /// external — not even when every profile is external.
+    #[test]
+    fn local_to_external_fallback_never_happens() {
+        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
+        let mut lan_by_hand = LlmProfile::new("lan", "LAN", CleanupApi::Ollama, "http://localhost:11434", "", "m");
+        lan_by_hand.external = true;
+        let s = Settings {
+            llm_profiles: vec![work, lan_by_hand],
+            cleanup_profile: "work".into(),
+            ..Default::default()
+        };
+        assert!(default_recipe_profile(&s).is_none());
+        let err = recipe_profile(&s, None).unwrap_err();
+        assert!(err.contains("no local LLM profile"), "{err}");
+    }
+
+    #[test]
+    fn runs_resolve_a_recipe_or_a_question() {
+        let s = Settings::default();
+        let (r, q) = run_recipe_of(&s, Some("summary"), None).unwrap();
+        assert_eq!((r.id.as_str(), q), ("summary", None));
+        let (r, q) = run_recipe_of(&s, Some("summary"), Some("  Who\nsends it? ")).unwrap();
+        assert_eq!((r.id.as_str(), q.as_deref()), ("question", Some("Who sends it?")));
+        assert!(run_recipe_of(&s, Some("nope"), None).is_err());
+        assert!(run_recipe_of(&s, None, None).is_err());
+        assert!(run_recipe_of(&s, None, Some(" ")).is_err());
+    }
+
+    /// The command-side gate: no token → refused; a token is consumed once;
+    /// a local profile needs none.
+    #[test]
+    fn consent_for_refuses_without_a_token_and_consumes_it_once() {
+        use crate::llm::consent::{ConsentStore, RunTarget};
+        let store = ConsentStore::default();
+        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
+        let recipe = recipes::builtin_recipes().remove(1);
+        let err = consent_for(&store, "2026/09/a", &recipe, &work, None).unwrap_err();
+        assert!(err.contains("Confirm the run first"), "{err}");
+        let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work));
+        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token)).unwrap().is_some());
+        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token)).is_err(), "single use");
+        let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work));
+        assert!(consent_for(&store, "2026/09/b", &recipe, &work, Some(&token)).is_err(), "bound to the item");
+        let local = LlmProfile::default();
+        assert!(consent_for(&store, "2026/09/a", &recipe, &local, None).unwrap().is_none());
     }
 }

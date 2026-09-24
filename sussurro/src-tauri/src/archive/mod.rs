@@ -5,6 +5,7 @@
 //! - [`paths`]: location, folder naming, id validation and confinement
 //! - [`types`]: frontmatter and `segments.json` data model
 //! - [`companion`]: recipe output next to the transcript (`document.md`, #120)
+//! - [`external`]: what was sent to an external LLM host, per item (#122)
 //! - [`frontmatter`]: YAML frontmatter read/write
 //! - [`render`]: `transcript.md` rendering
 //! - [`store`]: create / read / list / update / delete items
@@ -12,6 +13,7 @@
 //! - [`index`]: search index (rebuildable)
 
 pub mod companion;
+pub mod external;
 pub mod frontmatter;
 pub mod index;
 pub mod live;

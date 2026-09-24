@@ -1,7 +1,13 @@
-//! One recipe run on an archive item: the privacy refusal, the input (the
+//! One recipe run on an archive item: the privacy gate, the input (the
 //! segments, or the markdown when it was edited outside Sussurro), the
 //! map-reduce engine, and — for a companion-document recipe — the file
 //! next to the transcript with its provenance frontmatter.
+//!
+//! Privacy gate (#122): a run on an external profile needs a
+//! [`ConsentGrant`] issued for exactly this run (see [`crate::llm::consent`]);
+//! without one it is refused before anything is read or sent. A granted
+//! run is recorded in the item's external-send log before the first
+//! request, and its document carries `external: true` and the host.
 //!
 //! Also the registry of runs in flight (one per item), for progress and
 //! cancel from the UI.
@@ -11,9 +17,11 @@ use super::engine::{self, ChatModel, Progress};
 use super::prompt::Context;
 use super::{companion_file_name, Recipe, RecipeTarget};
 use crate::archive::companion::{write_companion, CompanionMeta};
+use crate::archive::external::{ExternalSend, SendKind};
 use crate::archive::store::TRANSCRIPT_FILE;
+use crate::llm::consent::{authorize, ConsentGrant, RunTarget};
 use crate::llm::LlmProfile;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context as _, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -32,22 +40,84 @@ pub struct RunOutput {
     pub answer: Option<String>,
 }
 
-/// Refuse profiles that would send the transcript off this machine. The
-/// per-run confirmation that makes them usable is #122; until then nothing
-/// leaves the machine from a recipe.
+/// A profile a recipe can run on at all: it names a model.
 pub fn check_profile(profile: &LlmProfile) -> Result<()> {
-    if profile.external {
-        bail!(
-            "“{}” is an external profile: the transcript would leave this machine. Recipes on external \
-             profiles need a confirmation for each run, which arrives in a later update — pick a local \
-             profile for now.",
-            profile.name
-        );
-    }
     if profile.model.trim().is_empty() {
         bail!("the profile “{}” has no model — choose one in Recipes → LLM profiles", profile.name);
     }
     Ok(())
+}
+
+/// What the confirmation dialog shows before an external run (#122): which
+/// document goes to which host, and roughly how much of it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ExternalRunPreview {
+    pub item_id: String,
+    pub item_title: String,
+    pub recipe_id: String,
+    pub recipe_name: String,
+    /// The question, for a free question.
+    pub question: Option<String>,
+    pub profile_id: String,
+    pub profile_name: String,
+    /// Server the text goes to (`api.example.com`).
+    pub host: String,
+    pub base_url: String,
+    pub model: String,
+    /// Characters of the transcript that will be sent (plus the task).
+    pub chars: usize,
+    /// Rough token count (≈ 4 characters per token).
+    pub approx_tokens: usize,
+    /// The profile is external: the run needs a confirmation.
+    pub external: bool,
+}
+
+/// Rough token count of `chars` characters of text (≈ 4 per token).
+pub fn approx_tokens(chars: usize) -> usize {
+    chars.div_ceil(4)
+}
+
+/// The preview of running `recipe` on item `id` with `profile`. Reads the
+/// item; sends nothing.
+pub fn preview(
+    archive: &Path,
+    id: &str,
+    recipe: &Recipe,
+    question: Option<&str>,
+    profile: &LlmProfile,
+) -> Result<ExternalRunPreview> {
+    let item = crate::archive::read_item(archive, id)?;
+    let input = item_input(&item);
+    let chars = input.iter().map(|l| l.format().chars().count() + 1).sum::<usize>()
+        + recipe.prompt.chars().count();
+    Ok(ExternalRunPreview {
+        item_id: id.to_string(),
+        item_title: item.meta.title.trim().to_string(),
+        recipe_id: recipe.id.clone(),
+        recipe_name: recipe.name.clone(),
+        question: question.map(str::to_string),
+        profile_id: profile.id.clone(),
+        profile_name: profile.name.trim().to_string(),
+        host: profile.host_label(),
+        base_url: profile.base_url.trim().to_string(),
+        model: profile.model.trim().to_string(),
+        chars,
+        approx_tokens: approx_tokens(chars),
+        external: profile.external,
+    })
+}
+
+/// The external-send log entry for a granted run.
+fn send_entry(recipe: &Recipe, profile: &LlmProfile, now: &str) -> ExternalSend {
+    let question = recipe.id == super::answer::QUESTION_RECIPE_ID;
+    ExternalSend {
+        date: now.to_string(),
+        host: profile.host(),
+        profile: profile.name.trim().to_string(),
+        model: profile.model.trim().to_string(),
+        kind: if question { SendKind::Question } else { SendKind::Recipe },
+        recipe: if question { String::new() } else { recipe.id.clone() },
+    }
 }
 
 /// A profile as a [`ChatModel`]: the real HTTP client, with the recipe's
@@ -82,22 +152,31 @@ pub fn item_input(item: &crate::archive::Item) -> Vec<InputLine> {
 
 /// Run `recipe` on item `id` with `model` (the chat side of `profile`).
 /// `now` stamps the document (RFC 3339). Nothing is sent when the profile
-/// is refused or the item is still being recorded.
+/// is refused, when an external profile comes without a matching
+/// `consent` (#122), or when the item is still being recorded.
 #[allow(clippy::too_many_arguments)]
 pub fn run_on_item(
     archive: &Path,
     id: &str,
     recipe: &Recipe,
     profile: &LlmProfile,
+    consent: Option<&ConsentGrant>,
     model: &dyn ChatModel,
     now: &str,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<RunOutput> {
     check_profile(profile)?;
+    authorize(profile, &RunTarget::new(id, recipe, profile), consent)?;
     let item = crate::archive::read_item(archive, id)?;
     if item.recording {
         bail!("'{id}' is still being recorded — run recipes when the session ends");
+    }
+    if profile.external {
+        // Before the first request: a run that then fails or is cancelled
+        // may already have sent part of the transcript.
+        crate::archive::external::record(archive, id, &send_entry(recipe, profile, now))
+            .context("could not record the external run, so nothing was sent")?;
     }
     let input = item_input(&item);
     let ctx = Context::from_meta(&item.meta, has_speakers(&input));
@@ -121,6 +200,7 @@ pub fn run_on_item(
                 profile: profile.name.trim().to_string(),
                 model: profile.model.trim().to_string(),
                 external: profile.external,
+                host: if profile.external { profile.host() } else { String::new() },
                 date: now.to_string(),
                 transcript: TRANSCRIPT_FILE.to_string(),
                 extra: Default::default(),
@@ -267,7 +347,7 @@ mod tests {
         let archive = tmp.path().join("Sussurro");
         let id = meeting(&archive);
         let model = FakeModel::new("**tl;dr:** Anna manda il file.\n\n# Weekly sync\n");
-        let out = run_on_item(&archive, &id, &recipe(0), &local(), &model, NOW, &AtomicBool::new(false), &mut |_| {})
+        let out = run_on_item(&archive, &id, &recipe(0), &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {})
             .unwrap();
         assert_eq!(out, RunOutput { file: Some("document.md".into()), answer: None });
 
@@ -297,7 +377,7 @@ mod tests {
         let archive = tmp.path().join("Sussurro");
         let id = meeting(&archive);
         let model = FakeModel::new("- [ ] Mandare il file — Anna, venerdì");
-        run_on_item(&archive, &id, &recipe(2), &local(), &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        run_on_item(&archive, &id, &recipe(2), &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
         let files: Vec<_> = list_companions(&archive, &id).unwrap().into_iter().map(|d| d.file).collect();
         assert_eq!(files, ["action-items.md"]);
     }
@@ -315,33 +395,144 @@ mod tests {
             builtin: false,
         };
         let model = FakeModel::new("Anna.");
-        let out = run_on_item(&archive, &id, &ask, &local(), &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let out = run_on_item(&archive, &id, &ask, &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
         assert_eq!(out, RunOutput { file: None, answer: Some("Anna.".into()) });
         assert!(list_companions(&archive, &id).unwrap().is_empty());
     }
 
+    fn work() -> LlmProfile {
+        LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com/v1", "k", "gpt")
+    }
+
+    fn run(archive: &Path, id: &str, r: &Recipe, p: &LlmProfile, g: Option<&ConsentGrant>, m: &FakeModel) -> Result<RunOutput> {
+        run_on_item(archive, id, r, p, g, m, NOW, &AtomicBool::new(false), &mut |_| {})
+    }
+
+    /// #122: without a confirmation an external run is refused before
+    /// anything is read, logged or sent.
     #[test]
-    fn external_profiles_are_refused_before_anything_is_sent() {
+    fn external_runs_without_consent_are_refused_before_anything_is_sent() {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("Sussurro");
         let id = meeting(&archive);
-        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com/v1", "k", "gpt");
-        assert!(work.external);
+        assert!(work().external);
         let model = FakeModel::new("never");
-        let err = run_on_item(&archive, &id, &recipe(1), &work, &model, NOW, &AtomicBool::new(false), &mut |_| {})
-            .unwrap_err();
+        let err = run(&archive, &id, &recipe(1), &work(), None, &model).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("external profile") && msg.contains("confirmation"), "{msg}");
+        assert!(msg.contains("external profile") && msg.contains("api.example.com") && msg.contains("Confirm"), "{msg}");
         assert!(model.calls.borrow().is_empty(), "nothing may reach the model");
         assert!(list_companions(&archive, &id).unwrap().is_empty());
+        assert!(crate::archive::external::read_log(&archive, &id).unwrap().is_empty(), "nothing was sent");
 
-        // A local URL marked external by hand is refused too.
+        // A local URL marked external by hand needs the confirmation too.
         let mut lan = local();
         lan.external = true;
-        assert!(check_profile(&lan).is_err());
+        assert!(run(&archive, &id, &recipe(1), &lan, None, &model).is_err());
+        assert!(model.calls.borrow().is_empty());
         let mut no_model = local();
         no_model.model = " ".into();
         assert!(check_profile(&no_model).is_err());
+    }
+
+    /// A grant issued for another run (item, recipe, profile, host or model)
+    /// doesn't open this one.
+    #[test]
+    fn a_grant_for_another_run_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let id = meeting(&archive);
+        let store = crate::llm::consent::ConsentStore::default();
+        let for_summary = RunTarget::new(&id, &recipe(1), &work());
+        let grant = store.consume(&store.issue(for_summary.clone()), &for_summary).unwrap();
+        let model = FakeModel::new("never");
+        // Another recipe.
+        assert!(run(&archive, &id, &recipe(2), &work(), Some(&grant), &model).is_err());
+        // Same recipe, the profile's model changed after confirming.
+        let mut changed = work();
+        changed.model = "gpt-4o".into();
+        assert!(run(&archive, &id, &recipe(1), &changed, Some(&grant), &model).is_err());
+        // Same recipe, another server.
+        let mut moved = work();
+        moved.set_base_url("https://llm.other.example/v1");
+        assert!(run(&archive, &id, &recipe(1), &moved, Some(&grant), &model).is_err());
+        assert!(model.calls.borrow().is_empty());
+        assert!(crate::archive::external::read_log(&archive, &id).unwrap().is_empty());
+    }
+
+    /// With a matching grant the run goes out, is logged first (metadata
+    /// only) and the document records `external: true` and the host.
+    #[test]
+    fn a_confirmed_external_run_is_logged_and_marked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let id = meeting(&archive);
+        let store = crate::llm::consent::ConsentStore::default();
+        let target = RunTarget::new(&id, &recipe(1), &work());
+        let grant = store.consume(&store.issue(target.clone()), &target).unwrap();
+        let model = FakeModel::new("- Anna manda il file.");
+        let out = run(&archive, &id, &recipe(1), &work(), Some(&grant), &model).unwrap();
+        assert_eq!(out.file.as_deref(), Some("summary.md"));
+        assert_eq!(model.calls.borrow().len(), 1);
+
+        let raw = std::fs::read_to_string(archive.join(&id).join("summary.md")).unwrap();
+        assert!(raw.contains("external: true\n") && raw.contains("host: api.example.com\n"), "{raw}");
+        let log = crate::archive::external::read_log(&archive, &id).unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(
+            log[0],
+            ExternalSend {
+                date: NOW.into(),
+                host: "api.example.com".into(),
+                profile: "Work".into(),
+                model: "gpt".into(),
+                kind: SendKind::Recipe,
+                recipe: "summary".into(),
+            }
+        );
+        let log_raw = std::fs::read_to_string(archive.join(&id).join(".sussurro/external-log.json")).unwrap();
+        assert!(!log_raw.contains("Mando il file"), "the log never holds content");
+        assert_eq!(crate::archive::read_item(&archive, &id).unwrap().external_hosts, ["api.example.com"]);
+
+        // A free question is logged as a question, without its text.
+        let q = super::super::answer::question_recipe("Chi manda il file?").unwrap();
+        let target = RunTarget::new(&id, &q, &work());
+        let grant = store.consume(&store.issue(target.clone()), &target).unwrap();
+        run(&archive, &id, &q, &work(), Some(&grant), &FakeModel::new("Anna.")).unwrap();
+        let log = crate::archive::external::read_log(&archive, &id).unwrap();
+        assert_eq!((log[1].kind, log[1].recipe.as_str()), (SendKind::Question, ""));
+        let log_raw = std::fs::read_to_string(archive.join(&id).join(".sussurro/external-log.json")).unwrap();
+        assert!(!log_raw.contains("Chi manda"), "the log never holds the question");
+    }
+
+    /// A local run leaves no trace of an external send.
+    #[test]
+    fn local_runs_are_not_logged_or_marked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let id = meeting(&archive);
+        run(&archive, &id, &recipe(1), &local(), None, &FakeModel::new("ok")).unwrap();
+        let raw = std::fs::read_to_string(archive.join(&id).join("summary.md")).unwrap();
+        assert!(raw.contains("external: false\n") && !raw.contains("host:"), "{raw}");
+        assert!(crate::archive::external::read_log(&archive, &id).unwrap().is_empty());
+        assert!(crate::archive::read_item(&archive, &id).unwrap().external_hosts.is_empty());
+    }
+
+    #[test]
+    fn preview_says_what_goes_where() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let id = meeting(&archive);
+        let p = preview(&archive, &id, &recipe(1), None, &work()).unwrap();
+        assert_eq!(p.item_title, "Weekly sync");
+        assert_eq!((p.recipe_id.as_str(), p.recipe_name.as_str()), ("summary", "Summary"));
+        assert_eq!((p.host.as_str(), p.model.as_str(), p.profile_name.as_str()), ("api.example.com", "gpt", "Work"));
+        assert!(p.external);
+        let lines = "[00:01:01] Anna: Mando il file venerdì.\n[00:01:10] Ok.\n".chars().count();
+        assert_eq!(p.chars, lines + recipe(1).prompt.chars().count());
+        assert_eq!(p.approx_tokens, p.chars.div_ceil(4));
+        assert!(preview(&archive, "2026/09/nope", &recipe(1), None, &work()).is_err());
+        assert_eq!(approx_tokens(0), 0);
+        assert_eq!(approx_tokens(9), 3);
     }
 
     #[test]
@@ -353,7 +544,7 @@ mod tests {
         let doc = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, doc.replace("Mando il file venerdì.", "Mando il file lunedì.")).unwrap();
         let model = FakeModel::new("ok");
-        run_on_item(&archive, &id, &recipe(1), &local(), &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        run_on_item(&archive, &id, &recipe(1), &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
         let user = model.user(0);
         assert!(user.contains("lunedì") && !user.contains("venerdì"), "{user}");
         assert!(!user.contains("# Weekly sync"), "the title heading is not repeated");
@@ -367,7 +558,7 @@ mod tests {
         meta.set_session_state(Some(crate::archive::SessionState::Recording));
         let id = create_item(&archive, &meta, &SegmentsFile::default()).unwrap();
         let model = FakeModel::new("x");
-        assert!(run_on_item(&archive, &id, &recipe(1), &local(), &model, NOW, &AtomicBool::new(false), &mut |_| {})
+        assert!(run_on_item(&archive, &id, &recipe(1), &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {})
             .is_err());
         assert!(model.calls.borrow().is_empty());
     }
@@ -402,7 +593,7 @@ mod tests {
         let profile = local();
         let model = ProfileModel { profile: profile.clone() };
         for r in builtin_recipes() {
-            let out = run_on_item(&archive, &id, &r, &profile, &model, NOW, &AtomicBool::new(false), &mut |p| {
+            let out = run_on_item(&archive, &id, &r, &profile, None, &model, NOW, &AtomicBool::new(false), &mut |p| {
                 println!("{}: {p:?}", r.name)
             })
             .unwrap();

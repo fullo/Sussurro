@@ -75,10 +75,13 @@ impl ConsentGrant {
     }
 }
 
+/// Pending tokens: what each was issued for, and when.
+type Pending = HashMap<String, (RunTarget, Instant)>;
+
 /// Confirmation tokens not used yet, in memory only (a restart forgets them).
 #[derive(Default)]
 pub struct ConsentStore {
-    inner: Mutex<(u64, HashMap<String, (RunTarget, Instant)>)>,
+    inner: Mutex<(u64, Pending)>,
 }
 
 impl ConsentStore {
