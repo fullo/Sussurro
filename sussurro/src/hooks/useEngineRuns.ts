@@ -41,12 +41,11 @@ export function useEngineRuns() {
       listen<EngineDone>("engine-done", (e) => dispatch({ type: "done", payload: e.payload })),
       listen<EngineError>("engine-error", (e) => dispatch({ type: "error", payload: e.payload })),
     ];
-    // A mic session survives a window reload or a UI switch: adopt it.
+    // Sessions survive a window reload or a UI switch (ui_v2): adopt the mic
+    // session and a running file transcription (#158).
     invoke<EngineStatus>("engine_status")
-      .then((s) => {
-        if (s.mic_session !== null && mounted.current) {
-          dispatch({ type: "started", kind: "mic", sessionId: s.mic_session, label: "Microphone", now: Date.now() });
-        }
+      .then((status) => {
+        if (mounted.current) dispatch({ type: "adopt", status, now: Date.now() });
       })
       .catch(() => {});
     return () => {

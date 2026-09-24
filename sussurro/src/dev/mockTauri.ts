@@ -366,7 +366,11 @@ function handle(cmd: string, a: Args): unknown {
     case "archive_rebuild_index":
       return items.length;
     case "engine_status":
-      return { active: (mic ? 1 : 0) + (fileRun ? 1 : 0), mic_session: mic?.id ?? null };
+      return {
+        active: (mic ? 1 : 0) + (fileRun ? 1 : 0),
+        mic_session: mic?.id ?? null,
+        file_sessions: fileRun ? [{ session_id: fileRun.id, label: "mock.wav" }] : [],
+      };
     case "engine_start_mic":
       if (mic) throw "a microphone session is already running";
       return startMic((a.title as string | null) ?? null, runLanguage(a));

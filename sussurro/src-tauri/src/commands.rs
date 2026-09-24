@@ -426,6 +426,17 @@ pub struct EngineStatus {
     pub active: usize,
     /// The running mic session, if any.
     pub mic_session: Option<u64>,
+    /// Running file transcriptions, oldest first (#158): a UI mounted
+    /// mid-run (window reload, `ui_v2` switched) adopts them, so a file
+    /// started from the other UI can still be followed and cancelled.
+    pub file_sessions: Vec<FileSessionStatus>,
+}
+
+#[derive(serde::Serialize)]
+pub struct FileSessionStatus {
+    pub session_id: u64,
+    /// The file's name.
+    pub label: String,
 }
 
 #[tauri::command]
@@ -433,6 +444,12 @@ pub fn engine_status(state: State<'_, AppState>) -> EngineStatus {
     EngineStatus {
         active: state.engine.active_count(),
         mic_session: state.engine.mic_session(),
+        file_sessions: state
+            .engine
+            .file_sessions()
+            .into_iter()
+            .map(|(session_id, label)| FileSessionStatus { session_id, label })
+            .collect(),
     }
 }
 

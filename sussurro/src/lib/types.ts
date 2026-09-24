@@ -210,4 +210,6 @@ export interface EngineError {
 export interface EngineStatus {
   active: number;
   mic_session: number | null;
+  /** Running file transcriptions, oldest first (#158). */
+  file_sessions: { session_id: number; label: string }[];
 }

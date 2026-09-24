@@ -3,7 +3,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { AboutDialog } from "./components/AboutDialog";
 import { DictatePill } from "./components/DictatePill";
 import type { Ctl } from "./hooks/useAppController";
-import { AudioFileCard } from "./settings/AudioFileCard";
+import { useEngineRuns } from "./hooks/useEngineRuns";
+import { AudioFileCard, MicSessionNotice } from "./settings/AudioFileCard";
 import { BehaviorCard } from "./settings/BehaviorCard";
 import { CleanupCard } from "./settings/CleanupCard";
 import { DictationCard } from "./settings/DictationCard";
@@ -16,6 +17,9 @@ import { SpeechCard } from "./settings/SpeechCard";
 export function LegacyApp({ ctl }: { ctl: Ctl }) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const { state, busy, version } = ctl;
+  // Long-form runs: a file from the Audio file card, or a session started in
+  // the workspace before ui_v2 was switched off (#158).
+  const engine = useEngineRuns();
 
   return (
     <main>
@@ -29,6 +33,7 @@ export function LegacyApp({ ctl }: { ctl: Ctl }) {
         {busy && <p className="busy" role="alert">{busy}</p>}
       </header>
 
+      <MicSessionNotice ctl={ctl} engine={engine} />
       <SetupBanner ctl={ctl} />
 
       <DictationCard ctl={ctl} />
@@ -37,7 +42,7 @@ export function LegacyApp({ ctl }: { ctl: Ctl }) {
       <PersonalizationCard ctl={ctl} />
       <BehaviorCard ctl={ctl} />
       <HistoryCard ctl={ctl} />
-      <AudioFileCard ctl={ctl} />
+      <AudioFileCard ctl={ctl} engine={engine} />
 
       <footer>
         <div className="footer-top">

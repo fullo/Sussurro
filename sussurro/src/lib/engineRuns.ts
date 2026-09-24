@@ -10,6 +10,7 @@ import type {
   EngineResult,
   EngineSegmentEvent,
   EngineStarted,
+  EngineStatus,
   Segment,
 } from "./types";
 
@@ -75,6 +76,8 @@ export type EngineEventAction =
 
 export type RunsAction =
   | { type: "started"; kind: RunKind; sessionId: number | null; label: string; now: number }
+  /** engine_status at mount: runs started elsewhere (#158). */
+  | { type: "adopt"; status: EngineStatus; now: number }
   | { type: "stopping"; kind: RunKind }
   | EngineEventAction
   /** transcribe_file resolved: its result, even if no event was routed. */
@@ -136,6 +139,21 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
       if (mine.length === 0) return started;
       const rest = state.pending.filter((e) => e.payload.session_id !== id);
       return mine.reduce<RunsState>(runsReducer, { ...started, pending: rest });
+    }
+    case "adopt": {
+      // Sessions that outlive the UI that started them — a window reload,
+      // or ui_v2 switched mid-run (#158): the mic session and the oldest
+      // file transcription, unless a run of that kind is already live here.
+      const { status, now } = action;
+      const adopt: { kind: RunKind; sessionId: number; label: string }[] = [];
+      if (status.mic_session !== null) adopt.push({ kind: "mic", sessionId: status.mic_session, label: "Microphone" });
+      const file = status.file_sessions?.[0];
+      if (file) adopt.push({ kind: "file", sessionId: file.session_id, label: file.label });
+      return adopt.reduce<RunsState>((s, a) => {
+        const current = s[a.kind];
+        if (isLive(current) || current?.sessionId === a.sessionId) return s;
+        return runsReducer(s, { type: "started", ...a, now });
+      }, state);
     }
     case "stopping":
       return update(state, action.kind, (r) => (r.status === "running" ? { ...r, status: "stopping" } : r));

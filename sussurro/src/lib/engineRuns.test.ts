@@ -207,6 +207,35 @@ describe("canStart", () => {
   });
 });
 
+// #158 finding 7: a UI mounted mid-run (ui_v2 switched, window reloaded)
+// adopts what engine_status reports — the file transcription too, so it
+// can be followed and cancelled instead of running unseen.
+describe("adopt", () => {
+  const status = (mic: number | null, files: { session_id: number; label: string }[] = []) => ({
+    active: (mic === null ? 0 : 1) + files.length,
+    mic_session: mic,
+    file_sessions: files,
+  });
+
+  it("adopts the mic session and a running file", () => {
+    const s = run([{ type: "adopt", status: status(3, [{ session_id: 4, label: "call.wav" }]), now: 0 }]);
+    expect(s.mic).toMatchObject({ sessionId: 3, status: "running" });
+    expect(s.file).toMatchObject({ sessionId: 4, label: "call.wav", status: "running" });
+    // It can't be doubled, and its events land on it.
+    expect(canStart(s, "file")).toBe(false);
+    const p = run([{ type: "progress", payload: progress(4, { processed_s: 20 }) }], s);
+    expect(p.file?.progress?.processed_s).toBe(20);
+    expect(p.mic?.progress).toBeNull();
+  });
+
+  it("never replaces a run this window already follows", () => {
+    const own = run([{ type: "started", kind: "file", sessionId: 8, label: "mine.wav", now: 0 }]);
+    const s = run([{ type: "adopt", status: status(null, [{ session_id: 8, label: "mine.wav" }]), now: 5 }], own);
+    expect(s).toEqual(own);
+    expect(run([{ type: "adopt", status: status(null), now: 0 }])).toEqual(initialRuns);
+  });
+});
+
 describe("Discard (#158)", () => {
   const recording = run([{ type: "started", kind: "mic", sessionId: 4, label: "", now: 0 }]);
 

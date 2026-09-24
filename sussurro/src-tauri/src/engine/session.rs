@@ -22,13 +22,20 @@ struct MicSession {
     stop: Arc<AtomicBool>,
 }
 
+/// One running session's bookkeeping.
+struct Running {
+    cancel: Arc<AtomicBool>,
+    /// The file's name for a file transcription; `None` for the mic.
+    file_label: Option<String>,
+}
+
 /// Running engine sessions. Lives in `AppState`.
 #[derive(Default)]
 pub struct Sessions {
     active: AtomicUsize,
     next_id: AtomicU64,
     mic: Mutex<Option<MicSession>>,
-    cancels: Mutex<HashMap<u64, Arc<AtomicBool>>>,
+    running: Mutex<HashMap<u64, Running>>,
 }
 
 impl Sessions {
@@ -41,18 +48,25 @@ impl Sessions {
         self.active.load(Ordering::SeqCst)
     }
 
-    /// Register a new session; returns its id and cancel flag.
-    pub fn begin(&self) -> (u64, Arc<AtomicBool>) {
+    /// Register a new session — a file transcription when `file_label` (the
+    /// file's name) is given, else the mic; returns its id and cancel flag.
+    pub fn begin(&self, file_label: Option<String>) -> (u64, Arc<AtomicBool>) {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let cancel = Arc::new(AtomicBool::new(false));
-        self.cancels.lock().unwrap().insert(id, cancel.clone());
+        self.running.lock().unwrap().insert(
+            id,
+            Running {
+                cancel: cancel.clone(),
+                file_label,
+            },
+        );
         self.active.fetch_add(1, Ordering::SeqCst);
         (id, cancel)
     }
 
     /// The session ended (done, failed or cancelled).
     pub fn end(&self, id: u64) {
-        if self.cancels.lock().unwrap().remove(&id).is_some() {
+        if self.running.lock().unwrap().remove(&id).is_some() {
             self.active.fetch_sub(1, Ordering::SeqCst);
         }
         let mut mic = self.mic.lock().unwrap();
@@ -63,13 +77,28 @@ impl Sessions {
 
     /// Abort a running session; false if there is no such session.
     pub fn cancel(&self, id: u64) -> bool {
-        match self.cancels.lock().unwrap().get(&id) {
-            Some(c) => {
-                c.store(true, Ordering::Relaxed);
+        match self.running.lock().unwrap().get(&id) {
+            Some(r) => {
+                r.cancel.store(true, Ordering::Relaxed);
                 true
             }
             None => false,
         }
+    }
+
+    /// Running file transcriptions: `(session id, file name)`, oldest
+    /// first. Reported by `engine_status` so a UI mounted mid-run (a window
+    /// reload, `ui_v2` switched) can show and cancel them (#158).
+    pub fn file_sessions(&self) -> Vec<(u64, String)> {
+        let mut files: Vec<(u64, String)> = self
+            .running
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(id, r)| r.file_label.clone().map(|l| (*id, l)))
+            .collect();
+        files.sort();
+        files
     }
 
     /// Id of the running mic session, if any.
@@ -417,7 +446,7 @@ pub fn start_mic(
     let stop = Arc::new(AtomicBool::new(false));
     let source = crate::sources::mic::MicSource::start(&device, stop.clone())
         .context("could not start the microphone")?;
-    let (id, cancel) = state.engine.begin();
+    let (id, cancel) = state.engine.begin(None);
     *mic = Some(MicSession { id, stop });
     drop(mic);
 
@@ -460,7 +489,11 @@ pub fn transcribe_file(
     let state = app.state::<AppState>();
     ensure_archive_writable(&state)?;
     let source = crate::sources::file::FileSource::open(path)?;
-    let (id, cancel) = state.engine.begin();
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (id, cancel) = state.engine.begin(Some(file_name));
     let _guard = SessionGuard {
         app: app.clone(),
         id,
@@ -498,10 +531,12 @@ mod tests {
     fn sessions_count_active_runs_and_forget_ended_ones() {
         let s = Sessions::default();
         assert!(!s.is_active());
-        let (a, cancel_a) = s.begin();
-        let (b, _) = s.begin();
+        let (a, cancel_a) = s.begin(None);
+        let (b, _) = s.begin(Some("call.wav".into()));
         assert_ne!(a, b);
         assert_eq!(s.active_count(), 2);
+        // #158: a UI mounted mid-run learns about the file transcription.
+        assert_eq!(s.file_sessions(), [(b, "call.wav".to_string())]);
         assert!(s.cancel(a));
         assert!(cancel_a.load(Ordering::Relaxed));
         s.end(a);
@@ -510,19 +545,21 @@ mod tests {
         assert!(!s.cancel(a), "an ended session can't be cancelled");
         s.end(b);
         assert!(!s.is_active());
+        assert!(s.file_sessions().is_empty());
     }
 
     #[test]
     fn mic_session_stop_and_end() {
         let s = Sessions::default();
         assert_eq!(s.stop_mic(), None);
-        let (id, _) = s.begin();
+        let (id, _) = s.begin(None);
         let stop = Arc::new(AtomicBool::new(false));
         *s.mic.lock().unwrap() = Some(MicSession {
             id,
             stop: stop.clone(),
         });
         assert_eq!(s.mic_session(), Some(id));
+        assert!(s.file_sessions().is_empty(), "the mic is not a file");
         assert_eq!(s.stop_mic(), Some(id));
         assert!(stop.load(Ordering::Relaxed));
         s.end(id);
