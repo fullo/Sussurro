@@ -1,13 +1,11 @@
 import type { ReactNode } from "react";
-import { AdvancedGroup, CollapsibleCard, Switch, Tip } from "../components/ui";
+import { Card, Switch, Tip } from "../components/ui";
 import { LANGUAGES, MODELS } from "../lib/constants";
 import { ENGINES, detectsLanguage, engineDetail, engineLabel, engineSelectable } from "../lib/engines";
 import type { Ctl } from "../hooks/useAppController";
-import type { CardProps } from "./DictationCard";
 
-/* The speech-recognition fields are split so the workspace can show the
-   engine and model under Models and the rest under Settings → Speech, while
-   the classic window keeps them together in one card. */
+/* The speech-recognition fields are split: engine and model live under
+   Models (and in the onboarding), the rest under Settings → Speech. */
 
 export function EngineField({ ctl }: { ctl: Ctl }) {
   const { settings, save, sidecarAvailable } = ctl;
@@ -162,35 +160,17 @@ export function WhisperModeField({ ctl }: { ctl: Ctl }) {
   );
 }
 
-/** Classic window: engine, language, model and the advanced speech options. */
-export function SpeechCard({ ctl, collapsible }: CardProps) {
-  return (
-    <CollapsibleCard
-      storageKey="speechOpen"
-      title={<>Speech recognition <span className="via">engine & models</span></>}
-      collapsible={collapsible}
-    >
-      <EngineField ctl={ctl} />
-      <LanguageField ctl={ctl} />
-      <ModelField ctl={ctl} />
-      <AdvancedGroup>
-        <ModelsFolderField ctl={ctl} />
-        <WhisperModeField ctl={ctl} />
-      </AdvancedGroup>
-    </CollapsibleCard>
-  );
-}
-
-/** Workspace Settings → Speech: what is left once engine and model moved to Models. */
+/** Settings → Speech: the language hint and whisper mode (engine, model
+ *  and the models folder are under Models). */
 export function SpeechOptionsCard({ ctl, footer }: { ctl: Ctl; footer?: ReactNode }) {
   return (
-    <CollapsibleCard storageKey="speechOpen" title="Speech" collapsible={false}>
+    <Card title="Speech">
       <LanguageField ctl={ctl} />
       {detectsLanguage(ctl.settings.engine) && (
         <p className="card-hint">{engineLabel(ctl.settings.engine)} detects the language on its own.</p>
       )}
       <WhisperModeField ctl={ctl} />
       {footer}
-    </CollapsibleCard>
+    </Card>
   );
 }

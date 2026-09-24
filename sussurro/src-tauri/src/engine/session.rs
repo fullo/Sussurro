@@ -127,7 +127,7 @@ impl Sessions {
 
     /// Running file transcriptions: `(session id, file name)`, oldest
     /// first. Reported by `engine_status` so a UI mounted mid-run (a window
-    /// reload, `ui_v2` switched) can show and cancel them (#158).
+    /// reload) can show and cancel them (#158).
     pub fn file_sessions(&self) -> Vec<(u64, String)> {
         self.sessions_where(|k| match k {
             SessionKind::File(l) => Some(l.clone()),

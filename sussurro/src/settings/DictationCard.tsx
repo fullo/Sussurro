@@ -1,18 +1,16 @@
 import type { ReactNode } from "react";
 import { HotkeyRecorder } from "../components/HotkeyRecorder";
-import { CollapsibleCard, Switch, Tip } from "../components/ui";
+import { Card, Switch, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 
 export interface CardProps {
   ctl: Ctl;
-  /** false in the workspace, where one card is shown at a time, always open. */
-  collapsible?: boolean;
 }
 
-export function DictationCard({ ctl, collapsible, footer }: CardProps & { footer?: ReactNode }) {
+export function DictationCard({ ctl, footer }: CardProps & { footer?: ReactNode }) {
   const { settings, save } = ctl;
   return (
-    <CollapsibleCard storageKey="dictationOpen" title="Dictation" defaultOpen collapsible={collapsible}>
+    <Card title="Dictation">
       <div className="field">
         <div className="field-label">
           <span>Shortcut <Tip text="The system-wide key combination that triggers dictation in any app. Click the field, then press the keys you want (Esc cancels)." /></span>
@@ -71,7 +69,7 @@ export function DictationCard({ ctl, collapsible, footer }: CardProps & { footer
 
       <div className="field">
         <div className="field-label">
-          <span>Push-to-talk <Tip text="On: recording lasts while you hold the shortcut or the Dictate button, like a walkie-talkie. Off: one tap/click starts recording, a second one stops it. Applies to both the keyboard shortcut and the Dictate button in the header." /></span>
+          <span>Push-to-talk <Tip text="On: recording lasts while you hold the shortcut or the Dictate button, like a walkie-talkie. Off: one tap/click starts recording, a second one stops it. Applies to both the keyboard shortcut and the Dictate button at the bottom of the sidebar." /></span>
           <small>off = toggle mode</small>
         </div>
         <Switch
@@ -80,6 +78,6 @@ export function DictationCard({ ctl, collapsible, footer }: CardProps & { footer
         />
       </div>
       {footer}
-    </CollapsibleCard>
+    </Card>
   );
 }

@@ -13,10 +13,10 @@ import type {
   UsageStats,
 } from "../lib/types";
 
-/** App-wide state and actions shared by the classic window and the workspace
- *  shell: settings, dictation status, models, permissions and the transient
- *  status message. Both UIs render the same cards from this one controller,
- *  so there is a single source of truth for every setting. */
+/** App-wide state and actions for the workspace: settings, dictation
+ *  status, models, permissions and the transient status message. Every
+ *  screen (and the onboarding) renders from this one controller, so there is
+ *  a single source of truth for every setting. */
 export function useAppController() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);

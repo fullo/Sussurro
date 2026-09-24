@@ -58,13 +58,7 @@ html, body {
   line-height: 1.5;
 }
 
-main {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem 1rem;
-}
-
-main.loading {
+.app-loading {
   color: var(--c-text-light);
   text-align: center;
   padding-top: 6rem;
@@ -75,24 +69,7 @@ main.loading {
   box-shadow: var(--focus-ring);
 }
 
-/* ---------- Masthead ---------- */
-
-.masthead { margin-bottom: 2rem; }
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.brand h1 {
-  font-family: var(--f-sans);
-  font-weight: 800;
-  font-size: 2rem;
-  letter-spacing: -0.03em;
-  color: var(--c-dark);
-  margin: 0;
-}
+/* ---------- Daruma and the Dictate pill ---------- */
 
 /* The daruma eye: hollow when idle, painted red while recording. */
 .daruma {
@@ -121,13 +98,6 @@ main.loading {
   50% { box-shadow: 0 0 0 9px rgba(229, 37, 32, 0); }
 }
 @keyframes daruma-spin { to { transform: rotate(360deg); } }
-
-.tagline {
-  font-family: var(--f-serif);
-  font-style: italic;
-  color: var(--c-text-light);
-  margin: 0.35rem 0 0.75rem;
-}
 
 .status {
   display: inline-block;
@@ -172,30 +142,6 @@ main.loading {
   padding: 1.25rem 1.5rem;
   margin-bottom: 1.25rem;
 }
-
-/* Collapsible sections (details/summary accordion) */
-details.collapsible summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-}
-details.collapsible summary::-webkit-details-marker { display: none; }
-details.collapsible summary h2 { margin: 0; }
-details.collapsible[open] summary { margin-bottom: 1rem; }
-details.collapsible .summary-right {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-details.collapsible .chevron {
-  color: var(--c-text-light);
-  font-size: 0.9rem;
-  transition: transform var(--transition);
-}
-details.collapsible:not([open]) .chevron { transform: rotate(-90deg); }
 
 .card h2, .history h2 {
   font-size: 0.8rem;
@@ -629,8 +575,8 @@ kbd {
 
 /* ---------- Busy / errors ---------- */
 
-/* System feedback lives in a fixed box top-right, beside the masthead: it
-   never shifts the layout and stays visible wherever the action started. */
+/* System feedback lives in a fixed box top-right: it never shifts the
+   layout and stays visible wherever the action started. */
 .busy {
   position: fixed;
   top: 1rem;
@@ -724,44 +670,6 @@ kbd {
 
 .empty { font-family: var(--f-serif); font-style: italic; color: var(--c-text-light); }
 
-/* ---------- Footer ---------- */
-
-footer {
-  margin-top: 2.5rem;
-  padding: 1rem 0 0.5rem;
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  font-size: 0.78rem;
-  color: var(--c-text-light);
-  letter-spacing: 0.05em;
-}
-footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-footer a:hover { color: var(--c-dark); }
-.footer-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.footer-actions { display: flex; gap: 0.5rem; flex: none; }
-/* The credit line: a tiny painted daruma next to the wordmark. */
-.footer-credit {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-}
-.daruma-mini {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  border: 2px solid var(--c-dark);
-  background: var(--brand);
-  flex: none;
-}
-
 /* Inline spinner for buttons with a long-running action. */
 .btn-spinner {
   display: inline-block;
@@ -776,7 +684,7 @@ footer a:hover { color: var(--c-dark); }
 }
 .btn-icon .btn-spinner { margin-right: 0; width: 16px; height: 16px; vertical-align: middle; }
 
-/* A text button that reads like an inline link (footer "About", etc.). */
+/* A text button that reads like an inline link. */
 .link-btn {
   font: inherit;
   color: inherit;

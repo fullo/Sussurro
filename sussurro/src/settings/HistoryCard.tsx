@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { CollapsibleCard, Tip } from "../components/ui";
+import { Card, Tip } from "../components/ui";
 import { LANGUAGES } from "../lib/constants";
 import { fmtCount } from "../lib/format";
 import type { HistoryEntry } from "../lib/types";
@@ -9,7 +9,7 @@ import type { CardProps } from "./DictationCard";
 
 /** Dictation history (JSONL): search, retention, copy / re-clean / translate /
  *  correct an entry. */
-export function HistoryCard({ ctl, collapsible }: CardProps) {
+export function HistoryCard({ ctl }: CardProps) {
   const { settings, save, history, setBusy, stats } = ctl;
   const [confirmClear, setConfirmClear] = useState(false);
   /** timestamp of the history entry being edited, and its draft text */
@@ -46,11 +46,9 @@ export function HistoryCard({ ctl, collapsible }: CardProps) {
   };
 
   return (
-    <CollapsibleCard
-      storageKey="historyOpen"
+    <Card
       className="card history"
       title="History"
-      collapsible={collapsible}
       headerExtra={
         history.length > 0 ? (
           <>
@@ -250,6 +248,6 @@ export function HistoryCard({ ctl, collapsible }: CardProps) {
           </li>
         ))}
       </ol>
-    </CollapsibleCard>
+    </Card>
   );
 }

@@ -1,13 +1,12 @@
 import { useAppController, type Ctl } from "./hooks/useAppController";
-import { LegacyApp } from "./LegacyApp";
 import { Shell } from "./shell/Shell";
 import "./App.css";
 
-/** The main window. `ui_v2` off (default): the classic single-column UI.
- *  On: the workspace preview (#114). Both render the same settings cards
- *  from one controller (`useAppController`). */
+/** The main window: the workspace (left rail: New · Library · People ·
+ *  Recipes · Models · Settings). Every screen renders from one controller
+ *  (`useAppController`), the single source of truth for the settings. */
 export default function App() {
   const ctl = useAppController();
-  if (!ctl.settings) return <main className="loading">Loading…</main>;
-  return ctl.settings.ui_v2 ? <Shell ctl={ctl as Ctl} /> : <LegacyApp ctl={ctl as Ctl} />;
+  if (!ctl.settings) return <div className="app-loading">Loading…</div>;
+  return <Shell ctl={ctl as Ctl} />;
 }

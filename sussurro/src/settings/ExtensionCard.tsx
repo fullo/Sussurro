@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { CollapsibleCard, Switch, Tip } from "../components/ui";
+import { Card, Switch, Tip } from "../components/ui";
 import { apiNotice } from "../lib/localApi";
 import { encodePairingCode, maskedPairingCode } from "../lib/pairingCode";
 import { needsMeetingNotice, withNoticeReset } from "../lib/meetingNotice";
@@ -16,7 +16,7 @@ const EXTENSION_README_URL = "https://github.com/fullo/Sussurro/tree/main/extens
 /** Settings → Browser extension (#127, E6): enable meetings, and pair the
  *  extension by copying one code (`sussurro:<port>:<token>`) into its
  *  options page. The token is never shown: it only goes to the clipboard. */
-export function ExtensionCard({ ctl, collapsible }: CardProps) {
+export function ExtensionCard({ ctl }: CardProps) {
   const { settings, save, setBusy, flash } = ctl;
   const [status, setStatus] = useState<ListenState | null>(null);
   const [confirmRegen, setConfirmRegen] = useState(false);
@@ -58,11 +58,7 @@ export function ExtensionCard({ ctl, collapsible }: CardProps) {
   };
 
   return (
-    <CollapsibleCard
-      storageKey="extensionOpen"
-      title={<>Browser extension <span className="via">meetings · preview</span></>}
-      collapsible={collapsible}
-    >
+    <Card title={<>Browser extension <span className="via">meetings · preview</span></>}>
       <div className="field">
         <div className="field-label">
           <span>
@@ -181,6 +177,6 @@ export function ExtensionCard({ ctl, collapsible }: CardProps) {
         </a>
         .
       </p>
-    </CollapsibleCard>
+    </Card>
   );
 }

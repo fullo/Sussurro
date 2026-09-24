@@ -3,7 +3,9 @@
    only when `import.meta.env.DEV` is true AND the page is not running inside
    Tauri, through a dynamic import that production builds drop entirely.
 
-   URL switches: ?ui=legacy (classic window), ?empty=1 (empty archive),
+   URL switches: ?onboarding=welcome (first-run setup) or =whats_new (the
+   upgrade screen), ?perms=ask (microphone not asked yet, Accessibility
+   denied — the setup's permission step), ?empty=1 (empty archive),
    ?ytdlp=0 (yt-dlp not installed, for the Link tab), ?keychain=0 (no OS
    credential store: the profile editor's clear-text key warning). */
 
@@ -14,6 +16,9 @@ import { DATE_BUCKETS, localToday, type DateBucket, type Facets, type FacetValue
 import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Person, Recipe, Segment, Settings } from "../lib/types";
 
 const params = new URLSearchParams(window.location.search);
+
+/** `?perms=ask`: the microphone counts as asked once a mic test ran. */
+let micAsked = false;
 
 const settings: Settings = {
   hotkey: "CommandOrControl+Shift+Space",
@@ -62,7 +67,9 @@ const settings: Settings = {
   api_port: 4525,
   output_file: "",
   archive_dir: "",
-  ui_v2: params.get("ui") !== "legacy",
+  // #115: the preview opens on the workspace; `?onboarding=welcome` or
+  // `=whats_new` shows the first-run setup or the upgrade screen.
+  onboarding: ((o) => (o === "welcome" || o === "whats_new" ? o : "done"))(params.get("onboarding")),
   // 0.9 preview (#130): on in the dev preview, `?meetings=off` hides it.
   meetings_enabled: params.get("meetings") !== "off",
   subtitles: "on_request",
@@ -745,6 +752,8 @@ function startLink(url: string, title: string | null, language: string, identify
 function listModels(p: LlmProfile | undefined): string[] {
   if (!p) throw "no profile";
   if (/example\.com/.test(p.base_url)) throw "OpenAI-compatible server not reachable";
+  // The onboarding's probe of llama.cpp-server's default port (#115): not running.
+  if (/localhost:8080/.test(p.base_url)) throw "connection refused";
   return p.api === "ollama" ? ["llama3.2:3b", "qwen2.5:3b"] : ["qwen2.5-7b-instruct", "gemma-3-4b-it"];
 }
 
@@ -1085,10 +1094,15 @@ function handle(cmd: string, a: Args): unknown {
     case "ollama_status":
       return { installed: true, running: true, has_model: true };
     case "check_permissions":
-      return { microphone: "granted", accessibility: "granted" };
+      return params.get("perms") === "ask" && !micAsked
+        ? { microphone: "unknown", accessibility: "denied" }
+        : { microphone: "granted", accessibility: params.get("perms") === "ask" ? "denied" : "granted" };
     case "mic_level":
       return 0.02 + Math.random() * 0.05;
     case "start_mic_test":
+      // The first mic access is what asks the OS (#115, ?perms=ask).
+      micAsked = true;
+      return null;
     case "stop_mic_test":
     case "trigger_dictation":
     case "copy_text":
@@ -1097,6 +1111,9 @@ function handle(cmd: string, a: Args): unknown {
     case "diagnostics":
       return "Sussurro dev preview";
     case "archive_dir":
+      return settings.archive_dir || ARCHIVE;
+    case "archive_prepare":
+      // The real command creates the folder (the macOS Documents prompt, #115).
       return settings.archive_dir || ARCHIVE;
     case "archive_list":
       return items.slice().sort(newestFirst).map((s) => toSummary(s));

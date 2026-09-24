@@ -1,4 +1,4 @@
-/* Pure formatting helpers shared by the classic UI and the workspace. */
+/* Pure formatting helpers for the workspace. */
 
 /** 12 → "12", 1234 → "1,234", 15200 → "15.2k" */
 export function fmtCount(n: number): string {

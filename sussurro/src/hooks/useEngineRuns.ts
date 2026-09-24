@@ -65,7 +65,7 @@ export function useEngineRuns() {
       listen<EngineDone>("engine-done", (e) => dispatch({ type: "done", payload: e.payload })),
       listen<EngineError>("engine-error", (e) => dispatch({ type: "error", payload: e.payload })),
     ];
-    // Sessions survive a window reload or a UI switch (ui_v2): adopt the mic
+    // Sessions survive a window reload: adopt the mic
     // session and a running file transcription (#158).
     invoke<EngineStatus>("engine_status")
       .then((status) => {
