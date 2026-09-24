@@ -659,6 +659,19 @@ fn edit_segment_with(
         true,
         before_commit,
     ) {
+        // Undo only if the markdown was not replaced (#158): when the
+        // replace went through and only recording its hash failed, the
+        // edit is in transcript.md, and rolling segments.json back would
+        // leave the two telling different stories.
+        let replaced = std::fs::read(&path)
+            .map(|now| now == doc.as_bytes())
+            .unwrap_or(false);
+        if replaced {
+            return Err(e.context(
+                "the line was saved, but its state could not be recorded — the item \
+                 now counts as edited outside Sussurro",
+            ));
+        }
         if let Err(undo) = write_segments(&dir, &original) {
             return Err(e.context(format!("segments.json could not be restored ({undo:#})")));
         }
@@ -667,9 +680,33 @@ fn edit_segment_with(
     read_item_at(id, &dir)
 }
 
-/// Move an item folder to the OS trash (never a hard delete).
+/// Move an item folder to the OS trash (never a hard delete). Refused while
+/// the item is marked `recording` (#158): a capture session is writing it —
+/// possibly another app instance's, which this process can't stop. Ending
+/// the session (or restarting after a crash, which marks it `interrupted`)
+/// makes it deletable.
 pub fn delete_item(archive: &Path, id: &str) -> Result<()> {
-    delete_item_with(archive, id, move_to_trash)
+    delete_finished_item_with(archive, id, move_to_trash)
+}
+
+fn delete_finished_item_with(
+    archive: &Path,
+    id: &str,
+    trash: impl FnOnce(&Path) -> Result<()>,
+) -> Result<()> {
+    // Same lock as the session's checkpoints: the check and the delete
+    // don't interleave with a writer of this item.
+    let _lock = lock_items();
+    let dir = existing_item_dir(archive, id)?;
+    let path = transcript_path(&dir);
+    let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let recording = frontmatter::parse(&String::from_utf8_lossy(&bytes))
+        .map(|(m, _)| m.session_state() == Some(SessionState::Recording))
+        .unwrap_or(false);
+    if recording {
+        bail!("'{id}' is still being recorded — stop the session before deleting it");
+    }
+    delete_item_with(archive, id, trash)
 }
 
 /// [`delete_item`] with an injectable trash mover (tests must not fill the
@@ -699,16 +736,55 @@ pub fn delete_item_with(
 /// The OS trash. On macOS through `NSFileManager` rather than the crate's
 /// default Finder/AppleScript route, which would prompt for Automation
 /// permission.
+///
+/// In unit tests nothing reaches the developer's real trash: the folder is
+/// recorded in [`test_trash`] and removed, so tests can assert that a path
+/// went "to the trash" rather than being hard-deleted.
 pub fn move_to_trash(path: &Path) -> Result<()> {
-    #[allow(unused_mut)]
-    let mut ctx = trash::TrashContext::default();
-    #[cfg(target_os = "macos")]
+    #[cfg(test)]
     {
-        use trash::macos::{DeleteMethod, TrashContextExtMacos};
-        ctx.set_delete_method(DeleteMethod::NsFileManager);
+        test_trash::take(path)
     }
-    ctx.delete(path)
-        .with_context(|| format!("moving {} to the trash", path.display()))
+    #[cfg(not(test))]
+    {
+        #[allow(unused_mut)]
+        let mut ctx = trash::TrashContext::default();
+        #[cfg(target_os = "macos")]
+        {
+            use trash::macos::{DeleteMethod, TrashContextExtMacos};
+            ctx.set_delete_method(DeleteMethod::NsFileManager);
+        }
+        ctx.delete(path)
+            .with_context(|| format!("moving {} to the trash", path.display()))
+    }
+}
+
+/// The trash as unit tests see it (see [`move_to_trash`]).
+#[cfg(test)]
+pub(crate) mod test_trash {
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static TRASHED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+    pub(crate) fn take(path: &Path) -> anyhow::Result<()> {
+        TRASHED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(path.to_path_buf());
+        std::fs::remove_dir_all(path)?;
+        Ok(())
+    }
+
+    /// Whether `path` was moved to the (test) trash. Tests run in parallel:
+    /// ask about paths under your own tempdir.
+    pub(crate) fn contains(path: &Path) -> bool {
+        TRASHED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|p| p == path)
+    }
 }
 
 #[cfg(test)]
@@ -989,6 +1065,39 @@ mod tests {
         assert!(read_item(archive, &id).unwrap().edited_externally);
     }
 
+    /// #158 finding 5: when `transcript.md` was replaced but recording its
+    /// hash in `state.json` failed, the line edit is in the markdown — so
+    /// `segments.json` must keep it too, not be rolled back.
+    #[test]
+    fn a_failed_state_write_after_the_replace_keeps_segments_in_step() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = create_item(archive, &meta("Stato", DATE), &segs(&["Uno.", "Due."])).unwrap();
+        let dir = archive.join(&id);
+        let state = dir.join(META_DIR).join(STATE_FILE);
+        let err = edit_segment_with(
+            archive,
+            &id,
+            1,
+            SegmentEdit::Text("Due, corretto.".into()),
+            // state.json can't be replaced any more (a folder in its place).
+            &|_| {
+                std::fs::remove_file(&state).unwrap();
+                std::fs::create_dir_all(state.join("blocker")).unwrap();
+            },
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("the line was saved"), "{err:#}");
+        let markdown = std::fs::read_to_string(dir.join(TRANSCRIPT_FILE)).unwrap();
+        assert!(markdown.contains("Due, corretto."), "{markdown}");
+        let saved = read_segments(&dir).unwrap();
+        assert_eq!(
+            saved.segments[1].text, "Due, corretto.",
+            "in step with the markdown"
+        );
+        assert!(saved.segments[1].edited);
+    }
+
     #[test]
     fn edit_segment_waits_for_a_live_session_to_finish() {
         use crate::archive::live;
@@ -1066,6 +1175,28 @@ mod tests {
         let never = |_: &Path| -> Result<()> { panic!("must not trash") };
         assert!(delete_item_with(&archive, "2025", never).is_err());
         assert!(delete_item_with(&archive, "../bin", never).is_err());
+    }
+
+    /// #158 finding 2: the backend refuses to delete an item a capture
+    /// session is writing (the UI only greys the button out); once the
+    /// session has ended it goes to the trash as usual.
+    #[test]
+    fn delete_refuses_a_recording_item() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("arch");
+        let id = crate::archive::live::begin_session(&archive, &meta("Live", DATE)).unwrap();
+        let never = |_: &Path| -> Result<()> { panic!("must not trash") };
+        let err = delete_finished_item_with(&archive, &id, never).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("still being recorded"),
+            "{err:#}"
+        );
+        assert!(delete_item(&archive, &id).is_err());
+        assert!(read_item(&archive, &id).is_ok());
+
+        crate::archive::live::mark_interrupted(&archive, &id).unwrap();
+        delete_item(&archive, &id).unwrap();
+        assert!(test_trash::contains(&archive.join(&id)));
     }
 
     fn temp_leftovers(dir: &Path) -> Vec<String> {

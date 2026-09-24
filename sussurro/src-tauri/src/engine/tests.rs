@@ -1133,6 +1133,8 @@ fn long_file_decoding_stays_a_bounded_distance_ahead_of_stt() {
 /// model through the dictation gate, like `session::app_transcriber`.
 struct GatedStt {
     gate: Arc<priority::DictationGate>,
+    /// The run's cancel flag, as `session::app_transcriber` holds it.
+    cancel: Arc<AtomicBool>,
     model: Arc<Mutex<Vec<String>>>,
     calls: usize,
     /// Run inside the first segment, with the model held.
@@ -1141,7 +1143,9 @@ struct GatedStt {
 
 impl SegmentStt for GatedStt {
     fn transcribe(&mut self, _samples: &[f32]) -> Result<TimedTranscript> {
-        let mut model = priority::acquire_yielding(&self.gate, || Ok(self.model.lock().unwrap()))?;
+        let mut model = priority::acquire_yielding(&self.gate, &self.cancel, || {
+            Ok(self.model.lock().unwrap())
+        })?;
         self.calls += 1;
         model.push(format!("segment {}", self.calls));
         if let Some(f) = self.during_first.take() {
@@ -1180,14 +1184,16 @@ fn a_dictation_during_a_run_is_served_before_the_next_segment() {
             }));
         })
     };
+    let j = job(dir.path(), audio, Policy::Block { max_queued: 4 });
     let mut stt = GatedStt {
         gate: gate.clone(),
+        cancel: j.cancel.clone(),
         model: model.clone(),
         calls: 0,
         during_first: Some(during_first),
     };
     let r = run(
-        job(dir.path(), audio, Policy::Block { max_queued: 4 }),
+        j,
         &mut stt,
         &FakeCleaner::default(),
         Arc::new(VecSink::default()),
@@ -1209,28 +1215,97 @@ fn a_dictation_during_a_run_is_served_before_the_next_segment() {
     assert!(!gate.is_pending());
 }
 
-/// #157: a session started with a language and a cleanup level from New
-/// transcribes and cleans with them, records the language in the
-/// frontmatter, and leaves the global (dictation) settings untouched. One
-/// without overrides falls back to the settings.
+/// #158 finding 4: Cancel pressed while the engine waits for a dictation
+/// (one that outlives the run here) ends the run at once, with no failed
+/// segment and nothing left in the archive.
+#[test]
+fn cancel_while_waiting_for_a_dictation_ends_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let audio = bursts(&[(true, 2.0), (false, 2.5)].repeat(3));
+    let gate = Arc::new(priority::DictationGate::default());
+    gate.begin(); // the hotkey is held: every segment has to wait
+    let j = job(dir.path(), audio, Policy::Block { max_queued: 4 });
+    let cancel = j.cancel.clone();
+    let mut stt = GatedStt {
+        gate: gate.clone(),
+        cancel: cancel.clone(),
+        model: Arc::new(Mutex::new(Vec::new())),
+        calls: 0,
+        during_first: None,
+    };
+    let sink = Arc::new(VecSink::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    {
+        let sink = sink.clone();
+        std::thread::spawn(move || {
+            let r = run(j, &mut stt, &FakeCleaner::default(), sink);
+            tx.send((r.map(|_| ()).map_err(|e| e.to_string()), stt.calls))
+                .unwrap();
+        });
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while gate.waiting() == 0 {
+        assert!(Instant::now() < deadline, "the engine never waited");
+        std::thread::yield_now();
+    }
+    cancel.store(true, Ordering::Relaxed);
+    let (r, calls) = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the engine ignored Cancel while waiting for the dictation");
+    assert_eq!(r, Err("cancelled".to_string()));
+    assert_eq!(calls, 0, "no segment was transcribed");
+    let events = sink.0.lock().unwrap();
+    assert!(
+        !events.iter().any(|e| matches!(e, EngineEvent::Segment(_))),
+        "a cancelled wait is not a failed segment"
+    );
+    assert!(archive::list_items(&dir.path().join("archive")).is_empty());
+    assert!(gate.is_pending(), "the dictation itself is untouched");
+}
+
+/// #157, through the real `session::run_request_with` (#158 finding 9): a
+/// session started with a language and a cleanup level from New transcribes
+/// and cleans with them and records the language in the frontmatter; one
+/// without overrides uses the dictation settings. The app's shared settings
+/// are read once at the start and never written: a change the user makes
+/// mid-run neither reaches the run nor gets overwritten by it.
 #[test]
 fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
     use crate::settings::{CleanupLevel, Settings};
-    use session::{run_parts, start_meta, RunOptions};
+    use crate::state::AppPaths;
+    use session::{run_request_with, Request, RunOptions};
 
-    let global = Mutex::new(Settings {
+    let dictation = Settings {
         language: "it".into(),
         cleanup_level: CleanupLevel::Light,
         ..Default::default()
-    });
-    let before = global.lock().unwrap().clone();
+    };
+    // What the user switches to in Settings while the run is going.
+    let changed_mid_run = Settings {
+        language: "fr".into(),
+        cleanup_level: CleanupLevel::None,
+        ..dictation.clone()
+    };
 
     let run_with = |options: RunOptions| {
         let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("appdata");
+        let paths = AppPaths {
+            settings_file: dir.path().join("settings.json"),
+            models_dir: data.join("models"),
+            history_file: data.join("history.jsonl"),
+            stats_file: data.join("stats.json"),
+            archive_index: data.join("index.sqlite"),
+            documents_dir: Some(dir.path().join("Documents")),
+            home_dir: Some(dir.path().to_path_buf()),
+        };
+        let shared = Mutex::new(dictation.clone());
         let languages = Mutex::new(Vec::<String>::new());
         let levels = Mutex::new(Vec::<CleanupLevel>::new());
         let fake_stt = |samples: &[f32], language: &str| -> Result<TimedTranscript> {
             languages.lock().unwrap().push(language.to_string());
+            // The user changes the dictation settings during the run.
+            *shared.lock().unwrap() = changed_mid_run.clone();
             Ok(TimedTranscript {
                 text: format!("parole {}", samples.len()),
                 // The engine "detects" Italian: an explicit language wins.
@@ -1242,30 +1317,43 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
             levels.lock().unwrap().push(s.cleanup_level.clone());
             raw.to_uppercase()
         };
-        // Like the app: the run reads a copy of the settings at its start.
-        let snapshot = global.lock().unwrap().clone();
-        let (settings, mut stt, cleaner) = run_parts(&snapshot, &options, fake_stt, fake_clean);
-        let mut job = job(
-            dir.path(),
-            bursts(&[(true, 2.0), (false, 2.5), (true, 2.0), (false, 1.0)]),
-            Policy::Block { max_queued: 2 },
-        );
-        job.meta = start_meta(
-            &settings,
-            ItemType::Note,
-            "Opzioni".into(),
-            "file:test.wav".into(),
-            String::new(),
-        );
-        let r = run(job, &mut stt, &cleaner, Arc::new(VecSink::default())).unwrap();
+        let req = Request {
+            id: 7,
+            cancel: Arc::new(AtomicBool::new(false)),
+            source: Box::new(VecSource::new(
+                bursts(&[(true, 2.0), (false, 2.5), (true, 2.0), (false, 1.0)]),
+                Channel::File,
+            )),
+            policy: Policy::Block { max_queued: 2 },
+            defer: false,
+            item_type: ItemType::Note,
+            title: "Opzioni".into(),
+            source_label: "file:test.wav".into(),
+            options,
+        };
+        let r = run_request_with(
+            &shared,
+            &paths,
+            req,
+            fake_stt,
+            fake_clean,
+            |_| Box::new(EnergyDetector::default()),
+            Arc::new(VecSink::default()),
+        )
+        .unwrap();
         assert_eq!(r.segments, 2);
-        let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+        let archive_dir = dir.path().join("Documents").join("Sussurro");
+        let item = archive::read_item(&archive_dir, &r.item_id).unwrap();
         assert!(item
             .segments
             .segments
             .iter()
             .all(|s| s.text == s.raw.to_uppercase()));
-        drop((stt, cleaner));
+        assert_eq!(
+            *shared.lock().unwrap(),
+            changed_mid_run,
+            "the run never writes the shared settings"
+        );
         (
             languages.into_inner().unwrap(),
             levels.into_inner().unwrap(),
@@ -1281,9 +1369,9 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
     assert_eq!(langs, ["en", "en"]);
     assert_eq!(levels, [CleanupLevel::High, CleanupLevel::High]);
     assert_eq!(recorded, "en");
-    assert_eq!(*global.lock().unwrap(), before, "settings must not change");
 
-    // No overrides (a blank language counts as none): the dictation settings.
+    // No overrides (a blank language counts as none): the dictation
+    // settings as they were when the run started, not the mid-run change.
     let (langs, levels, recorded) = run_with(RunOptions {
         language: Some("  ".into()),
         cleanup_level: None,
@@ -1291,5 +1379,4 @@ fn per_run_options_drive_stt_and_cleanup_without_touching_settings() {
     assert_eq!(langs, ["it", "it"]);
     assert_eq!(levels, [CleanupLevel::Light, CleanupLevel::Light]);
     assert_eq!(recorded, "it");
-    assert_eq!(*global.lock().unwrap(), before);
 }

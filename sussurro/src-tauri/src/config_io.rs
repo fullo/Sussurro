@@ -124,7 +124,45 @@ pub struct ImportFile {
 /// named `*.txt` could point anywhere), at most `MAX_IMPORT_BYTES`, valid
 /// UTF-8 (a leading BOM is stripped). Parsing and merging happen in the
 /// frontend (`src/utils.ts`).
+///
+/// Symlinks: the `lstat` check refuses a link up front, and on Unix the file
+/// is opened with `O_NOFOLLOW` (#158), so a link swapped in between the
+/// check and the open is refused too instead of being followed. Windows has
+/// no such flag on this path: `File::open` follows a link swapped in during
+/// that window (the regular-file check runs on the target). Exploiting it
+/// takes a local process that can already write in the folder the user
+/// picked, at the exact moment of the import — accepted and documented.
 pub fn read_import_text(path: &Path, kind: ImportKind) -> anyhow::Result<String> {
+    read_import_text_with(path, kind, &|| {})
+}
+
+/// The open that never follows a final symlink on Unix (see
+/// [`read_import_text`]).
+fn open_no_follow(path: &Path) -> anyhow::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    match options.open(path) {
+        Ok(f) => Ok(f),
+        #[cfg(unix)]
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => {
+            anyhow::bail!("symbolic links can't be imported, pick the file itself")
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// [`read_import_text`] with a hook run between the `lstat` and the open (a
+/// test simulates the symlink swap there).
+fn read_import_text_with(
+    path: &Path,
+    kind: ImportKind,
+    before_open: &dyn Fn(),
+) -> anyhow::Result<String> {
     use std::io::Read;
 
     let ext = path
@@ -143,7 +181,8 @@ pub fn read_import_text(path: &Path, kind: ImportKind) -> anyhow::Result<String>
     if !meta.is_file() {
         anyhow::bail!("not a regular file");
     }
-    let file = std::fs::File::open(path)?;
+    before_open();
+    let file = open_no_follow(path)?;
     // Re-check on the opened handle (the entry could have been swapped since
     // the lstat) and bound the read in case the file grows meanwhile.
     let meta = file.metadata()?;
@@ -316,6 +355,26 @@ mod tests {
         std::os::unix::fs::symlink(&real, &alias).unwrap();
         assert!(read_import_text(&alias, Dictionary).is_err());
         assert_eq!(read_import_text(&real, Dictionary).unwrap(), "Sussurro\n");
+    }
+
+    /// #158 finding 8: a symlink swapped in between the lstat check and the
+    /// open is not followed.
+    #[cfg(unix)]
+    #[test]
+    fn read_import_text_refuses_a_symlink_swapped_in_after_the_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = dir.path().join("secret.json");
+        std::fs::write(&secret, "{\"password\":\"x\"}").unwrap();
+        let picked = dir.path().join("dict.txt");
+        std::fs::write(&picked, "Sussurro\n").unwrap();
+        let swap = || {
+            std::fs::remove_file(&picked).unwrap();
+            std::os::unix::fs::symlink(&secret, &picked).unwrap();
+        };
+        let err = read_import_text_with(&picked, Dictionary, &swap)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("symbolic link"), "{err}");
     }
 
     #[test]

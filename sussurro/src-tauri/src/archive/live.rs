@@ -10,7 +10,8 @@
 //!    rule of `store`).
 //! 3. [`finish_session`] on a normal stop: final segments, duration and the
 //!    other end-of-run metadata, marker removed, final render.
-//!    [`discard_session`] on a user cancel or when nothing was said.
+//!    [`discard_session`] on a user cancel or when nothing was said (to the
+//!    OS trash if any segment has text; only an empty item is removed).
 //! 4. After a crash the item is left with `status: recording`; at the next
 //!    start the app calls [`mark_interrupted`], which turns it into
 //!    `status: interrupted` and keeps the saved segments.
@@ -23,8 +24,8 @@ use super::paths::{folder_name, item_dir, slugify};
 use super::render::{format_timestamp, render_transcript};
 use super::store::{
     commit_transcript, create_item, delete_item_with, existing_item_dir, is_edited_externally,
-    lock_items, read_segments, rerender_if_unchanged, sha256_hex, transcript_path, write_segments,
-    ChangedOnDisk,
+    lock_items, move_to_trash, read_segments, rerender_if_unchanged, sha256_hex, transcript_path,
+    write_segments, ChangedOnDisk,
 };
 use super::types::{ItemMeta, SegmentsFile, SessionState};
 use anyhow::{Context, Result};
@@ -184,7 +185,10 @@ pub fn mark_interrupted(archive: &Path, id: &str) -> Result<bool> {
     let _lock = lock_items();
     let dir = existing_item_dir(archive, id)?;
     let path = transcript_path(&dir);
-    let doc = std::fs::read_to_string(&path).unwrap_or_default();
+    // A read error is an error (the caller keeps its journal entry, #158),
+    // not "not recording"; invalid UTF-8 is not a read error.
+    let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let doc = String::from_utf8_lossy(&bytes);
     let recording = frontmatter::parse(&doc)
         .map(|(m, _)| m.session_state() == Some(SessionState::Recording))
         .unwrap_or(false);
@@ -215,23 +219,46 @@ pub fn mark_interrupted(archive: &Path, id: &str) -> Result<bool> {
     Ok(true)
 }
 
-/// Drop a live item the user cancelled (or that captured no speech). The
-/// folder was created by this session, so it is removed outright — unless
-/// the user edited `transcript.md` meanwhile: then it is kept, marked
-/// `interrupted`. Returns whether the folder was removed.
-pub fn discard_session(archive: &Path, id: &str) -> Result<bool> {
+/// What [`discard_session`] did with the item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Discarded {
+    /// No segment had text: the folder (created by this session, holding
+    /// nothing worth keeping) was removed.
+    Removed,
+    /// Some segment had text: the folder went to the OS trash, like any
+    /// delete from the Library — the app never hard-deletes a transcript.
+    Trashed,
+    /// The user edited `transcript.md` meanwhile: kept, marked `interrupted`.
+    Kept,
+}
+
+/// Drop a live item the user cancelled (or that captured no speech). Since
+/// #153 the item exists from the session start, so a cancel can hit one
+/// holding minutes of transcript: an item with any transcribed text goes to
+/// the OS trash ([`move_to_trash`], with its macOS trade-off), only an empty
+/// one is removed outright. An item whose `transcript.md` the user edited
+/// meanwhile is kept, marked `interrupted`.
+pub fn discard_session(archive: &Path, id: &str) -> Result<Discarded> {
     let _lock = lock_items();
     let dir = existing_item_dir(archive, id)?;
     let bytes = std::fs::read(transcript_path(&dir))?;
     if is_edited_externally(&dir, &bytes) {
         drop(_lock);
         mark_interrupted(archive, id)?;
-        return Ok(false);
+        return Ok(Discarded::Kept);
+    }
+    // Unreadable segments count as text: when in doubt, the trash.
+    let has_text = read_segments(&dir)
+        .map(|s| s.segments.iter().any(|s| !s.text.trim().is_empty()))
+        .unwrap_or(true);
+    if has_text {
+        delete_item_with(archive, id, move_to_trash)?;
+        return Ok(Discarded::Trashed);
     }
     delete_item_with(archive, id, |p| {
         std::fs::remove_dir_all(p).with_context(|| format!("removing {}", p.display()))
     })?;
-    Ok(true)
+    Ok(Discarded::Removed)
 }
 
 /// Rename a live item's folder after its final title (a session started
@@ -502,15 +529,49 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("arch");
         let id = begin_session(&archive, &meta("Gone")).unwrap();
-        assert!(discard_session(&archive, &id).unwrap());
+        assert_eq!(discard_session(&archive, &id).unwrap(), Discarded::Removed);
         assert!(!archive.join(&id).exists());
+        assert!(!crate::archive::store::test_trash::contains(
+            &archive.join(&id)
+        ));
         assert!(!archive.join("2026").exists(), "empty month folders pruned");
 
         let id = begin_session(&archive, &meta("Kept")).unwrap();
         let path = archive.join(&id).join("transcript.md");
         std::fs::write(&path, transcript(&archive, &id) + "my notes\n").unwrap();
-        assert!(!discard_session(&archive, &id).unwrap());
+        assert_eq!(discard_session(&archive, &id).unwrap(), Discarded::Kept);
         assert!(read_item(&archive, &id).unwrap().interrupted);
+    }
+
+    /// #158 finding 1: a discarded session that transcribed something goes
+    /// to the OS trash, never a hard delete; only failed segments (no text)
+    /// still count as empty.
+    #[test]
+    fn discard_trashes_an_item_with_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("arch");
+        let id = begin_session(&archive, &meta("Minutes")).unwrap();
+        checkpoint(&archive, &id, &segs(3), true).unwrap();
+        let dir = archive.join(&id);
+        assert_eq!(discard_session(&archive, &id).unwrap(), Discarded::Trashed);
+        assert!(!dir.exists());
+        assert!(
+            crate::archive::store::test_trash::contains(&dir),
+            "moved to the trash, not removed"
+        );
+        assert!(!archive.join("2026").exists(), "empty month folders pruned");
+
+        let id = begin_session(&archive, &meta("Failed")).unwrap();
+        let mut failed = segs(2);
+        for s in &mut failed.segments {
+            s.text.clear();
+            s.stt_error = Some("model missing".into());
+        }
+        checkpoint(&archive, &id, &failed, false).unwrap();
+        assert_eq!(discard_session(&archive, &id).unwrap(), Discarded::Removed);
+        assert!(!crate::archive::store::test_trash::contains(
+            &archive.join(&id)
+        ));
     }
 
     #[test]

@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   canStart,
   describeProgress,
+  discardStep,
   initialRuns,
+  MAX_BUFFERED,
   routeEvent,
   runsReducer,
+  showDiscard,
   wasCancelled,
   type RunsAction,
   type RunsState,
@@ -52,8 +55,36 @@ describe("runsReducer routing", () => {
     expect(routeEvent(s, 4)).toBeNull();
   });
 
-  it("ignores events when nothing is running", () => {
-    expect(run([{ type: "progress", payload: progress(1) }])).toEqual(initialRuns);
+  it("routes no event when nothing is running (it is only buffered)", () => {
+    const s = run([{ type: "progress", payload: progress(1) }]);
+    expect(s.mic).toBeNull();
+    expect(s.file).toBeNull();
+    expect(s.pending).toHaveLength(1);
+  });
+
+  // #158 finding 6: the engine thread emits engine-started as soon as the
+  // item exists, which can beat engine_start_mic's reply to the webview.
+  it("replays a mic session's early events once its id is known", () => {
+    const started = {
+      type: "engine-started" as const,
+      payload: { session_id: 9, item_id: "2026/09/2026-09-24-untitled", item_type: "note" as const, title: "", source: "mic" },
+    };
+    const s = run([
+      started,
+      { type: "progress", payload: progress(9, { processed_s: 3 }) },
+      { type: "progress", payload: progress(12) }, // someone else's session
+      { type: "started", kind: "mic", sessionId: 9, label: "", now: 0 },
+    ]);
+    expect(s.mic?.itemId).toBe("2026/09/2026-09-24-untitled");
+    expect(s.mic?.progress?.processed_s).toBe(3);
+    expect(s.pending.map((e) => e.payload.session_id)).toEqual([12]);
+  });
+
+  it("keeps a bounded buffer of unclaimed events", () => {
+    const flood = Array.from({ length: MAX_BUFFERED + 10 }, (_, i) => ({ type: "progress" as const, payload: progress(100 + i) }));
+    const s = run(flood);
+    expect(s.pending).toHaveLength(MAX_BUFFERED);
+    expect(s.pending[0].payload.session_id).toBe(110); // oldest dropped
   });
 
   it("collects segments in time order, dedups by id, drops word timings", () => {
@@ -173,6 +204,61 @@ describe("canStart", () => {
     expect(canStart(fileStarting, "mic")).toBe(false);
     const fileClaimed = run([{ type: "progress", payload: progress(5) }], fileStarting);
     expect(canStart(fileClaimed, "mic")).toBe(true);
+  });
+});
+
+// #158 finding 7: a UI mounted mid-run (ui_v2 switched, window reloaded)
+// adopts what engine_status reports — the file transcription too, so it
+// can be followed and cancelled instead of running unseen.
+describe("adopt", () => {
+  const status = (mic: number | null, files: { session_id: number; label: string }[] = []) => ({
+    active: (mic === null ? 0 : 1) + files.length,
+    mic_session: mic,
+    file_sessions: files,
+  });
+
+  it("adopts the mic session and a running file", () => {
+    const s = run([{ type: "adopt", status: status(3, [{ session_id: 4, label: "call.wav" }]), now: 0 }]);
+    expect(s.mic).toMatchObject({ sessionId: 3, status: "running" });
+    expect(s.file).toMatchObject({ sessionId: 4, label: "call.wav", status: "running" });
+    // It can't be doubled, and its events land on it.
+    expect(canStart(s, "file")).toBe(false);
+    const p = run([{ type: "progress", payload: progress(4, { processed_s: 20 }) }], s);
+    expect(p.file?.progress?.processed_s).toBe(20);
+    expect(p.mic?.progress).toBeNull();
+  });
+
+  it("never replaces a run this window already follows", () => {
+    const own = run([{ type: "started", kind: "file", sessionId: 8, label: "mine.wav", now: 0 }]);
+    const s = run([{ type: "adopt", status: status(null, [{ session_id: 8, label: "mine.wav" }]), now: 5 }], own);
+    expect(s).toEqual(own);
+    expect(run([{ type: "adopt", status: status(null), now: 0 }])).toEqual(initialRuns);
+  });
+});
+
+describe("Discard (#158)", () => {
+  const recording = run([{ type: "started", kind: "mic", sessionId: 4, label: "", now: 0 }]);
+
+  it("is offered only while the session records, never once Stop was pressed", () => {
+    expect(showDiscard(null)).toBe(false);
+    expect(showDiscard(recording.mic)).toBe(true);
+    const stopping = run([{ type: "stopping", kind: "mic" }], recording);
+    expect(showDiscard(stopping.mic)).toBe(false);
+    const done = run(
+      [{ type: "done", payload: { session_id: 4, item_id: "a", item_type: "note", title: "t", text: "", segments: 1, duration_s: 1 } }],
+      stopping,
+    );
+    expect(showDiscard(done.mic)).toBe(false);
+  });
+
+  it("cancels the session only after an explicit confirmation", () => {
+    // A single click never discards.
+    expect(discardStep("idle", "confirm")).toEqual({ step: "idle", cancel: false });
+    const asked = discardStep("idle", "ask");
+    expect(asked).toEqual({ step: "confirming", cancel: false });
+    // Keep recording closes the question without cancelling.
+    expect(discardStep(asked.step, "keep")).toEqual({ step: "idle", cancel: false });
+    expect(discardStep(asked.step, "confirm")).toEqual({ step: "idle", cancel: true });
   });
 });
 

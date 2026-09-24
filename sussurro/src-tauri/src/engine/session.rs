@@ -8,7 +8,7 @@ use super::{Cleaner, EngineEvent, EngineSink, Job, RunResult, SegmentStt};
 use crate::archive::{ItemMeta, ItemType};
 use crate::settings::{CleanupLevel, Settings, SttEngine};
 use crate::sources::Source;
-use crate::state::AppState;
+use crate::state::{AppPaths, AppState};
 use crate::stt::TimedTranscript;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -22,13 +22,20 @@ struct MicSession {
     stop: Arc<AtomicBool>,
 }
 
+/// One running session's bookkeeping.
+struct Running {
+    cancel: Arc<AtomicBool>,
+    /// The file's name for a file transcription; `None` for the mic.
+    file_label: Option<String>,
+}
+
 /// Running engine sessions. Lives in `AppState`.
 #[derive(Default)]
 pub struct Sessions {
     active: AtomicUsize,
     next_id: AtomicU64,
     mic: Mutex<Option<MicSession>>,
-    cancels: Mutex<HashMap<u64, Arc<AtomicBool>>>,
+    running: Mutex<HashMap<u64, Running>>,
 }
 
 impl Sessions {
@@ -41,18 +48,25 @@ impl Sessions {
         self.active.load(Ordering::SeqCst)
     }
 
-    /// Register a new session; returns its id and cancel flag.
-    pub fn begin(&self) -> (u64, Arc<AtomicBool>) {
+    /// Register a new session — a file transcription when `file_label` (the
+    /// file's name) is given, else the mic; returns its id and cancel flag.
+    pub fn begin(&self, file_label: Option<String>) -> (u64, Arc<AtomicBool>) {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let cancel = Arc::new(AtomicBool::new(false));
-        self.cancels.lock().unwrap().insert(id, cancel.clone());
+        self.running.lock().unwrap().insert(
+            id,
+            Running {
+                cancel: cancel.clone(),
+                file_label,
+            },
+        );
         self.active.fetch_add(1, Ordering::SeqCst);
         (id, cancel)
     }
 
     /// The session ended (done, failed or cancelled).
     pub fn end(&self, id: u64) {
-        if self.cancels.lock().unwrap().remove(&id).is_some() {
+        if self.running.lock().unwrap().remove(&id).is_some() {
             self.active.fetch_sub(1, Ordering::SeqCst);
         }
         let mut mic = self.mic.lock().unwrap();
@@ -63,13 +77,28 @@ impl Sessions {
 
     /// Abort a running session; false if there is no such session.
     pub fn cancel(&self, id: u64) -> bool {
-        match self.cancels.lock().unwrap().get(&id) {
-            Some(c) => {
-                c.store(true, Ordering::Relaxed);
+        match self.running.lock().unwrap().get(&id) {
+            Some(r) => {
+                r.cancel.store(true, Ordering::Relaxed);
                 true
             }
             None => false,
         }
+    }
+
+    /// Running file transcriptions: `(session id, file name)`, oldest
+    /// first. Reported by `engine_status` so a UI mounted mid-run (a window
+    /// reload, `ui_v2` switched) can show and cancel them (#158).
+    pub fn file_sessions(&self) -> Vec<(u64, String)> {
+        let mut files: Vec<(u64, String)> = self
+            .running
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(id, r)| r.file_label.clone().map(|l| (*id, l)))
+            .collect();
+        files.sort();
+        files
     }
 
     /// Id of the running mic session, if any.
@@ -222,13 +251,16 @@ pub(crate) fn start_meta(
 /// model is (re)loaded for the settings current when the lock is taken, so
 /// a model change mid-session reloads the same engine the dictation uses;
 /// the dictionary is re-read per segment too. The language is the run's.
-fn app_transcriber(app: AppHandle) -> impl FnMut(&[f32], &str) -> Result<TimedTranscript> + Send {
+fn app_transcriber(
+    app: AppHandle,
+    cancel: Arc<AtomicBool>,
+) -> impl FnMut(&[f32], &str) -> Result<TimedTranscript> + Send {
     move |samples, language| {
         let state = app.state::<AppState>();
         // A hotkey dictation recording or waiting for its final pass goes
         // first; one pressed while this segment runs waits for it only
-        // (see `priority` for the bound).
-        let mut model = super::priority::acquire_yielding(&state.dictation, || {
+        // (see `priority` for the bound). A cancel ends the wait (#158).
+        let mut model = super::priority::acquire_yielding(&state.dictation, &cancel, || {
             crate::pipeline::lock_transcriber(&state)
         })?;
         let dictionary = state.settings.lock().unwrap().dictionary.clone();
@@ -264,8 +296,24 @@ fn load_detector(models_dir: &Path) -> Box<dyn SpeechDetector> {
 
 /// A file of the engine's in the app data dir (next to the dictation
 /// history): mic spools and the session journal.
-fn app_data_file(state: &AppState, name: &str) -> std::path::PathBuf {
-    state.paths.history_file.with_file_name(name)
+fn app_data_file(paths: &AppPaths, name: &str) -> std::path::PathBuf {
+    paths.history_file.with_file_name(name)
+}
+
+/// The session journal ([`super::checkpoint`]) in the app data dir.
+pub fn journal_path(state: &AppState) -> std::path::PathBuf {
+    app_data_file(&state.paths, super::checkpoint::JOURNAL_FILE)
+}
+
+/// Refuse a delete or a line edit of an item a running capture session is
+/// writing — this process's or another instance's (#158). The store also
+/// refuses items marked `recording`; this catches a live item whose marker
+/// was edited away by hand.
+pub fn ensure_not_live(journal: &Path, archive: &Path, id: &str) -> Result<()> {
+    if super::checkpoint::owned_by_live_session(journal, archive, id) {
+        anyhow::bail!("'{id}' is being written by a running session — stop it first");
+    }
+    Ok(())
 }
 
 /// At app start, before the user can begin a session: items of sessions
@@ -276,7 +324,7 @@ pub fn recover_after_crash(app: &AppHandle) {
     let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap().clone();
     let archive = crate::state::resolve_archive_dir(&state.paths, &settings).ok();
-    let journal = app_data_file(&state, super::checkpoint::JOURNAL_FILE);
+    let journal = journal_path(&state);
     let spool_dir = journal.parent().map(Path::to_path_buf).unwrap_or_default();
     let r = super::checkpoint::recover(
         &journal,
@@ -301,37 +349,62 @@ fn ensure_archive_writable(state: &AppState) -> Result<()> {
     crate::archive::live::ensure_writable(&archive)
 }
 
-struct Request {
-    id: u64,
-    cancel: Arc<AtomicBool>,
-    source: Box<dyn Source>,
-    policy: Policy,
-    defer: bool,
-    item_type: ItemType,
-    title: String,
-    source_label: String,
-    options: RunOptions,
+/// One run to start: the source and what the caller chose for it.
+pub(crate) struct Request {
+    pub id: u64,
+    pub cancel: Arc<AtomicBool>,
+    pub source: Box<dyn Source>,
+    pub policy: Policy,
+    pub defer: bool,
+    pub item_type: ItemType,
+    pub title: String,
+    pub source_label: String,
+    pub options: RunOptions,
 }
 
 fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
-    let sink: Arc<dyn EngineSink> = Arc::new(TauriSink { app: app.clone() });
     let state = app.state::<AppState>();
-    let global = state.settings.lock().unwrap().clone();
+    let transcribe = app_transcriber(app.clone(), req.cancel.clone());
+    run_request_with(
+        &state.settings,
+        &state.paths,
+        req,
+        transcribe,
+        crate::cleanup::ollama::cleanup_with_context,
+        load_detector,
+        Arc::new(TauriSink { app: app.clone() }),
+    )
+}
+
+/// The body of [`run_request`], with the app's pieces passed in so tests
+/// drive the real path (#158): `shared` is the app's settings, read
+/// **once** when the run starts and never written — this run's language
+/// and cleanup level (#157) apply to a copy, and later changes to the
+/// settings don't reach a run in flight.
+pub(crate) fn run_request_with<T, C>(
+    shared: &Mutex<Settings>,
+    paths: &AppPaths,
+    req: Request,
+    transcribe: T,
+    clean: C,
+    detector: impl FnOnce(&Path) -> Box<dyn SpeechDetector>,
+    sink: Arc<dyn EngineSink>,
+) -> Result<RunResult>
+where
+    T: FnMut(&[f32], &str) -> Result<TimedTranscript> + Send,
+    C: Fn(&Settings, Option<&str>, &str) -> String + Send,
+{
+    let global = shared.lock().unwrap().clone();
     // This run's settings: the dictation's plus the choices made in New
     // (#157). The global settings are not modified.
-    let (settings, mut stt, cleaner) = run_parts(
-        &global,
-        &req.options,
-        app_transcriber(app.clone()),
-        crate::cleanup::ollama::cleanup_with_context,
-    );
+    let (settings, mut stt, cleaner) = run_parts(&global, &req.options, transcribe, clean);
     let prepared = (|| -> Result<Job> {
-        let archive_dir = crate::state::resolve_archive_dir(&state.paths, &settings)?;
-        let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
+        let archive_dir = crate::state::resolve_archive_dir(paths, &settings)?;
+        let models_dir = crate::state::resolve_models_dir(paths, &settings);
         Ok(Job {
             session_id: req.id,
             source: req.source,
-            detector: load_detector(&models_dir),
+            detector: detector(&models_dir),
             params: SegmenterParams::default(),
             policy: req.policy,
             // App data dir (next to the dictation history), not the shared
@@ -339,7 +412,7 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
             // The `<prefix><pid>-` part lets the next start tell a dead
             // process's spool from a live one (see `checkpoint`).
             spool_path: app_data_file(
-                &state,
+                paths,
                 &format!(
                     "{}{}-{}.f32",
                     super::checkpoint::SPOOL_PREFIX,
@@ -352,8 +425,8 @@ fn run_request(app: &AppHandle, req: Request) -> Result<RunResult> {
             // Spoken "new line" etc. only make sense in the user's own notes.
             voice_commands: settings.voice_commands && req.item_type == ItemType::Note,
             archive_dir,
-            index_db: Some(state.paths.archive_index.clone()),
-            journal: Some(app_data_file(&state, super::checkpoint::JOURNAL_FILE)),
+            index_db: Some(paths.archive_index.clone()),
+            journal: Some(app_data_file(paths, super::checkpoint::JOURNAL_FILE)),
             meta: start_meta(
                 &settings,
                 req.item_type,
@@ -398,7 +471,7 @@ pub fn start_mic(
     let stop = Arc::new(AtomicBool::new(false));
     let source = crate::sources::mic::MicSource::start(&device, stop.clone())
         .context("could not start the microphone")?;
-    let (id, cancel) = state.engine.begin();
+    let (id, cancel) = state.engine.begin(None);
     *mic = Some(MicSession { id, stop });
     drop(mic);
 
@@ -441,7 +514,11 @@ pub fn transcribe_file(
     let state = app.state::<AppState>();
     ensure_archive_writable(&state)?;
     let source = crate::sources::file::FileSource::open(path)?;
-    let (id, cancel) = state.engine.begin();
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (id, cancel) = state.engine.begin(Some(file_name));
     let _guard = SessionGuard {
         app: app.clone(),
         id,
@@ -479,10 +556,12 @@ mod tests {
     fn sessions_count_active_runs_and_forget_ended_ones() {
         let s = Sessions::default();
         assert!(!s.is_active());
-        let (a, cancel_a) = s.begin();
-        let (b, _) = s.begin();
+        let (a, cancel_a) = s.begin(None);
+        let (b, _) = s.begin(Some("call.wav".into()));
         assert_ne!(a, b);
         assert_eq!(s.active_count(), 2);
+        // #158: a UI mounted mid-run learns about the file transcription.
+        assert_eq!(s.file_sessions(), [(b, "call.wav".to_string())]);
         assert!(s.cancel(a));
         assert!(cancel_a.load(Ordering::Relaxed));
         s.end(a);
@@ -491,19 +570,21 @@ mod tests {
         assert!(!s.cancel(a), "an ended session can't be cancelled");
         s.end(b);
         assert!(!s.is_active());
+        assert!(s.file_sessions().is_empty());
     }
 
     #[test]
     fn mic_session_stop_and_end() {
         let s = Sessions::default();
         assert_eq!(s.stop_mic(), None);
-        let (id, _) = s.begin();
+        let (id, _) = s.begin(None);
         let stop = Arc::new(AtomicBool::new(false));
         *s.mic.lock().unwrap() = Some(MicSession {
             id,
             stop: stop.clone(),
         });
         assert_eq!(s.mic_session(), Some(id));
+        assert!(s.file_sessions().is_empty(), "the mic is not a file");
         assert_eq!(s.stop_mic(), Some(id));
         assert!(stop.load(Ordering::Relaxed));
         s.end(id);
@@ -539,6 +620,30 @@ mod tests {
         // The frontmatter records the run's language.
         let meta = start_meta(&s, ItemType::Note, "t".into(), "mic".into(), "d".into());
         assert_eq!(meta.language, "en");
+    }
+
+    /// #158: the delete / line-edit commands refuse an item a running
+    /// session still owns, even with its `recording` marker edited away.
+    #[test]
+    fn a_live_sessions_item_is_refused_by_the_archive_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let journal = tmp.path().join(super::super::checkpoint::JOURNAL_FILE);
+        let meta = start_meta(
+            &Settings::default(),
+            ItemType::Note,
+            "Live".into(),
+            "mic".into(),
+            "2026-09-24T10:00:00+02:00".into(),
+        );
+        let live =
+            super::super::checkpoint::LiveItem::begin(&archive, &meta, Some(&journal)).unwrap();
+        let id = live.id().to_string();
+        let err = ensure_not_live(&journal, &archive, &id).unwrap_err();
+        assert!(err.to_string().contains("running session"), "{err}");
+        assert!(ensure_not_live(&journal, &archive, "2026/09/other").is_ok());
+        assert!(live.discard().is_none());
+        assert!(ensure_not_live(&journal, &archive, &id).is_ok());
     }
 
     #[test]

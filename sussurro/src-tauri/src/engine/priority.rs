@@ -9,7 +9,10 @@
 //!   done (success or not), through [`DictationTurn`];
 //! - the engine takes the transcriber through [`acquire_yielding`], which
 //!   waits while a dictation is pending and re-checks after acquiring, so
-//!   it never starts a new segment ahead of a dictation.
+//!   it never starts a new segment ahead of a dictation. The wait wakes up
+//!   every [`CANCEL_POLL`] to honour the run's cancel flag (#158): a Cancel
+//!   pressed while the engine yields ends the run at once, not after the
+//!   dictation.
 //!
 //! **Worst-case wait** for a dictation: a segment already in STT when the
 //! hotkey is pressed is not interrupted (whisper.cpp / ONNX Runtime calls
@@ -18,7 +21,13 @@
 //! (the segmenter's cap) minus the time the user spent recording. Every
 //! later segment waits for the dictation instead.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
+use std::time::Duration;
+
+/// How often an engine thread waiting for a dictation checks its cancel
+/// flag (the dictation's `end` wakes it at once).
+pub const CANCEL_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Default)]
 struct Inner {
@@ -57,18 +66,25 @@ impl DictationGate {
         self.inner.lock().unwrap().pending > 0
     }
 
-    /// Block while a dictation is pending. Returns whether it waited.
-    pub fn wait_clear(&self) -> bool {
+    /// Block while a dictation is pending. Returns whether it waited, or an
+    /// error as soon as `cancel` is set (checked every [`CANCEL_POLL`]).
+    pub fn wait_clear(&self, cancel: &AtomicBool) -> anyhow::Result<bool> {
         let mut g = self.inner.lock().unwrap();
         if g.pending == 0 {
-            return false;
+            return Ok(false);
         }
         g.waiting += 1;
-        while g.pending > 0 {
-            g = self.cv.wait(g).unwrap();
-        }
+        let result = loop {
+            if cancel.load(Ordering::Relaxed) {
+                break Err(anyhow::anyhow!("cancelled"));
+            }
+            if g.pending == 0 {
+                break Ok(true);
+            }
+            g = self.cv.wait_timeout(g, CANCEL_POLL).unwrap().0;
+        };
         g.waiting -= 1;
-        true
+        result
     }
 
     /// Engine threads currently yielding to a dictation.
@@ -113,13 +129,15 @@ impl Drop for DictationTurn<'_> {
 
 /// Take the transcriber for one long-form segment, yielding to dictation:
 /// wait while one is pending, acquire, and if a dictation began in between
-/// release and wait again. `acquire` locks (and may load) the model.
+/// release and wait again. `acquire` locks (and may load) the model. Fails
+/// with "cancelled" as soon as the run's `cancel` flag is set while waiting.
 pub fn acquire_yielding<G>(
     gate: &DictationGate,
+    cancel: &AtomicBool,
     mut acquire: impl FnMut() -> anyhow::Result<G>,
 ) -> anyhow::Result<G> {
     loop {
-        gate.wait_clear();
+        gate.wait_clear(cancel)?;
         let guard = acquire()?;
         if !gate.is_pending() {
             return Ok(guard);
@@ -135,6 +153,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
+    static NO_CANCEL: AtomicBool = AtomicBool::new(false);
+
     /// Poll `cond` until true; panics after 5 s (a broken gate must fail
     /// the test, not hang it).
     fn eventually(what: &str, cond: impl Fn() -> bool) {
@@ -149,7 +169,7 @@ mod tests {
     fn gate_counts_overlapping_dictations() {
         let g = DictationGate::default();
         assert!(!g.is_pending());
-        assert!(!g.wait_clear(), "no dictation: no wait");
+        assert!(!g.wait_clear(&NO_CANCEL).unwrap(), "no dictation: no wait");
         g.begin();
         g.begin(); // a second dictation starts while the first transcribes
         g.end();
@@ -181,7 +201,7 @@ mod tests {
         g.begin();
         let t = {
             let g = g.clone();
-            std::thread::spawn(move || g.wait_clear())
+            std::thread::spawn(move || g.wait_clear(&NO_CANCEL).unwrap())
         };
         eventually("the engine blocks on the gate", || g.waiting() == 1);
         g.end();
@@ -203,7 +223,8 @@ mod tests {
             let model = model.clone();
             std::thread::spawn(move || {
                 for i in 0..3 {
-                    let mut m = acquire_yielding(&gate, || Ok(model.lock().unwrap())).unwrap();
+                    let mut m =
+                        acquire_yielding(&gate, &NO_CANCEL, || Ok(model.lock().unwrap())).unwrap();
                     m.push(format!("segment {i}"));
                     if i == 0 {
                         // A long segment: the hotkey is pressed meanwhile.
@@ -238,7 +259,7 @@ mod tests {
         let order = Arc::new(Mutex::new(Vec::<&str>::new()));
         let mut attempts = 0;
         let mut dictation = None;
-        let got = acquire_yielding(&gate, || {
+        let got = acquire_yielding(&gate, &NO_CANCEL, || {
             attempts += 1;
             if attempts == 1 {
                 gate.begin(); // the hotkey fires as the engine takes the lock
@@ -256,5 +277,30 @@ mod tests {
         dictation.unwrap().join().unwrap();
         assert_eq!(got, 2, "released, waited, re-acquired");
         assert_eq!(*order.lock().unwrap(), ["dictation", "segment"]);
+    }
+
+    /// #158 finding 4: Cancel pressed while the engine yields to a
+    /// dictation ends the wait at once, even if the dictation never ends.
+    #[test]
+    fn a_cancel_ends_the_wait_for_a_dictation() {
+        let gate = Arc::new(DictationGate::default());
+        let cancel = Arc::new(AtomicBool::new(false));
+        gate.begin(); // a dictation that outlives the run
+        let (tx, rx) = mpsc::channel();
+        {
+            let (gate, cancel) = (gate.clone(), cancel.clone());
+            std::thread::spawn(move || {
+                let r = acquire_yielding(&gate, &cancel, || Ok(()));
+                tx.send(r.map_err(|e| e.to_string())).unwrap();
+            });
+        }
+        eventually("the engine blocks on the gate", || gate.waiting() == 1);
+        cancel.store(true, Ordering::Relaxed);
+        let r = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the engine ignored the cancel");
+        assert_eq!(r, Err("cancelled".to_string()));
+        assert_eq!(gate.waiting(), 0);
+        assert!(gate.is_pending(), "the dictation itself is untouched");
     }
 }

@@ -426,6 +426,17 @@ pub struct EngineStatus {
     pub active: usize,
     /// The running mic session, if any.
     pub mic_session: Option<u64>,
+    /// Running file transcriptions, oldest first (#158): a UI mounted
+    /// mid-run (window reload, `ui_v2` switched) adopts them, so a file
+    /// started from the other UI can still be followed and cancelled.
+    pub file_sessions: Vec<FileSessionStatus>,
+}
+
+#[derive(serde::Serialize)]
+pub struct FileSessionStatus {
+    pub session_id: u64,
+    /// The file's name.
+    pub label: String,
 }
 
 #[tauri::command]
@@ -433,6 +444,12 @@ pub fn engine_status(state: State<'_, AppState>) -> EngineStatus {
     EngineStatus {
         active: state.engine.active_count(),
         mic_session: state.engine.mic_session(),
+        file_sessions: state
+            .engine
+            .file_sessions()
+            .into_iter()
+            .map(|(session_id, label)| FileSessionStatus { session_id, label })
+            .collect(),
     }
 }
 
@@ -811,7 +828,11 @@ async fn edit_segment_command(
     edit: archive::SegmentEdit,
 ) -> Result<Item, String> {
     let (dir, db) = archive_paths(state)?;
+    let journal = crate::engine::session::journal_path(state);
     blocking(move || {
+        // A live item can't be line-edited (#158): the store refuses the
+        // `recording` marker, this a session that still owns the item.
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         let item = archive::edit_segment(&dir, &id, segment_id, edit)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         Ok(item)
@@ -819,11 +840,15 @@ async fn edit_segment_command(
     .await
 }
 
-/// Move an item folder to the OS trash (never a hard delete).
+/// Move an item folder to the OS trash (never a hard delete). Refused for
+/// an item a capture session is writing (#158), in this process or another
+/// instance.
 #[tauri::command]
 pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let (dir, db) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
     blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         archive::delete_item(&dir, &id)?;
         reindex(&dir, &db, |idx| idx.remove_from_index(&id));
         Ok(())

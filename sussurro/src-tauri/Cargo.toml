@@ -68,6 +68,14 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 # default so contributor builds don't require the SDK.
 [target.'cfg(windows)'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["vulkan"] }
+# Is the process owning a session-journal entry still running (#158)?
+# OpenProcess + GetExitCodeProcess. Already in the tree (via tauri).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+# Unix counterpart: kill(pid, 0) for the journal liveness check (#158) and
+# O_NOFOLLOW for the import picker. Already in the tree.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["metal"] }
