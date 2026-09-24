@@ -289,6 +289,27 @@ project decisions here, not in per-machine memory.**
   the exe dir or cwd). Linux AppImage builds need that folder on
   `LD_LIBRARY_PATH` (linuxdeploy's `ldd`). `scripts/verify-sidecar-bundle.sh`
   checks every release bundle.
+- **Qwen3-ASR engine (Track E, #117)** (`stt/remote.rs`): `SttEngine::Qwen3Asr`
+  = **1.7B Q8 only** (the #152 gate; 0.6B failed on Italian), optional and
+  **never the default** — no dictionary prompt, and whisper large-v3-turbo
+  is more accurate on Italian (#109); the Models screen says so. Model +
+  `mmproj` from `ggml-org/Qwen3-ASR-1.7B-GGUF` via the HF-tree SHA-256
+  downloader. `AnyTranscriber::Remote` owns the `llama-server` process, so
+  the idle unload / engine change / Drop stop it; `kill_all()` runs on the
+  exit event and from an `ExitGuard` in Tauri's resource table (dropped by
+  `cleanup_before_exit`, which also covers `restart()` and the updater's
+  Windows install). Crash of Sussurro: Windows kill-on-close job object,
+  Linux `PR_SET_PDEATHSIG` (spawned from one long-lived thread — the signal
+  follows the spawning *thread*), macOS nothing (documented). Spawned
+  without a shell on a random port, `--host 127.0.0.1`, `-ngl 99 -c 4096
+  -np 1 --cache-ram 0 --no-webui` (#109's settings). Requests ≤ 30 s: longer
+  hotkey dictations are cut with `stt::pauses` (#194) into ≤ 28 s pieces.
+  Output: text after the last `<asr_text>`, `<|…|>` tokens removed,
+  language name → ISO code. The app never strips macOS quarantine (manual
+  `xattr -cr`, documented). Its tests re-run the test binary as a fake
+  server: with a **shared `CARGO_TARGET_DIR` another worktree's build can
+  replace that binary mid-run** — verify in a private target dir if they
+  fail with "0 passed; N filtered out".
 - **Parakeet long input (#194)** (`stt/pauses.rs`): transcribe-rs 0.3.11's
   Parakeet greedy decoder can emit only blanks after a sentence end + pause
   (the decoder state blocks; the encoder output is fine), dropping every

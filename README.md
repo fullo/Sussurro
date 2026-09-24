@@ -66,9 +66,13 @@ Building from source instead? See
 ## Features
 
 ### Dictation
-- **Two STT engines** — Whisper (GPU, any language, multiple sizes) or NVIDIA
+- **STT engines** — Whisper (GPU, any language, multiple sizes) or NVIDIA
   Parakeet TDT v3 (single 456 MB int8 model, CPU-optimized, auto-detects 25
-  European languages). Switch in Settings → Engine.
+  European languages). Switch in Settings → Engine. Optionally **Qwen3-ASR
+  1.7B** (~2.5 GB, 52 languages, detects the language itself) runs in the
+  bundled `llama-server` (see *Third-party binaries*); it takes no dictionary
+  prompt, and Whisper large-v3-turbo stays more accurate on Italian, so it
+  is never the default.
 - **Language** — pick your dictation language or auto-detect; a fixed language
   is more accurate on smaller multilingual models.
 - **Streaming typing** — text is typed while you speak: word by word with

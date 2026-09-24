@@ -49,7 +49,18 @@ app starts it with the lib folder as working directory and
 ID signing + notarization ever land, the dylibs must move next to the
 binary instead). A quarantined copy (downloaded DMG) should be covered by
 the one-time right-click → *Open* of the app; if the engine then fails to
-start, `xattr -cr /Applications/sussurro.app` clears the flag.
+start, `xattr -cr /Applications/sussurro.app` clears the flag (the error
+message says so). The app never strips `com.apple.quarantine` itself: an
+unapproved app runs translocated from a read-only copy, so it could not,
+and removing Gatekeeper's flag from inside the app is not something an
+ad-hoc-signed app should do behind the user's back — the manual step stays
+the user's choice.
+
+The sidecar runs only while the Qwen3-ASR engine is loaded, on a random
+`127.0.0.1` port; it stops with the idle model unload (15 min), an engine
+change and on quit. macOS has no way to tie a child to its parent's life,
+so if Sussurro itself crashes or is force-quit while the engine is loaded,
+`sussurro-llama-server` can stay behind: quit it from Activity Monitor.
 
 ## Runtime notes
 
