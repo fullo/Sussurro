@@ -436,7 +436,9 @@ pub struct EngineResult {
 /// default, or transcription (P10). Resolves when the item is written;
 /// progress arrives as `engine-progress` / `engine-segment` events.
 /// `language` / `cleanup_level`: this run only (#157); omitted = the
-/// dictation settings, which are never modified.
+/// dictation settings, which are never modified. `identify_voices`: label
+/// a transcription's voices "Voice N" (P11, #134; off when omitted,
+/// ignored for notes).
 #[tauri::command]
 pub async fn transcribe_file(
     app: AppHandle,
@@ -445,6 +447,7 @@ pub async fn transcribe_file(
     title: Option<String>,
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
+    identify_voices: Option<bool>,
 ) -> Result<EngineResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let r = crate::engine::session::transcribe_file(
@@ -455,6 +458,7 @@ pub async fn transcribe_file(
             crate::engine::session::RunOptions {
                 language,
                 cleanup_level,
+                identify_voices: identify_voices.unwrap_or(false),
             },
         )
         .map_err(|e| format!("{e:#}"))?;
@@ -494,6 +498,7 @@ pub fn engine_start_mic(
         crate::engine::session::RunOptions {
             language,
             cleanup_level,
+            ..Default::default()
         },
     )
     .map_err(|e| format!("{e:#}"))
@@ -506,6 +511,8 @@ pub fn engine_start_mic(
 /// url:<link>`). `allow_local`: this run may reach hosts on this computer
 /// or the local network (refused by default). An invalid link, a missing
 /// yt-dlp or an unwritable archive fail here, before any download.
+/// `identify_voices`: label the voices "Voice N" (P11, #134; off when
+/// omitted).
 #[tauri::command]
 pub fn engine_start_link(
     app: AppHandle,
@@ -514,6 +521,7 @@ pub fn engine_start_link(
     allow_local: Option<bool>,
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
+    identify_voices: Option<bool>,
 ) -> Result<u64, String> {
     crate::engine::session::start_link(
         &app,
@@ -523,6 +531,7 @@ pub fn engine_start_link(
         crate::engine::session::RunOptions {
             language,
             cleanup_level,
+            identify_voices: identify_voices.unwrap_or(false),
         },
     )
     .map_err(|e| format!("{e:#}"))
@@ -1146,6 +1155,46 @@ pub async fn archive_unlink_speaker(
     edit_speakers_command(&state, id, archive::SpeakerEdit::Unlink { speaker_id }).await
 }
 
+/// Speaker panel (#134): can "Identify voices" run on this transcription,
+/// and if not, why (its original file is gone, it came from a link…).
+#[tauri::command]
+pub async fn archive_voice_source(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<crate::engine::identify::VoiceSource, String> {
+    let (dir, _) = archive_paths(&state)?;
+    let store = crate::engine::session::source_files_path(&state);
+    blocking(move || crate::engine::identify::voice_source(&dir, &store, &id)).await
+}
+
+/// Speaker panel (#134): "Identify voices" on a transcription without
+/// voice data — labels its lines "Voice N" from its original file, as a
+/// run with the toggle on would (the speaker model is downloaded on first
+/// use). Returns the updated item. Same rules as a line edit.
+#[tauri::command]
+pub async fn archive_identify_voices(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Item, String> {
+    let (dir, db) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
+    let store = crate::engine::session::source_files_path(&state);
+    let models_dir = {
+        let settings = state.settings.lock().unwrap();
+        crate::state::resolve_models_dir(&state.paths, &settings)
+    };
+    let always = subtitles_always(&state);
+    blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        let load = crate::engine::session::embedder_loader(models_dir);
+        let (item, _) = crate::engine::identify::identify_voices(&dir, &store, &id, load)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        refresh_subtitles_if(always, &dir, &id);
+        Ok(item.without_embeddings())
+    })
+    .await
+}
+
 async fn edit_speakers_command(
     state: &AppState,
     id: String,
@@ -1172,10 +1221,15 @@ async fn edit_speakers_command(
 pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let (dir, db) = archive_paths(&state)?;
     let journal = crate::engine::session::journal_path(&state);
+    let sources = crate::engine::session::source_files_path(&state);
     blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         archive::delete_item(&dir, &id)?;
         reindex(&dir, &db, |idx| idx.remove_from_index(&id));
+        // Its original file's path is a local detail: forget it too (#134).
+        if let Err(e) = crate::engine::source_files::forget(&sources, &dir, &id) {
+            eprintln!("archive: original file of {id} not forgotten ({e:#})");
+        }
         Ok(())
     })
     .await

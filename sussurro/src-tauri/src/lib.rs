@@ -224,6 +224,8 @@ pub fn run() {
             commands::archive_redetect_speakers,
             commands::archive_link_speaker,
             commands::archive_unlink_speaker,
+            commands::archive_voice_source,
+            commands::archive_identify_voices,
             commands::archive_delete,
             commands::archive_reveal,
             commands::archive_rebuild_index,
