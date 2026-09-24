@@ -42,8 +42,10 @@ npm run tauri dev      # development, hot-reload
 npm run tauri build    # production bundle (installer per platform)
 ```
 
-First run: the window opens on Settings — pick a Whisper model, click
-*Download*, set your shortcut with the hotkey recorder, and dictate.
+First run: a short setup opens over the workspace (permissions, the archive
+folder, a speech model to download, cleanup, your shortcut) — then dictate.
+Settings → About → *Run the setup again* reopens it. In the browser preview
+(`npm run dev`), `?onboarding=welcome` or `?onboarding=whats_new` shows it.
 
 ## llama-server sidecar
 
