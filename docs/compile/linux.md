@@ -49,6 +49,33 @@ npm run tauri build    # production bundle (AppImage, .deb, .rpm)
 cd src-tauri && cargo test   # headless test suite
 ```
 
+### The llama-server sidecar (release bundles)
+
+Release bundles ship a pinned upstream `llama-server` (llama.cpp, CPU build;
+upstream's Vulkan Linux build is a possible later addition, like
+`linux-vulkan` above) for the optional Qwen3-ASR engine (plan E9). Fetch it
+once, and again whenever `src-tauri/sidecar/llama-server.lock.json` changes
+(SHA-256-checked, fails closed):
+
+```bash
+sudo apt install patchelf        # linuxdeploy, for the AppImage
+npm run sidecar
+LD_LIBRARY_PATH="$PWD/src-tauri/binaries/llama-server-libs:$LD_LIBRARY_PATH" \
+  npm run tauri build -- --config src-tauri/tauri.sidecar.conf.json
+../scripts/verify-sidecar-bundle.sh x86_64-unknown-linux-gnu src-tauri/target   # optional check
+```
+
+The `LD_LIBRARY_PATH` is for the AppImage step only: linuxdeploy resolves
+every executable's libraries with `ldd` and fails on the sidecar's otherwise
+(it then copies them into the AppImage and rewrites that copy's rpath).
+Without the `--config` there is no sidecar; `cargo test` and clippy never
+need it. Installed layout: `/usr/bin/sussurro-llama-server` (prefixed so it
+never clashes with a distro `llama-server`) and its `.so` files in
+`/usr/lib/sussurro/llama-server-libs/`; the app starts it with that folder as
+working directory and on `LD_LIBRARY_PATH` (ggml loads its CPU backends from
+there). Runtime needs `libgomp1` and OpenSSL 3, declared as `.deb`/`.rpm`
+dependencies.
+
 The D-Bus client library (`libdbus-1-dev`) comes in with `libgtk-3-dev`;
 the tray, `enigo` and the Secret Service keyring below all link it.
 

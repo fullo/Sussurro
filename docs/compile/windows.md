@@ -73,6 +73,28 @@ npm run tauri build    # production bundle (NSIS .exe + .msi)
 cd src-tauri; cargo test   # headless test suite
 ```
 
+### The llama-server sidecar (release bundles)
+
+Release installers ship a pinned upstream `llama-server` (llama.cpp, Vulkan
+build) for the optional Qwen3-ASR engine (plan E9). Fetch it once, and again
+whenever `src-tauri/sidecar/llama-server.lock.json` changes (SHA-256-checked,
+fails closed):
+
+```powershell
+npm run sidecar
+npm run tauri build -- --config src-tauri/tauri.sidecar.conf.json
+```
+
+Without the `--config` there is no sidecar in the installer; `cargo test`
+and clippy never need it. It installs as `sussurro-llama-server.exe` next to
+`sussurro.exe`, with its DLLs (llama, ggml, the Vulkan and CPU backends,
+`libomp.dll`) in `llama-server-libs\`; the app starts it with that folder as
+working directory and prepended to `PATH`. It needs the Visual C++ runtime
+(`MSVCP140.dll`, already required by Sussurro itself) and, for the GPU, the
+Vulkan loader that comes with the graphics driver — without it ggml falls
+back to the CPU. Antivirus tools may flag an unsigned helper executable the
+first time it runs.
+
 ## Runtime notes
 
 - Settings → Privacy & security → Microphone → enable **"Let desktop apps

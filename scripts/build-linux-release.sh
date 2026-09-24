@@ -14,6 +14,12 @@ rm -rf "$HOME/ci/sussurro"
 git clone -q --branch "$TAG" /mnt/f/GitHub/Sussurro "$HOME/ci/sussurro"
 cd "$HOME/ci/sussurro/sussurro"
 npm ci --no-audit --no-fund >/dev/null 2>&1
-npm run tauri build 2>&1 | tail -8
+# llama-server sidecar (#116): pinned + SHA-256-verified (fails closed), then
+# bundled via the merge config; linuxdeploy (AppImage) needs its libs on the
+# loader path.
+npm run sidecar
+LD_LIBRARY_PATH="$PWD/src-tauri/binaries/llama-server-libs:$LD_LIBRARY_PATH" \
+  npm run tauri build -- --config src-tauri/tauri.sidecar.conf.json 2>&1 | tail -8
+bash ../scripts/verify-sidecar-bundle.sh x86_64-unknown-linux-gnu "$CARGO_TARGET_DIR"
 
 bash /mnt/f/GitHub/Sussurro/scripts/sign-linux-bundles.sh

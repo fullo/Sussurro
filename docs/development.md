@@ -45,6 +45,39 @@ npm run tauri build    # production bundle (installer per platform)
 First run: the window opens on Settings — pick a Whisper model, click
 *Download*, set your shortcut with the hotkey recorder, and dictate.
 
+## llama-server sidecar
+
+Extra STT engines (Qwen3-ASR, Track E) run in a bundled `llama-server`
+(plan E9): a **pinned upstream llama.cpp release**, never built here and never
+in git. `sussurro/src-tauri/sidecar/llama-server.lock.json` pins the release
+and, per target, the asset URL, SHA-256, size, the companion libraries to
+ship and the licence. Run once per machine (and after the lock changes):
+
+```bash
+cd sussurro
+npm run sidecar        # host target; --target <triple> for another one
+```
+
+It downloads, checks the SHA-256 (a mismatch aborts and writes nothing),
+and writes `src-tauri/binaries/sussurro-llama-server-<target-triple>` (Tauri's
+`externalBin` naming) plus `src-tauri/binaries/llama-server-libs/`
+(gitignored; archives cached in `binaries/.cache/`). Builds pick them up only
+with `--config src-tauri/tauri.sidecar.conf.json` (`tauri build`/`tauri dev`)
+— `tauri-build` checks `externalBin` at *compile* time, so keeping it out of
+`tauri.conf.json` means `cargo test`, clippy and plain `tauri dev` never need
+the download. The release workflow always merges it and then runs
+`scripts/verify-sidecar-bundle.sh` on every bundle; `test.yml` does the same
+for the Linux `.deb` + AppImage. Per-OS layout and runtime notes are in
+`docs/compile/*.md`; the Rust side only locates it (`stt::sidecar`), the
+lifecycle is #117.
+
+**Bumping llama.cpp**: change `release`/`commit`/`version` and every target's
+`asset`/`url`/`sha256`/`size` (the GitHub release lists each asset's
+digest), re-check the `libs` lists against the new archives (`otool -L`,
+`objdump -p`), run `npm test` and `npm run sidecar -- --force`, and
+regenerate `licenses.json` if a licence text changed (the script refuses an
+archive whose licence differs from the committed copy in `sidecar/licenses/`).
+
 ## Tests & CI
 
 ```bash

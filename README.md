@@ -259,6 +259,23 @@ terms — contact [DarumaHQ.it](https://darumahq.it).
 Bundled third-party components keep their own (permissive/compatible) licenses;
 see the in-app About dialog or [`sussurro/public/licenses.json`](sussurro/public/licenses.json).
 
+### Third-party binaries
+
+The installers include one prebuilt program that Sussurro does not compile:
+**`sussurro-llama-server`**, the unmodified `llama-server` from a pinned
+[llama.cpp](https://github.com/ggml-org/llama.cpp) release (MIT; currently
+`b11146` — Metal on macOS, Vulkan on Windows, CPU on Linux) with its shared
+libraries in `llama-server-libs/`. It runs the optional extra speech
+engines (Qwen3-ASR) as a separate local process, only when you choose such an
+engine; its models download on first use. The release and the SHA-256 of
+every upstream archive are committed in
+[`sussurro/src-tauri/sidecar/llama-server.lock.json`](sussurro/src-tauri/sidecar/llama-server.lock.json),
+and the build refuses any file that doesn't match. The Windows build also
+ships the LLVM OpenMP runtime (`libomp.dll`, Apache-2.0 WITH
+LLVM-exception) that llama.cpp needs. Like Sussurro itself these binaries
+are not OS-code-signed, so an antivirus may ask about
+`sussurro-llama-server.exe` the first time it runs.
+
 ---
 
 Made by [DarumaHQ.it](https://darumahq.it).

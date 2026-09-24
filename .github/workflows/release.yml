@@ -17,15 +17,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `triple` picks the pinned llama-server sidecar (#116,
+          # src-tauri/sidecar/llama-server.lock.json); every build merges
+          # tauri.sidecar.conf.json to bundle it.
           - platform: windows-latest
-            args: ""
+            triple: x86_64-pc-windows-msvc
+            args: "--config src-tauri/tauri.sidecar.conf.json"
           # arm64 only: ort (onnxruntime) has no prebuilt binaries for
           # x86_64-apple-darwin, so Intel macOS is not supported.
           - platform: macos-latest # arm64 (Apple Silicon)
-            args: "--target aarch64-apple-darwin"
+            triple: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin --config src-tauri/tauri.sidecar.conf.json"
           # 24.04: the ort (onnxruntime) prebuilt binaries need glibc >= 2.38
           - platform: ubuntu-24.04
-            args: ""
+            triple: x86_64-unknown-linux-gnu
+            args: "--config src-tauri/tauri.sidecar.conf.json"
 
     runs-on: ${{ matrix.platform }}
 
@@ -93,6 +99,20 @@ jobs:
         working-directory: sussurro
         run: npm ci
 
+      # Pinned upstream llama.cpp build (E9, #116): downloaded and checked
+      # against the SHA-256 in the lock; a mismatch fails the job before
+      # anything is built (fail-closed).
+      - name: llama-server sidecar (fetch + verify)
+        working-directory: sussurro
+        run: npm run sidecar -- --target ${{ matrix.triple }}
+
+      # linuxdeploy (AppImage) runs ldd on every ELF in usr/bin and fails on
+      # a NEEDED lib it can't find; the sidecar's libs sit in the resource
+      # folder, so point the loader there for the build.
+      - name: Sidecar libs on the loader path (Linux AppImage)
+        if: matrix.platform == 'ubuntu-24.04'
+        run: echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/sussurro/src-tauri/binaries/llama-server-libs" >> "$GITHUB_ENV"
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -106,6 +126,16 @@ jobs:
           releaseBody: "Local voice dictation. See README for setup (Ollama + a Whisper/Parakeet model)."
           releaseDraft: true
           args: ${{ matrix.args }}
+
+      - name: Bundles contain the verified sidecar
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            windows-latest) TD="$(cygpath -u "$CARGO_TARGET_DIR")" ;;
+            macos-latest) TD=sussurro/src-tauri/target/aarch64-apple-darwin ;;
+            *) TD=sussurro/src-tauri/target ;;
+          esac
+          bash scripts/verify-sidecar-bundle.sh "${{ matrix.triple }}" "$TD"
 
   # Browser extension zips (Chrome/Edge/Brave + Firefox), attached to the draft
   # release the build job created. Store listings are not part of the release.
