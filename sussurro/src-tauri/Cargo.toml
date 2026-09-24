@@ -101,6 +101,13 @@ whisper-rs = { version = "0.16.0", features = ["metal"] }
 # checks. objc2 versions match the ones already in the tree (via tauri).
 objc2 = "0.6"
 objc2-foundation = "0.3"
+# System audio without a virtual device (#140): Core Audio process taps
+# through a private aggregate device. Already in the tree via cpal /
+# coreaudio-rs; the 14.2+ tap API itself is looked up at run time (the
+# app's minimum stays 11.0).
+objc2-core-audio = { version = "0.3", default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-core-audio-types"] }
+objc2-core-audio-types = { version = "0.3", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFDictionary"] }
 # macOS Keychain (Security.framework) for the profile API keys (#159).
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
 

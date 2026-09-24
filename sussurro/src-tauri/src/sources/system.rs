@@ -3,8 +3,9 @@
 //! `mic` (the user, "You") and `system` (everyone else, clustered into
 //! "Voice N"). The second device is whatever carries the computer's output:
 //! BlackHole or Loopback on macOS, VB-Cable or Voicemeeter on Windows, a
-//! PulseAudio/PipeWire monitor source on Linux. Native loopback without a
-//! virtual device is step 2 (#140).
+//! PulseAudio/PipeWire monitor source on Linux — or, since step 2 (#140),
+//! the computer's own output captured natively ([`crate::sources::loopback`]:
+//! WASAPI loopback, Core Audio process taps, the default sink's monitor).
 //!
 //! Each device has its own [`Recorder`] — its own cpal stream, thread and
 //! [`crate::audio::resample::StreamResampler`] from the device's rate and
@@ -37,6 +38,15 @@
 //! checkpointing of #153, so a crash keeps it too. A device that never
 //! delivers in the first [`START_MS`] ends its channel the same way; only
 //! when neither ever delivered does the run fail.
+//!
+//! **Gapless captures** (#140). A native loopback may deliver *nothing*
+//! while nothing plays (WASAPI loopback sends no packets then), so for a
+//! capture that says so ([`Capture::gapless`]) no delivery means silence,
+//! not a stall: after [`IDLE_MS`] without audio the lane is filled with
+//! silence up to the wall clock, and audio that resumes after a gap lands
+//! where the wall clock says (the gap is silence). Such a lane is never
+//! "lost" or "never started" for being quiet — only when its capture
+//! reports a failure.
 
 use super::{Channel, Frame, Source};
 use crate::audio::recorder::Recorder;
@@ -63,6 +73,13 @@ pub const LAG_WINDOW: usize = 8;
 pub const STALL_MS: u64 = 5_000;
 /// A device that has not delivered by then failed to open.
 pub const START_MS: u64 = 5_000;
+/// A gapless capture quiet this long is idle: its lane is filled with
+/// silence up to the wall clock.
+pub const IDLE_MS: u64 = 1_000;
+/// A gapless capture whose audio resumes more than this after where its
+/// lane stands gets the gap as silence (half the drift limit, so a lane
+/// padded this way never looks like drift).
+const GAP_TOLERANCE: u64 = DRIFT_LIMIT as u64 / 2;
 
 fn ms_to_samples(ms: u64) -> u64 {
     ms * RATE / 1000
@@ -120,13 +137,16 @@ impl Notice {
 struct SyncLane {
     channel: Channel,
     /// Position of the next sample on the session's clock; `None` until
-    /// the first audio.
+    /// the first audio (or, on a gapless lane, the first silence filled).
     pos: Option<u64>,
     /// Wall time (16 kHz samples) of the last delivery.
     last_audio: u64,
     /// Recent `now − pos`, one per poll, at most [`LAG_WINDOW`].
     lags: VecDeque<i64>,
     ended: bool,
+    /// No delivery means silence (a native loopback while nothing plays),
+    /// never a stall — see the module docs.
+    gapless: bool,
 }
 
 impl SyncLane {
@@ -154,9 +174,17 @@ impl ChannelSync {
                     last_audio: 0,
                     lags: VecDeque::with_capacity(LAG_WINDOW + 1),
                     ended: false,
+                    gapless: false,
                 })
                 .collect(),
             resyncs: 0,
+        }
+    }
+
+    /// Treat `channel` as gapless: a pause in delivery is silence (#140).
+    pub fn set_gapless(&mut self, channel: Channel) {
+        if let Some(l) = self.lane_mut(channel) {
+            l.gapless = true;
         }
     }
 
@@ -174,8 +202,20 @@ impl ChannelSync {
         let len = samples.len() as u64;
         // The first chunk was captured just before now: a device that
         // opened late joins the session where it actually started.
-        let start = *lane.pos.get_or_insert(now.saturating_sub(len));
-        lane.pos = Some(start + len);
+        let at = now.saturating_sub(len);
+        let start = *lane.pos.get_or_insert(at);
+        let mut samples = samples;
+        if lane.gapless && at > start + GAP_TOLERANCE {
+            // Audio resumed after a pause in delivery (a native loopback
+            // sends nothing while nothing plays): the pause was silence,
+            // and the audio lands where the wall clock says. Within the
+            // tolerance it is delivery jitter and is appended as it is.
+            let mut padded = vec![0.0; (at - start) as usize];
+            padded.append(&mut samples);
+            samples = padded;
+            lane.lags.clear();
+        }
+        lane.pos = Some(start + samples.len() as u64);
         lane.last_audio = now;
         Some(Frame {
             channel,
@@ -203,6 +243,25 @@ impl ChannelSync {
         let mut frames = Vec::new();
         let mut notices = Vec::new();
         for lane in self.lanes.iter_mut().filter(|l| !l.ended) {
+            if lane.gapless {
+                // Quiet is silence: after IDLE_MS without audio the lane
+                // is filled up to the wall clock (from the session start
+                // if it never delivered). Its lag window starts over, so
+                // the filled stretch never counts as drift.
+                if now.saturating_sub(lane.last_audio) >= ms_to_samples(IDLE_MS) {
+                    let start = lane.pos.unwrap_or(0);
+                    if now > start {
+                        frames.push(Frame {
+                            channel: lane.channel,
+                            start,
+                            samples: vec![0.0; (now - start) as usize],
+                        });
+                        lane.pos = Some(now);
+                    }
+                    lane.lags.clear();
+                }
+                continue;
+            }
             match lane.pos {
                 None if now >= ms_to_samples(START_MS) => {
                     lane.ended = true;
@@ -303,6 +362,16 @@ pub trait Capture: Send {
     fn failed(&self) -> bool;
     /// Stop capturing; returns what is left (the resampler's tail).
     fn stop(&mut self) -> Vec<f32>;
+    /// Delivers nothing (rather than zeros) while nothing plays — a native
+    /// loopback (#140): a pause is silence, not a stalled device.
+    fn gapless(&self) -> bool {
+        false
+    }
+    /// Something about the capture the user should hear once (a macOS tap
+    /// that has only delivered digital silence — permission?), taken.
+    fn take_hint(&mut self) -> Option<String> {
+        None
+    }
 }
 
 /// The session's wall clock and poll rhythm.
@@ -411,6 +480,22 @@ impl SystemSource {
         ))
     }
 
+    /// Like [`Self::start`], but the system channel is the computer's own
+    /// output captured natively (#140) — no virtual device. Fails when the
+    /// native capture is unavailable (the reason says why) or can't open.
+    pub fn start_native(mic_device: &str, stop: Arc<AtomicBool>) -> anyhow::Result<Self> {
+        let pacer = WallPacer::new();
+        let system = crate::sources::loopback::start()?;
+        let mut mic = Recorder::default();
+        mic.start(mic_device)?;
+        Ok(Self::from_parts(
+            Box::new(RecorderCapture(mic)),
+            system,
+            Box::new(pacer),
+            stop,
+        ))
+    }
+
     /// A source over any two captures and clock (tests pass fakes).
     pub fn from_parts(
         mic: Box<dyn Capture>,
@@ -418,6 +503,13 @@ impl SystemSource {
         pacer: Box<dyn Pacer>,
         stop: Arc<AtomicBool>,
     ) -> Self {
+        let mut sync = ChannelSync::new(&[Channel::Mic, Channel::System]);
+        if mic.gapless() {
+            sync.set_gapless(Channel::Mic);
+        }
+        if system.gapless() {
+            sync.set_gapless(Channel::System);
+        }
         Self {
             inputs: vec![
                 Input {
@@ -431,7 +523,7 @@ impl SystemSource {
                     open: true,
                 },
             ],
-            sync: ChannelSync::new(&[Channel::Mic, Channel::System]),
+            sync,
             pacer,
             stop,
             cancel: None,
@@ -458,8 +550,13 @@ impl SystemSource {
             return;
         }
         let chunk = input.capture.take();
+        let hint = input.capture.take_hint();
         if let Some(f) = self.sync.push(input.channel, chunk, now) {
             self.pending.push_back(f);
+        }
+        if let Some(message) = hint {
+            eprintln!("system audio: {message}");
+            self.warnings.push(message);
         }
     }
 
@@ -756,6 +853,80 @@ mod tests {
         assert!(sync.all_ended() && sync.started_any());
     }
 
+    #[test]
+    fn a_quiet_gapless_channel_is_silence_not_a_lost_device() {
+        let mut sync = ChannelSync::new(&[Channel::Mic, Channel::System]);
+        sync.set_gapless(Channel::System);
+        let mut system = Vec::new();
+        for t in 1..=60u64 {
+            let now = t * TICK;
+            sync.push(Channel::Mic, vec![0.1; TICK as usize], now);
+            let (frames, notices) = sync.check(now);
+            assert!(notices.is_empty(), "poll {t}: {notices:?}");
+            system.extend(frames.into_iter().filter(|f| f.channel == Channel::System));
+        }
+        // Filled from the session start, contiguous, all silence, up to
+        // the wall clock.
+        assert_eq!(system.first().map(|f| f.start), Some(0));
+        for w in system.windows(2) {
+            assert_eq!(w[0].start + w[0].samples.len() as u64, w[1].start);
+        }
+        assert!(system.iter().all(|f| f.samples.iter().all(|&x| x == 0.0)));
+        assert_eq!(sync.position(Channel::System), Some(60 * TICK));
+        assert!(!sync.is_ended(Channel::System) && sync.resyncs() == 0);
+    }
+
+    #[test]
+    fn gapless_audio_that_resumes_lands_where_the_wall_clock_says() {
+        let mut sync = ChannelSync::new(&[Channel::Mic, Channel::System]);
+        sync.set_gapless(Channel::System);
+        let mut frames = Vec::new();
+        let mut notices = Vec::new();
+        for t in 1..=80u64 {
+            let now = t * TICK;
+            sync.push(Channel::Mic, vec![0.1; TICK as usize], now);
+            // The loopback delivers for 2 s, pauses 0.5 s (too short to
+            // be filled as idle), delivers 5 s, pauses 10 s, then plays on.
+            let playing = t <= 8 || (11..=30).contains(&t) || t > 70;
+            if playing {
+                frames.extend(sync.push(Channel::System, vec![0.3; TICK as usize], now));
+            }
+            let (f, n) = sync.check(now);
+            frames.extend(f);
+            notices.extend(n);
+        }
+        assert!(notices.is_empty(), "{notices:?}");
+        let system: Vec<&Frame> = frames
+            .iter()
+            .filter(|f| f.channel == Channel::System)
+            .collect();
+        for w in system.windows(2) {
+            assert_eq!(
+                w[0].start + w[0].samples.len() as u64,
+                w[1].start,
+                "contiguous"
+            );
+        }
+        // Each burst of audio starts where it was played: 2.5 s after the
+        // start (after the short pause) and 17.5 s (after the long one).
+        let audio_starts: Vec<u64> = system
+            .iter()
+            .flat_map(|f| {
+                f.samples
+                    .iter()
+                    .enumerate()
+                    .map(move |(i, &x)| (f.start + i as u64, x))
+            })
+            .collect::<Vec<_>>()
+            .windows(2)
+            .filter(|w| w[0].1 == 0.0 && w[1].1 != 0.0)
+            .map(|w| w[1].0)
+            .collect();
+        assert_eq!(audio_starts, vec![10 * TICK, 70 * TICK], "{audio_starts:?}");
+        let end = sync.position(Channel::System).unwrap();
+        assert!(end.abs_diff(80 * TICK) <= TICK, "{end}");
+    }
+
     // ---- the source, over fake devices and a fake clock ----
 
     /// Wall clock of a fake session, in 16 kHz samples.
@@ -786,6 +957,11 @@ mod tests {
         stalls_at: Option<u64>,
         /// Reports `DeviceNotAvailable` from this wall time on.
         fails_at: Option<u64>,
+        /// A WASAPI-like loopback: delivers nothing (drops the samples)
+        /// during these wall-time windows, and says it is gapless.
+        quiet: Vec<(u64, u64)>,
+        /// Hands out this hint once, on the first take.
+        hint: Option<String>,
         produced: u64,
         resampler: StreamResampler,
         /// 16 kHz samples handed out (audio, not silence).
@@ -802,6 +978,8 @@ mod tests {
                 opens_at: 0,
                 stalls_at: None,
                 fails_at: None,
+                quiet: Vec::new(),
+                hint: None,
                 produced: 0,
                 resampler: StreamResampler::new(1, rate, RATE as u32),
                 out: Arc::default(),
@@ -823,8 +1001,17 @@ mod tests {
             let n = due.saturating_sub(self.produced);
             self.produced = due;
             let out = self.resampler.push(&vec![self.level; n as usize]);
+            if self.quiet.iter().any(|&(a, b)| (a..b).contains(&now)) {
+                return Vec::new();
+            }
             *self.out.lock().unwrap() += out.len() as u64;
             out
+        }
+        fn gapless(&self) -> bool {
+            !self.quiet.is_empty()
+        }
+        fn take_hint(&mut self) -> Option<String> {
+            self.hint.take()
         }
         fn failed(&self) -> bool {
             self.fails_at
@@ -1062,6 +1249,53 @@ mod tests {
         let r = run(mic, system, &wall, 3_600);
         assert!(r.error.unwrap().contains("neither"));
         assert!(r.frames.is_empty());
+    }
+
+    #[test]
+    fn a_native_loopback_that_goes_quiet_keeps_its_channel_on_time() {
+        let wall: Wall = Arc::default();
+        let mic = FakeDevice::new(&wall, 48_000, 0.1);
+        let mut system = FakeDevice::new(&wall, 48_000, 0.3);
+        // Nothing plays in the first 3 s, then for 12 s mid-call.
+        system.quiet = vec![(0, 3 * S), (6 * S, 18 * S)];
+        system.hint = Some("check the permission".into());
+        let r = run(mic, system, &wall, 25);
+        assert!(r.error.is_none());
+        // No "lost", "never started" or drift warnings: only the capture's
+        // own hint.
+        assert_eq!(r.warnings, vec!["check the permission".to_string()]);
+        assert_eq!(r.resyncs, 0);
+        let (_, m_end, ..) = channel(&r.frames, Channel::Mic);
+        let (s0, s_end, s_audio, s_sil) = channel(&r.frames, Channel::System);
+        // The quiet stretches are silence on a channel that spans the
+        // session, and the audio after them is where it was played.
+        assert_eq!(s0, 0);
+        assert!(m_end.abs_diff(s_end) <= TICK, "{m_end} vs {s_end}");
+        assert!(
+            (10 * S - TICK..=10 * S + TICK).contains(&s_audio),
+            "{s_audio}"
+        );
+        assert!(s_sil >= 15 * S - TICK, "{s_sil}");
+        let system: Vec<&Frame> = r
+            .frames
+            .iter()
+            .filter(|f| f.channel == Channel::System)
+            .collect();
+        let first_audio_after = |t: u64| {
+            system
+                .iter()
+                .flat_map(|f| {
+                    f.samples
+                        .iter()
+                        .enumerate()
+                        .map(move |(i, &x)| (f.start + i as u64, x))
+                })
+                .find(|&(at, x)| at >= t && x != 0.0)
+                .map(|(at, _)| at)
+                .unwrap()
+        };
+        assert!(first_audio_after(0).abs_diff(3 * S) <= TICK);
+        assert!(first_audio_after(7 * S).abs_diff(18 * S) <= TICK);
     }
 
     #[test]
