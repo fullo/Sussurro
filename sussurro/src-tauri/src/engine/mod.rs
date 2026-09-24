@@ -22,10 +22,12 @@
 //! start marks such an item `interrupted`.
 
 pub mod checkpoint;
+pub mod identify;
 pub mod priority;
 pub mod queue;
 pub mod segmenter;
 pub mod session;
+pub mod source_files;
 pub mod timing;
 pub mod vad;
 

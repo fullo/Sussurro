@@ -773,6 +773,17 @@ fn edit_speakers_with(
     })
 }
 
+/// [`modify_segments_with`] for the app's editors outside this module
+/// ("Identify voices" on a transcription, #134): same rules as
+/// [`edit_speakers`]. Returns the updated item.
+pub(crate) fn modify_segments(
+    archive: &Path,
+    id: &str,
+    change: impl FnOnce(&mut SegmentsFile) -> Result<()>,
+) -> Result<Item> {
+    modify_segments_with(archive, id, &|_| {}, |_meta, segments| change(segments))
+}
+
 /// Read-modify-write of an item's `segments.json` from the app's editors
 /// (lines, speakers), with `transcript.md` regenerated in step; `change`
 /// may also edit the frontmatter (a speaker link adds a participant; the

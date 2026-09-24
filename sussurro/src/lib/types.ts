@@ -281,6 +281,16 @@ export interface Item {
   embedded_segments?: number;
 }
 
+/** Whether "Identify voices" can run on a transcription (#134,
+ *  `archive_voice_source`). */
+export interface VoiceSource {
+  available: boolean;
+  /** Why not, for the speaker panel (empty when available). */
+  reason: string;
+  /** The original file's name (empty when unknown). */
+  file_name: string;
+}
+
 export interface ItemSummary {
   id: string;
   meta: ItemMeta;

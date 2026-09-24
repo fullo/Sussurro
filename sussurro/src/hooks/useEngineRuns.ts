@@ -22,7 +22,13 @@ import type {
 } from "../lib/types";
 
 /** A run's language and cleanup level (#157); null = the dictation setting. */
-export type RunArgs = { language: string | null; cleanupLevel: CleanupLevel | null };
+export type RunArgs = {
+  language: string | null;
+  cleanupLevel: CleanupLevel | null;
+  /** "Identify voices" (P11, #134): label a transcription's voices "Voice N".
+   *  Omitted = off; the backend ignores it for notes. */
+  identifyVoices?: boolean;
+};
 const NO_OPTIONS: RunArgs = { language: null, cleanupLevel: null };
 
 /** The long-form engine's runs (one mic session, one file, one link), fed

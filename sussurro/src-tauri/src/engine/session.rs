@@ -200,6 +200,10 @@ pub fn engine_label(settings: &Settings) -> String {
 pub struct RunOptions {
     pub language: Option<String>,
     pub cleanup_level: Option<CleanupLevel>,
+    /// "Identify voices" (P11, #134): label a transcription's voices as
+    /// "Voice N". Off by default; ignored for notes (never) and meetings
+    /// (the 0.9 preview decides, see [`speaker_options`]).
+    pub identify_voices: bool,
 }
 
 impl RunOptions {
@@ -456,6 +460,36 @@ where
     T: FnMut(&[f32], &str) -> Result<TimedTranscript> + Send,
     C: Fn(&Settings, Option<&str>, &str) -> String + Send + Sync,
 {
+    run_request_with_speakers(
+        shared,
+        paths,
+        req,
+        transcribe,
+        clean,
+        detector,
+        embedder_loader,
+        sink,
+    )
+}
+
+/// [`run_request_with`] with the speaker model injected too (#134): tests
+/// pass a fake embedder instead of the downloaded WeSpeaker. `speaker_model`
+/// is called only when the run labels voices ([`speaker_options`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_request_with_speakers<T, C>(
+    shared: &Mutex<Settings>,
+    paths: &AppPaths,
+    req: Request,
+    transcribe: T,
+    clean: C,
+    detector: impl FnOnce(&Path) -> Box<dyn SpeechDetector>,
+    speaker_model: impl FnOnce(std::path::PathBuf) -> crate::speakers::tracker::EmbedderLoader,
+    sink: Arc<dyn EngineSink>,
+) -> Result<RunResult>
+where
+    T: FnMut(&[f32], &str) -> Result<TimedTranscript> + Send,
+    C: Fn(&Settings, Option<&str>, &str) -> String + Send + Sync,
+{
     let global = shared.lock().unwrap().clone();
     // This run's settings: the dictation's plus the choices made in New
     // (#157). The global settings are not modified.
@@ -468,8 +502,9 @@ where
             req.item_type,
             req.source.channel(),
             &req.source_label,
+            req.options.identify_voices,
         )
-            .map(|o| crate::speakers::Tracker::new(o, embedder_loader(models_dir.clone())));
+        .map(|o| crate::speakers::Tracker::new(o, speaker_model(models_dir.clone())));
         Ok(Job {
             session_id: req.id,
             source: req.source,
@@ -522,10 +557,15 @@ where
     super::run(job, &mut stt, &cleaner, sink)
 }
 
-/// Which channels a run labels with "Voice N" (#130). Behind the 0.9
-/// flag (`meetings_enabled`, E12), for meetings only; notes never are, and
-/// transcriptions wait for their "Identify voices" toggle (#134).
-/// - One channel (the in-room case: one mic for everyone): it is clustered.
+/// Which channels a run labels with "Voice N" (#130):
+/// - notes never (P10: the user's own voice);
+/// - transcriptions only with this run's "Identify voices" toggle (P11,
+///   #134), whatever the 0.9 preview flag says — the flag gates meeting
+///   pieces only;
+/// - meetings behind the 0.9 flag (`meetings_enabled`, E12).
+///
+/// What is clustered:
+/// - One channel (the in-room case, a file or a link): it is clustered.
 /// - A browser meeting (`source: browser:<host>`, #126) records the mic
 ///   and the remote side apart: the mic is always "You" and only the
 ///   remote channel is clustered (names from the meeting page are #131).
@@ -536,9 +576,15 @@ pub(crate) fn speaker_options(
     item_type: ItemType,
     channel: crate::archive::Channel,
     source_label: &str,
+    identify_voices: bool,
 ) -> Option<crate::speakers::SpeakerOptions> {
     use crate::archive::Channel;
-    if !(settings.meetings_enabled && item_type == ItemType::Meeting) {
+    let on = match item_type {
+        ItemType::Note => false,
+        ItemType::Transcription => identify_voices,
+        ItemType::Meeting => settings.meetings_enabled,
+    };
+    if !on {
         return None;
     }
     Some(if source_label.starts_with("browser:") {
@@ -553,7 +599,7 @@ pub(crate) fn speaker_options(
 
 /// Loads the speaker model when a run first needs it: downloaded into the
 /// models folder on first use and verified against its pinned SHA-256.
-fn embedder_loader(models_dir: std::path::PathBuf) -> crate::speakers::tracker::EmbedderLoader {
+pub(crate) fn embedder_loader(models_dir: std::path::PathBuf) -> crate::speakers::tracker::EmbedderLoader {
     Box::new(move || {
         let path = crate::speakers::model::ensure_model(&models_dir)?;
         let model = crate::speakers::model::WeSpeaker::load(&path)?;
@@ -721,7 +767,7 @@ pub fn transcribe_file(
     } else {
         title
     };
-    run_request(
+    let result = run_request(
         app,
         Request {
             id,
@@ -736,7 +782,31 @@ pub fn transcribe_file(
             source_label: crate::sources::file::source_label(path),
             options,
         },
-    )
+    )?;
+    remember_source_file(&state, &result, path);
+    Ok(result)
+}
+
+/// The app data file remembering where transcriptions' files came from
+/// (#134, [`super::source_files`]).
+pub fn source_files_path(state: &AppState) -> std::path::PathBuf {
+    app_data_file(&state.paths, super::source_files::FILE)
+}
+
+/// After a file transcription: remember the file on this machine so
+/// "Identify voices" can run later (#134). Transcriptions only — notes
+/// never have speakers (P10). A failure is only logged.
+fn remember_source_file(state: &AppState, result: &RunResult, path: &Path) {
+    if result.meta.item_type != ItemType::Transcription {
+        return;
+    }
+    let settings = state.settings.lock().unwrap().clone();
+    let recorded = crate::state::resolve_archive_dir(&state.paths, &settings).and_then(|archive| {
+        super::source_files::record(&source_files_path(state), &archive, &result.item_id, path)
+    });
+    if let Err(e) = recorded {
+        eprintln!("engine: original file of {} not remembered ({e:#})", result.item_id);
+    }
 }
 
 /// One link run to start (#123).
@@ -1003,6 +1073,7 @@ mod tests {
         let o = RunOptions {
             language: Some(" en ".into()),
             cleanup_level: Some(CleanupLevel::None),
+            identify_voices: true,
         };
         let s = o.apply(&global);
         assert_eq!(
@@ -1014,7 +1085,7 @@ mod tests {
         assert_eq!(RunOptions::default().apply(&global), global);
         let blank = RunOptions {
             language: Some(String::new()),
-            cleanup_level: None,
+            ..Default::default()
         };
         assert_eq!(blank.apply(&global), global);
         // The frontmatter records the run's language.
@@ -1046,26 +1117,63 @@ mod tests {
         assert!(ensure_not_live(&journal, &archive, &id).is_ok());
     }
 
-    /// #130: voices only for meetings, and only with the 0.9 preview on.
+    /// #130 / #134: who gets "Voice N" — the gating matrix of item type ×
+    /// 0.9 preview flag × the run's "Identify voices" toggle. Notes never;
+    /// transcriptions exactly when the toggle is on, whatever the flag;
+    /// meetings exactly when the flag is on, whatever the toggle.
     #[test]
-    fn speaker_labels_need_the_preview_and_a_meeting() {
+    fn speaker_labels_gating_matrix() {
         use crate::archive::Channel;
-        let off = Settings::default();
+        for flag in [false, true] {
+            let settings = Settings {
+                meetings_enabled: flag,
+                ..Default::default()
+            };
+            for identify in [false, true] {
+                let note = speaker_options(&settings, ItemType::Note, Channel::Mic, "mic", identify);
+                assert_eq!(note, None, "notes never (flag {flag}, toggle {identify})");
+                let note_file =
+                    speaker_options(&settings, ItemType::Note, Channel::File, "file:a.wav", identify);
+                assert_eq!(note_file, None, "a voice memo from a file is still a note");
+
+                for source in ["file:a.wav", "url:https://x.org/a.mp3"] {
+                    let t = speaker_options(
+                        &settings,
+                        ItemType::Transcription,
+                        Channel::File,
+                        source,
+                        identify,
+                    );
+                    assert_eq!(
+                        t.is_some(),
+                        identify,
+                        "transcription {source}: flag {flag}, toggle {identify}"
+                    );
+                    if let Some(o) = t {
+                        assert!(o.clusters(Channel::File) && !o.two_channel);
+                    }
+                }
+
+                let m = speaker_options(&settings, ItemType::Meeting, Channel::Mic, "mic", identify);
+                assert_eq!(m.is_some(), flag, "meeting: flag {flag}, toggle {identify}");
+                if let Some(o) = m {
+                    assert!(o.clusters(Channel::Mic) && !o.two_channel);
+                }
+            }
+        }
+        // A browser meeting: the mic is You, the remote side is clustered.
         let on = Settings {
             meetings_enabled: true,
             ..Default::default()
         };
-        assert_eq!(speaker_options(&off, ItemType::Meeting, Channel::Mic, "mic"), None);
-        assert_eq!(speaker_options(&on, ItemType::Note, Channel::Mic, "mic"), None);
-        assert_eq!(
-            speaker_options(&on, ItemType::Transcription, Channel::File, "file:a.wav"),
-            None
-        );
-        let o = speaker_options(&on, ItemType::Meeting, Channel::Mic, "mic").unwrap();
-        assert!(o.clusters(Channel::Mic) && !o.two_channel);
-        // A browser meeting: the mic is You, the remote side is clustered.
-        let b = speaker_options(&on, ItemType::Meeting, Channel::Remote, "browser:meet.google.com")
-            .unwrap();
+        let b = speaker_options(
+            &on,
+            ItemType::Meeting,
+            Channel::Remote,
+            "browser:meet.google.com",
+            false,
+        )
+        .unwrap();
         assert!(b.two_channel && b.clusters(Channel::Remote) && !b.clusters(Channel::Mic));
     }
 
