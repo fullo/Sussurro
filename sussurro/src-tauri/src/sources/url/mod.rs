@@ -281,11 +281,12 @@ pub fn source_label(url: &Url) -> String {
     format!("url:{u}")
 }
 
-/// A short label for the UI: host (no `www.`) and path, at most 60 chars.
+/// A short label for the UI: host (no `www.`) and decoded path, at most 60
+/// chars.
 pub fn display_label(url: &Url) -> String {
     let host = url.host_str().unwrap_or_default();
     let host = host.strip_prefix("www.").unwrap_or(host);
-    let mut s = format!("{host}{}", url.path().trim_end_matches('/'));
+    let mut s = format!("{host}{}", percent_decode(url.path().trim_end_matches('/')));
     if let Some(q) = url.query() {
         s.push('?');
         s.push_str(q);
@@ -780,6 +781,10 @@ mod tests {
         assert_eq!(
             display_label(&url("https://www.youtube.com/watch?v=dQw4w9WgXcQ")),
             "youtube.com/watch?v=dQw4w9WgXcQ"
+        );
+        assert_eq!(
+            display_label(&url("https://example.com/podcast/Episodio%2012.mp3")),
+            "example.com/podcast/Episodio 12.mp3"
         );
         let long = display_label(&url(&format!("https://example.com/{}", "x".repeat(100))));
         assert_eq!(long.chars().count(), 60);

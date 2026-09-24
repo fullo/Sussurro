@@ -53,6 +53,19 @@ project decisions here, not in per-machine memory.**
   to ≤ 0.7 loses a custom cleanup server (the old build falls back to its
   defaults, Ollama on localhost) — the updater only moves forward. API keys
   stay in `settings.json` in clear, as before.
+- **Link source rules (0.8, #123)** (`sources/url/`): only `http`/`https`,
+  no credentials in the link (it is saved as `source: url:<link>`). Hosts on
+  this computer or the local network (loopback, private, link-local incl.
+  cloud metadata, CGNAT, unique-local IPv6, `localhost`) are **refused
+  unless the user ticks "Allow local network addresses" for that run** —
+  checked on IP literals, every resolved address and every redirect hop,
+  with the connection pinned to the checked addresses (no DNS rebinding).
+  Downloads: model-download timeouts, 2 GiB cap, temp file in
+  `<app data>/link-downloads/` (never the archive), removed after the run
+  and swept at startup. Video platforms: `yt-dlp` found on PATH or the
+  Homebrew/winget/scoop/pip folders (E10, not bundled), argument vector
+  only, `bestaudio[ext=m4a]/bestaudio`, `--ignore-config --no-playlist`;
+  opus-only videos are refused (no ffmpeg bundled).
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 
 ## Release process

@@ -226,7 +226,11 @@ function RunOutcome({
     return (
       <div className="run-outcome err" role="alert">
         <p>
-          {wasCancelled(run) ? "Discarded — nothing was saved to the Library (anything transcribed is in the trash)." : run.error}
+          {wasCancelled(run)
+            ? run.kind === "link" && run.itemId === null
+              ? "Cancelled — the download was deleted and nothing was saved."
+              : "Discarded — nothing was saved to the Library (anything transcribed is in the trash)."
+            : run.error}
           {kept && " What was transcribed until then is kept in the Library, marked interrupted."}
         </p>
         <div className="row-gap">
