@@ -89,6 +89,11 @@ fn run_cleanup(
 /// OpenAI-compatible: GET /v1/models. Also the profile editor's "test
 /// connection".
 pub fn list_models(profile: &LlmProfile) -> Result<Vec<String>> {
+    // The bundled profile (#118): its one model once the sidecar and the
+    // file are there — without starting the server.
+    if profile.bundled {
+        return crate::llm::bundled::list_models();
+    }
     match profile.api {
         CleanupApi::Ollama => list_models_ollama(&profile.base_url),
         CleanupApi::Openai => list_models_openai(&profile.base_url, &profile.api_key),
@@ -170,6 +175,9 @@ pub fn chat(profile: &LlmProfile, messages: &[Value]) -> Result<String> {
 
 /// [`chat`] with explicit [`ChatOptions`] (recipes, #120).
 pub fn chat_with(profile: &LlmProfile, messages: &[Value], opts: &ChatOptions) -> Result<String> {
+    if profile.bundled {
+        return chat_bundled(crate::llm::bundled::global(), messages, opts);
+    }
     match profile.api {
         CleanupApi::Ollama => chat_ollama(&profile.base_url, &profile.model, messages, opts),
         CleanupApi::Openai => chat_openai(
@@ -208,7 +216,43 @@ fn chat_ollama(url: &str, model: &str, messages: &[Value], opts: &ChatOptions) -
         .to_string())
 }
 
+/// The "Local (bundled)" profile's chat (#118): an OpenAI-compatible
+/// request to the `llama-server` sidecar that `llm` runs (started on first
+/// use; see [`crate::llm::bundled`]), never through a proxy.
+pub fn chat_bundled(
+    llm: &crate::llm::bundled::BundledLlm,
+    messages: &[Value],
+    opts: &ChatOptions,
+) -> Result<String> {
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy() // loopback: never through a system proxy
+        .connect_timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(opts.timeout_secs))
+        .build()?;
+    llm.with_server(|url| {
+        chat_openai_with(
+            &client,
+            url,
+            crate::llm::bundled::MODEL_ID,
+            "",
+            messages,
+            opts,
+        )
+    })
+}
+
 fn chat_openai(
+    url: &str,
+    model: &str,
+    api_key: &str,
+    messages: &[Value],
+    opts: &ChatOptions,
+) -> Result<String> {
+    chat_openai_with(&http_client(opts.timeout_secs)?, url, model, api_key, messages, opts)
+}
+
+fn chat_openai_with(
+    client: &reqwest::blocking::Client,
     url: &str,
     model: &str,
     api_key: &str,
@@ -221,7 +265,7 @@ fn chat_openai(
         "stream": false,
         "temperature": opts.temperature
     });
-    let mut req = http_client(opts.timeout_secs)?
+    let mut req = client
         .post(format!("{}/v1/chat/completions", openai_base(url)))
         .json(&body);
     if !api_key.is_empty() {

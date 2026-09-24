@@ -706,6 +706,7 @@ mod tests {
                 external: false,
                 context_tokens: 0,
                 cleanup_opt_in: String::new(),
+                bundled: false,
             }]
         );
         assert_eq!(s.cleanup_profile, "local");

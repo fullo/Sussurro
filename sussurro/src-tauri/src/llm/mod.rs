@@ -3,6 +3,7 @@
 //! supported (P6): OpenAI-compatible `/v1` and Ollama native — no
 //! provider-specific adapters. The HTTP client lives in `cleanup::ollama`.
 
+pub mod bundled;
 pub mod consent;
 pub mod profile;
 

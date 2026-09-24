@@ -30,6 +30,11 @@
 //!   (`PR_SET_PDEATHSIG`); macOS has no equivalent, so only a crash or a
 //!   force-quit of Sussurro can leave it running there.
 //!
+//! The process side ([`Sidecar`], [`SidecarConfig`], [`kill_all`]) also runs
+//! the chat model of the "Local (bundled)" LLM profile (#118, a second,
+//! separate process — see `crate::llm::bundled` for why not one shared
+//! server): only the arguments differ ([`SidecarRole`]).
+//!
 //! **Client** — one multipart `POST /v1/audio/transcriptions` per ≤ 30 s
 //! piece of audio, sent as a 16 kHz mono WAV. Qwen3-ASR has no dictionary
 //! prompt and ignores the language hint (it detects the language itself):
@@ -231,13 +236,29 @@ fn new_boundary() -> Result<String> {
 
 // --------------------------------------------------------------- process --
 
-/// What to run and how. [`SidecarConfig::new`] has the app's defaults.
+/// What a sidecar serves. The process lifecycle is the same for both; only
+/// the server arguments and the name in messages differ.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SidecarRole {
+    /// Qwen3-ASR: the model plus its audio encoder ([`SidecarConfig::mmproj`]),
+    /// `/v1/audio/transcriptions` (#117).
+    Asr,
+    /// A chat model for the "Local (bundled)" LLM profile (#118),
+    /// `/v1/chat/completions`, listed as `alias` with a `ctx_tokens` context
+    /// window. See `crate::llm::bundled`.
+    Chat { ctx_tokens: u32, alias: String },
+}
+
+/// What to run and how. [`SidecarConfig::new`] (Qwen3-ASR) and
+/// [`SidecarConfig::chat`] have the app's defaults.
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {
     pub binary: PathBuf,
     pub lib_dir: PathBuf,
     pub model: PathBuf,
+    /// The audio encoder; empty and unused for [`SidecarRole::Chat`].
     pub mmproj: PathBuf,
+    pub role: SidecarRole,
     /// stdout + stderr of the server; `None` discards them.
     pub log_file: Option<PathBuf>,
     /// Spawn → `/health` 200 (model load; 2–3 s warm on an M1, much more
@@ -260,11 +281,49 @@ impl SidecarConfig {
             lib_dir,
             model,
             mmproj,
+            role: SidecarRole::Asr,
             log_file: None,
             start_timeout: Duration::from_secs(180),
             request_timeout: Duration::from_secs(180),
             backoff_base: Duration::from_millis(500),
             prefix_args: Vec::new(),
+        }
+    }
+
+    /// A chat-model sidecar (#118): `model` served as `alias` with a
+    /// `ctx_tokens` window. Same timeouts and backoff as Qwen3-ASR.
+    pub fn chat(
+        binary: PathBuf,
+        lib_dir: PathBuf,
+        model: PathBuf,
+        ctx_tokens: u32,
+        alias: &str,
+    ) -> Self {
+        Self {
+            role: SidecarRole::Chat {
+                ctx_tokens,
+                alias: alias.to_string(),
+            },
+            ..Self::new(binary, lib_dir, model, PathBuf::new())
+        }
+    }
+
+    /// The server's own arguments for `port`: [`server_args`] or
+    /// [`chat_server_args`]. Pure.
+    pub fn server_args(&self, port: u16) -> Vec<OsString> {
+        match &self.role {
+            SidecarRole::Asr => server_args(&self.model, &self.mmproj, port),
+            SidecarRole::Chat { ctx_tokens, alias } => {
+                chat_server_args(&self.model, alias, *ctx_tokens, port)
+            }
+        }
+    }
+
+    /// How messages name this sidecar.
+    pub fn label(&self) -> &'static str {
+        match self.role {
+            SidecarRole::Asr => "Qwen3-ASR",
+            SidecarRole::Chat { .. } => "bundled LLM",
         }
     }
 }
@@ -300,6 +359,38 @@ pub fn server_args(model: &Path, mmproj: &Path, port: u16) -> Vec<OsString> {
     args
 }
 
+/// `llama-server` arguments for a chat model on `port` (#118): the same
+/// loopback-only, all-layers-on-GPU, one-slot, no-prompt-cache, no-web-UI
+/// shape as [`server_args`], plus the model's id in `/v1/models`
+/// (`--alias`) and reasoning off: Qwen3 would otherwise think before every
+/// cleanup, which costs seconds for nothing. `ctx_tokens` is the whole
+/// window (one slot). Pure.
+pub fn chat_server_args(model: &Path, alias: &str, ctx_tokens: u32, port: u16) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec!["-m".into(), model.as_os_str().to_os_string()];
+    for a in [
+        "--alias",
+        alias,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &port.to_string(),
+        "-ngl",
+        "99",
+        "-c",
+        &ctx_tokens.to_string(),
+        "-np",
+        "1",
+        "--cache-ram",
+        "0",
+        "--reasoning",
+        "off",
+        "--no-webui",
+    ] {
+        args.push(a.into());
+    }
+    args
+}
+
 /// The variable the dynamic loader searches on `os`
 /// (`std::env::consts::OS`). Pure.
 pub fn library_path_var(os: &str) -> &'static str {
@@ -330,7 +421,7 @@ pub fn command(cfg: &SidecarConfig, port: u16) -> Command {
     let var = library_path_var(os);
     let mut cmd = Command::new(&cfg.binary);
     cmd.args(&cfg.prefix_args)
-        .args(server_args(&cfg.model, &cfg.mmproj, port))
+        .args(cfg.server_args(port))
         .current_dir(&cfg.lib_dir)
         .env(
             var,
@@ -566,6 +657,15 @@ pub struct Sidecar {
 impl Sidecar {
     /// Spawn the server and wait until it is healthy.
     pub fn start(cfg: SidecarConfig) -> Result<Self> {
+        let mut s = Self::stopped(cfg)?;
+        s.launch()?;
+        Ok(s)
+    }
+
+    /// A sidecar that is not running yet: [`Sidecar::ensure_running`]
+    /// starts it. Unlike [`Sidecar::start`], a failed first start keeps the
+    /// failure count, so the backoff applies to it too (#118).
+    pub fn stopped(cfg: SidecarConfig) -> Result<Self> {
         if let Some(log) = &cfg.log_file {
             if let Some(dir) = log.parent() {
                 let _ = std::fs::create_dir_all(dir);
@@ -577,7 +677,7 @@ impl Sidecar {
             .connect_timeout(Duration::from_secs(2))
             .timeout(cfg.request_timeout)
             .build()?;
-        let mut s = Self {
+        let s = Self {
             cfg,
             child: Arc::new(Mutex::new(None)),
             port: 0,
@@ -586,13 +686,52 @@ impl Sidecar {
             retry_at: None,
         };
         register(&s.child);
-        s.launch()?;
         Ok(s)
+    }
+
+    /// Start the process if it is not running (never started, crashed or
+    /// stopped), honouring the backoff; no-op while it runs.
+    pub fn ensure_running(&mut self) -> Result<()> {
+        if self.is_running() {
+            return Ok(());
+        }
+        self.launch()
+    }
+
+    /// What it runs.
+    pub fn config(&self) -> &SidecarConfig {
+        &self.cfg
     }
 
     /// The loopback port it listens on.
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// `http://127.0.0.1:<port>`: the server's base URL while it runs.
+    pub fn base_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// A request answered: the failure count starts over.
+    pub fn note_ok(&mut self) {
+        self.failures = 0;
+    }
+
+    /// Whether the process died within `d` of a failed request — a crash,
+    /// counted towards the backoff — rather than a slow or refused answer
+    /// from a live server.
+    pub fn crashed_within(&mut self, d: Duration) -> bool {
+        if self.exits_within(d) {
+            self.note_failure();
+            return true;
+        }
+        false
+    }
+
+    /// Consecutive failed starts and crashes.
+    pub fn failures(&self) -> u32 {
+        self.failures
     }
 
     /// The process id, while it runs.
@@ -632,7 +771,8 @@ impl Sidecar {
             let wait = at.saturating_duration_since(Instant::now());
             if wait > MAX_INLINE_BACKOFF {
                 bail!(
-                    "the Qwen3-ASR sidecar failed {} times in a row; next try in {} s",
+                    "the {} sidecar failed {} times in a row; next try in {} s",
+                    self.cfg.label(),
                     self.failures,
                     wait.as_secs().max(1)
                 );
@@ -778,9 +918,8 @@ impl Sidecar {
     pub fn transcribe_wav(&mut self, wav: &[u8]) -> Result<String> {
         let mut last = None;
         for _ in 0..2 {
-            if !self.is_running() {
-                self.launch().context("restarting the Qwen3-ASR sidecar")?;
-            }
+            self.ensure_running()
+                .context("restarting the Qwen3-ASR sidecar")?;
             match self.post(wav) {
                 Ok(text) => {
                     self.failures = 0;
@@ -897,4 +1036,4 @@ pub fn qwen3_asr_config(
 
 #[cfg(test)]
 #[allow(clippy::single_range_in_vec_init)]
-mod tests;
+pub(crate) mod tests;
