@@ -521,7 +521,7 @@ function onOffscreenPort(port: Runtime.Port) {
 
 browser.runtime.onConnect.addListener((port) => {
   if (port.name === "capture") onPagePort(port);
-  else if (port.name === "offscreen" && port.sender?.url?.startsWith(browser.runtime.getURL(""))) onOffscreenPort(port);
+  else if (__BROWSER__ === "chrome" && port.name === "offscreen" && port.sender?.url?.startsWith(browser.runtime.getURL(""))) onOffscreenPort(port);
   else port.disconnect();
 });
 

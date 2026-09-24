@@ -88,6 +88,14 @@ if (/\bdocument\./.test(readFileSync(join(outDir, "background.js"), "utf8"))) {
   process.exit(1);
 }
 
+// Firefox has neither tabCapture nor offscreen documents: the Chrome-only
+// tab-capture fallback must be compiled out (`__BROWSER__` checks), not
+// merely unreachable.
+if (target === "firefox" && /getMediaStreamId|createDocument/.test(readFileSync(join(outDir, "background.js"), "utf8"))) {
+  console.error("background.js still calls Chrome's tab capture: guard it with `__BROWSER__ === \"chrome\"`.");
+  process.exit(1);
+}
+
 // 3. Icons (the app's own) and the manifest.
 mkdirSync(join(outDir, "icons"), { recursive: true });
 for (const size of [32, 64, 128]) {
