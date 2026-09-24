@@ -77,6 +77,22 @@ project decisions here, not in per-machine memory.**
   logged per item in `.sussurro/external-log.json` (metadata only, never
   content) and drive the Library's "sent externally" marker.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
+- **Product direction: speech-to-text workbench** (decided 2026-09-24).
+  Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`
+  (decisions P1–P11 + engineering E1–E12 — read it before touching 0.7+).
+  Short form: UX = proposal A (left-rail workspace, mock in
+  `docs/superpowers/plans/ux-mocks/`); **command mode removed** (out of
+  focus, OS voice control covers it — spoken editing commands inside
+  dictation stay); cleaning is text-only (no audio cutting); archive of
+  markdown items in `<Documents>/Sussurro` on every OS (frontmatter is the
+  source of truth, index is derived); three item types by content —
+  note / meeting / transcription (file default: note); participant emails
+  from a manual People registry; LLM profiles speak only OpenAI-compatible
+  or Ollama APIs; .srt is a setting (default on request) for meetings and
+  transcriptions; 0.9 speakers = Meet names + generic "Voice N" only; WAV
+  saved only on request; extra STT engines (Qwen3-ASR) run in a bundled
+  `llama-server` sidecar, never in-process (two ggml copies can't share a
+  binary); never add sherpa-onnx (second ONNX Runtime).
 
 ## Release process
 
@@ -235,6 +251,34 @@ project decisions here, not in per-machine memory.**
     (constant for now; try_lock + recording check, so it never blocks or
     races a dictation) — model RAM is only held while dictating. The
     published v0.6.3 release includes this along with the #88–#95 batch.
+
+### 0.7–0.10 — speech-to-text workbench (agreed 2026-09-24)
+
+Plan and checklists: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`.
+
+Work is tracked as GitHub issues in milestones `Phase 0 — Spikes`, `0.7 — Notetaking`,
+`0.8 — Advanced notetaking + links`, `0.9 — Meeting`, `0.10 — Advanced meeting`,
+`Track E — Qwen3-ASR sidecar` and `Future`, with one epic issue per milestone
+(#147–#152; Future is the single tracking issue #146); agents take issues
+labelled `agent-ready`.
+
+- **Phase 0** — spikes (browser capture on Meet/Teams/Zoom web, Meet
+  speaker names, Silero VAD, speaker embeddings vs Sortformer, word
+  timings, Qwen3-ASR benchmark). Gates 0.9 and Track E only.
+- **0.7 — Notetaking**: remove command mode; archive core; long-form
+  engine for mic + file (streamed decode, VAD segments, chunked cleanup);
+  UI shell A behind `ui_v2` until release.
+- **0.8 — Advanced notetaking + links**: LLM profiles, recipes (formatted
+  companion document with tl;dr/headings/tables), Ask panel, URL source
+  (`yt-dlp` on PATH).
+- **0.9 — Meeting**: browser extension (Chromium + Firefox), Meet names +
+  "Voice N", People registry, SRT/VTT, facet search.
+- **0.10 — Advanced meeting**: system audio as a second channel, opt-in
+  WAV, per-speaker replay.
+- **Track E** (parallel): Qwen3-ASR via `llama-server` sidecar if the
+  benchmark gate passes.
+- **Future (tracked, not built)**: voice recognition after training,
+  text-to-speech, voice cloning with consent.
 
 ### Candidate / not committed
 

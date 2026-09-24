@@ -1,3 +1,6 @@
 
 # local preview helper
 .claude/launch.json
+
+# Claude Code agent worktrees
+.claude/worktrees/

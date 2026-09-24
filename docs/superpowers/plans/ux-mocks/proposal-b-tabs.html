@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Proposal B — Tabs + meeting window</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+.page { padding:22px 26px; }
+.masthead { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.masthead h1 { font-size:22px; margin:0; }
+.masthead .tag2 { font-family:var(--f-serif); color:var(--c-text-light); font-size:13px; }
+.seg { display:inline-flex; border:1px solid var(--border-strong); border-radius:var(--pill); overflow:hidden; background:var(--c-surface); margin-bottom:18px; }
+.seg span { padding:7px 18px; font-size:13px; }
+.seg span.on { background:var(--c-dark); color:#fff; font-weight:600; }
+.mcard { display:flex; align-items:center; gap:12px; padding:12px 14px; }
+.mcard b { display:block; }
+.mcard .sub { font-size:12px; color:var(--c-text-light); }
+.mcard .act { margin-left:auto; display:flex; gap:6px; }
+.coll { padding:12px 16px; }
+.coll summary { font-weight:600; font-size:15px; list-style:none; display:flex; justify-content:space-between; }
+.coll summary::after { content:'▾'; color:var(--c-text-light); }
+.meetwin .body { display:grid; grid-template-columns:1fr 250px; height:520px; }
+.meetwin .txwrap { padding:12px 14px; overflow:hidden; background:var(--c-surface); }
+.meetwin .side { border-left:1px solid var(--border); padding:14px; background:var(--c-bg); display:flex; flex-direction:column; gap:12px; }
+.meetwin .side h3 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--c-text-light); margin:0 0 6px; }
+.spk { display:flex; align-items:center; gap:8px; padding:4px 0; font-size:13px; }
+.topbar { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--c-surface); }
+.topbar h1 { font-size:15px; margin:0; font-weight:600; }
+.topbar .right { margin-left:auto; display:flex; gap:6px; }
+.two { display:flex; gap:24px; align-items:flex-start; }
+</style></head>
+<body>
+<a class="back" href="../2026-09-24-sussurro-speech-workbench.md">← Back to the plan</a>
+<h1 class="mock-title">Proposal B — Tabs on the existing page + a dedicated meeting window</h1>
+<p class="mock-sub">Evolutionary: the current single-column settings page stays as it is, but gains a segmented control at the top — <b>Dictation</b> (today's page, unchanged), <b>Meetings</b> (archive list + extension pairing) and <b>Models</b> (engines). Opening a meeting spawns a <b>separate window</b>, like the overlay already is, so the editor can be wide without changing the main window (700×860). Live transcript, naming, editing, map and replay all happen in the meeting window; the extension side panel only shows the live text.</p>
+
+<div class="two">
+<div>
+<div class="screen-label">Screen 1 — main window, Meetings tab</div>
+<div class="win" style="width:700px">
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>Sussurro</div>
+  <div class="page">
+    <div class="masthead"><span class="daruma"></span><h1>Sussurro</h1><span class="tag2">whisper it, it's typed</span><span class="pill" style="margin-left:auto">Idle · press hotkey</span></div>
+    <div class="seg"><span>Dictation</span><span class="on">Meetings</span><span>Models</span></div>
+    <div class="stack">
+      <div class="card" style="padding:12px 14px">
+        <div class="row spread"><div><b>Browser extension</b><div class="muted" style="font-size:12px">Chrome paired ✓ · Firefox not paired</div></div><button class="btn sm">Copy pairing token</button></div>
+      </div>
+      <div class="card mcard"><span class="daruma rec"></span><div><b>Weekly sync — release 0.7</b><span class="sub">Live · 00:14:32 · 4 voices · meet.google.com</span></div><div class="act"><button class="btn sm primary">Open</button><button class="btn sm danger">Stop</button></div></div>
+      <div class="card mcard"><div><b>Onboarding call with Luca</b><span class="sub">Yesterday · 42 min · 2 voices</span></div><div class="act"><button class="btn sm">Open</button><button class="btn sm">Export</button></div></div>
+      <div class="card mcard"><div><b>Design review Meetings UI</b><span class="sub">19 Sep · 1 h 05 · 3 voices</span></div><div class="act"><button class="btn sm">Open</button><button class="btn sm">Export</button></div></div>
+      <div class="card mcard"><div><b>Support: issue #40 Wayland</b><span class="sub">17 Sep · 28 min · 2 voices · audio deleted</span></div><div class="act"><button class="btn sm">Open</button><button class="btn sm">Export</button></div></div>
+      <details class="card coll" open><summary>Voices <span class="muted" style="font-weight:400;font-size:12px">6 learned</span></summary>
+        <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px"><span class="chip you"><i></i>You</span><span class="chip s1"><i></i>Anna</span><span class="chip s2"><i></i>Marco</span><span class="chip s3"><i></i>Luca</span><span class="chip s4"><i></i>Giulia</span><span class="chip s3" style="background:#9a3412"><i></i>Paolo</span><button class="btn sm">Manage…</button></div>
+      </details>
+      <details class="card coll"><summary>Storage &amp; privacy</summary></details>
+    </div>
+  </div>
+</div>
+</div>
+<div>
+<div class="screen-label">Screen 2 — main window, Models tab</div>
+<div class="win" style="width:700px">
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>Sussurro</div>
+  <div class="page">
+    <div class="masthead"><span class="daruma"></span><h1>Sussurro</h1><span class="pill" style="margin-left:auto">Idle</span></div>
+    <div class="seg"><span>Dictation</span><span>Meetings</span><span class="on">Models</span></div>
+    <div class="stack">
+      <div class="card" style="padding:12px 14px"><div class="row spread"><label class="row"><input type="radio" checked><b>Qwen3-ASR 0.6B</b><span class="tag">New</span></label><span class="pill ok">✓ Installed · 805 MB</span></div><div class="muted" style="font-size:12px;margin-left:22px">52 languages · Apache-2.0 · bundled llama-server · best accuracy for Italian</div></div>
+      <div class="card" style="padding:12px 14px"><div class="row spread"><label class="row"><input type="radio"><b>Whisper</b></label><select class="input"><option>small · installed</option></select></div><div class="muted" style="font-size:12px;margin-left:22px">whisper.cpp · 99 languages · honours your dictionary</div></div>
+      <div class="card" style="padding:12px 14px"><div class="row spread"><label class="row"><input type="radio"><b>Parakeet TDT v3</b></label><button class="btn sm">Download 640 MB</button></div><div class="muted" style="font-size:12px;margin-left:22px">CPU-fast · 25 languages</div></div>
+      <div class="card" style="padding:12px 14px"><b>Cleanup LLM</b><div class="row" style="margin-top:6px;gap:16px"><label class="row"><input type="radio" checked>Local Qwen3 1.7B</label><label class="row"><input type="radio">Ollama</label><label class="row"><input type="radio">OpenAI-compatible</label></div></div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<div class="screen-label">Screen 3 — the meeting window (opens from "Open"; also from the extension's "Open in Sussurro")</div>
+<div class="win meetwin" style="width:960px">
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>Weekly sync — release 0.7 · Sussurro</div>
+  <div class="topbar"><span class="daruma rec"></span><h1>Weekly sync — release 0.7</h1><span class="pill rec">● Live 00:14:32</span>
+    <div class="right"><button class="btn sm">▶ Replay ▾</button><button class="btn sm">Map</button><button class="btn sm">Export ▾</button><button class="btn sm danger">■ Stop</button></div></div>
+  <div class="body">
+    <div class="txwrap"><div class="tx">
+      <div class="line"><span class="t">00:00:04</span><span class="chip you"><i></i>You</span><span class="txt">Ok, partiamo dal punto sulla release 0.7.</span></div>
+      <div class="line"><span class="t">00:00:11</span><span class="chip s1"><i></i>Anna</span><span class="txt">Il pacchetto Firefox è pronto, manca solo la firma AMO.</span></div>
+      <div class="line"><span class="t">00:00:19</span><span class="chip s2"><i></i>Marco</span><span class="txt">Io ho i benchmark di Qwen3-ASR sul Mac, li mando in chat.</span></div>
+      <div class="line sel"><span class="t">00:00:27</span><span class="chip s1"><i></i>Anna</span><span class="txt editing">Perfetto, allora chiudiamo la 0.7 entro venerdì?<span class="cursor"></span></span><span></span><span></span><span class="line-actions"><button class="btn sm">Move to ▾</button><button class="btn sm">Delete</button></span></div>
+      <div class="line"><span class="t">00:00:33</span><span class="chip unk">? Speaker 4</span><span class="txt">Scusate, mi sentite? Sono appena entrato.</span></div>
+      <div class="line"><span class="t">00:00:38</span><span class="chip you"><i></i>You</span><span class="txt">Sì, ti sentiamo bene. Stavamo dicendo che il test su Teams web è ancora aperto.</span></div>
+      <div class="line"><span class="t">00:00:46</span><span class="chip s2"><i></i>Marco</span><span class="txt">Lo faccio io domani con Firefox, così chiudiamo anche la matrice.</span></div>
+      <div class="line partial"><span class="t">00:14:29</span><span class="chip you"><i></i>You</span><span class="txt">Quindi il piano è: spike, poi il motore nel backend…</span></div>
+    </div></div>
+    <div class="side">
+      <div><h3>Speakers</h3>
+        <div class="spk"><span class="chip you"><i></i>You</span></div>
+        <div class="spk"><span class="chip s1"><i></i>Anna</span><span class="muted" style="font-size:11px">known</span></div>
+        <div class="spk"><span class="chip s2"><i></i>Marco</span><span class="muted" style="font-size:11px">known</span></div>
+        <div class="spk"><span class="chip unk">? Speaker 4</span><button class="btn sm">Name…</button></div></div>
+      <div><h3>Voice map</h3>
+        <div class="vmap" style="height:150px"><svg viewBox="0 0 220 150">
+          <g fill="#1a1a1a"><circle cx="44" cy="40" r="4"/><circle cx="54" cy="32" r="4"/><circle cx="38" cy="52" r="4"/><circle cx="60" cy="48" r="4"/></g>
+          <g fill="#1f6feb"><circle cx="150" cy="60" r="4"/><circle cx="162" cy="70" r="4"/><circle cx="142" cy="74" r="4"/></g>
+          <g fill="#c2410c"><circle cx="66" cy="112" r="4"/><circle cx="80" cy="120" r="4"/><circle cx="58" cy="126" r="4"/></g>
+          <g fill="#7e22ce"><circle cx="176" cy="86" r="4"/><circle cx="184" cy="74" r="4"/></g>
+          <text x="118" y="128" font-size="9" fill="#595959">Speaker 4 ≈ Anna?</text></svg></div></div>
+      <div class="player" style="border:1px solid var(--border);border-radius:var(--radius);padding:8px"><button class="btn sm">▶</button><span class="chip s1"><i></i>Anna</span><div class="bar"><i style="left:6%;width:5%"></i><i style="left:41%;width:9%"></i><i style="left:80%;width:7%"></i><b style="left:22%"></b></div></div>
+    </div>
+  </div>
+</div>
+</body></html>
