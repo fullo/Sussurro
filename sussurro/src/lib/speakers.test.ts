@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  canAddSpeakerToPeople,
+  linkChoices,
+  linkSuggestion,
+  linkedPerson,
   isVoice,
   labelProblem,
   redetectBlocked,
@@ -8,7 +12,7 @@ import {
   speakerSource,
   speakersEnabled,
 } from "./speakers";
-import type { DocSpeaker, Item, Segment } from "./types";
+import type { DocSpeaker, Item, Person, Segment } from "./types";
 
 const v1: DocSpeaker = { id: "voice:1", label: "Voice 1", color: "#0f766e" };
 const v2: DocSpeaker = { id: "voice:2", label: "Anna", color: "#7e22ce" };
@@ -91,5 +95,32 @@ describe("redetectBlocked", () => {
     expect(redetectBlocked({ edited_externally: false })).toMatch(/no voice data/);
     expect(redetectBlocked({ embedded_segments: 4, edited_externally: true })).toMatch(/outside/);
     expect(redetectBlocked({ embedded_segments: 4, edited_externally: false, recording: true })).toMatch(/recording ends/);
+  });
+});
+
+describe("people links", () => {
+  const anna: Person = { id: "p-anna", name: "Anna Rossi", email: "anna@example.com", aliases: ["Anna R."] };
+  const bob: Person = { id: "p-bob", name: "Bob", aliases: [] };
+  const people = [bob, anna];
+
+  it("suggests the person a Meet name or a rename matches, never for generic voices", () => {
+    expect(linkSuggestion({ id: "meet:Anna R.", label: "Anna R.", color: "" }, people)).toEqual(anna);
+    expect(linkSuggestion({ id: "voice:1", label: "  anna rossi ", color: "" }, people)).toEqual(anna);
+    expect(linkSuggestion({ id: "voice:1", label: "Voice 1", color: "" }, people)).toBeNull();
+    expect(linkSuggestion({ id: "voice:1", label: "Anna Rossi", color: "", person_id: "p-anna" }, people)).toBeNull();
+  });
+
+  it("finds the linked person and offers Add to People only for new names", () => {
+    expect(linkedPerson({ id: "voice:1", label: "x", color: "", person_id: "p-anna" }, people)).toEqual(anna);
+    expect(linkedPerson({ id: "voice:1", label: "x", color: "", person_id: "p-gone" }, people)).toBeNull();
+    expect(canAddSpeakerToPeople({ id: "voice:1", label: "Luca", color: "" }, people)).toBe(true);
+    expect(canAddSpeakerToPeople({ id: "voice:1", label: "Voice 1", color: "" }, people)).toBe(false);
+    expect(canAddSpeakerToPeople({ id: "voice:1", label: "Anna R.", color: "" }, people)).toBe(false);
+    expect(canAddSpeakerToPeople({ id: "voice:1", label: "Luca", color: "", person_id: "p-x" }, people)).toBe(false);
+  });
+
+  it("lists the suggested person first, then the rest by name", () => {
+    expect(linkChoices({ id: "voice:1", label: "Anna R.", color: "" }, people).map((p) => p.id)).toEqual(["p-anna", "p-bob"]);
+    expect(linkChoices({ id: "voice:1", label: "Voice 1", color: "" }, people).map((p) => p.id)).toEqual(["p-anna", "p-bob"]);
   });
 });

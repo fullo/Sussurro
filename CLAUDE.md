@@ -108,7 +108,10 @@ project decisions here, not in per-machine memory.**
   by default); runs turn it on only with `Settings.meetings_enabled` for
   meetings — one channel is clustered as is; a browser meeting's mic is
   always "You" and only its remote channel is clustered. Embeddings never
-  go to the UI (`Item::without_embeddings`).
+  go to the UI (`Item::without_embeddings`). Linking a speaker to a person
+  (`SpeakerEdit::Link`) sets `person_id`, takes the person's name unless
+  the user renamed the speaker (old label kept in `label_before_link` for
+  Unlink) and adds/completes the participant (never replaces an email).
 - **Local API for the browser extension (0.9, #126)** (`api/`): new routes
   (`GET /app/version`, `WS /live`, `POST /items/{id}/open`,
   `GET /items/{id}/export`) exist only with `Settings.meetings_enabled`

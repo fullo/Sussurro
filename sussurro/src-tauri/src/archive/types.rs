@@ -281,8 +281,14 @@ pub struct DocSpeaker {
     pub label: String,
     #[serde(default)]
     pub color: String,
+    /// Person of the People registry this speaker is (#132, #130).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub person_id: Option<String>,
+    /// The label the speaker had before a link replaced it with the
+    /// person's name; unlinking gives it back. `None` when the link kept
+    /// the label (the user had named the speaker) or there is no link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_before_link: Option<String>,
 }
 
 /// `.sussurro/segments.json`.
@@ -394,6 +400,7 @@ mod tests {
                 label: "You".into(),
                 color: "#f00".into(),
                 person_id: None,
+                label_before_link: None,
             }],
             segments: vec![Segment {
                 id: 1,

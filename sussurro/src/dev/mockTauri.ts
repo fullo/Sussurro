@@ -882,6 +882,8 @@ function handle(cmd: string, a: Args): unknown {
     }
     case "archive_move_segment_speaker":
     case "archive_rename_speaker":
+    case "archive_link_speaker":
+    case "archive_unlink_speaker":
     case "archive_redetect_speakers": {
       // Mirrors archive::edit_speakers (#130), simplified.
       const s = find(String(a.id));
@@ -902,6 +904,30 @@ function handle(cmd: string, a: Args): unknown {
         if (!sp) throw `no speaker '${a.speakerId}' in this document`;
         const label = String(a.label).trim().replace(/\s+/g, " ");
         sp.label = label || sp.id.replace("voice:", "Voice ");
+        delete sp.label_before_link;
+      } else if (cmd === "archive_link_speaker") {
+        // Mirrors speakers::doc::link_speaker (#130), simplified.
+        const sp = speakers.find((x) => x.id === a.speakerId);
+        if (!sp) throw `no speaker '${a.speakerId}' in this document`;
+        const person = people.find((x) => x.id === a.personId);
+        if (!person) throw "that person is no longer in People";
+        const old = sp.label;
+        const generic = /^voice \d+$|^you$/i.test(old.trim());
+        sp.person_id = person.id;
+        if (generic) {
+          sp.label_before_link = old;
+          sp.label = person.name;
+        }
+        const list = s.meta.participants;
+        const at = list.findIndex((pt) => nameKey(pt.name) === nameKey(person.name) || nameKey(pt.name) === nameKey(old));
+        if (at < 0) list.push(person.email ? { name: person.name, email: person.email } : { name: person.name });
+        else list[at] = { name: nameKey(list[at].name) === nameKey(old) ? person.name : list[at].name, email: list[at].email || person.email };
+      } else if (cmd === "archive_unlink_speaker") {
+        const sp = speakers.find((x) => x.id === a.speakerId);
+        if (!sp) throw `no speaker '${a.speakerId}' in this document`;
+        delete sp.person_id;
+        if (sp.label_before_link) sp.label = sp.label_before_link;
+        delete sp.label_before_link;
       } else {
         const truth = s.voiceOf;
         if (!truth) throw "this document has no voice data — speakers can only be detected on recordings made with speaker detection on";

@@ -1,15 +1,41 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Ctl } from "../hooks/useAppController";
-import { MAX_LABEL_CHARS, isVoice, labelProblem, redetectBlocked, speakerShares, speakerSource } from "../lib/speakers";
-import type { Item } from "../lib/types";
+import {
+  MAX_LABEL_CHARS,
+  canAddSpeakerToPeople,
+  isVoice,
+  labelProblem,
+  linkChoices,
+  linkSuggestion,
+  linkedPerson,
+  redetectBlocked,
+  speakerShares,
+  speakerSource,
+} from "../lib/speakers";
+import type { DocSpeaker, Item, Person } from "../lib/types";
 
 /** The context pane's *Speakers* section (#130, 0.9 preview): the
  *  document's speakers with colour and share of speech, rename for this
  *  document, and "Re-detect speakers". Moving a line is on the line itself
  *  (transcript line actions). */
-export function SpeakerPanel({ ctl, item, onItem }: { ctl: Ctl; item: Item; onItem: (item: Item) => void }) {
+export function SpeakerPanel({
+  ctl,
+  item,
+  onItem,
+  people = [],
+  onPeopleChanged,
+}: {
+  ctl: Ctl;
+  item: Item;
+  onItem: (item: Item) => void;
+  /** The People registry (#132): link a speaker to a person. */
+  people?: Person[];
+  onPeopleChanged?: () => void;
+}) {
   const [renaming, setRenaming] = useState<{ id: string; label: string } | null>(null);
+  /** Speaker whose "Link to person…" picker is open. */
+  const [picking, setPicking] = useState<string | null>(null);
   const [confirmRedetect, setConfirmRedetect] = useState(false);
   const [busy, setBusy] = useState(false);
   const shares = speakerShares(item);
@@ -41,6 +67,28 @@ export function SpeakerPanel({ ctl, item, onItem }: { ctl: Ctl; item: Item; onIt
       return;
     }
     if (await call("archive_rename_speaker", { speakerId: renaming.id, label: renaming.label })) setRenaming(null);
+  };
+
+  const link = async (sp: DocSpeaker, person: Person) => {
+    setPicking(null);
+    await call("archive_link_speaker", { speakerId: sp.id, personId: person.id }, `${sp.label} linked to ${person.name}.`);
+  };
+
+  const unlink = (sp: DocSpeaker) => call("archive_unlink_speaker", { speakerId: sp.id });
+
+  const addToPeople = async (sp: DocSpeaker) => {
+    setBusy(true);
+    let added: Person;
+    try {
+      added = await invoke<Person>("people_add", { person: { id: "", name: sp.label.trim(), aliases: [] } });
+    } catch (e) {
+      ctl.setBusy(String(e));
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    onPeopleChanged?.();
+    await call("archive_link_speaker", { speakerId: sp.id, personId: added.id }, `${added.name} added to People.`);
   };
 
   const redetect = async () => {
@@ -103,18 +151,19 @@ export function SpeakerPanel({ ctl, item, onItem }: { ctl: Ctl; item: Item; onIt
                   <span className="spk-pct" title={`${lines} line${lines === 1 ? "" : "s"}`}>
                     {percent}%
                   </span>
+                  {speaker.person_id && <LinkedTo speaker={speaker} people={people} />}
                   {editable && (
-                    <span className="spk-acts">
-                      <button
-                        type="button"
-                        className="link-btn"
-                        disabled={busy}
-                        onClick={() => setRenaming({ id: speaker.id, label: speaker.label })}
-                        aria-label={`Rename ${speaker.label} in this document`}
-                      >
-                        Rename
-                      </button>
-                    </span>
+                    <SpeakerActions
+                      speaker={speaker}
+                      people={people}
+                      busy={busy}
+                      picking={picking === speaker.id}
+                      onRename={() => setRenaming({ id: speaker.id, label: speaker.label })}
+                      onPick={(open) => setPicking(open ? speaker.id : null)}
+                      onLink={(p) => link(speaker, p)}
+                      onUnlink={() => unlink(speaker)}
+                      onAdd={() => addToPeople(speaker)}
+                    />
                   )}
                 </>
               )}
@@ -147,5 +196,104 @@ export function SpeakerPanel({ ctl, item, onItem }: { ctl: Ctl; item: Item; onIt
         shares.length > 0 && blocked && <p className="ctx-note">{blocked}</p>
       )}
     </section>
+  );
+}
+
+/** "↔ Anna Rossi · anna@example.com" under a linked speaker (the name only
+ *  when the label differs from it). */
+function LinkedTo({ speaker, people }: { speaker: DocSpeaker; people: Person[] }) {
+  const p = linkedPerson(speaker, people);
+  if (!p) return <span className="spk-person">↔ a person no longer in People</span>;
+  const parts = [p.name.trim() === speaker.label.trim() ? "" : p.name, p.email ?? ""].filter(Boolean);
+  return <span className="spk-person">↔ {parts.length ? parts.join(" · ") : "in People"}</span>;
+}
+
+/** A speaker row's actions: rename, link to a person (a suggestion first),
+ *  unlink, Add to People. */
+function SpeakerActions({
+  speaker,
+  people,
+  busy,
+  picking,
+  onRename,
+  onPick,
+  onLink,
+  onUnlink,
+  onAdd,
+}: {
+  speaker: DocSpeaker;
+  people: Person[];
+  busy: boolean;
+  picking: boolean;
+  onRename: () => void;
+  onPick: (open: boolean) => void;
+  onLink: (p: Person) => void;
+  onUnlink: () => void;
+  onAdd: () => void;
+}) {
+  const suggestion = linkSuggestion(speaker, people);
+  const choices = linkChoices(speaker, people);
+  return (
+    <span className="spk-acts">
+      <button type="button" className="link-btn" disabled={busy} onClick={onRename} aria-label={`Rename ${speaker.label} in this document`}>
+        Rename
+      </button>
+      {speaker.person_id ? (
+        <button type="button" className="link-btn" disabled={busy} onClick={onUnlink} aria-label={`Unlink ${speaker.label} from People`}>
+          Unlink
+        </button>
+      ) : (
+        <>
+          {suggestion && (
+            <button
+              type="button"
+              className="link-btn spk-suggest"
+              disabled={busy}
+              onClick={() => onLink(suggestion)}
+              title={suggestion.email ? `${suggestion.name} <${suggestion.email}>` : suggestion.name}
+            >
+              Link to {suggestion.name}?
+            </button>
+          )}
+          {picking ? (
+            <select
+              autoFocus
+              aria-label={`Link ${speaker.label} to a person`}
+              value=""
+              disabled={busy}
+              onChange={(e) => {
+                const p = choices.find((c) => c.id === e.target.value);
+                if (p) onLink(p);
+              }}
+              onBlur={() => onPick(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.stopPropagation();
+                  onPick(false);
+                }
+              }}
+            >
+              <option value="">Choose a person…</option>
+              {choices.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.email ? `${p.name} · ${p.email}` : p.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            choices.length > 0 && (
+              <button type="button" className="link-btn" disabled={busy} onClick={() => onPick(true)}>
+                Link to person…
+              </button>
+            )
+          )}
+          {canAddSpeakerToPeople(speaker, people) && (
+            <button type="button" className="link-btn" disabled={busy} onClick={onAdd} title={`Add ${speaker.label} to People and link this voice`}>
+              Add to People
+            </button>
+          )}
+        </>
+      )}
+    </span>
   );
 }

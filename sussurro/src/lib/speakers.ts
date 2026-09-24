@@ -1,7 +1,8 @@
 /* Speakers of a document (#130): the pure logic behind the speaker panel
    and the line chips. Components only wire these to invoke(). */
 
-import type { DocSpeaker, Item, Segment, Settings } from "./types";
+import { canAddToPeople, isGenericSpeaker, matchPerson } from "./people";
+import type { DocSpeaker, Item, Person, Segment, Settings } from "./types";
 
 /** Line-move target that opens a new "Voice N" (speakers/doc.rs NEW_VOICE). */
 export const NEW_VOICE = "voice:new";
@@ -90,4 +91,36 @@ export function redetectBlocked(item: Pick<Item, "recording" | "edited_externall
   if (item.edited_externally) return "The transcript was edited outside Sussurro.";
   if (!item.embedded_segments) return "This recording has no voice data: speakers can only be detected on recordings made with speaker labels on.";
   return "";
+}
+
+/* ---------- People links (#132) ---------- */
+
+/** The registry entry a speaker is linked to, if it is still there. */
+export function linkedPerson(speaker: DocSpeaker, people: Person[]): Person | null {
+  return speaker.person_id ? (people.find((p) => p.id === speaker.person_id) ?? null) : null;
+}
+
+/** The person to suggest for an unlinked speaker: its label (a Meet name,
+ *  or a name the user typed) matches exactly one person. Generic labels
+ *  ("Voice 2", "You") never suggest anyone. */
+export function linkSuggestion(speaker: DocSpeaker, people: Person[]): Person | null {
+  if (speaker.person_id || isGenericSpeaker(speaker.label)) return null;
+  return matchPerson(people, speaker.label);
+}
+
+/** "Add to People" is offered for an unlinked speaker the user named
+ *  (not a generic "Voice N") who is nobody in the registry yet. */
+export function canAddSpeakerToPeople(speaker: DocSpeaker, people: Person[]): boolean {
+  return !speaker.person_id && canAddToPeople(people, { name: speaker.label });
+}
+
+/** People offered by "Link to person…", sorted by name; the suggested one
+ *  (if any) first. */
+export function linkChoices(speaker: DocSpeaker, people: Person[]): Person[] {
+  const first = linkSuggestion(speaker, people);
+  const rest = people
+    .filter((p) => p.id !== first?.id)
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return first ? [first, ...rest] : rest;
 }
