@@ -61,6 +61,7 @@ const settings: Settings = {
   output_file: "",
   archive_dir: "",
   ui_v2: params.get("ui") !== "legacy",
+  subtitles: "on_request",
 };
 
 const ARCHIVE = "/Users/demo/Documents/Sussurro";
@@ -153,6 +154,9 @@ let items: Stored[] = params.get("empty")
     ];
 
 const find = (id: string) => items.find((i) => i.id === id);
+
+/** Items whose transcript.srt the preview "wrote" (#133). */
+const srtWritten = new Set<string>();
 
 /** External sends per item id (#122): what `.sussurro/external-log.json`
  *  records — hosts only here. */
@@ -775,6 +779,30 @@ function handle(cmd: string, a: Args): unknown {
       return null;
     case "archive_rebuild_index":
       return items.length;
+    case "archive_export": {
+      // Mirrors archive::export: subtitles are refused for notes (P10).
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      const format = String(a.format);
+      if ((format === "srt" || format === "vtt") && s.meta.type === "note")
+        throw "notes have no subtitles — subtitles belong to meetings and transcriptions";
+      const path = String(a.path);
+      return path.toLowerCase().endsWith(`.${format}`) ? path : `${path}.${format}`;
+    }
+    case "archive_subtitles_status":
+    case "archive_create_subtitles": {
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      const applicable = s.meta.type !== "note";
+      if (cmd === "archive_create_subtitles") {
+        if (!applicable) throw "notes have no subtitles — subtitles belong to meetings and transcriptions";
+        if (s.recording) throw `'${s.id}' is still being recorded — create subtitles when the session ends`;
+        srtWritten.add(s.id);
+      }
+      return { file: "transcript.srt", applicable, exists: srtWritten.has(s.id), edited_externally: false };
+    }
+    case "export_history":
+      return "Entries exported.";
     case "engine_status":
       return {
         active: (mic ? 1 : 0) + (fileRun ? 1 : 0) + (linkRun ? 1 : 0),
@@ -846,7 +874,10 @@ function handle(cmd: string, a: Args): unknown {
       const o = (a.options ?? {}) as { directory?: boolean };
       return o.directory ? "/Users/demo/Obsidian/Vault/Sussurro" : "/Users/demo/Recordings/memo-idee-onboarding.m4a";
     }
-    case "plugin:dialog|save":
+    case "plugin:dialog|save": {
+      const o = (a.options ?? {}) as { defaultPath?: string };
+      return `/Users/demo/Desktop/${o.defaultPath ?? "export"}`;
+    }
     case "plugin:opener|open_url":
     case "plugin:updater|check":
       return null;

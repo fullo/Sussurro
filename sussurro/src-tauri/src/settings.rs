@@ -35,6 +35,19 @@ pub enum CleanupApi {
     Openai,
 }
 
+/// When `transcript.srt` is written next to a meeting's or a
+/// transcription's transcript (P7; notes never get subtitles, P10).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SubtitlesMode {
+    /// Only when the user asks ("Create .srt", or an export). The default.
+    #[default]
+    OnRequest,
+    /// Written and kept up to date every time the transcript is saved (end
+    /// of a run, line edits, metadata edits).
+    Always,
+}
+
 /// Optional user overrides for the per-level cleanup instructions sent to the
 /// LLM. Empty string = use the built-in default for that level.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -148,6 +161,9 @@ pub struct Settings {
     /// Preview of the 0.7 workspace UI (left rail: New, Library, Models,
     /// Settings). Off = today's single-column window. Removed when 0.7 ships.
     pub ui_v2: bool,
+    /// Subtitles setting (P7, #133): `transcript.srt` on request (default)
+    /// or on every save. Meetings and transcriptions only.
+    pub subtitles: SubtitlesMode,
 }
 
 impl Default for Settings {
@@ -185,6 +201,7 @@ impl Default for Settings {
             output_file: String::new(),
             archive_dir: String::new(),
             ui_v2: false,
+            subtitles: SubtitlesMode::OnRequest,
         }
     }
 }
@@ -504,6 +521,22 @@ mod tests {
         let s = Settings::load(&path);
         assert_eq!(s.hotkey, "Alt+Space");
         assert_eq!(s.archive_dir, "");
+    }
+
+    /// Settings files written before 0.9 have no `subtitles`: on request.
+    #[test]
+    fn subtitles_default_to_on_request_and_round_trip() {
+        assert_eq!(Settings::default().subtitles, SubtitlesMode::OnRequest);
+        let old: Settings = serde_json::from_str(r#"{"ui_v2":true}"#).unwrap();
+        assert_eq!(old.subtitles, SubtitlesMode::OnRequest);
+        let on: Settings = serde_json::from_str(r#"{"subtitles":"always"}"#).unwrap();
+        assert_eq!(on.subtitles, SubtitlesMode::Always);
+        let json = serde_json::to_value(&on).unwrap();
+        assert_eq!(json["subtitles"], "always");
+        assert_eq!(
+            serde_json::to_value(SubtitlesMode::OnRequest).unwrap(),
+            "on_request"
+        );
     }
 
     /// Settings files written before the workspace preview have no `ui_v2`:
