@@ -508,6 +508,54 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
   white-space: nowrap;
 }
 
+/* ---------- Recipes: LLM profiles (#119) ---------- */
+
+.card.recipes-soon { border-style: dashed; border-color: var(--border-strong); box-shadow: none; background: transparent; }
+.recipes-soon .card-hint { margin: 0; }
+.badge-local {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #166534;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius-pill);
+  padding: 0 6px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.prof-list { list-style: none; margin: 0 0 12px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--c-surface); overflow: hidden; }
+.prof-list li + li { border-top: 1px solid var(--border); }
+.prof-row {
+  font: inherit;
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--c-text);
+  text-align: left;
+}
+.prof-row:hover { background: var(--c-surface-alt); }
+.prof-row.active { background: var(--c-surface-alt); box-shadow: inset 3px 0 0 var(--c-dark); }
+.prof-name { font-weight: 600; color: var(--c-dark); white-space: nowrap; }
+.prof-sub { flex: 1; min-width: 0; color: var(--c-text-light); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prof-editor { border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 4px 14px 14px; background: var(--c-bg); }
+.prof-editor .field .btn-ghost { flex: none; }
+.check-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--c-text); cursor: pointer; }
+.check-row input, .field .check-row input { flex: none; min-height: 0; margin-top: 3px; accent-color: var(--c-dark); }
+.check-row small { display: block; color: var(--c-text-light); font-size: 12px; }
+.prof-test { margin: 0 0 4px; min-height: 1.2em; font-size: 12.5px; color: var(--c-text-light); }
+.prof-test.ok { color: #166534; }
+.prof-test.error { color: var(--warn); }
+.prof-problems { margin: 4px 0 0; padding-left: 18px; color: var(--warn); font-size: 12.5px; }
+.prof-actions { margin-top: 12px; }
+.profile-line { color: var(--c-text-light); font-size: 0.85rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ---------- Narrow windows ---------- */
 
 @media (max-width: 1000px) {

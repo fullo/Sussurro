@@ -1,13 +1,15 @@
 use crate::cleanup::prompt::build_messages;
+use crate::llm::LlmProfile;
 use crate::settings::CleanupApi;
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::time::Duration;
 
-/// Clean `transcript` via Ollama, driven by the user settings (level,
-/// dictionary, translation, voice commands). NEVER fails the pipeline: any
-/// error (server down, model missing, timeout, empty reply) returns the raw
-/// transcript.
+/// Clean `transcript` on the settings' cleanup profile
+/// ([`crate::settings::Settings::cleanup_llm`]), driven by the user settings
+/// (level, dictionary, translation, voice commands). NEVER fails the
+/// pipeline: any error (server down, model missing, timeout, empty reply)
+/// returns the raw transcript.
 pub fn cleanup(
     settings: &crate::settings::Settings,
     style: Option<&str>,
@@ -42,7 +44,7 @@ fn run_cleanup(
     messages: &[Value],
     transcript: &str,
 ) -> String {
-    match chat(settings, messages) {
+    match chat(&settings.cleanup_llm(), messages) {
         Ok(text) if !text.trim().is_empty() => {
             let cleaned = text.trim().to_string();
             // Small models sometimes ANSWER short dictations instead of
@@ -63,18 +65,19 @@ fn run_cleanup(
         }
         Ok(_) => transcript.to_string(),
         Err(e) => {
-            eprintln!("ollama cleanup failed, using raw transcript: {e:#}");
+            eprintln!("LLM cleanup failed, using raw transcript: {e:#}");
             transcript.to_string()
         }
     }
 }
 
-/// Model ids available on the configured cleanup backend. Ollama:
-/// GET /api/tags. OpenAI-compatible: GET /v1/models.
-pub fn list_models(settings: &crate::settings::Settings) -> Result<Vec<String>> {
-    match settings.cleanup_api {
-        CleanupApi::Ollama => list_models_ollama(&settings.ollama_url),
-        CleanupApi::Openai => list_models_openai(&settings.ollama_url, &settings.api_key),
+/// Model ids available on a profile's server. Ollama: GET /api/tags.
+/// OpenAI-compatible: GET /v1/models. Also the profile editor's "test
+/// connection".
+pub fn list_models(profile: &LlmProfile) -> Result<Vec<String>> {
+    match profile.api {
+        CleanupApi::Ollama => list_models_ollama(&profile.base_url),
+        CleanupApi::Openai => list_models_openai(&profile.base_url, &profile.api_key),
     }
 }
 
@@ -124,16 +127,13 @@ fn list_models_openai(url: &str, api_key: &str) -> Result<Vec<String>> {
         .unwrap_or_default())
 }
 
-/// One non-streaming chat completion, dispatched to the configured backend.
-fn chat(settings: &crate::settings::Settings, messages: &[Value]) -> Result<String> {
-    match settings.cleanup_api {
-        CleanupApi::Ollama => chat_ollama(&settings.ollama_url, &settings.ollama_model, messages),
-        CleanupApi::Openai => chat_openai(
-            &settings.ollama_url,
-            &settings.ollama_model,
-            &settings.api_key,
-            messages,
-        ),
+/// One non-streaming chat completion on a profile, dispatched to its API.
+pub fn chat(profile: &LlmProfile, messages: &[Value]) -> Result<String> {
+    match profile.api {
+        CleanupApi::Ollama => chat_ollama(&profile.base_url, &profile.model, messages),
+        CleanupApi::Openai => {
+            chat_openai(&profile.base_url, &profile.model, &profile.api_key, messages)
+        }
     }
 }
 
@@ -198,13 +198,23 @@ mod tests {
     use super::*;
     use crate::settings::{CleanupApi, CleanupLevel};
 
-    fn cfg(level: CleanupLevel, url: &str) -> crate::settings::Settings {
+    fn profile(api: CleanupApi, url: &str) -> LlmProfile {
+        LlmProfile::new("t", "Test", api, url, "", "llama3.2:3b")
+    }
+
+    /// Settings whose cleanup profile is `api` at `url`.
+    fn cfg_api(level: CleanupLevel, api: CleanupApi, url: &str) -> crate::settings::Settings {
         crate::settings::Settings {
             cleanup_level: level,
-            ollama_url: url.into(),
+            llm_profiles: vec![crate::llm::LlmProfile::default(), profile(api, url)],
+            cleanup_profile: "t".into(),
             voice_commands: false,
             ..Default::default()
         }
+    }
+
+    fn cfg(level: CleanupLevel, url: &str) -> crate::settings::Settings {
+        cfg_api(level, CleanupApi::Ollama, url)
     }
 
     #[test]
@@ -231,15 +241,16 @@ mod tests {
 
     #[test]
     fn list_models_errors_when_unreachable() {
-        assert!(list_models(&cfg(CleanupLevel::Light, "http://127.0.0.1:9")).is_err());
+        assert!(list_models(&profile(CleanupApi::Ollama, "http://127.0.0.1:9")).is_err());
+        assert!(list_models(&profile(CleanupApi::Openai, "http://127.0.0.1:9")).is_err());
     }
 
     #[test]
     fn unreachable_openai_falls_back_to_raw_transcript() {
-        let mut s = cfg(CleanupLevel::Light, "http://127.0.0.1:9");
-        s.cleanup_api = CleanupApi::Openai;
+        let s = cfg_api(CleanupLevel::Light, CleanupApi::Openai, "http://127.0.0.1:9");
         assert_eq!(cleanup(&s, None, "um raw text"), "um raw text");
     }
+
 
     #[test]
     fn openai_base_strips_trailing_slash_and_v1() {
@@ -254,7 +265,7 @@ mod tests {
     #[test]
     #[ignore]
     fn live_list_models() {
-        let models = list_models(&cfg(CleanupLevel::Light, "http://localhost:11434")).unwrap();
+        let models = list_models(&profile(CleanupApi::Ollama, "http://localhost:11434")).unwrap();
         println!("models: {models:?}");
         assert!(models.iter().any(|m| m.starts_with("llama3.2")));
     }
@@ -298,6 +309,30 @@ mod tests {
             assert!(!out.to_lowercase().contains("questo"), "translated to Italian: {out}");
             // The guard falling back to raw would leave the fillers in.
             assert!(!out.to_lowercase().contains("um"), "cleanup did not run: {out}");
+        }
+    }
+
+    /// #119: the same local Ollama driven through both profile APIs — its
+    /// native `/api/chat` and its OpenAI-compatible `/v1`. Needs a running
+    /// Ollama with llama3.2:3b pulled. Run manually:
+    /// cargo test live_profiles_clean_via_both_apis -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_profiles_clean_via_both_apis() {
+        for (api, url) in [
+            (CleanupApi::Ollama, "http://localhost:11434"),
+            (CleanupApi::Openai, "http://localhost:11434/v1"),
+        ] {
+            let p = profile(api.clone(), url);
+            let models = list_models(&p).unwrap();
+            assert!(models.iter().any(|m| m.starts_with("llama3.2")), "{api:?}: {models:?}");
+            let out = cleanup(
+                &cfg_api(CleanupLevel::Light, api.clone(), url),
+                None,
+                "um so basically i think uh we should ship it",
+            );
+            println!("{api:?}: {out}");
+            assert!(!out.to_lowercase().contains(" uh "), "{api:?} did not clean: {out}");
         }
     }
 

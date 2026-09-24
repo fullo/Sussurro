@@ -8,6 +8,7 @@ pub mod engine;
 pub mod history;
 pub mod hotkey;
 pub mod inject;
+pub mod llm;
 pub mod permissions;
 pub mod pipeline;
 pub mod settings;
@@ -83,7 +84,15 @@ pub fn run() {
             let handle = app.handle();
             let _ = APP_HANDLE.set(handle.clone());
             let paths = AppPaths::from_app(handle);
-            let settings = Settings::load(&paths.settings_file);
+            let (settings, migrated) = Settings::load_migrating(&paths.settings_file);
+            // Pre-0.8 cleanup settings became the "Local" LLM profile (#119):
+            // write the new shape once. Best effort — the in-memory settings
+            // are already migrated, and the next load would migrate again.
+            if migrated {
+                if let Err(e) = settings.save(&paths.settings_file) {
+                    eprintln!("could not save the migrated settings: {e}");
+                }
+            }
             // Wayland portal injection persists its consent token next to
             // the settings; without this the dialog would reappear per launch.
             #[cfg(all(target_os = "linux", feature = "wayland-portal"))]
@@ -162,6 +171,7 @@ pub fn run() {
             commands::list_whisper_models,
             commands::download_model,
             commands::list_ollama_models,
+            commands::llm_list_models,
             commands::list_input_devices,
             commands::start_mic_test,
             commands::stop_mic_test,

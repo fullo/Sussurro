@@ -15,8 +15,10 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 pub fn set_settings(
     app: AppHandle,
     state: State<'_, AppState>,
-    settings: Settings,
+    mut settings: Settings,
 ) -> Result<(), String> {
+    // Valid LLM profiles and a cleanup selection that names one (#119).
+    settings.normalize();
     // The model name flows into models_dir.join(name) for download and load —
     // reject traversal/absolute paths before anything touches the filesystem.
     models::validate_model_name(&settings.whisper_model).map_err(|e| e.to_string())?;
@@ -472,8 +474,8 @@ pub async fn translate_entry(
     tauri::async_runtime::spawn_blocking(move || {
         let translated = crate::cleanup::ollama::cleanup(&settings, None, &raw);
         if translated == raw {
-            // cleanup() falls back to the input on any Ollama error.
-            return Err("translation failed — is Ollama running?".to_string());
+            // cleanup() falls back to the input on any LLM error.
+            return Err("translation failed — is the cleanup server running?".to_string());
         }
         let entry = HistoryEntry {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -487,15 +489,23 @@ pub async fn translate_entry(
     .map_err(|e| e.to_string())?
 }
 
-/// Ollama environment status for the setup banner.
+/// Cleanup server status for the setup banner, for the cleanup profile.
 #[derive(serde::Serialize)]
 pub struct OllamaStatus {
     /// Binary found on PATH (or the server answered — installed for sure).
     pub installed: bool,
-    /// The HTTP server answered /api/tags.
+    /// The profile's server answered its model listing.
     pub running: bool,
-    /// The configured cleanup model is present on the server.
+    /// The profile's model is present on the server.
     pub has_model: bool,
+}
+
+/// Whether `model` is in `models`, Ollama-style: `llama3.2` matches
+/// `llama3.2:latest`.
+fn model_listed(models: &[String], model: &str) -> bool {
+    models
+        .iter()
+        .any(|m| m == model || m.starts_with(&format!("{model}:")))
 }
 
 fn ollama_binary_on_path() -> bool {
@@ -511,19 +521,11 @@ fn ollama_binary_on_path() -> bool {
 
 #[tauri::command]
 pub async fn ollama_status(state: State<'_, AppState>) -> Result<OllamaStatus, String> {
-    let (settings, model) = {
-        let s = state.settings.lock().unwrap();
-        (s.clone(), s.ollama_model.clone())
-    };
+    let profile = state.settings.lock().unwrap().cleanup_llm();
     tauri::async_runtime::spawn_blocking(move || {
-        let models = crate::cleanup::ollama::list_models(&settings).ok();
+        let models = crate::cleanup::ollama::list_models(&profile).ok();
         let running = models.is_some();
-        let has_model = models
-            .map(|ms| {
-                ms.iter()
-                    .any(|m| m == &model || m.starts_with(&format!("{model}:")))
-            })
-            .unwrap_or(false);
+        let has_model = models.is_some_and(|ms| model_listed(&ms, &profile.model));
         Ok(OllamaStatus {
             installed: running || ollama_binary_on_path(),
             running,
@@ -555,16 +557,10 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     };
     tauri::async_runtime::spawn_blocking(move || {
         use std::fmt::Write as _;
-        let models = crate::cleanup::ollama::list_models(&settings).ok();
-        let ollama_running = models.is_some();
-        let ollama_has_model = models
-            .map(|ms| {
-                ms.iter().any(|m| {
-                    m == &settings.ollama_model
-                        || m.starts_with(&format!("{}:", settings.ollama_model))
-                })
-            })
-            .unwrap_or(false);
+        let profile = settings.cleanup_llm();
+        let models = crate::cleanup::ollama::list_models(&profile).ok();
+        let llm_running = models.is_some();
+        let llm_has_model = models.is_some_and(|ms| model_listed(&ms, &profile.model));
 
         let mut r = String::new();
         let _ = writeln!(r, "Sussurro {} — diagnostics", env!("CARGO_PKG_VERSION"));
@@ -592,8 +588,14 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
         );
         let _ = writeln!(
             r,
-            "Cleanup: {:?} · {} @ {} (running: {ollama_running}, model present: {ollama_has_model})",
-            settings.cleanup_level, settings.ollama_model, settings.ollama_url
+            "Cleanup: {:?} · profile \"{}\" ({:?}, {}) · {} @ {} (running: {llm_running}, model present: {llm_has_model}) · {} profile(s)",
+            settings.cleanup_level,
+            profile.name,
+            profile.api,
+            if profile.external { "external" } else { "local" },
+            profile.model,
+            profile.base_url,
+            settings.llm_profiles.len()
         );
         let _ = writeln!(
             r,
@@ -640,14 +642,15 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// Pull the configured cleanup model on the Ollama server (blocking, can take
+/// Pull the cleanup profile's model on its Ollama server (blocking, can take
 /// minutes for a ~2 GB model).
 #[tauri::command]
 pub async fn pull_ollama_model(state: State<'_, AppState>) -> Result<(), String> {
-    let (url, model) = {
-        let s = state.settings.lock().unwrap();
-        (s.ollama_url.clone(), s.ollama_model.clone())
-    };
+    let profile = state.settings.lock().unwrap().cleanup_llm();
+    if profile.api != crate::settings::CleanupApi::Ollama {
+        return Err("pulling a model needs an Ollama profile".to_string());
+    }
+    let (url, model) = (profile.base_url, profile.model);
     tauri::async_runtime::spawn_blocking(move || {
         let client = reqwest::blocking::Client::builder()
             .timeout(None)
@@ -677,13 +680,20 @@ pub fn get_default_prompts() -> [String; 3] {
     ]
 }
 
-/// Models available on the configured Ollama server. Errors when unreachable —
-/// the frontend falls back to a free-text field.
+/// Models available on the cleanup profile's server. Errors when
+/// unreachable — the frontend falls back to a free-text field.
 #[tauri::command]
 pub async fn list_ollama_models(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    let settings = { state.settings.lock().unwrap().clone() };
+    let profile = state.settings.lock().unwrap().cleanup_llm();
+    llm_list_models(profile).await
+}
+
+/// Models on any profile's server, saved or still being edited — the
+/// profile editor's "Test connection" (#119). Errors when unreachable.
+#[tauri::command]
+pub async fn llm_list_models(profile: crate::llm::LlmProfile) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::cleanup::ollama::list_models(&settings).map_err(|e| format!("{e:#}"))
+        crate::cleanup::ollama::list_models(&profile).map_err(|e| format!("{e:#}"))
     })
     .await
     .map_err(|e| e.to_string())?

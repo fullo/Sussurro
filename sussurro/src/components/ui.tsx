@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { isLocalEndpoint, parseEndpoint } from "../lib/endpoint";
+import { parseEndpoint } from "../lib/endpoint";
 
 /* ---------- Info tooltip ---------- */
 
@@ -83,13 +83,16 @@ export function AdvancedGroup({ children }: { children: ReactNode }) {
   );
 }
 
-/** Privacy note under the cleanup Server field when the endpoint is remote. */
-export function EndpointNote({ url }: { url: string }) {
+/** Privacy note for an LLM profile marked external (#92, #119). The flag,
+ *  not the URL, decides: it is inferred from the URL and can be set by hand. */
+export function EndpointNote({ url, external }: { url: string; external: boolean }) {
+  if (!external) return null;
   const e = parseEndpoint(url);
-  if (!e || isLocalEndpoint(url)) return null;
   return (
     <small className="endpoint-note">
-      ⚠ Your transcripts will be sent to {e.host} over {e.secure ? "https" : "http"}
+      {e
+        ? `⚠ Your transcripts will be sent to ${e.host} over ${e.secure ? "https" : "http"}`
+        : "⚠ This profile is marked external: your transcripts leave this machine"}
     </small>
   );
 }

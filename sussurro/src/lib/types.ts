@@ -15,15 +15,32 @@ export interface AppStyle {
   language: string;
 }
 
+/** Chat API an LLM profile speaks (P6): Ollama native or OpenAI-compatible. */
+export type LlmApi = "ollama" | "openai";
+
+/** A named LLM connection (llm/profile.rs). */
+export interface LlmProfile {
+  id: string;
+  name: string;
+  api: LlmApi;
+  base_url: string;
+  /** Bearer token, OpenAI-compatible only; "" = none. */
+  api_key: string;
+  model: string;
+  /** Text sent to this profile leaves the machine (inferred from the URL,
+   *  overridable). Drives the privacy warning. */
+  external: boolean;
+}
+
 export interface Settings {
   hotkey: string;
   push_to_talk: boolean;
   whisper_model: string;
   engine: "whisper" | "parakeet";
-  ollama_url: string;
-  ollama_model: string;
-  cleanup_api: "ollama" | "openai";
-  api_key: string;
+  /** LLM profiles (#119): cleanup (and later recipes, Ask) pick one. */
+  llm_profiles: LlmProfile[];
+  /** Id of the profile cleanup runs on. */
+  cleanup_profile: string;
   cleanup_level: CleanupLevel;
   output_language: string;
   dictionary: string[];
