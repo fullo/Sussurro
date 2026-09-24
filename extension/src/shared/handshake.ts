@@ -11,7 +11,7 @@
  *   again on every `main-ready` it sees. Whichever order the scripts ran in,
  *   one offer reaches a listening MAIN.
  * - MAIN takes the first offer only, answers `ack` on that port and hides
- *   the offer from the page's later listeners. ISOLATED keeps the port that
+ *   every offer from the page's later listeners. ISOLATED keeps the port that
  *   was acknowledged and closes the others.
  *
  * Everything after that (audio, state, commands) goes over the port. The
@@ -63,9 +63,9 @@ export function acceptPort(win: WindowLike, targetOrigin: string, onPort: (port:
     // Ours: the page's own listeners don't need to see it.
     e.stopImmediatePropagation();
     const port = e.ports && e.ports[0];
+    // Late offers (ISOLATED answers every main-ready) stay swallowed.
     if (done || !port) return;
     done = true;
-    win.removeEventListener("message", listener, true);
     port.postMessage(ACK);
     onPort(port);
   };
