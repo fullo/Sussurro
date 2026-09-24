@@ -85,7 +85,7 @@ export function Rail({
   const elapsed = useElapsed(micLive ? mic.startedAt : null, micLive);
   // Red is the recording moment: a dictation or a mic session in progress.
   const recording = ctl.state === "recording" || micLive;
-  const daruma = recording ? "recording" : ctl.state === "processing" || isRunning(engine.runs.file) ? "processing" : ctl.state;
+  const daruma = recording ? "recording" : ctl.state === "processing" || isRunning(engine.runs.file) || isRunning(engine.runs.link) ? "processing" : ctl.state;
 
   return (
     <aside className="sh-rail" aria-label="Sussurro">

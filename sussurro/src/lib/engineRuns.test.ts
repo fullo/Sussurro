@@ -276,3 +276,53 @@ describe("describeProgress", () => {
     expect(describeProgress(stopping.mic!)).toBe("Finishing · 2 s of audio left");
   });
 });
+
+// #123: link runs have their id up front (engine_start_link returns it);
+// their download events never land on a file waiting to claim an id.
+describe("link runs", () => {
+  const download = (session_id: number, downloaded_bytes = 10) => ({
+    type: "download" as const,
+    payload: { session_id, via: "yt-dlp" as const, downloaded_bytes, total_bytes: 100, title: "Talk" },
+  });
+
+  it("routes download and engine events to the link by id", () => {
+    const s = run([
+      { type: "started", kind: "file", sessionId: null, label: "call.wav", now: 0 },
+      { type: "started", kind: "link", sessionId: 9, label: "youtube.com/watch?v=x", now: 0 },
+      download(9, 40),
+      { type: "progress", payload: progress(9, { processed_s: 3 }) },
+    ]);
+    expect(s.link?.download?.downloaded_bytes).toBe(40);
+    expect(s.link?.progress?.processed_s).toBe(3);
+    expect(s.file?.sessionId).toBeNull();
+    expect(s.file?.progress).toBeNull();
+    expect(describeProgress(run([], { ...initialRuns, link: { ...s.link!, progress: null } }).link!)).toBe("Downloading…");
+  });
+
+  it("buffers a download that beats engine_start_link's reply, never giving it to the file", () => {
+    const s = run([
+      { type: "started", kind: "file", sessionId: null, label: "call.wav", now: 0 },
+      download(12),
+    ]);
+    expect(s.file?.sessionId).toBeNull();
+    expect(s.pending).toHaveLength(1);
+    const started = run([{ type: "started", kind: "link", sessionId: 12, label: "x", now: 0 }], s);
+    expect(started.link?.download?.downloaded_bytes).toBe(10);
+    expect(started.pending).toHaveLength(0);
+  });
+
+  it("is adopted from engine_status and waits for an unclaimed file like the mic", () => {
+    const s = run([
+      {
+        type: "adopt",
+        status: { active: 1, mic_session: null, file_sessions: [], link_sessions: [{ session_id: 5, label: "vimeo.com/1" }] },
+        now: 0,
+      },
+    ]);
+    expect(s.link).toMatchObject({ sessionId: 5, label: "vimeo.com/1", status: "running" });
+    expect(canStart(s, "link")).toBe(false);
+    const fileStarting = run([{ type: "started", kind: "file", sessionId: null, label: "a", now: 0 }]);
+    expect(canStart(fileStarting, "link")).toBe(false);
+    expect(canStart(initialRuns, "link")).toBe(true);
+  });
+});
