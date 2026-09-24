@@ -2,6 +2,7 @@ import { AdvancedGroup, CollapsibleCard } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { EngineField, ModelField, ModelsFolderField } from "../settings/SpeechCard";
 import { cleanupProfile, profileHost } from "../lib/llmProfiles";
+import { cleanupGate } from "../lib/privacy";
 import { cleanupLabel } from "./labels";
 import type { SectionId } from "./SettingsScreen";
 
@@ -23,7 +24,11 @@ export function ModelsScreen({
       <header className="sh-topbar">
         <h1>Models</h1>
         <span className="sh-muted">
-          {profile?.external ? "Speech runs on this machine; cleanup uses an external profile" : "Everything runs on this machine"}
+          {!profile?.external
+            ? "Everything runs on this machine"
+            : cleanupGate(settings).state === "allowed"
+              ? "Speech runs on this machine; cleanup uses an external profile"
+              : "Everything runs on this machine; cleanup is held back until you allow its external profile"}
         </span>
       </header>
       <div className="sh-scroll cards-col">
