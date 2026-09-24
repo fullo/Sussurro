@@ -524,6 +524,7 @@ mod tests {
                 api_key: "sk-local".into(),
                 model: "qwen2.5-3b-instruct".into(),
                 external: false,
+                context_tokens: 0,
             }]
         );
         assert_eq!(s.cleanup_profile, "local");

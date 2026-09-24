@@ -38,7 +38,20 @@ pub struct LlmProfile {
     /// the warning errs on the safe side.
     #[serde(default = "missing_external")]
     pub external: bool,
+    /// Context window of the model, in tokens; 0 = unknown, and recipes
+    /// then size their chunks for [`DEFAULT_CONTEXT_TOKENS`] (#120). On
+    /// Ollama, recipes also request this window (`num_ctx`), since Ollama's
+    /// own default can be smaller than the model's.
+    #[serde(default)]
+    pub context_tokens: u32,
 }
+
+/// Context window assumed when a profile doesn't state one: small enough
+/// for the 3–4B models Sussurro suggests on a laptop (#120).
+pub const DEFAULT_CONTEXT_TOKENS: u32 = 4096;
+/// Smallest window recipes plan for: below this a chunk would hold only a
+/// few lines next to the instructions.
+pub const MIN_CONTEXT_TOKENS: u32 = 1024;
 
 /// `external` absent from a saved profile: assume the text leaves the machine.
 fn missing_external() -> bool {
@@ -77,6 +90,16 @@ impl LlmProfile {
             api_key: api_key.to_string(),
             model: model.to_string(),
             external: infer_external(base_url),
+            context_tokens: 0,
+        }
+    }
+
+    /// The context window recipes plan for: the stated one (at least
+    /// [`MIN_CONTEXT_TOKENS`]), else [`DEFAULT_CONTEXT_TOKENS`].
+    pub fn effective_context_tokens(&self) -> u32 {
+        match self.context_tokens {
+            0 => DEFAULT_CONTEXT_TOKENS,
+            n => n.max(MIN_CONTEXT_TOKENS),
         }
     }
 
@@ -109,6 +132,19 @@ mod tests {
         assert_eq!(p.model, "llama3.2:3b");
         assert!(p.api_key.is_empty());
         assert!(!p.external);
+        assert_eq!(p.context_tokens, 0);
+        assert_eq!(p.effective_context_tokens(), DEFAULT_CONTEXT_TOKENS);
+    }
+
+    #[test]
+    fn effective_context_has_a_floor_and_a_default() {
+        let mut p = LlmProfile { context_tokens: 32_768, ..Default::default() };
+        assert_eq!(p.effective_context_tokens(), 32_768);
+        p.context_tokens = 100;
+        assert_eq!(p.effective_context_tokens(), MIN_CONTEXT_TOKENS);
+        // A profile saved before #120 has no field: unknown.
+        let old: LlmProfile = serde_json::from_str(r#"{"id":"x","external":false}"#).unwrap();
+        assert_eq!(old.context_tokens, 0);
     }
 
     #[test]
