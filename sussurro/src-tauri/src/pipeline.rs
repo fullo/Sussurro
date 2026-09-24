@@ -353,7 +353,7 @@ pub fn unload_transcriber_if_idle(state: &AppState) -> bool {
 /// logic without loading a real model. Lock order (slot → last_used) matches
 /// `ensure_transcriber`, and `last_used` is only read under the slot lock —
 /// no unload can race a load that just refreshed the clock.
-fn unload_if_idle<T>(
+pub(crate) fn unload_if_idle<T>(
     slot: &std::sync::Mutex<Option<T>>,
     last_used: &std::sync::Mutex<Option<std::time::Instant>>,
     threshold: std::time::Duration,
