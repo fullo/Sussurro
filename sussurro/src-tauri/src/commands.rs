@@ -555,7 +555,7 @@ pub fn engine_start_mic(
     .map_err(|e| format!("{e:#}"))
 }
 
-/// Start a *System audio + mic* session (#139, behind `meetings_enabled`):
+/// Start a *System audio + mic* session (#139):
 /// the microphone (`mic_device`; omitted = the dictation's input device)
 /// and the computer's output — a second input device (`system_device`), or
 /// with `native: true` the OS's own capture of it (#140; `system_device`
@@ -1147,8 +1147,8 @@ pub async fn archive_search(
 
 /// The Library's search (#135): the items of [`archive_search`] plus the
 /// facet counts (type, tag, category, participant, date) for the same
-/// query and filters, from one synced snapshot of the index. Not behind
-/// `meetings_enabled`: facets serve notes and transcriptions too.
+/// query and filters, from one synced snapshot of the index. Facets serve
+/// notes and transcriptions as well as meetings.
 #[tauri::command]
 pub async fn archive_facets(
     state: State<'_, AppState>,

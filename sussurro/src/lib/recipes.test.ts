@@ -149,22 +149,19 @@ describe("speakers-only recipes", () => {
     edited_externally: false,
     ...extra,
   });
-  const on = { meetings_enabled: true };
   const ids = (rs: Recipe[]) => rs.map((r) => r.id);
 
   it("shows them on meetings and transcriptions with speakers", () => {
-    expect(ids(recipesFor(ALL, on, item("meeting", true)))).toEqual(ids(ALL));
-    expect(ids(recipesFor(ALL, { meetings_enabled: false }, item("transcription", true)))).toEqual(ids(ALL));
+    expect(ids(recipesFor(ALL, item("meeting", true)))).toEqual(ids(ALL));
+    expect(ids(recipesFor(ALL, item("transcription", true)))).toEqual(ids(ALL));
   });
 
   it("hides them on items without speakers", () => {
     const general = ids([...BUILTINS, mine]);
-    expect(ids(recipesFor(ALL, on, item("meeting", false)))).toEqual(general);
-    expect(ids(recipesFor(ALL, on, item("transcription", false)))).toEqual(general);
+    expect(ids(recipesFor(ALL, item("meeting", false)))).toEqual(general);
+    expect(ids(recipesFor(ALL, item("transcription", false)))).toEqual(general);
     // Notes never, even with a labelled voice.
-    expect(ids(recipesFor(ALL, on, item("note", true)))).toEqual(general);
-    // Meetings follow the 0.9 preview flag like the speaker panel.
-    expect(ids(recipesFor(ALL, { meetings_enabled: false }, item("meeting", true)))).toEqual(general);
+    expect(ids(recipesFor(ALL, item("note", true)))).toEqual(general);
     // A speaker with no label, or only on an empty line, doesn't count.
     const blank = item("meeting", true);
     blank.segments.speakers = blank.segments.speakers.map((s) => ({ ...s, label: " " }));

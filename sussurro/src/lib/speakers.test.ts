@@ -33,16 +33,12 @@ describe("speakersEnabled", () => {
   const note = { meta: { type: "note" } } as Pick<Item, "meta">;
   const transcription = { meta: { type: "transcription" } } as Pick<Item, "meta">;
 
-  it("follows the gating matrix: note × transcription × meeting, flag off and on", () => {
-    for (const flag of [false, true]) {
-      const settings = { meetings_enabled: flag };
-      // Notes never have speakers (P10).
-      expect(speakersEnabled(settings, note)).toBe(false);
-      // Transcriptions always (P11, #134): the flag gates meeting pieces only.
-      expect(speakersEnabled(settings, transcription)).toBe(true);
-      // Meetings are the 0.9 preview (E12).
-      expect(speakersEnabled(settings, meeting)).toBe(flag);
-    }
+  it("is on for everything but notes", () => {
+    // Notes never have speakers (P10).
+    expect(speakersEnabled(note)).toBe(false);
+    // Transcriptions always (P11, #134); meetings always (#138).
+    expect(speakersEnabled(transcription)).toBe(true);
+    expect(speakersEnabled(meeting)).toBe(true);
   });
 });
 

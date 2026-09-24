@@ -127,25 +127,55 @@ wsl -d Ubuntu-dev -u root -- bash /mnt/f/GitHub/Sussurro/scripts/ci-local.sh <br
 cd extension
 npm ci
 npm run build          # dist/chrome/, dist/firefox/ + one zip per browser
-npm run typecheck && npm test && npm run lint   # lint = web-ext lint (Firefox build)
+npm run build:chrome   # or one browser at a time (build:firefox)
+npm run typecheck      # tsc
+npm test               # vitest: pure helpers, manifests, licence list
+npm run lint           # web-ext lint on dist/firefox (after the build)
+```
+
+The capture harness (Playwright, runs in CI) loads the built extension into
+real Chromium and Firefox against a local two-peer call and a fake app:
+
+```bash
+npx playwright install chromium firefox   # once; PLAYWRIGHT_BROWSERS_PATH chooses where
+npm run build && npm run test:e2e         # or: npm run test:e2e -- firefox
+HEADED=1 npm run test:e2e -- chromium     # watch it
 ```
 
 It imports the app's transcript components from `sussurro/src/transcript/`
-(`@sussurro/transcript`), so changes there must keep building in both places.
-Its version always equals the app's (read from `sussurro/package.json`).
-Loading it unpacked in Chrome/Edge/Brave and as a temporary add-on in Firefox
-is described in [`extension/README.md`](../extension/README.md). CI builds and
-lints it in its own job; the release workflow attaches both zips to the
-release.
+(`@sussurro/transcript`), the pairing-code format (`@sussurro/pairing`) and
+the recording notice (`@sussurro/notice`), so changes there must keep
+building in both places. Its version always equals the app's (read from
+`sussurro/package.json`).
+
+To try it against a running app: load `dist/chrome` unpacked
+(`chrome://extensions` → Developer mode → Load unpacked) or
+`dist/firefox/manifest.json` as a temporary add-on
+(`about:debugging#/runtime/this-firefox`), then pair it from Settings →
+Browser extension (the local API must be on). Meetings are always available
+in the app; there is no feature flag. Details, architecture and the manual
+checks are in [`extension/README.md`](../extension/README.md). CI builds,
+tests, lints and runs the harness in its own job; the release workflow
+attaches both zips to the release.
 
 ## Third-party licenses
 
 The About dialog's license list is `sussurro/public/licenses.json`, generated
-from the resolved cargo + npm dependencies. **Regenerate after changing
-dependencies** (needs the Rust toolchain; committed, not run in CI):
+from the resolved cargo + npm production dependencies (never dev ones — the
+script fails if one gets in). **Regenerate after changing dependencies**
+(needs the Rust toolchain; committed, not run in CI):
 
 ```bash
 cd sussurro && npm run licenses
+```
+
+The browser extension has its own list, shown in the About section of its
+options page: `extension/src/options/licenses.json`, from the extension's npm
+production dependencies. Regenerate it after changing them (a unit test
+compares it with `extension/package-lock.json`):
+
+```bash
+cd extension && npm ci && npm run licenses
 ```
 
 ## Conventions

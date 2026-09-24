@@ -2,7 +2,8 @@
    code from Sussurro → Settings → Browser extension (or type port and token),
    save it to storage.local, and "Test connection" (GET /app/version with the
    token). Once saved, the token is only ever shown masked. Also brings
-   back the recording notice (#136). */
+   back the recording notice (#136) and lists the third-party licences
+   (About, #138). */
 import { StrictMode, useState, type FormEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { Header } from "../shared/Header";
@@ -19,6 +20,7 @@ import {
 import { usePairing } from "../shared/usePairing";
 import { useNoticeNeeded } from "../shared/useNotice";
 import { RECORDING_NOTICE, RECORDING_PRIVACY_URL, resetNotice } from "../shared/notice";
+import { SOURCE_URL, licenseEntries } from "./licenses";
 import "../shared/page.css";
 
 function Options() {
@@ -90,7 +92,45 @@ function Options() {
         />
       )}
       <NoticeSection />
+      <AboutSection />
     </Page>
+  );
+}
+
+/** About (#138): the extension's own licence and the third-party
+ *  licences of what it bundles (npm production dependencies). */
+function AboutSection() {
+  const entries = licenseEntries();
+  return (
+    <section className="panel about" aria-labelledby="about-title">
+      <h2 id="about-title">About</h2>
+      <p className="muted">
+        Sussurro browser extension, © Francesco Fullone (DarumaHQ), free software under the GNU AGPL v3.0 or later.{" "}
+        <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
+          Source code
+        </a>
+      </p>
+      <h3>Third-party licences</h3>
+      <ul className="licenses" data-testid="licenses">
+        {entries.map((e) => (
+          <li key={`${e.name}@${e.version}`}>
+            <details>
+              <summary>
+                <span className="lic-name">{e.name}</span> <span className="muted">{e.version}</span> · {e.license}
+              </summary>
+              {e.repository && (
+                <p className="muted">
+                  <a href={e.repository} target="_blank" rel="noopener noreferrer">
+                    {e.repository}
+                  </a>
+                </p>
+              )}
+              {e.text ? <pre>{e.text}</pre> : <p className="muted">No licence text shipped with the package.</p>}
+            </details>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -168,7 +208,7 @@ function PairForm({
     <form className="panel" onSubmit={submit} aria-labelledby="pair-title" autoComplete="off">
       <h2 id="pair-title">Pair with the Sussurro app</h2>
       <ol className="steps">
-        <li>In Sussurro, open Settings → Browser extension and turn on Meetings.</li>
+        <li>In Sussurro, open Settings → Browser extension.</li>
         <li>Click Copy pairing code.</li>
         <li>Paste it here and save.</li>
       </ol>

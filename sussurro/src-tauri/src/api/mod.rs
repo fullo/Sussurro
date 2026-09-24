@@ -4,7 +4,8 @@
 //! `POST /transcribe`, `GET /history`.
 //!
 //! 0.9 routes for the browser extension (#126, plan §6), answered only with
-//! `meetings_enabled` on (E12) and the extension token (E6, [`auth`]):
+//! the extension token (E6, [`auth`]); always on since #138 removed the
+//! `meetings_enabled` preview flag (E12):
 //! - `GET /app/version` → `{app, protocol, subtitles}` handshake; `subtitles`
 //!   is the subtitles setting (`on_request` | `always`, #133), so the side
 //!   panel offers "Create .srt" only when the app doesn't write it itself
@@ -45,11 +46,10 @@ pub trait Host: Send + Sync + 'static {
     fn start_meeting(&self, meeting: live::MeetingStart) -> anyhow::Result<u64>;
 }
 
-/// The settings the API checks on every request (so toggling
-/// `meetings_enabled` or regenerating the token applies at once).
+/// The settings the API checks on every request (so regenerating the
+/// token applies at once).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ApiConfig {
-    pub meetings_enabled: bool,
     pub extension_token: String,
     /// Told to the extension by `GET /app/version` (#129).
     pub subtitles: crate::settings::SubtitlesMode,
@@ -71,7 +71,7 @@ pub enum Route {
 }
 
 impl Route {
-    /// A 0.9 route: behind `meetings_enabled` and the extension token.
+    /// A 0.9 route: behind the extension token (and extension-only origins).
     pub fn is_meeting(&self) -> bool {
         matches!(
             self,
@@ -117,8 +117,7 @@ fn is_meeting_path(path: &str) -> bool {
         || item_path(path, "export").is_some()
 }
 
-/// Pure: method + path → route (every route, whatever the settings; see
-/// [`gate`]).
+/// Pure: method + path → route.
 pub fn route(method: &str, path: &str) -> Route {
     match (method, path) {
         ("POST", "/clean") => Route::Clean,
@@ -130,15 +129,6 @@ pub fn route(method: &str, path: &str) -> Route {
         ("POST", p) => item_path(p, "open").map_or(Route::NotFound, Route::OpenItem),
         ("GET", p) => item_path(p, "export").map_or(Route::NotFound, Route::ExportItem),
         _ => Route::NotFound,
-    }
-}
-
-/// Pure: meeting routes don't exist while `meetings_enabled` is off (E12).
-pub fn gate(route: Route, meetings_enabled: bool) -> Route {
-    if route.is_meeting() && !meetings_enabled {
-        Route::NotFound
-    } else {
-        route
     }
 }
 
@@ -173,7 +163,7 @@ pub fn parse_url(url: &str) -> (&str, HashMap<String, String>) {
 /// - Request payloads, URLs (they may carry the extension token) and tokens
 ///   are never logged: transcripts may contain sensitive text.
 /// - Meeting routes: extension token, extension-only origins and CORS
-///   ([`auth`]); absent while `meetings_enabled` is off.
+///   ([`auth`]); an unpaired app (no token) accepts nothing there.
 pub fn spawn(app: AppHandle, port: u16) {
     std::thread::spawn(move || {
         let Some(server) = bind(port) else { return };
@@ -270,7 +260,7 @@ fn handle(host: &Arc<dyn Host>, mut request: tiny_http::Request) {
     let (path, params) = parse_url(&url);
     let config = host.config();
 
-    let route = gate(route(&method, path), config.meetings_enabled);
+    let route = route(&method, path);
     if route.is_meeting() {
         return handle_meeting(host, request, route, &params, &config);
     }
@@ -484,7 +474,6 @@ impl Host for AppHost {
         let state = self.app.state::<AppState>();
         let s = state.settings.lock().unwrap();
         ApiConfig {
-            meetings_enabled: s.meetings_enabled,
             extension_token: s.extension_token.clone(),
             subtitles: s.subtitles,
         }

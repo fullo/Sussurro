@@ -234,7 +234,7 @@ pub struct RunOptions {
     pub cleanup_level: Option<CleanupLevel>,
     /// "Identify voices" (P11, #134): label a transcription's voices as
     /// "Voice N". Off by default; ignored for notes (never) and meetings
-    /// (the 0.9 preview decides, see [`speaker_options`]).
+    /// (always labelled, see [`speaker_options`]).
     pub identify_voices: bool,
     /// "Save audio" (P9, #141) for this run: `None` = the per-app default
     /// ([`Settings::save_audio`], off unless the user turned it on).
@@ -541,7 +541,6 @@ where
         let archive_dir = crate::state::resolve_archive_dir(paths, &settings)?;
         let models_dir = crate::state::resolve_models_dir(paths, &settings);
         let speakers = speaker_options(
-            &settings,
             req.item_type,
             req.source.channel(),
             &req.source_label,
@@ -611,9 +610,8 @@ where
 /// Which channels a run labels with "Voice N" (#130):
 /// - notes never (P10: the user's own voice);
 /// - transcriptions only with this run's "Identify voices" toggle (P11,
-///   #134), whatever the 0.9 preview flag says — the flag gates meeting
-///   pieces only;
-/// - meetings behind the 0.9 flag (`meetings_enabled`, E12).
+///   #134);
+/// - meetings always (the 0.9 preview flag is gone since #138).
 ///
 /// What is clustered:
 /// - One channel (the in-room case, a file or a link): it is clustered.
@@ -626,7 +624,6 @@ where
 ///
 /// Pure.
 pub(crate) fn speaker_options(
-    settings: &Settings,
     item_type: ItemType,
     channel: crate::archive::Channel,
     source_label: &str,
@@ -636,7 +633,7 @@ pub(crate) fn speaker_options(
     let on = match item_type {
         ItemType::Note => false,
         ItemType::Transcription => identify_voices,
-        ItemType::Meeting => settings.meetings_enabled,
+        ItemType::Meeting => true,
     };
     if !on {
         return None;
@@ -743,18 +740,6 @@ pub fn start_mic(
     Ok(id)
 }
 
-/// A *System audio + mic* session records other people (#139): like the
-/// browser meetings it is a 0.9 meeting piece, behind `meetings_enabled`
-/// (E12) until #138 — checked here, not only in the UI. Pure.
-pub(crate) fn ensure_system_audio_allowed(settings: &Settings) -> Result<()> {
-    if !settings.meetings_enabled {
-        anyhow::bail!(
-            "recording system audio is part of the meetings preview — turn it on in Settings → Browser extension"
-        );
-    }
-    Ok(())
-}
-
 /// The run of a *System audio + mic* session (#139): a `meeting` item
 /// whose source is `system`, fed live (the queue spills like a mic
 /// session's). The mic channel is "You", the system channel is clustered
@@ -809,8 +794,8 @@ impl SystemInput {
 /// sound — a second input device (`SystemInput::Device`, e.g. BlackHole) or
 /// the OS's native capture (`SystemInput::Native`, #140) — as two channels
 /// of one meeting. Returns the session id at once; the item arrives as
-/// `engine-done` after [`Sessions::stop_system`]. Refused without the
-/// meetings preview, with the same device twice, when the native capture is
+/// `engine-done` after [`Sessions::stop_system`]. Refused with the same
+/// device twice, when the native capture is
 /// unavailable (with the reason), or while a mic session runs (both need
 /// the microphone).
 pub fn start_system(
@@ -823,7 +808,6 @@ pub fn start_system(
 ) -> Result<u64> {
     let state = app.state::<AppState>();
     let settings = state.settings.lock().unwrap().clone();
-    ensure_system_audio_allowed(&settings)?;
     let mic_device = mic_device.unwrap_or(settings.input_device);
     match system {
         SystemInput::Device(system_device) => {
@@ -1324,18 +1308,6 @@ mod tests {
     }
 
     #[test]
-    fn system_audio_is_gated_by_the_meetings_preview() {
-        let off = Settings::default();
-        assert!(!off.meetings_enabled, "off by default (E12)");
-        assert!(ensure_system_audio_allowed(&off).is_err());
-        let on = Settings {
-            meetings_enabled: true,
-            ..Default::default()
-        };
-        assert!(ensure_system_audio_allowed(&on).is_ok());
-    }
-
-    #[test]
     fn a_system_audio_run_is_a_meeting_from_source_system() {
         use crate::sources::system::{Capture, Pacer, SystemSource};
         struct Silent;
@@ -1436,57 +1408,32 @@ mod tests {
         assert!(ensure_not_live(&journal, &archive, &id).is_ok());
     }
 
-    /// #130 / #134: who gets "Voice N" — the gating matrix of item type ×
-    /// 0.9 preview flag × the run's "Identify voices" toggle. Notes never;
-    /// transcriptions exactly when the toggle is on, whatever the flag;
-    /// meetings exactly when the flag is on, whatever the toggle.
+    /// #130 / #134 / #138: who gets "Voice N" — item type × the run's
+    /// "Identify voices" toggle. Notes never; transcriptions exactly when
+    /// the toggle is on; meetings always, whatever the toggle.
     #[test]
     fn speaker_labels_gating_matrix() {
         use crate::archive::Channel;
-        for flag in [false, true] {
-            let settings = Settings {
-                meetings_enabled: flag,
-                ..Default::default()
-            };
-            for identify in [false, true] {
-                let note = speaker_options(&settings, ItemType::Note, Channel::Mic, "mic", identify);
-                assert_eq!(note, None, "notes never (flag {flag}, toggle {identify})");
-                let note_file =
-                    speaker_options(&settings, ItemType::Note, Channel::File, "file:a.wav", identify);
-                assert_eq!(note_file, None, "a voice memo from a file is still a note");
+        for identify in [false, true] {
+            let note = speaker_options(ItemType::Note, Channel::Mic, "mic", identify);
+            assert_eq!(note, None, "notes never (toggle {identify})");
+            let note_file = speaker_options(ItemType::Note, Channel::File, "file:a.wav", identify);
+            assert_eq!(note_file, None, "a voice memo from a file is still a note");
 
-                for source in ["file:a.wav", "url:https://x.org/a.mp3"] {
-                    let t = speaker_options(
-                        &settings,
-                        ItemType::Transcription,
-                        Channel::File,
-                        source,
-                        identify,
-                    );
-                    assert_eq!(
-                        t.is_some(),
-                        identify,
-                        "transcription {source}: flag {flag}, toggle {identify}"
-                    );
-                    if let Some(o) = t {
-                        assert!(o.clusters(Channel::File) && !o.two_channel);
-                    }
-                }
-
-                let m = speaker_options(&settings, ItemType::Meeting, Channel::Mic, "mic", identify);
-                assert_eq!(m.is_some(), flag, "meeting: flag {flag}, toggle {identify}");
-                if let Some(o) = m {
-                    assert!(o.clusters(Channel::Mic) && !o.two_channel);
+            for source in ["file:a.wav", "url:https://x.org/a.mp3"] {
+                let t = speaker_options(ItemType::Transcription, Channel::File, source, identify);
+                assert_eq!(t.is_some(), identify, "transcription {source}: toggle {identify}");
+                if let Some(o) = t {
+                    assert!(o.clusters(Channel::File) && !o.two_channel);
                 }
             }
+
+            let m = speaker_options(ItemType::Meeting, Channel::Mic, "mic", identify)
+                .expect("meetings always get speaker labels");
+            assert!(m.clusters(Channel::Mic) && !m.two_channel);
         }
         // A browser meeting: the mic is You, the remote side is clustered.
-        let on = Settings {
-            meetings_enabled: true,
-            ..Default::default()
-        };
         let b = speaker_options(
-            &on,
             ItemType::Meeting,
             Channel::Remote,
             "browser:meet.google.com",
@@ -1495,13 +1442,11 @@ mod tests {
         .unwrap();
         assert!(b.two_channel && b.clusters(Channel::Remote) && !b.clusters(Channel::Mic));
         // System audio + mic (#139): the mic is You, the system side is
-        // clustered — and only with the 0.9 flag, whatever the toggle.
-        let sys = speaker_options(&on, ItemType::Meeting, Channel::System, "system", false).unwrap();
-        assert!(sys.two_channel && sys.clusters(Channel::System) && !sys.clusters(Channel::Mic));
-        assert_eq!(
-            speaker_options(&Settings::default(), ItemType::Meeting, Channel::System, "system", true),
-            None
-        );
+        // clustered, whatever the toggle.
+        for identify in [false, true] {
+            let sys = speaker_options(ItemType::Meeting, Channel::System, "system", identify).unwrap();
+            assert!(sys.two_channel && sys.clusters(Channel::System) && !sys.clusters(Channel::Mic));
+        }
     }
 
     /// P9 (#141): audio is saved only on request — the run's choice wins,

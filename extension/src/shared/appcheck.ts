@@ -39,9 +39,9 @@ export function problemText(p: AppProblem): string {
     case "timeout":
       return "The Sussurro app does not answer.";
     case "blocked":
-      return "The browser blocked the connection to Sussurro: check that meetings are on in its settings.";
-    case "meetings_disabled":
-      return "Meetings are off in Sussurro → Settings → Browser extension.";
+      return "The browser blocked the connection to Sussurro: check the extension's access to 127.0.0.1.";
+    case "app_outdated":
+      return "This Sussurro can't record meetings: update the app.";
     case "bad_token":
       return "Sussurro refused the token. Pair the extension again.";
     case "forbidden":

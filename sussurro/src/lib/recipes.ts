@@ -96,14 +96,12 @@ export function itemHasSpeakers(item: Pick<Item, "meta" | "segments" | "body" | 
 
 /** The recipes offered on `item` (#143): speakers-only recipes (Meeting
  *  minutes, Who said what) appear only where the transcript names its
- *  speakers and the speaker features are on for its type (meetings behind
- *  the 0.9 preview flag, E12). */
+ *  speakers and the speaker features are on for its type (never on notes). */
 export function recipesFor(
   recipes: Recipe[],
-  settings: Pick<Settings, "meetings_enabled">,
   item: Pick<Item, "meta" | "segments" | "body" | "edited_externally">,
 ): Recipe[] {
-  const speakers = speakersEnabled(settings, item) && itemHasSpeakers(item);
+  const speakers = speakersEnabled(item) && itemHasSpeakers(item);
   return recipes.filter((r) => !r.speakers_only || speakers);
 }
 

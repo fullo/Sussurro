@@ -16,7 +16,7 @@ const NEW_PERSON: Person = { id: "", name: "", aliases: [] };
 
 /** People (proposal A rail, #132): the registry that gives participants
  *  their email. Stored in the archive (`.sussurro/people.json`), so it
- *  travels with it; never sent anywhere. Not behind `meetings_enabled`:
+ *  travels with it; never sent anywhere. Not tied to meetings:
  *  transcriptions have participants too (#124). */
 export function PeopleScreen({ ctl }: { ctl: Ctl }) {
   const [people, setPeople] = useState<Person[] | null>(null);

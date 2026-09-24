@@ -70,8 +70,6 @@ const settings: Settings = {
   // #115: the preview opens on the workspace; `?onboarding=welcome` or
   // `=whats_new` shows the first-run setup or the upgrade screen.
   onboarding: ((o) => (o === "welcome" || o === "whats_new" ? o : "done"))(params.get("onboarding")),
-  // 0.9 preview (#130): on in the dev preview, `?meetings=off` hides it.
-  meetings_enabled: params.get("meetings") !== "off",
   subtitles: "on_request",
   extension_token: "",
   save_audio: false,
@@ -557,9 +555,8 @@ function startMic(title: string | null, language: string, saveAudio = false): nu
 }
 
 /** New → System audio + mic (#139): a meeting from the mic and a loopback
- *  device, behind the meetings preview like the backend. */
+ *  device. */
 function startSystem(a: Args, language: string): number {
-  if (!settings.meetings_enabled) throw "recording system audio is part of the meetings preview — turn it on in Settings → Browser extension";
   if (mic) throw mic.system ? "a system audio session is already running" : "a microphone session is running — stop it first";
   const native = !!a.native;
   if (native && !SYSTEM_DEVICES.native.available)

@@ -5,7 +5,7 @@
  * the pairing in `storage.local`). It:
  *
  * - checks the app with `GET /app/version` before starting and before each
- *   reconnect ("app not running", bad token, meetings off, other protocol);
+ *   reconnect ("app not running", bad token, app too old, other protocol);
  * - on the side panel's Start, asks the page to connect and arm the hook,
  *   opens the socket, sends `start {title, url, platform, rate, channels}`
  *   and forwards the audio frames, numbering `seq` per connection;

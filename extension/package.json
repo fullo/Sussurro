@@ -16,7 +16,8 @@
     "typecheck": "tsc",
     "lint": "web-ext lint --source-dir dist/firefox",
     "test": "vitest run",
-    "test:e2e": "node e2e/run.ts"
+    "test:e2e": "node e2e/run.ts",
+    "licenses": "node ../sussurro/scripts/gen-licenses.mjs --extension"
   },
   "dependencies": {
     "react": "^19.1.0",

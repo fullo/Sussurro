@@ -172,8 +172,8 @@ export const WHATS_NEW: { title: string; text: string }[] = [
     text: "Turn a transcript into a summary, action items or meeting minutes, or ask it a question. Your cleanup server is now an LLM profile, under Recipes.",
   },
   {
-    title: "Meetings (preview)",
-    text: "With the browser extension or this computer's sound, record meetings with speaker labels and subtitles. Off until you turn it on.",
+    title: "Meetings",
+    text: "Record meetings from this computer's sound (New → System audio + mic), in the room, or in the browser with the Sussurro extension (pair it in Settings → Browser extension), with speaker labels and subtitles.",
   },
   {
     title: "Command mode is gone",

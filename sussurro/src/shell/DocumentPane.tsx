@@ -180,8 +180,8 @@ export function DocumentPane({
 
   const reveal = () => invoke("archive_reveal", { id }).catch((e) => ctl.setBusy(String(e)));
 
-  // Speaker chips and "Move to speaker" are part of the 0.9 preview (#130).
-  const showSpeakers = speakersEnabled(ctl.settings, item);
+  // Speaker chips and "Move to speaker" (#130): every item but a note.
+  const showSpeakers = speakersEnabled(item);
   const docSpeakers = showSpeakers ? item.segments.speakers : undefined;
   const lines = toLines(item.segments.segments, docSpeakers);
   const editable = !item.edited_externally && !item.recording;

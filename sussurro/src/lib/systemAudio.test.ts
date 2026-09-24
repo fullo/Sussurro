@@ -13,7 +13,6 @@ import {
   nativeOptionLabel,
   osOf,
   SETUP_HELP,
-  systemTabVisible,
 } from "./systemAudio";
 import type { NativeLoopback, SystemAudioDevices } from "./types";
 
@@ -28,12 +27,6 @@ const list: SystemAudioDevices = {
 };
 
 describe("system audio tab (#139)", () => {
-  it("is gated by the meetings preview, but never hides a running session", () => {
-    expect(systemTabVisible(false, false)).toBe(false);
-    expect(systemTabVisible(true, false)).toBe(true);
-    expect(systemTabVisible(false, true)).toBe(true);
-  });
-
   it("preselects the remembered device, else the first loopback device that is not the mic", () => {
     expect(initialSystemDevice(list, "Loopback Audio", "")).toBe("Loopback Audio");
     expect(initialSystemDevice(list, "Gone Device", "")).toBe("BlackHole 2ch");

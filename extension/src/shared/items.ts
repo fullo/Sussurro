@@ -40,7 +40,7 @@ export function describeFailure(status: number, body: unknown): string {
     case 404:
       return appSays && appSays !== "unknown endpoint"
         ? "Sussurro can't find this item: it was deleted or moved."
-        : "Meetings are off in Sussurro → Settings → Browser extension.";
+        : "This Sussurro can't do that: update the app.";
     case 422:
       return appSays ? `Sussurro can't export it: ${appSays}.` : "Sussurro can't export this item.";
     default:
