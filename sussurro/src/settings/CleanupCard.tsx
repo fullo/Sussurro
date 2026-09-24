@@ -1,26 +1,47 @@
 import { AdvancedGroup, CollapsibleCard, EndpointNote, Tip } from "../components/ui";
 import { CLEANUP_LEVELS, LANGUAGES } from "../lib/constants";
 import type { Ctl } from "../hooks/useAppController";
+import type { CleanupLevel } from "../lib/types";
 import type { CardProps } from "./DictationCard";
 
-/** The cleanup level control, shared by the Cleanup card and the workspace's
- *  New screen (the level applies to dictation and to long-form runs). */
-export function CleanupLevelControl({ ctl, label = "Cleanup level" }: { ctl: Ctl; label?: string }) {
-  const { settings, save } = ctl;
+/** A segmented cleanup level picker. The workspace's New screen uses it for
+ *  a per-run level (#157) that never touches the settings. */
+export function CleanupLevelPicker({
+  value,
+  onChange,
+  label = "Cleanup level",
+}: {
+  value: CleanupLevel;
+  onChange: (level: CleanupLevel) => void;
+  label?: string;
+}) {
   return (
     <div className="segmented" role="radiogroup" aria-label={label}>
       {CLEANUP_LEVELS.map((l) => (
         <button
           key={l.value}
+          type="button"
           role="radio"
-          aria-checked={settings.cleanup_level === l.value}
-          className={settings.cleanup_level === l.value ? "on" : ""}
-          onClick={() => save({ ...settings, cleanup_level: l.value })}
+          aria-checked={value === l.value}
+          className={value === l.value ? "on" : ""}
+          onClick={() => onChange(l.value)}
         >
           {l.label}
         </button>
       ))}
     </div>
+  );
+}
+
+/** The dictation's cleanup level (saved in the settings). */
+export function CleanupLevelControl({ ctl, label = "Cleanup level" }: { ctl: Ctl; label?: string }) {
+  const { settings, save } = ctl;
+  return (
+    <CleanupLevelPicker
+      value={settings.cleanup_level}
+      onChange={(cleanup_level) => save({ ...settings, cleanup_level })}
+      label={label}
+    />
   );
 }
 

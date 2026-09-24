@@ -1,18 +1,21 @@
 import { useEffect, useState } from "react";
 import { TranscriptView, toLines } from "@sussurro/transcript";
 import type { Ctl } from "../hooks/useAppController";
-import type { EngineRuns } from "../hooks/useEngineRuns";
+import type { EngineRuns, RunArgs } from "../hooks/useEngineRuns";
 import { describeProgress, isRunning, wasCancelled, type Run, type RunKind } from "../lib/engineRuns";
 import { baseName, formatClock, progressPercent } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
 import type { ItemType } from "../lib/types";
-import { CleanupLevelControl } from "../settings/CleanupCard";
+import { CleanupLevelPicker } from "../settings/CleanupCard";
 import { AUDIO_EXTENSIONS, pickAudioFile } from "../settings/AudioFileCard";
 import { LANGUAGES } from "../lib/constants";
+import { differsFromDictation, effectiveRun, runArgs, type RunChoice } from "../lib/runOptions";
 import { ChipEditor } from "./ChipEditor";
 import { sttLabel } from "./labels";
 
-export interface NewDefaults {
+/** New's options, shared by every source. Language and cleanup level are
+ *  per run (#157): unset = the dictation settings, never saved to them. */
+export interface NewDefaults extends RunChoice {
   tags: string[];
   categories: string[];
 }
@@ -37,6 +40,7 @@ export function NewScreen({
   onOpenItem: (id: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>(() => (isRunning(engine.runs.file) && !isRunning(engine.runs.mic) ? "file" : "mic"));
+  const options = runArgs(ctl.settings, defaults);
 
   return (
     <div className="sh-screen">
@@ -65,9 +69,9 @@ export function NewScreen({
         <div className="new-grid">
           <section id={`new-panel-${tab}`} role="tabpanel" aria-labelledby={`new-tab-${tab}`} className="new-source">
             {tab === "mic" ? (
-              <MicPanel ctl={ctl} engine={engine} onRunStart={onRunStart} onOpenItem={onOpenItem} />
+              <MicPanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             ) : (
-              <FilePanel ctl={ctl} engine={engine} onRunStart={onRunStart} onOpenItem={onOpenItem} />
+              <FilePanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             )}
           </section>
           <OptionsCard ctl={ctl} defaults={defaults} onChange={onDefaultsChange} />
@@ -88,7 +92,8 @@ function OptionsCard({
   defaults: NewDefaults;
   onChange: (d: NewDefaults) => void;
 }) {
-  const { settings, save } = ctl;
+  const { settings } = ctl;
+  const run = effectiveRun(settings, defaults);
   return (
     <section className="card new-options" aria-labelledby="new-options-title">
       <h2 id="new-options-title" className="sh-sect">Options — same for every source</h2>
@@ -96,9 +101,9 @@ function OptionsCard({
         <label className="opt-k" htmlFor="new-lang">Language</label>
         <select
           id="new-lang"
-          value={settings.engine === "whisper" ? settings.language : "auto"}
+          value={run.language}
           disabled={settings.engine !== "whisper"}
-          onChange={(e) => save({ ...settings, language: e.target.value })}
+          onChange={(e) => onChange({ ...defaults, language: e.target.value })}
         >
           {LANGUAGES.map(([code, label]) => (
             <option key={code} value={code}>{label}</option>
@@ -106,7 +111,11 @@ function OptionsCard({
         </select>
 
         <span className="opt-k" id="new-cleanup">Cleanup level</span>
-        <CleanupLevelControl ctl={ctl} label="Cleanup level" />
+        <CleanupLevelPicker
+          value={run.cleanupLevel}
+          onChange={(cleanupLevel) => onChange({ ...defaults, cleanupLevel })}
+          label="Cleanup level"
+        />
 
         <span className="opt-k">Default tags</span>
         <ChipEditor
@@ -125,9 +134,21 @@ function OptionsCard({
         />
       </div>
       <p className="sh-note">
-        Language and cleanup level are shared with dictation
-        {settings.engine !== "whisper" && " (Parakeet detects the language itself)"}. Tags and category are added to
-        the item when it is saved.
+        Language and cleanup level apply to these runs only and start from your dictation settings
+        {settings.engine !== "whisper" && " (Parakeet detects the language itself)"}.
+        {differsFromDictation(settings, defaults) && (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => onChange({ ...defaults, language: null, cleanupLevel: null })}
+            >
+              Use the dictation settings
+            </button>
+          </>
+        )}{" "}
+        Tags and category are added to the item when it is saved.
       </p>
       <p className="sh-note">Engine: {sttLabel(settings)}</p>
     </section>
@@ -196,11 +217,13 @@ function RunOutcome({
 function MicPanel({
   ctl,
   engine,
+  options,
   onRunStart,
   onOpenItem,
 }: {
   ctl: Ctl;
   engine: EngineRuns;
+  options: RunArgs;
   onRunStart: (kind: RunKind) => void;
   onOpenItem: (id: string) => void;
 }) {
@@ -243,7 +266,7 @@ function MicPanel({
               title={engine.canStartMic ? "Start recording" : "Wait for the file to start"}
               onClick={async () => {
                 onRunStart("mic");
-                const err = await engine.startMic(title, "note");
+                const err = await engine.startMic(title, "note", options);
                 if (err) ctl.setBusy(err);
                 else setTitle("");
               }}
@@ -305,11 +328,13 @@ function MicPanel({
 function FilePanel({
   ctl,
   engine,
+  options,
   onRunStart,
   onOpenItem,
 }: {
   ctl: Ctl;
   engine: EngineRuns;
+  options: RunArgs;
   onRunStart: (kind: RunKind) => void;
   onOpenItem: (id: string) => void;
 }) {
@@ -471,7 +496,7 @@ function FilePanel({
           onClick={async () => {
             if (!path) return;
             onRunStart("file");
-            await engine.startFile(path, itemType, title);
+            await engine.startFile(path, itemType, title, options);
           }}
         >
           Transcribe

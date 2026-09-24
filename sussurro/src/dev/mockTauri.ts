@@ -199,10 +199,17 @@ function micTick() {
   ev("engine-progress", { session_id: mic.id, processed_s: i * 6 + 5, ingested_s: t, total_s: t, backlog_s: Math.max(0, t - (i * 6 + 5)), queue_len: 0, segments_done: i + 1 });
 }
 
-function startMic(title: string | null): number {
+/** A run's language (#157): the one chosen in New, else the settings'. The
+ *  per-run cleanup level only changes the (fake) text, so it is just logged. */
+function runLanguage(a: Args): string {
+  if (a.cleanupLevel) console.info("[mock] run cleanup level", a.cleanupLevel);
+  return (a.language as string | null) || settings.language;
+}
+
+function startMic(title: string | null, language: string): number {
   const id = nextSession++;
   const itemId = `2026/09/${new Date().toISOString().slice(0, 10)}-untitled`;
-  items.push({ id: itemId, meta: meta(title || "Untitled", "note", new Date().toISOString(), "", "mic"), segments: [], recording: true });
+  items.push({ id: itemId, meta: meta(title || "Untitled", "note", new Date().toISOString(), "", "mic", { language }), segments: [], recording: true });
   mic = { id, itemId, n: 0, started: Date.now(), timer: window.setInterval(micTick, 2500) };
   setTimeout(() => ev("engine-started", { session_id: id, item_id: itemId, item_type: "note", title: title ?? "", source: "mic" }), 50);
   return id;
@@ -243,13 +250,13 @@ function cancel(id: number): boolean {
 
 let fileRun: { id: number; cancelled: boolean } | null = null;
 
-async function transcribeFile(path: string, itemType: "note" | "transcription", title: string | null) {
+async function transcribeFile(path: string, itemType: "note" | "transcription", title: string | null, language: string) {
   const id = nextSession++;
   fileRun = { id, cancelled: false };
   const name = path.split("/").pop() ?? path;
   const itemId = `2026/09/${name.replace(/\.[^.]+$/, "")}`;
   const total = 192;
-  items.push({ id: itemId, meta: meta(title || name.replace(/\.[^.]+$/, ""), itemType, new Date().toISOString(), "", `file:${name}`), segments: [], recording: true });
+  items.push({ id: itemId, meta: meta(title || name.replace(/\.[^.]+$/, ""), itemType, new Date().toISOString(), "", `file:${name}`, { language }), segments: [], recording: true });
   await new Promise((r) => setTimeout(r, 30));
   ev("engine-started", { session_id: id, item_id: itemId, item_type: itemType, title: title ?? "", source: `file:${name}` });
   for (let i = 0; i < 8; i++) {
@@ -362,13 +369,18 @@ function handle(cmd: string, a: Args): unknown {
       return { active: (mic ? 1 : 0) + (fileRun ? 1 : 0), mic_session: mic?.id ?? null };
     case "engine_start_mic":
       if (mic) throw "a microphone session is already running";
-      return startMic((a.title as string | null) ?? null);
+      return startMic((a.title as string | null) ?? null, runLanguage(a));
     case "engine_stop_mic":
       return stopMic();
     case "engine_cancel":
       return cancel(Number(a.sessionId));
     case "transcribe_file":
-      return transcribeFile(String(a.path), (a.itemType as "note" | "transcription") ?? "note", (a.title as string | null) ?? null);
+      return transcribeFile(
+        String(a.path),
+        (a.itemType as "note" | "transcription") ?? "note",
+        (a.title as string | null) ?? null,
+        runLanguage(a),
+      );
     case "pick_import_file":
       // The real command opens the picker in Rust and returns {name, contents}
       // (null on cancel); the preview skips the dialog and returns a sample.
