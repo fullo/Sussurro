@@ -1,5 +1,6 @@
 pub mod models;
 pub mod parakeet;
+pub mod pauses;
 pub mod remote;
 pub mod sidecar;
 pub mod whisper;

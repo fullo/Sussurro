@@ -289,6 +289,16 @@ project decisions here, not in per-machine memory.**
   the exe dir or cwd). Linux AppImage builds need that folder on
   `LD_LIBRARY_PATH` (linuxdeploy's `ldd`). `scripts/verify-sidecar-bundle.sh`
   checks every release bundle.
+- **Parakeet long input (#194)** (`stt/pauses.rs`): transcribe-rs 0.3.11's
+  Parakeet greedy decoder can emit only blanks after a sentence end + pause
+  (the decoder state blocks; the encoder output is fine), dropping every
+  later sentence — English mostly, pauses of any length. transcribe-rs has
+  no knob for it, so `ParakeetTranscriber` cuts input at pauses (~8 s
+  pieces, energy relative to the buffer) and re-decodes a piece's rest when
+  ≥ 1 s of speech follows its last word; engine segments on Parakeet also
+  end at the first 300 ms VAD pause after 8 s
+  (`SegmenterParams::for_engine`). Whisper is untouched. Re-check (and
+  maybe drop) this when transcribe-rs changes its decode loop.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`

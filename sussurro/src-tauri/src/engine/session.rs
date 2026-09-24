@@ -558,7 +558,8 @@ where
             session_id: req.id,
             source: req.source,
             detector: detector(&models_dir),
-            params: SegmenterParams::default(),
+            // Parakeet: shorter segments, cut at pauses (#194).
+            params: SegmenterParams::for_engine(&settings.engine),
             policy: req.policy,
             // App data dir (next to the dictation history), not the shared
             // temp dir: it holds the user's audio while the backlog lasts.
