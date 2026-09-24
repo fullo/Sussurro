@@ -137,6 +137,20 @@ free of page code (React, the transcript CSS): Chrome runs it as a service
 worker without a DOM, and the build refuses a `background.js` that uses
 `document`.
 
+## Recording notice (#136)
+
+The first **Start** shows a short notice in the panel: the other
+participants may need to be told, and some may have to agree, depending on
+local rules (neutral wording, no legal advice). **Start recording** goes
+ahead, **Cancel** starts nothing. *Don't show this again* (ticked by
+default) is stored in `storage.local` under `recordingNoticeSeen`, read and
+written only through `src/shared/notice.ts`; clearing the extension's
+storage shows it again, and so does **Show the notice again** on the
+options page. While recording, a "Recording other people" line stays under
+the controls. The strings live once, in the app's
+`sussurro/src/lib/recordingNotice.ts`, imported here as `@sussurro/notice`
+(same wording as the app's New screen).
+
 ## Meet names (#131)
 
 Who spoke, per remote line (plan §4.3, decision P8): the mic channel is

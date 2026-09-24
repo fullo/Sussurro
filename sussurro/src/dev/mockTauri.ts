@@ -68,6 +68,8 @@ const settings: Settings = {
   subtitles: "on_request",
   extension_token: "",
   save_audio: false,
+  // #136: `?notice=seen` skips the recording notice.
+  meeting_notice_seen: params.get("notice") === "seen",
 };
 
 /** A fake pairing token (#126): 64 hex characters, like the backend's. */

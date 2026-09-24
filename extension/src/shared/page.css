@@ -176,3 +176,24 @@ body {
 .result p { margin: 4px 0 0; }
 .result.ok { background: #e9f5ec; border-color: #9fcfae; color: #1d4d2b; }
 .result.error { background: var(--brand-soft); border-color: var(--brand); color: var(--c-dark); }
+
+/* ---- Recording notice (#136) ---- */
+.rec-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--c-surface);
+}
+.rec-notice h2 { margin: 0; font-size: 14.5px; font-weight: 600; color: var(--c-dark); }
+.rec-notice p { margin: 0; }
+.rec-notice #rec-notice-desc { display: flex; flex-direction: column; gap: 6px; }
+.rec-notice-small { font-size: 12.5px; color: var(--c-text-light); }
+.rec-notice a, .rec-reminder a, .panel a { color: var(--brand-text); }
+.check { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.check input { margin: 3px 0 0; accent-color: var(--c-dark); }
+.muted { margin: 0; color: var(--c-text-light); }
+.rec-reminder { margin: 0; font-size: 12.5px; color: var(--c-text-light); }
+.rec-reminder::before { content: "●"; color: var(--brand); font-size: 9px; margin-right: 6px; vertical-align: 1px; }

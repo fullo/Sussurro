@@ -905,3 +905,7 @@ button.pchip-name:hover { text-decoration: underline; }
 .field-err { color: var(--c-text); font-size: 12.5px; }
 .check-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
 .check-row input { margin-top: 3px; accent-color: var(--c-dark); min-height: 0; }
+
+/* #136: the reminder while recording other people — one quiet line. */
+.rec-reminder { margin: 0; }
+.rec-reminder::before { content: "●"; color: var(--brand); font-size: 9px; margin-right: 6px; vertical-align: 1px; }

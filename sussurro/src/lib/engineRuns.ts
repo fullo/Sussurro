@@ -14,6 +14,7 @@ import type {
   EngineStarted,
   EngineStatus,
   EngineWarning,
+  ItemType,
   Segment,
 } from "./types";
 
@@ -50,6 +51,9 @@ export interface Run {
    *  session's folder is renamed at the end), final from `engine-done`, or
    *  the item a failed run kept as interrupted. */
   itemId: string | null;
+  /** The item's type, from `engine-started` (unknown until then). A mic
+   *  session is a meeting when it records a room (#130). */
+  itemType?: ItemType;
   /** The provisional id when the final one differs, so a selection on the
    *  live item can follow the rename. */
   previousItemId: string | null;
@@ -97,7 +101,7 @@ export type EngineEventAction =
   | { type: "error"; payload: EngineError };
 
 export type RunsAction =
-  | { type: "started"; kind: RunKind; sessionId: number | null; label: string; now: number }
+  | { type: "started"; kind: RunKind; sessionId: number | null; label: string; now: number; itemType?: ItemType }
   /** engine_status at mount: runs started elsewhere (#158). */
   | { type: "adopt"; status: EngineStatus; now: number }
   | { type: "stopping"; kind: RunKind }
@@ -150,6 +154,7 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
           status: "running",
           startedAt: action.now,
           itemId: null,
+          ...(action.itemType ? { itemType: action.itemType } : {}),
           previousItemId: null,
           progress: null,
           download: null,
@@ -203,7 +208,7 @@ export function runsReducer(state: RunsState, action: RunsAction): RunsState {
           case "download":
             return { ...run, download: action.payload };
           case "engine-started":
-            return { ...run, itemId: action.payload.item_id };
+            return { ...run, itemId: action.payload.item_id, itemType: action.payload.item_type };
           case "progress":
             return { ...run, progress: action.payload };
           case "segment": {

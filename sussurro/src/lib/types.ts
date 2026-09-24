@@ -150,6 +150,10 @@ export interface Settings {
   /** "Save audio" preselected in New (P9, #141). Off by default: WAV is
    *  saved only on request. Absent in settings from before 0.10. */
   save_audio?: boolean;
+  /** The notice before the first recording of other people (#136) was
+   *  acknowledged with "Don't show this again". Absent or false (a fresh or
+   *  cleared settings file) = show it. */
+  meeting_notice_seen?: boolean;
 }
 
 export type SubtitlesMode = "on_request" | "always";

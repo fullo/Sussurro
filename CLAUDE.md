@@ -234,6 +234,20 @@ project decisions here, not in per-machine memory.**
   `meet:<name>` speakers feed the People link suggestion; page
   participants join the frontmatter with People emails. Captions fallback
   not built (follow-up).
+- **Recording notice (0.9, #136)**: before recording other people (New →
+  System audio + mic, Microphone → Meeting in the room, the extension's
+  side-panel Start) a notice says others may need to be told and may have
+  to agree, depending on local rules — neutral, no legal advice, no named
+  jurisdictions. One wording in `sussurro/src/lib/recordingNotice.ts`
+  (pure; the extension imports it as `@sussurro/notice`). It never blocks:
+  *Start recording* proceeds, Cancel starts nothing. *Don't show this
+  again* (ticked by default) is stored per install: app
+  `Settings.meeting_notice_seen` (reset from Settings → Browser extension;
+  a cleared settings file shows it again), extension `storage.local`
+  `recordingNoticeSeen` (reset from the options page; not touched by
+  Forget pairing). A "Recording other people" line shows on those tabs and
+  while such a run records. README → Privacy → *Recording meetings and
+  consent* is the notice's link target — keep the anchor stable.
 - **Library facets (0.9, #135)** (`archive/facets.rs`, `archive_facets`):
   not behind `meetings_enabled`. OR within a facet, AND across facets and
   with the text query; counts are disjunctive (a facet ignores its own

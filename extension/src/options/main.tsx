@@ -1,7 +1,8 @@
 /* Options page: pairing with the Sussurro app (#127, E6). Paste the pairing
    code from Sussurro → Settings → Browser extension (or type port and token),
    save it to storage.local, and "Test connection" (GET /app/version with the
-   token). Once saved, the token is only ever shown masked. */
+   token). Once saved, the token is only ever shown masked. Also brings
+   back the recording notice (#136). */
 import { StrictMode, useState, type FormEvent, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { Header } from "../shared/Header";
@@ -16,6 +17,8 @@ import {
   type Pairing,
 } from "../shared/pairing";
 import { usePairing } from "../shared/usePairing";
+import { useNoticeNeeded } from "../shared/useNotice";
+import { RECORDING_NOTICE, RECORDING_PRIVACY_URL, resetNotice } from "../shared/notice";
 import "../shared/page.css";
 
 function Options() {
@@ -86,7 +89,31 @@ function Options() {
           onCancel={saved ? () => setEditing(false) : undefined}
         />
       )}
+      <NoticeSection />
     </Page>
+  );
+}
+
+/** "Show the notice again" (#136): the side panel asks before the next
+ *  Start. */
+function NoticeSection() {
+  const needed = useNoticeNeeded();
+  if (needed === undefined) return null;
+  return (
+    <section className="panel" aria-labelledby="notice-title">
+      <h2 id="notice-title">{RECORDING_NOTICE.settingsTitle}</h2>
+      <p className="muted" role="status">
+        {needed ? RECORDING_NOTICE.reshowDone : RECORDING_NOTICE.reshowHint}{" "}
+        <a href={RECORDING_PRIVACY_URL} target="_blank" rel="noopener noreferrer">
+          {RECORDING_NOTICE.readMore}
+        </a>
+      </p>
+      <div className="actions">
+        <button type="button" className="btn" data-testid="notice-reset" disabled={needed} onClick={() => void resetNotice()}>
+          {RECORDING_NOTICE.reshow}
+        </button>
+      </div>
+    </section>
   );
 }
 

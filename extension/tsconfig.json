@@ -24,6 +24,7 @@
     "paths": {
       "@sussurro/transcript": ["../sussurro/src/transcript/index.ts"],
       "@sussurro/pairing": ["../sussurro/src/lib/pairingCode.ts"],
+      "@sussurro/notice": ["../sussurro/src/lib/recordingNotice.ts"],
       "react": ["./node_modules/@types/react/index.d.ts"],
       "react/*": ["./node_modules/@types/react/*"]
     },

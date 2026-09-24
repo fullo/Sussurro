@@ -179,6 +179,11 @@ pub struct Settings {
     /// request, so this is off by default. Also applies to runs started
     /// without a New screen (a browser meeting from the extension).
     pub save_audio: bool,
+    /// The notice before the first recording of other people (#136) was
+    /// acknowledged with "Don't show this again". Per install; false (a
+    /// fresh or cleared settings file) shows it again, and so does
+    /// Settings → Browser extension → "Show the notice again".
+    pub meeting_notice_seen: bool,
 }
 
 impl Default for Settings {
@@ -220,6 +225,7 @@ impl Default for Settings {
             extension_token: String::new(),
             subtitles: SubtitlesMode::OnRequest,
             save_audio: false,
+            meeting_notice_seen: false,
         }
     }
 }
@@ -608,6 +614,19 @@ mod tests {
         let second = s.regenerate_extension_token().unwrap();
         assert_ne!(second, first);
         assert_eq!(s.extension_token, second);
+    }
+
+    /// #136: the recording notice shows until acknowledged; a settings file
+    /// without the key (fresh, cleared, or older) shows it again.
+    #[test]
+    fn meeting_notice_is_unseen_until_acknowledged() {
+        assert!(!Settings::default().meeting_notice_seen);
+        let s: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert!(!s.meeting_notice_seen);
+        let seen: Settings = serde_json::from_str(r#"{"meeting_notice_seen":true}"#).unwrap();
+        assert!(seen.meeting_notice_seen);
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&seen).unwrap()).unwrap();
+        assert!(back.meeting_notice_seen, "round-trips through settings.json");
     }
 
     /// A settings.json exactly as 0.6.3 writes it (every field, pretty

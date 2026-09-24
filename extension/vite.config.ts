@@ -20,6 +20,9 @@ export function baseConfig(target: Target): UserConfig {
         // The pairing-code format (#127): one definition for the app, which
         // encodes it, and the options page, which parses it.
         "@sussurro/pairing": here("../sussurro/src/lib/pairingCode.ts"),
+        // The recording notice's wording (#136): one text for the app's New
+        // screen and the side panel.
+        "@sussurro/notice": here("../sussurro/src/lib/recordingNotice.ts"),
       },
       // The shared components live under sussurro/: without this, their
       // `react` import would resolve to sussurro/node_modules (a second React,

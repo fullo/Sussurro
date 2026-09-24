@@ -42,7 +42,9 @@ import { AUDIO_EXTENSIONS, pickAudioFile } from "../settings/AudioFileCard";
 import { LANGUAGES } from "../lib/constants";
 import { differsFromDictation, effectiveRun, runArgs, saveAudioChoice, type RunChoice } from "../lib/runOptions";
 import { identifyVoicesArg } from "../lib/speakers";
+import { recordsOthers } from "../lib/meetingNotice";
 import { ChipEditor } from "./ChipEditor";
+import { RecordingReminder, useRecordingNotice } from "./RecordingNotice";
 import { sttLabel } from "./labels";
 
 /** New's options, shared by every source. Language and cleanup level are
@@ -338,6 +340,7 @@ function MicPanel({
    *  saved as a Meeting with voices labelled "Voice 1, Voice 2…". */
   const [inRoom, setInRoom] = useState(false);
   const meetingOn = !!ctl.settings.meetings_enabled && inRoom;
+  const { confirmNotice, dialog } = useRecordingNotice(ctl);
 
   if (!run) {
     return (
@@ -386,6 +389,8 @@ function MicPanel({
                     : "Wait for the file to start"
               }
               onClick={async () => {
+                // A meeting in the room records other people (#136).
+                if (meetingOn && !(await confirmNotice())) return;
                 onRunStart("mic");
                 const err = await engine.startMic(title, meetingOn ? "meeting" : "note", options);
                 if (err) ctl.setBusy(err);
@@ -395,7 +400,9 @@ function MicPanel({
               <span className="rec-dot" aria-hidden="true" /> {engine.micStarting ? "Starting…" : "Start recording"}
             </button>
           </div>
+          {meetingOn && <RecordingReminder />}
         </div>
+        {dialog}
       </div>
     );
   }
@@ -499,6 +506,7 @@ function CaptureLive({
           </span>
         </div>
       )}
+      {live && recordsOthers(run) && <RecordingReminder />}
       {run.warnings.length > 0 && (
         <div className="link-notice" role="status" aria-live="polite">
           {run.warnings.map((w, i) => (
@@ -544,6 +552,7 @@ function SystemPanel({
   const [refresh, setRefresh] = useState(0);
   const os = osOf();
   const help = SETUP_HELP[os];
+  const { confirmNotice, dialog } = useRecordingNotice(ctl);
 
   useEffect(() => {
     let alive = true;
@@ -590,7 +599,7 @@ function SystemPanel({
           <p className="sh-muted">
             Zoom, Teams or any app that plays through the computer: your microphone and the computer's sound are
             recorded as two channels and saved as a <strong>Meeting</strong>. You are “You”; the others are told apart
-            as Voice 1, Voice 2… — rename them in the document. Tell the other participants that you are recording.
+            as Voice 1, Voice 2… — rename them in the document.
           </p>
         </div>
 
@@ -658,6 +667,8 @@ function SystemPanel({
                 : problem ?? "Start recording"
             }
             onClick={async () => {
+              // It records other people (#136).
+              if (!(await confirmNotice())) return;
               onRunStart("system");
               const err = await engine.startSystem({ mic: mic || null, system }, title, options);
               if (err) ctl.setBusy(err);
@@ -670,7 +681,9 @@ function SystemPanel({
             <span className="rec-dot" aria-hidden="true" /> {engine.systemStarting ? "Starting…" : "Start recording"}
           </button>
         </div>
+        <RecordingReminder />
       </div>
+      {dialog}
     </div>
   );
 }
