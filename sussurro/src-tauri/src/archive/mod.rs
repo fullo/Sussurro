@@ -21,7 +21,8 @@ pub mod types;
 pub use index::{rebuild_index, with_index, Index, SearchFilters};
 pub use paths::resolve_archive_dir;
 pub use store::{
-    create_item, delete_item, list_items, read_item, save_segments, update_meta, Item, ItemSummary,
+    create_item, delete_item, edit_segment, list_items, read_item, save_segments, update_meta, Item,
+    ItemSummary, SegmentEdit,
 };
 pub use types::{
     Channel, DocSpeaker, ItemMeta, ItemType, Participant, Segment, SegmentsFile, SessionState,

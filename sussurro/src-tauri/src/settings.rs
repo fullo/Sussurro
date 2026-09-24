@@ -129,6 +129,9 @@ pub struct Settings {
     /// Archive folder for notes, meetings and transcriptions. Empty = the
     /// default `<Documents>/Sussurro` (see `archive::resolve_archive_dir`).
     pub archive_dir: String,
+    /// Preview of the 0.7 workspace UI (left rail: New, Library, Models,
+    /// Settings). Off = today's single-column window. Removed when 0.7 ships.
+    pub ui_v2: bool,
 }
 
 impl Default for Settings {
@@ -162,6 +165,7 @@ impl Default for Settings {
             api_port: 4525,
             output_file: String::new(),
             archive_dir: String::new(),
+            ui_v2: false,
         }
     }
 }
@@ -352,6 +356,17 @@ mod tests {
         let s = Settings::load(&path);
         assert_eq!(s.hotkey, "Alt+Space");
         assert_eq!(s.archive_dir, "");
+    }
+
+    /// Settings files written before the workspace preview have no `ui_v2`:
+    /// they load with the classic UI (serde default).
+    #[test]
+    fn settings_without_ui_v2_keep_the_classic_ui() {
+        let s: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert!(!s.ui_v2);
+        assert!(!Settings::default().ui_v2);
+        let on: Settings = serde_json::from_str(r#"{"ui_v2":true}"#).unwrap();
+        assert!(on.ui_v2);
     }
 
     #[test]
