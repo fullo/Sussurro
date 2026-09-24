@@ -6,8 +6,8 @@ Sussurro app running on the same computer, which transcribes and saves it.
 The extension is a capture device plus a live mirror; editing happens in the
 app (plan decision E3).
 
-**Status: preview.** Pairing with the app (#127) and capture (#128) work;
-the live transcript in the side panel (#129) comes next. Capture is
+**Status: preview.** Pairing with the app (#127), capture (#128) and the
+live transcript in the side panel (#129) work. Capture is
 verified automatically against a local two-peer call (see *Capture
 harness*); real Meet / Teams / Zoom calls are still checked by hand (#184).
 Build it only to work on it.
@@ -98,6 +98,44 @@ MAIN world (hook, AudioWorklet) ─MessagePort─▶ ISOLATED world ─runtime p
 - Scope: the top frame only (no `all_frames`); if a platform runs its call
   in an iframe, that shows up in the manual checks (#184).
 
+## Side panel (#129)
+
+The side panel (Chrome) / sidebar (Firefox) is a **live mirror** of the
+meeting in the active tab; editing happens in the app (plan E3).
+
+- **Live lines** with their timestamp and a **speaker chip**, drawn by the
+  app's own transcript components (`@sussurro/transcript`). Chips use the
+  app's labels and colours (`src/shared/speakers.ts` mirrors
+  `speakers/doc.rs`; a unit test compares them): `You` on the mic channel,
+  `Voice N`, and the names the app sends with `speaker {id, label}`. A
+  `segment` `updated` replaces the line with the same id.
+- **Follows the newest line** unless the user scrolled up; then **Jump to
+  live** brings it back. The list is a keyboard-scrollable region; each new
+  line is also read out through a *polite* live region (never
+  interrupting).
+- **Backlog**: from the app's `status` (`backlog_s`): up to date, *N s
+  behind*, or, past 30 s, a note that Sussurro is slower than the meeting
+  (nothing is lost); *Finishing* after Stop.
+- **Open in Sussurro** (`POST /items/{id}/open`), **Copy as text**
+  (`GET /items/{id}/export?format=txt`, then the clipboard) and **Create
+  .srt** (`…?format=srt`, saved through a Blob link: no `downloads`
+  permission), on the meeting's current item. *Create .srt* shows only when
+  the app's subtitles setting is *on request* (`subtitles` in
+  `GET /app/version`; with *always* the app writes the `.srt` itself) and
+  works once the recording ends.
+- A **reconnect** is a new item on the app: its lines follow the earlier
+  ones under a "connection lost" note, and the buttons act on the new item.
+  A new **Start** clears the panel.
+
+The background keeps each tab's transcript (`src/shared/live.ts`, a pure
+reducer over the app's `/live` messages), so a panel opened mid-meeting,
+or switching tabs, shows everything so far: the panel asks for a snapshot
+(`panel:transcript`) and then applies the numbered changes the background
+broadcasts (`panel:live`), asking again on a gap. The background must stay
+free of page code (React, the transcript CSS): Chrome runs it as a service
+worker without a DOM, and the build refuses a `background.js` that uses
+`document`.
+
 ## Layout
 
 | Path | What it is |
@@ -109,7 +147,7 @@ MAIN world (hook, AudioWorklet) ─MessagePort─▶ ISOLATED world ─runtime p
 | `src/content/isolated-world.ts` | ISOLATED-world content script (relay to the background) |
 | `src/offscreen/`, `offscreen.html` | Chrome only: tab-capture fallback |
 | `e2e/` | capture harness (Playwright + a fake app) |
-| `src/sidepanel/`, `sidepanel.html` | side panel (Chrome) / sidebar (Firefox) |
+| `src/sidepanel/`, `sidepanel.html` | side panel (Chrome) / sidebar (Firefox): live lines, Start/Stop, item actions (#129) |
 | `src/options/`, `options.html` | options page: pairing with the app, Test connection (#127) |
 | `src/shared/` | helpers shared by the entry points (`pairing.ts`: storage keys and URLs; `connection.ts`: the connection test) |
 | `scripts/build.ts` | the build: pages + scripts + manifest + icons + zip |
@@ -154,9 +192,12 @@ plus the capture harness.
 `e2e/run.ts` loads the built extension into real browsers (Playwright's
 Chromium and Firefox), opens a local two-peer WebRTC call (the user's side
 sends the browser's fake microphone — 440 Hz in Chromium, 1 kHz in Firefox —
-the other side a 300 Hz tone) and a fake Sussurro app (`/app/version` and
-`/live` with the app's Origin and token checks). Per configuration it
+the other side a 300 Hz tone) and a fake Sussurro app (`/app/version`,
+`/live` and the item routes, with the app's Origin and token checks). Per configuration it
 presses Start in the side panel and checks: no socket before Start, the
+side panel showing the fake app's scripted lines (a correction applied,
+speaker chips, timestamps, the backlog) and reaching `open` / `export`
+(txt, then srt after Stop), a new Start clearing it, the
 `start` message, both channels arriving with their own tone, `seq` from 0
 without gaps, the call unaffected both ways, Stop, and `stop` when the tab
 closes. Configurations: `chromium` (binary messaging, Meet-like
