@@ -930,6 +930,8 @@ pub struct RecipeProgressEvent {
     pub item_id: String,
     pub recipe_id: String,
     pub recipe_name: String,
+    /// The question, for a free question (#121).
+    pub question: Option<String>,
     #[serde(flatten)]
     pub progress: recipes::engine::Progress,
 }
@@ -942,8 +944,16 @@ pub struct RecipeFinished {
     pub recipe_name: String,
     /// Companion document written, for a document recipe.
     pub file: Option<String>,
-    /// The text, for an answer recipe.
+    /// The text, for an answer recipe or a free question.
     pub answer: Option<String>,
+    /// Handle of the answer for `recipe_save_answer` (kept in memory only).
+    pub answer_id: Option<u64>,
+    /// The question, for a free question (#121).
+    pub question: Option<String>,
+    /// Profile the run used (name as shown), its model and external flag.
+    pub profile: String,
+    pub model: String,
+    pub external: bool,
     pub error: Option<String>,
     pub cancelled: bool,
 }
@@ -964,13 +974,27 @@ fn default_recipe_profile(settings: &Settings) -> crate::llm::LlmProfile {
         .unwrap_or(cleanup)
 }
 
+/// The profile `profile_id` names, or the default one.
+fn recipe_profile(settings: &Settings, profile_id: Option<&str>) -> Result<crate::llm::LlmProfile, String> {
+    match profile_id {
+        Some(pid) => settings
+            .llm_profiles
+            .iter()
+            .find(|p| p.id == pid)
+            .cloned()
+            .ok_or_else(|| format!("no LLM profile '{pid}'")),
+        None => Ok(default_recipe_profile(settings)),
+    }
+}
+
 /// Run a recipe on an archive item with an LLM profile (default: see
 /// [`default_recipe_profile`]). Refusals — unknown recipe or profile, an
 /// external profile (#122 adds the per-run confirmation), a live item,
 /// another run on the same item — are errors, and nothing is sent. Once
 /// started, progress arrives as `recipe-progress` and the end as
 /// `recipe-finished`, whose payload this also returns (with `error` /
-/// `cancelled` set when it did not complete).
+/// `cancelled` set when it did not complete). An answer recipe's result is
+/// kept in memory for `recipe_save_answer` (`answer_id`).
 #[tauri::command]
 pub async fn recipe_run(
     app: AppHandle,
@@ -979,33 +1003,56 @@ pub async fn recipe_run(
     recipe_id: String,
     profile_id: Option<String>,
 ) -> Result<RecipeFinished, String> {
-    use tauri::{Emitter, Manager};
-    let (archive, db) = archive_paths(&state)?;
     let settings = state.settings.lock().unwrap().clone();
     let recipe = recipes::find_recipe(&settings.recipes, &recipe_id)
         .ok_or_else(|| format!("no recipe '{recipe_id}'"))?;
-    let profile = match profile_id.as_deref() {
-        Some(pid) => settings
-            .llm_profiles
-            .iter()
-            .find(|p| p.id == pid)
-            .cloned()
-            .ok_or_else(|| format!("no LLM profile '{pid}'"))?,
-        None => default_recipe_profile(&settings),
-    };
+    let profile = recipe_profile(&settings, profile_id.as_deref())?;
+    run_recipe(app, &state, id, recipe, None, profile).await
+}
+
+/// Ask a free question about an archive item (the Ask panel, #121): a
+/// transient answer recipe whose task is the question, run like any other
+/// recipe (map-reduce on long transcripts, same refusals, same events).
+/// The answer is not written anywhere unless saved with
+/// `recipe_save_answer`.
+#[tauri::command]
+pub async fn recipe_ask(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    question: String,
+    profile_id: Option<String>,
+) -> Result<RecipeFinished, String> {
+    let question = recipes::answer::normalize_question(&question).map_err(|e| format!("{e:#}"))?;
+    let recipe = recipes::answer::question_recipe(&question).map_err(|e| format!("{e:#}"))?;
+    let settings = state.settings.lock().unwrap().clone();
+    let profile = recipe_profile(&settings, profile_id.as_deref())?;
+    run_recipe(app, &state, id, recipe, Some(question), profile).await
+}
+
+async fn run_recipe(
+    app: AppHandle,
+    state: &State<'_, AppState>,
+    id: String,
+    recipe: Recipe,
+    question: Option<String>,
+    profile: crate::llm::LlmProfile,
+) -> Result<RecipeFinished, String> {
+    use tauri::{Emitter, Manager};
+    let (archive, db) = archive_paths(state)?;
     recipes::run::check_profile(&profile).map_err(|e| format!("{e:#}"))?;
     {
-        let journal = crate::engine::session::journal_path(&state);
+        let journal = crate::engine::session::journal_path(state);
         let (archive, id) = (archive.clone(), id.clone());
         blocking(move || crate::engine::session::ensure_not_live(&journal, &archive, &id)).await?;
     }
     let cancel = state
         .recipe_runs
-        .begin(&id, &recipe)
+        .begin_with(&id, &recipe, question.as_deref())
         .map_err(|e| format!("{e:#}"))?;
 
     let handle = app.clone();
-    let (item_id, r) = (id.clone(), recipe.clone());
+    let (item_id, r, q, p) = (id.clone(), recipe.clone(), question.clone(), profile.clone());
     let joined = tauri::async_runtime::spawn_blocking(move || {
         let state = handle.state::<AppState>();
         /// Unregisters the run however the closure ends (panic included).
@@ -1017,50 +1064,67 @@ pub async fn recipe_run(
         }
         let _end = End(&state.recipe_runs, &item_id);
         let now = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
-        let model = recipes::run::ProfileModel {
-            profile: profile.clone(),
-        };
+        let model = recipes::run::ProfileModel { profile: p.clone() };
         let result = recipes::run::run_on_item(
             &archive,
             &item_id,
             &r,
-            &profile,
+            &p,
             &model,
             &now,
             &cancel,
-            &mut |p| {
-                state.recipe_runs.set_progress(&item_id, p);
+            &mut |step| {
+                state.recipe_runs.set_progress(&item_id, step);
                 let _ = handle.emit(
                     "recipe-progress",
                     RecipeProgressEvent {
                         item_id: item_id.clone(),
                         recipe_id: r.id.clone(),
                         recipe_name: r.name.clone(),
-                        progress: p,
+                        question: q.clone(),
+                        progress: step,
                     },
                 );
             },
         );
-        if result.is_ok() {
+        if result.as_ref().is_ok_and(|o| o.file.is_some()) {
             // Keep the index in step with the item folder.
             reindex(&archive, &db, |idx| idx.index_item(&item_id));
         }
-        result
+        result.map(|out| (out, now))
     })
     .await;
     let mut finished = RecipeFinished {
-        item_id: id,
+        item_id: id.clone(),
         recipe_id: recipe.id.clone(),
         recipe_name: recipe.name.clone(),
         file: None,
         answer: None,
+        answer_id: None,
+        question: question.clone(),
+        profile: profile.name.trim().to_string(),
+        model: profile.model.trim().to_string(),
+        external: profile.external,
         error: None,
         cancelled: false,
     };
     match joined {
-        Ok(Ok(out)) => {
+        Ok(Ok((out, now))) => {
             finished.file = out.file;
-            finished.answer = out.answer;
+            if let Some(text) = out.answer {
+                finished.answer_id = Some(state.recipe_answers.put(recipes::answer::PendingAnswer {
+                    item_id: id,
+                    recipe_id: recipe.id.clone(),
+                    recipe_name: recipe.name.clone(),
+                    question,
+                    profile: finished.profile.clone(),
+                    model: finished.model.clone(),
+                    external: profile.external,
+                    date: now,
+                    text: text.clone(),
+                }));
+                finished.answer = Some(text);
+            }
         }
         Ok(Err(e)) if e.downcast_ref::<recipes::engine::Cancelled>().is_some() => {
             finished.cancelled = true;
@@ -1070,6 +1134,38 @@ pub async fn recipe_run(
     }
     let _ = app.emit("recipe-finished", finished.clone());
     Ok(finished)
+}
+
+/// Save an answer shown in the Ask panel as a companion document next to
+/// the transcript (`<slug of the question>.md`, or of the recipe name),
+/// with provenance frontmatter. Never replaces an existing file. The
+/// answer is forgotten once saved. Returns the file name written.
+#[tauri::command]
+pub async fn recipe_save_answer(
+    state: State<'_, AppState>,
+    id: String,
+    answer_id: u64,
+) -> Result<String, String> {
+    let (archive, db) = archive_paths(&state)?;
+    let answer = state
+        .recipe_answers
+        .get(&id, answer_id)
+        .ok_or("this answer is no longer available — ask again to save it")?;
+    let item_id = id.clone();
+    let file = blocking(move || {
+        let file = recipes::answer::save_answer(&archive, &answer)?;
+        reindex(&archive, &db, |idx| idx.index_item(&item_id));
+        Ok(file)
+    })
+    .await?;
+    state.recipe_answers.remove(&id, answer_id);
+    Ok(file)
+}
+
+/// Forget an answer the Ask panel no longer shows (dismissed, replaced).
+#[tauri::command]
+pub fn recipe_dismiss_answer(state: State<'_, AppState>, id: String, answer_id: u64) -> bool {
+    state.recipe_answers.remove(&id, answer_id)
 }
 
 /// Stop the recipe running on an item after its current step. False when

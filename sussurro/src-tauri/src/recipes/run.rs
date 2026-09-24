@@ -137,6 +137,8 @@ pub struct RunStatus {
     pub item_id: String,
     pub recipe_id: String,
     pub recipe_name: String,
+    /// The question, for a free question from the Ask panel (#121).
+    pub question: Option<String>,
     pub progress: Option<Progress>,
 }
 
@@ -154,6 +156,11 @@ pub struct Runs {
 impl Runs {
     /// Register a run on `item_id`; refused while another one runs there.
     pub fn begin(&self, item_id: &str, recipe: &Recipe) -> Result<Arc<AtomicBool>> {
+        self.begin_with(item_id, recipe, None)
+    }
+
+    /// [`Runs::begin`] for a free question (shown in the run's status).
+    pub fn begin_with(&self, item_id: &str, recipe: &Recipe, question: Option<&str>) -> Result<Arc<AtomicBool>> {
         let mut map = self.running.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(r) = map.get(item_id) {
             bail!("“{}” is already running on this item — wait for it or cancel it", r.status.recipe_name);
@@ -166,6 +173,7 @@ impl Runs {
                     item_id: item_id.to_string(),
                     recipe_id: recipe.id.clone(),
                     recipe_name: recipe.name.clone(),
+                    question: question.map(str::to_string),
                     progress: None,
                 },
                 cancel: cancel.clone(),
@@ -369,11 +377,12 @@ mod tests {
         let runs = Runs::default();
         let flag = runs.begin("a", &recipe(0)).unwrap();
         assert!(runs.begin("a", &recipe(1)).is_err());
-        assert!(runs.begin("b", &recipe(1)).is_ok());
+        assert!(runs.begin_with("b", &recipe(1), Some("Why?")).is_ok());
         runs.set_progress("a", Progress { phase: engine::Phase::Map, done: 1, total: 3 });
         let list = runs.list();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].progress.unwrap().done, 1);
+        assert_eq!((list[0].question.as_deref(), list[1].question.as_deref()), (None, Some("Why?")));
         assert!(runs.cancel("a"));
         assert!(flag.load(std::sync::atomic::Ordering::SeqCst));
         runs.end("a");

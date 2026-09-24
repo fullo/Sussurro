@@ -110,6 +110,8 @@ pub struct AppState {
     pub dictation: crate::engine::priority::DictationGate,
     /// Recipe runs in flight, one per archive item (#120).
     pub recipe_runs: crate::recipes::run::Runs,
+    /// Ask panel answers not saved yet, in memory only (#121).
+    pub recipe_answers: crate::recipes::answer::Answers,
 }
 
 /// What streaming injection has already done for the current recording.
