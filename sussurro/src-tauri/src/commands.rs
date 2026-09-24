@@ -290,6 +290,9 @@ pub fn import_config(state: State<'_, AppState>, path: String) -> Result<String,
 /// What a finished engine run produced (also sent as `engine-done`).
 #[derive(serde::Serialize)]
 pub struct EngineResult {
+    /// The run's session id (as in its `engine-*` events; `engine-started`
+    /// announces it while the run is still going).
+    pub session_id: u64,
     pub item_id: String,
     pub item_type: crate::archive::ItemType,
     pub title: String,
@@ -319,6 +322,7 @@ pub async fn transcribe_file(
         )
         .map_err(|e| format!("{e:#}"))?;
         Ok(EngineResult {
+            session_id: r.session_id,
             item_id: r.item_id,
             item_type: r.meta.item_type,
             title: r.meta.title,

@@ -6,7 +6,8 @@
 //!   so decoding never runs more than a few segments ahead of STT.
 //! - [`Policy::Spill`] (live mic, which cannot wait): beyond a few segments
 //!   in RAM, audio goes to an append-only spool file on disk and is read
-//!   back in order. The spool is deleted when the queue is dropped.
+//!   back in order. The spool is deleted when the queue is dropped; one
+//!   left by a crash is deleted at the next start (`checkpoint`, #153).
 
 use super::segmenter::SegmentAudio;
 use anyhow::{Context, Result};

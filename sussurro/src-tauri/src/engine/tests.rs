@@ -125,6 +125,7 @@ fn job(dir: &std::path::Path, audio: Vec<f32>, policy: Policy) -> Job {
         voice_commands: false,
         archive_dir: dir.join("archive"),
         index_db: Some(dir.join("index.sqlite")),
+        journal: Some(dir.join(checkpoint::JOURNAL_FILE)),
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: "file:test.wav".into(),
@@ -193,6 +194,14 @@ fn pipeline_segments_cleans_with_context_and_writes_an_item() {
     assert_eq!(item.meta.language, "it");
     assert_eq!(item.meta.duration.as_deref(), Some("00:01:21"));
     assert!(!item.meta.title.is_empty());
+    // Finalized (#153): no in-progress marker, nothing left to recover, and
+    // the folder renamed from `…-untitled` after the auto title.
+    assert!(!item.recording && !item.interrupted);
+    assert!(!item.meta.extra.contains_key(archive::SESSION_KEY));
+    assert!(checkpoint::journal_entries(&dir.path().join(checkpoint::JOURNAL_FILE)).is_empty());
+    assert!(!r.item_id.ends_with("-untitled"), "{}", r.item_id);
+    assert_eq!(archive::list_items(&dir.path().join("archive")).len(), 1);
+    assert!(item.body.contains("W1X0"));
     // Indexed: searchable right away.
     let hits = archive::with_index(
         &dir.path().join("archive"),
@@ -265,15 +274,61 @@ fn deferred_mic_run_spills_and_still_writes_everything() {
 }
 
 #[test]
-fn stt_failure_reports_an_error_and_writes_nothing() {
+fn stt_failure_on_one_segment_is_marked_and_the_run_continues() {
     let dir = tempfile::tempdir().unwrap();
-    // Long enough that the decoder is blocked on a full queue when STT fails.
-    let audio = bursts(&[(true, 3.0), (false, 2.5)].repeat(10));
+    let audio = bursts(&[(true, 3.0), (false, 2.5)].repeat(5));
     let sink = Arc::new(VecSink::default());
     let mut stt = FakeStt {
         calls: 0,
         fail_on: Some(2),
     };
+    let cleaner = FakeCleaner::default();
+    let r = run(
+        job(dir.path(), audio, Policy::Block { max_queued: 1 }),
+        &mut stt,
+        &cleaner,
+        sink.clone(),
+    )
+    .unwrap();
+    assert_eq!(r.segments, 5);
+    let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+    let segs = &item.segments.segments;
+    let failed = &segs[1];
+    assert!(failed.text.is_empty() && failed.raw.is_empty() && failed.words.is_empty());
+    assert!(failed
+        .stt_error
+        .as_deref()
+        .unwrap()
+        .contains("model not downloaded"));
+    assert!(failed.end_ms > failed.start_ms, "keeps its time range");
+    assert!(segs
+        .iter()
+        .enumerate()
+        .all(|(i, s)| (i == 1) == s.stt_error.is_some()));
+    // Cleanup context skips the hole: segment 2 saw segment 0's text.
+    let seen = cleaner.seen.lock().unwrap();
+    assert_eq!(seen[1].0.as_deref(), Some(segs[0].text.as_str()));
+    assert!(!item.body.contains("model not downloaded"));
+    assert!(!item.interrupted);
+    // The UI hears about the failed segment too.
+    let events = sink.0.lock().unwrap();
+    assert!(events.iter().any(|e| matches!(e,
+        EngineEvent::Segment(p) if p.segment.stt_error.is_some())));
+}
+
+#[test]
+fn stt_that_never_works_fails_fast_and_writes_nothing() {
+    struct AlwaysFail(usize);
+    impl SegmentStt for AlwaysFail {
+        fn transcribe(&mut self, _: &[f32]) -> Result<TimedTranscript> {
+            self.0 += 1;
+            anyhow::bail!("model not downloaded")
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let audio = bursts(&[(true, 3.0), (false, 2.5)].repeat(10));
+    let sink = Arc::new(VecSink::default());
+    let mut stt = AlwaysFail(0);
     let err = run(
         job(dir.path(), audio, Policy::Block { max_queued: 1 }),
         &mut stt,
@@ -282,12 +337,199 @@ fn stt_failure_reports_an_error_and_writes_nothing() {
     )
     .unwrap_err();
     assert!(format!("{err:#}").contains("model not downloaded"));
+    assert_eq!(stt.0, MAX_STT_FAILURES_UP_FRONT, "stops early");
     assert!(archive::list_items(&dir.path().join("archive")).is_empty());
-    let events = sink.0.lock().unwrap();
-    match events.last().unwrap() {
-        EngineEvent::Error(e) => assert!(e.error.contains("model not downloaded")),
+    assert!(checkpoint::journal_entries(&dir.path().join(checkpoint::JOURNAL_FILE)).is_empty());
+    match sink.0.lock().unwrap().last().unwrap() {
+        EngineEvent::Error(e) => {
+            assert!(e.error.contains("model not downloaded"));
+            assert_eq!(e.item_id, None);
+            assert!(EngineEvent::Error(e.clone())
+                .payload()
+                .get("item_id")
+                .is_none());
+        }
         other => panic!("last event {other:?}"),
     }
+
+    // A short file whose only segment fails: the STT error, not "no speech".
+    let dir = tempfile::tempdir().unwrap();
+    let err = run(
+        job(
+            dir.path(),
+            bursts(&[(true, 3.0)]),
+            Policy::Block { max_queued: 1 },
+        ),
+        &mut AlwaysFail(0),
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("model not downloaded"));
+    assert!(archive::list_items(&dir.path().join("archive")).is_empty());
+}
+
+#[test]
+fn source_failure_mid_run_keeps_the_segments_done_as_interrupted() {
+    /// Replays audio, then fails like an unplugged mic or a corrupt file.
+    struct Breaks {
+        inner: VecSource,
+        after: usize,
+    }
+    impl Source for Breaks {
+        fn channel(&self) -> Channel {
+            self.inner.channel()
+        }
+        fn total_samples(&self) -> Option<u64> {
+            None
+        }
+        fn next_frame(&mut self) -> Result<Option<Frame>> {
+            if self.inner.pos >= self.after {
+                anyhow::bail!("decode error at packet 42");
+            }
+            self.inner.next_frame()
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let audio = bursts(&[(true, 3.0), (false, 2.5)].repeat(6));
+    let mut j = job(dir.path(), Vec::new(), Policy::Block { max_queued: 4 });
+    // Three bursts get through before the source breaks.
+    j.source = Box::new(Breaks {
+        inner: VecSource::new(audio, Channel::File),
+        after: (16_000.0 * 5.5 * 3.0) as usize,
+    });
+    let sink = Arc::new(VecSink::default());
+    let mut stt = FakeStt {
+        calls: 0,
+        fail_on: None,
+    };
+    let err = run(j, &mut stt, &FakeCleaner::default(), sink.clone()).unwrap_err();
+    assert!(format!("{err:#}").contains("decode error"));
+    let archive_dir = dir.path().join("archive");
+    let items = archive::list_items(&archive_dir);
+    assert_eq!(items.len(), 1);
+    assert!(items[0].interrupted && !items[0].recording);
+    let item = archive::read_item(&archive_dir, &items[0].id).unwrap();
+    assert!(
+        !item.segments.segments.is_empty(),
+        "segments before the failure kept"
+    );
+    assert!(item.body.contains("W1X0"));
+    assert!(checkpoint::journal_entries(&dir.path().join(checkpoint::JOURNAL_FILE)).is_empty());
+    // Indexed right away.
+    let hits = archive::with_index(&archive_dir, &dir.path().join("index.sqlite"), |i| {
+        i.search("w1x0", &Default::default())
+    })
+    .unwrap();
+    assert!(hits[0].interrupted);
+    let events = sink.0.lock().unwrap();
+    assert!(matches!(events.first().unwrap(), EngineEvent::Started(s)
+        if s.item_id == items[0].id && s.session_id == 7));
+    match events.last().unwrap() {
+        EngineEvent::Error(e) => {
+            assert_eq!(e.item_id.as_deref(), Some(items[0].id.as_str()));
+            assert_eq!(
+                EngineEvent::Error(e.clone()).payload()["item_id"],
+                items[0].id
+            );
+        }
+        other => panic!("last event {other:?}"),
+    }
+}
+
+#[test]
+fn unwritable_archive_fails_before_capturing_anything() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocked = dir.path().join("not-a-folder");
+    std::fs::write(&blocked, "x").unwrap();
+    let mut j = job(
+        dir.path(),
+        bursts(&[(true, 3.0)]),
+        Policy::Block { max_queued: 1 },
+    );
+    j.archive_dir = blocked.join("Sussurro");
+    let mut stt = FakeStt {
+        calls: 0,
+        fail_on: None,
+    };
+    let sink = Arc::new(VecSink::default());
+    let err = run(j, &mut stt, &FakeCleaner::default(), sink.clone()).unwrap_err();
+    assert!(format!("{err:#}").contains("cannot write to the archive folder"));
+    assert_eq!(stt.calls, 0, "no audio was processed");
+    assert!(matches!(
+        sink.0.lock().unwrap().last().unwrap(),
+        EngineEvent::Error(_)
+    ));
+}
+
+#[test]
+fn a_crash_mid_run_leaves_a_recoverable_item() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive_dir = dir.path().join("archive");
+    let journal = dir.path().join(checkpoint::JOURNAL_FILE);
+    let audio = bursts(&[(true, 3.0), (false, 2.5)].repeat(6));
+
+    // An STT that looks at the archive while the run is going, then "dies"
+    // (a panic unwinds the worker like a killed process never finishing).
+    struct Observer {
+        archive: std::path::PathBuf,
+        calls: usize,
+        seen: Arc<Mutex<Vec<usize>>>,
+    }
+    impl SegmentStt for Observer {
+        fn transcribe(&mut self, _: &[f32]) -> Result<TimedTranscript> {
+            self.calls += 1;
+            let items = archive::list_items(&self.archive);
+            assert_eq!(items.len(), 1, "item exists from the start");
+            assert!(items[0].recording);
+            let saved = archive::read_item(&self.archive, &items[0].id)
+                .unwrap()
+                .segments
+                .segments
+                .len();
+            self.seen.lock().unwrap().push(saved);
+            if self.calls == 4 {
+                panic!("simulated crash");
+            }
+            Ok(TimedTranscript {
+                text: format!("parte{}", self.calls),
+                ..Default::default()
+            })
+        }
+    }
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut j = job(dir.path(), audio, Policy::Block { max_queued: 1 });
+    j.meta.title = "Crash".into();
+    let mut stt = Observer {
+        archive: archive_dir.clone(),
+        calls: 0,
+        seen: seen.clone(),
+    };
+    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run(
+            j,
+            &mut stt,
+            &FakeCleaner::default(),
+            Arc::new(VecSink::default()),
+        )
+    }));
+    assert!(crashed.is_err());
+    // Before each STT call, every earlier segment was already on disk.
+    assert_eq!(*seen.lock().unwrap(), vec![0, 1, 2, 3]);
+    let items = archive::list_items(&archive_dir);
+    assert!(items[0].recording, "left in progress by the crash");
+
+    let data = dir.path().join("data");
+    let r = checkpoint::recover(&journal, Some(&archive_dir), None, &data);
+    assert_eq!(r.interrupted, vec![items[0].id.clone()]);
+    let item = archive::read_item(&archive_dir, &items[0].id).unwrap();
+    assert!(item.interrupted);
+    assert_eq!(item.segments.segments.len(), 3);
+    assert!(
+        item.body.contains("PARTE1") && item.body.contains("PARTE3"),
+        "{}",
+        item.body
+    );
 }
 
 #[test]
@@ -531,9 +773,20 @@ fn event_names_and_payloads() {
     let err = EngineEvent::Error(ErrorPayload {
         session_id: 1,
         error: "boom".into(),
+        item_id: None,
     });
     assert_eq!(err.name(), "engine-error");
     assert_eq!(err.payload()["error"], "boom");
+    let started = EngineEvent::Started(StartedPayload {
+        session_id: 3,
+        item_id: "2026/09/2026-09-24-untitled".into(),
+        item_type: ItemType::Note,
+        title: String::new(),
+        source: "mic".into(),
+    });
+    assert_eq!(started.name(), "engine-started");
+    assert_eq!(started.payload()["session_id"], 3);
+    assert_eq!(started.payload()["item_type"], "note");
 }
 
 /// End to end with a real whisper model: a WAV (speech, a pause, the same
@@ -592,6 +845,7 @@ fn engine_end_to_end_with_a_real_model() {
         voice_commands: false,
         archive_dir: archive_dir.clone(),
         index_db: Some(dir.path().join("index.sqlite")),
+        journal: None,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(&input),
@@ -682,6 +936,7 @@ fn engine_long_file_streams_with_bounded_memory() {
         voice_commands: false,
         archive_dir: dir.path().join("Sussurro"),
         index_db: None,
+        journal: None,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(path),

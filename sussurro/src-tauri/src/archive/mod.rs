@@ -7,10 +7,12 @@
 //! - [`frontmatter`]: YAML frontmatter read/write
 //! - [`render`]: `transcript.md` rendering
 //! - [`store`]: create / read / list / update / delete items
+//! - [`live`]: items written while a session runs (checkpoints, #153)
 //! - [`index`]: search index (rebuildable)
 
 pub mod frontmatter;
 pub mod index;
+pub mod live;
 pub mod paths;
 pub mod render;
 pub mod store;
@@ -22,7 +24,8 @@ pub use store::{
     create_item, delete_item, list_items, read_item, save_segments, update_meta, Item, ItemSummary,
 };
 pub use types::{
-    Channel, DocSpeaker, ItemMeta, ItemType, Participant, Segment, SegmentsFile, Word,
+    Channel, DocSpeaker, ItemMeta, ItemType, Participant, Segment, SegmentsFile, SessionState,
+    Word, SESSION_KEY,
 };
 
 /// File name of the search index inside the app data dir.
