@@ -23,12 +23,14 @@ export function filterByType(items: ItemSummary[], type: TypeFilter): ItemSummar
   return type === "all" ? items : items.filter((i) => i.meta.type === type);
 }
 
-/** Case-insensitive substring match on title, tags and categories — the
- *  client-side fallback for the full-text index. */
+/** Case-insensitive substring match on title, tags, categories and
+ *  participant names and emails — the client-side fallback for the
+ *  full-text index. */
 export function matchesQuery(item: ItemSummary, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const hay = [item.meta.title, ...item.meta.tags, ...item.meta.categories].join("\n").toLowerCase();
+  const people = (item.meta.participants ?? []).flatMap((p) => [p.name, p.email ?? ""]);
+  const hay = [item.meta.title, ...item.meta.tags, ...item.meta.categories, ...people].join("\n").toLowerCase();
   return q.split(/\s+/).every((w) => hay.includes(w));
 }
 

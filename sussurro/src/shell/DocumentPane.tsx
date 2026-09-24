@@ -4,11 +4,13 @@ import { TranscriptView, toLines } from "@sussurro/transcript";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, formatDurationLabel, formatLongDate, parseDuration } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
+import { hasParticipants } from "../lib/participants";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import type { Item, ItemMeta } from "../lib/types";
 import { ChipEditor } from "./ChipEditor";
 import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
 import { DocumentTab } from "./DocumentTab";
+import { ParticipantEditor } from "./ParticipantEditor";
 import { languageLabel } from "./labels";
 
 /** Source label for the header: "microphone", "file memo.m4a". */
@@ -248,6 +250,18 @@ export function DocumentPane({
           addLabel="+ category"
           onChange={(categories) => saveMeta({ ...meta, categories })}
         />
+        {/* P10: notes never have participants. */}
+        {hasParticipants(meta.type) && (
+          <>
+            <span className="opt-k">Participants</span>
+            <ParticipantEditor
+              label="Participants"
+              disabled={!!item.recording}
+              values={meta.participants}
+              onChange={(participants) => saveMeta({ ...meta, participants })}
+            />
+          </>
+        )}
       </div>
 
       {tab === "document" ? (
@@ -276,8 +290,9 @@ export function DocumentPane({
       {item.edited_externally && (
         <div className="notice-warn" role="note">
           <strong>Edited outside Sussurro.</strong> The markdown file wins: Sussurro won't overwrite{" "}
-          <code>transcript.md</code>, so line editing is off. Title, tags and categories still update its
-          frontmatter.{" "}
+          <code>transcript.md</code>, so line editing is off.{" "}
+          {hasParticipants(meta.type) ? "Title, tags, categories and participants" : "Title, tags and categories"} still
+          update its frontmatter.{" "}
           <button type="button" className="link-btn" onClick={reveal}>Open folder</button>
         </div>
       )}

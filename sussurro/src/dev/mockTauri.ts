@@ -105,7 +105,10 @@ let items: Stored[] = params.get("empty")
       },
       {
         id: "2026/09/podcast-daruma-ep-12-intervista",
-        meta: meta("Podcast Daruma, ep. 12 — intervista", "transcription", at(1, 17, 5), "00:48:10", "file:podcast-ep12.mp3", { tags: ["podcast"] }),
+        meta: meta("Podcast Daruma, ep. 12 — intervista", "transcription", at(1, 17, 5), "00:48:10", "file:podcast-ep12.mp3", {
+          tags: ["podcast"],
+          participants: [{ name: "Francesco Fullone", email: "francesco@example.com" }, { name: "Ospite" }],
+        }),
         segments: segs([
           "Benvenuti a una nuova puntata del podcast di Daruma.",
           "Oggi parliamo di software locale e di privacy con un ospite speciale.",
@@ -119,7 +122,10 @@ let items: Stored[] = params.get("empty")
       },
       {
         id: "2026/09/call-con-studio-verdi",
-        meta: meta("Call con Studio Verdi", "meeting", at(2, 11, 0), "00:38:02", "mic", { categories: ["clienti"] }),
+        meta: meta("Call con Studio Verdi", "meeting", at(2, 11, 0), "00:38:02", "mic", {
+          categories: ["clienti"],
+          participants: [{ name: "Anna Rossi", email: "anna@example.com" }, { name: "Marco Bianchi", email: "marco@example.com" }, { name: "Voice 1" }],
+        }),
         segments: segs([
           "Ok, partiamo dalla release 0.7: archivio e schermata New.",
           "La cartella in Documenti funziona su tutti e tre i sistemi, manca il test con OneDrive.",
@@ -194,7 +200,8 @@ function search(query: string, type?: string): ItemSummary[] {
     .flatMap((s) => {
       if (!q) return [toSummary(s)];
       const text = s.segments.map((x) => x.text).join(" ");
-      const hay = `${s.meta.title} ${text} ${s.meta.tags.join(" ")}`.toLowerCase();
+      const people = s.meta.participants.map((p) => `${p.name} ${p.email ?? ""}`).join(" ");
+      const hay = `${s.meta.title} ${text} ${s.meta.tags.join(" ")} ${s.meta.categories.join(" ")} ${people}`.toLowerCase();
       if (!q.split(/\s+/).every((w) => hay.includes(w))) return [];
       const at = text.toLowerCase().indexOf(q.split(/\s+/)[0]);
       if (at < 0) return [toSummary(s)];
@@ -725,7 +732,14 @@ function handle(cmd: string, a: Args): unknown {
     case "archive_update_meta": {
       const s = find(String(a.id));
       if (!s) throw `no archive item '${a.id}'`;
-      s.meta = { ...(a.meta as ItemMeta) };
+      const next = a.meta as ItemMeta;
+      // Mirrors store::update_meta: notes never get participants (P10, #124).
+      const participants = (next.participants ?? [])
+        .map((p) => ({ name: p.name.trim(), ...(p.email?.trim() ? { email: p.email.trim() } : {}) }))
+        .filter((p) => p.name);
+      if (next.type === "note" && participants.length && JSON.stringify(participants) !== JSON.stringify(s.meta.participants))
+        throw "notes have no participants — participants belong to meetings and transcriptions. Remove them, or change the item's type first.";
+      s.meta = { ...next, participants };
       return toItem(s);
     }
     case "archive_update_segment":
