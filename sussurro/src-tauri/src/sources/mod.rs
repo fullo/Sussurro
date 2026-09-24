@@ -5,9 +5,11 @@
 //!
 //! 0.7 sources: [`mic::MicSource`] (long sessions, separate from the hotkey
 //! recorder) and [`file::FileSource`] (decoded from a path, streamed).
+//! 0.8: [`url`] fetches a link to a temporary file for the file source.
 
 pub mod file;
 pub mod mic;
+pub mod url;
 
 pub use crate::archive::Channel;
 
