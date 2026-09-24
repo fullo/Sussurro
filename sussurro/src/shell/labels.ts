@@ -1,4 +1,5 @@
 import { CLEANUP_LEVELS, LANGUAGES } from "../lib/constants";
+import { cleanupProfile } from "../lib/llmProfiles";
 import type { Settings } from "../lib/types";
 
 /** "Whisper large-v3-turbo" / "Parakeet TDT v3" */
@@ -8,11 +9,14 @@ export function sttLabel(s: Pick<Settings, "engine" | "whisper_model">): string 
   return `Whisper ${m}`;
 }
 
-/** "Light · llama3.2:3b" / "Off" */
-export function cleanupLabel(s: Pick<Settings, "cleanup_level" | "ollama_model">): string {
+/** "Light · llama3.2:3b" / "Off" — the model of the cleanup profile. */
+export function cleanupLabel(
+  s: Pick<Settings, "cleanup_level" | "llm_profiles" | "cleanup_profile">,
+): string {
   if (s.cleanup_level === "none") return "Off";
   const level = CLEANUP_LEVELS.find((l) => l.value === s.cleanup_level)?.label ?? s.cleanup_level;
-  return `${level} · ${s.ollama_model}`;
+  const model = cleanupProfile(s)?.model;
+  return model ? `${level} · ${model}` : level;
 }
 
 export function languageLabel(code: string): string {

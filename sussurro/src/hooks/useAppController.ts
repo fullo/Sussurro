@@ -4,6 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { cleanupProfile, cleanupServerChanged, modelListed, patchCleanupProfile } from "../lib/llmProfiles";
 import type {
   HistoryEntry,
   OllamaStatus,
@@ -24,7 +25,7 @@ export function useAppController() {
   const [downloadingModel, setDownloadingModel] = useState(false);
   const [pullingModel, setPullingModel] = useState(false);
   const [busy, setBusy] = useState("");
-  /** null = Ollama unreachable → free-text fallback */
+  /** Models on the cleanup profile's server; null = unreachable → free-text fallback */
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
   /** GGML whisper models already present in the models folder (reuse). */
   const [installedWhisper, setInstalledWhisper] = useState<string[]>([]);
@@ -103,18 +104,19 @@ export function useAppController() {
 
   // Resolves false (after showing the error) when the backend rejects the save.
   const save = async (next: Settings): Promise<boolean> => {
-    const serverChanged =
-      !settings ||
-      next.ollama_url !== settings.ollama_url ||
-      next.cleanup_api !== settings.cleanup_api ||
-      next.api_key !== settings.api_key;
+    const serverChanged = cleanupServerChanged(settings, next);
     setSettings(next);
+    // The old server's model list must not be adopted into the new profile.
+    if (serverChanged) setOllamaModels(null);
     try {
       await invoke("set_settings", { settings: next });
       setBusy("");
       setModelReady(await invoke<boolean>("model_is_downloaded"));
       loadWhisperModels();
-      if (serverChanged) loadOllamaModels();
+      if (serverChanged) {
+        loadOllamaModels();
+        checkOllama();
+      }
       return true;
     } catch (e) {
       setBusy(String(e));
@@ -125,23 +127,23 @@ export function useAppController() {
   // If Ollama is running with models but the configured cleanup model isn't one
   // of them, adopt an installed model instead of forcing a specific download —
   // and tell the user what was picked (Matteo's onboarding feedback).
+  // The model goes into the cleanup profile (#119).
+  const cleanup = settings ? cleanupProfile(settings) : null;
   useEffect(() => {
     const s = settings;
-    if (!s || s.cleanup_api !== "ollama") return;
+    const profile = s ? cleanupProfile(s) : null;
+    if (!s || !profile || profile.api !== "ollama") return;
     if (!ollamaModels || ollamaModels.length === 0) return;
-    const have = ollamaModels.some(
-      (m) => m === s.ollama_model || m.startsWith(s.ollama_model + ":")
-    );
-    if (have) return;
+    if (modelListed(ollamaModels, profile.model)) return;
     const pick =
       ollamaModels.find((m) => /llama3\.2|qwen2\.5|gemma2|phi3|mistral|instruct/i.test(m)) ||
       ollamaModels[0];
     setModelAdoptNote(
-      `Found ${ollamaModels.length} model${ollamaModels.length > 1 ? "s" : ""} on Ollama — selected “${pick}” for cleanup. Change it below anytime.`
+      `Found ${ollamaModels.length} model${ollamaModels.length > 1 ? "s" : ""} on Ollama — selected “${pick}” for cleanup in the “${profile.name}” profile. Change it anytime.`
     );
-    save({ ...s, ollama_model: pick });
+    save(patchCleanupProfile(s, { model: pick }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ollamaModels, settings?.cleanup_api, settings?.ollama_model]);
+  }, [ollamaModels, cleanup?.id, cleanup?.api, cleanup?.model]);
 
   const recordingNow = status.startsWith("recording");
 
@@ -200,7 +202,7 @@ export function useAppController() {
   const pullOllamaModel = async () => {
     if (!settings) return;
     setPullingModel(true);
-    setBusy(`Pulling ${settings.ollama_model}… (can take minutes)`);
+    setBusy(`Pulling ${cleanupProfile(settings)?.model ?? "the model"}… (can take minutes)`);
     try {
       await invoke("pull_ollama_model");
       setBusy("");

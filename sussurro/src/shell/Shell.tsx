@@ -8,6 +8,7 @@ import { withDefaults } from "../lib/library";
 import type { Item } from "../lib/types";
 import { LibraryScreen } from "./LibraryScreen";
 import { ModelsScreen } from "./ModelsScreen";
+import { RecipesScreen } from "./RecipesScreen";
 import { NewScreen, type NewDefaults } from "./NewScreen";
 import { Rail, type Screen } from "./Rail";
 import { SettingsScreen, type SectionId } from "./SettingsScreen";
@@ -18,7 +19,7 @@ const SCREEN_KEY = "shellScreen";
 function loadScreen(): Screen {
   try {
     const s = localStorage.getItem(SCREEN_KEY);
-    if (s === "new" || s === "library" || s === "models" || s === "settings") return s;
+    if (s === "new" || s === "library" || s === "recipes" || s === "models" || s === "settings") return s;
   } catch {
     /* storage unavailable: fall through */
   }
@@ -26,8 +27,9 @@ function loadScreen(): Screen {
 }
 
 /** Workspace preview (proposal A, #114): left rail with New · Library ·
- *  Models · Settings. Dictation stays tray-first and is configured under
- *  Settings → Dictation; People and Recipes arrive in later releases. */
+ *  Recipes · Models · Settings. Dictation stays tray-first and is configured
+ *  under Settings → Dictation. Recipes hosts the LLM profiles (#119) until
+ *  recipes themselves land (#120); People arrives in a later release. */
 export function Shell({ ctl }: { ctl: Ctl }) {
   const engine = useEngineRuns();
   const [screen, setScreenState] = useState<Screen>(loadScreen);
@@ -149,13 +151,21 @@ export function Shell({ ctl }: { ctl: Ctl }) {
             onNew={() => setScreen("new")}
           />
         )}
-        {screen === "models" && <ModelsScreen ctl={ctl} onOpenSettings={(s) => { setSection(s); setScreen("settings"); }} />}
+        {screen === "recipes" && <RecipesScreen ctl={ctl} />}
+        {screen === "models" && (
+          <ModelsScreen
+            ctl={ctl}
+            onOpenSettings={(s) => { setSection(s); setScreen("settings"); }}
+            onOpenRecipes={() => setScreen("recipes")}
+          />
+        )}
         {screen === "settings" && (
           <SettingsScreen
             ctl={ctl}
             section={section}
             onSection={setSection}
             onOpenModels={() => setScreen("models")}
+            onOpenRecipes={() => setScreen("recipes")}
             onAbout={() => setAboutOpen(true)}
           />
         )}

@@ -1,18 +1,30 @@
 import { AdvancedGroup, CollapsibleCard } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { EngineField, ModelField, ModelsFolderField } from "../settings/SpeechCard";
+import { cleanupProfile, profileHost } from "../lib/llmProfiles";
 import { cleanupLabel } from "./labels";
 import type { SectionId } from "./SettingsScreen";
 
 /** Models: the same engine / model choice and download as the classic
  *  Speech card (shared components, not a copy). */
-export function ModelsScreen({ ctl, onOpenSettings }: { ctl: Ctl; onOpenSettings: (s: SectionId) => void }) {
+export function ModelsScreen({
+  ctl,
+  onOpenSettings,
+  onOpenRecipes,
+}: {
+  ctl: Ctl;
+  onOpenSettings: (s: SectionId) => void;
+  onOpenRecipes: () => void;
+}) {
   const { settings, installedWhisper, modelReady } = ctl;
+  const profile = cleanupProfile(settings);
   return (
     <div className="sh-screen">
       <header className="sh-topbar">
         <h1>Models</h1>
-        <span className="sh-muted">Everything runs on this machine</span>
+        <span className="sh-muted">
+          {profile?.external ? "Speech runs on this machine; cleanup uses an external profile" : "Everything runs on this machine"}
+        </span>
       </header>
       <div className="sh-scroll cards-col">
         <CollapsibleCard storageKey="modelsStt" title={<>Speech-to-text <span className="via">engine & model</span></>} collapsible={false}>
@@ -30,15 +42,25 @@ export function ModelsScreen({ ctl, onOpenSettings }: { ctl: Ctl; onOpenSettings
           </AdvancedGroup>
         </CollapsibleCard>
 
-        <CollapsibleCard storageKey="modelsLlm" title={<>Cleanup <span className="via">local LLM</span></>} collapsible={false}>
+        <CollapsibleCard storageKey="modelsLlm" title={<>Cleanup <span className="via">LLM profile</span></>} collapsible={false}>
           <p className="card-hint">
-            Currently: <strong>{cleanupLabel(settings)}</strong> via{" "}
-            {settings.cleanup_api === "ollama" ? "Ollama" : "an OpenAI-compatible server"}. The server, model and
-            prompts are set in Settings → Cleanup.
+            Currently: <strong>{cleanupLabel(settings)}</strong>
+            {profile && (
+              <>
+                {" "}on the <strong>{profile.name}</strong> profile ({profile.api === "ollama" ? "Ollama" : "OpenAI-compatible"}
+                {profile.external ? `, external: ${profileHost(profile)}` : ", on this machine"})
+              </>
+            )}
+            . Servers and models are LLM profiles, edited in Recipes; the level and prompts are in Settings → Cleanup.
           </p>
-          <button type="button" className="btn-ghost sh-btn" onClick={() => onOpenSettings("cleanup")}>
-            Open cleanup settings
-          </button>
+          <div className="row-gap">
+            <button type="button" className="btn-ghost sh-btn" onClick={onOpenRecipes}>
+              Edit LLM profiles
+            </button>
+            <button type="button" className="btn-ghost sh-btn" onClick={() => onOpenSettings("cleanup")}>
+              Open cleanup settings
+            </button>
+          </div>
         </CollapsibleCard>
       </div>
     </div>

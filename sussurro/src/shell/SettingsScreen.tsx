@@ -41,12 +41,14 @@ export function SettingsScreen({
   section,
   onSection,
   onOpenModels,
+  onOpenRecipes,
   onAbout,
 }: {
   ctl: Ctl;
   section: SectionId;
   onSection: (s: SectionId) => void;
   onOpenModels: () => void;
+  onOpenRecipes: () => void;
   onAbout: () => void;
 }) {
   return (
@@ -101,7 +103,7 @@ export function SettingsScreen({
               }
             />
           )}
-          {section === "cleanup" && <CleanupCard ctl={ctl} collapsible={false} />}
+          {section === "cleanup" && <CleanupCard ctl={ctl} collapsible={false} onEditProfiles={onOpenRecipes} />}
           {section === "personalization" && <PersonalizationCard ctl={ctl} collapsible={false} />}
           {section === "behavior" && <BehaviorCard ctl={ctl} collapsible={false} />}
           {section === "history" && <HistoryCard ctl={ctl} collapsible={false} />}

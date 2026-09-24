@@ -2,12 +2,15 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Ctl } from "../hooks/useAppController";
+import { cleanupProfile } from "../lib/llmProfiles";
 
 /** First-run checklist: permissions, Ollama, speech model. Hidden once
  *  everything is in place or when dismissed for this window session. */
 export function SetupBanner({ ctl }: { ctl: Ctl }) {
   const [setupDismissed, setSetupDismissed] = useState(false);
   const { settings, ollamaStatus, ollamaModels, permissions, modelReady } = ctl;
+  // The Ollama checks only concern an Ollama cleanup profile (#119).
+  const onOllama = cleanupProfile(settings)?.api === "ollama";
 
   const needed =
     (ollamaStatus !== null &&
@@ -64,7 +67,7 @@ export function SetupBanner({ ctl }: { ctl: Ctl }) {
             </button>
           </li>
         )}
-        {settings.cleanup_api === "ollama" && ollamaStatus && !ollamaStatus.installed && (
+        {onOllama && ollamaStatus && !ollamaStatus.installed && (
           <li>
             <span className="setup-bad">✗</span> Ollama is not installed — cleanup
             and translation need it (dictation still works, raw only).
@@ -76,14 +79,14 @@ export function SetupBanner({ ctl }: { ctl: Ctl }) {
             </button>
           </li>
         )}
-        {settings.cleanup_api === "ollama" && ollamaStatus?.installed && !ollamaStatus.running && (
+        {onOllama && ollamaStatus?.installed && !ollamaStatus.running && (
           <li>
             <span className="setup-bad">✗</span> Ollama is installed but not
             running — start the Ollama app (or run <code>ollama serve</code>),
             then Re-check.
           </li>
         )}
-        {settings.cleanup_api === "ollama" && ollamaStatus?.running && !ollamaStatus.has_model && (!ollamaModels || ollamaModels.length === 0) && (
+        {onOllama && ollamaStatus?.running && !ollamaStatus.has_model && (!ollamaModels || ollamaModels.length === 0) && (
           <li>
             <span className="setup-bad">✗</span> No models on your Ollama
             server yet — pull one to enable cleanup.

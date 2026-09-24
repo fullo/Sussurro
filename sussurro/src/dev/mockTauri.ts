@@ -7,7 +7,7 @@
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import type { Item, ItemMeta, ItemSummary, Segment, Settings } from "../lib/types";
+import type { Item, ItemMeta, ItemSummary, LlmProfile, Segment, Settings } from "../lib/types";
 
 const params = new URLSearchParams(window.location.search);
 
@@ -16,10 +16,12 @@ const settings: Settings = {
   push_to_talk: true,
   whisper_model: "ggml-large-v3-turbo-q5_0.bin",
   engine: "whisper",
-  ollama_url: "http://localhost:11434",
-  ollama_model: "llama3.2:3b",
-  cleanup_api: "ollama",
-  api_key: "",
+  llm_profiles: [
+    { id: "local", name: "Local", api: "ollama", base_url: "http://localhost:11434", api_key: "", model: "llama3.2:3b", external: false },
+    { id: "lm-studio", name: "LM Studio", api: "openai", base_url: "http://localhost:1234/v1", api_key: "", model: "qwen2.5-7b-instruct", external: false },
+    { id: "work", name: "Work", api: "openai", base_url: "https://llm.example.com/v1", api_key: "sk-demo", model: "gpt-4o-mini", external: true },
+  ],
+  cleanup_profile: "local",
   cleanup_level: "light",
   output_language: "",
   dictionary: ["Sussurro", "Tauri", "DarumaHQ"],
@@ -281,6 +283,16 @@ async function transcribeFile(path: string, itemType: "note" | "transcription", 
   return result;
 }
 
+/* ---------- LLM profiles (#119) ---------- */
+
+/** Fake model listing per profile: Ollama and localhost servers answer,
+ *  "*.example.com" hosts behave as unreachable (to preview the error). */
+function listModels(p: LlmProfile | undefined): string[] {
+  if (!p) throw "no profile";
+  if (/example\.com/.test(p.base_url)) throw "OpenAI-compatible server not reachable";
+  return p.api === "ollama" ? ["llama3.2:3b", "qwen2.5:3b"] : ["qwen2.5-7b-instruct", "gemma-3-4b-it"];
+}
+
 /* ---------- command table ---------- */
 
 type Args = Record<string, unknown>;
@@ -306,7 +318,9 @@ function handle(cmd: string, a: Args): unknown {
     case "list_whisper_models":
       return ["ggml-large-v3-turbo-q5_0.bin", "ggml-small.bin"];
     case "list_ollama_models":
-      return ["llama3.2:3b", "qwen2.5:3b"];
+      return listModels(settings.llm_profiles.find((p) => p.id === settings.cleanup_profile) ?? settings.llm_profiles[0]);
+    case "llm_list_models":
+      return listModels(a.profile as LlmProfile);
     case "list_input_devices":
       return ["MacBook Pro Microphone", "USB Audio Device"];
     case "get_default_prompts":
