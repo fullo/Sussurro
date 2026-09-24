@@ -49,7 +49,18 @@ npm run tauri build    # production bundle (AppImage, .deb, .rpm)
 cd src-tauri && cargo test   # headless test suite
 ```
 
+The D-Bus client library (`libdbus-1-dev`) comes in with `libgtk-3-dev`;
+the tray, `enigo` and the Secret Service keyring below all link it.
+
 ## Runtime notes
+
+- **API keys of LLM profiles** are kept in the Secret Service keyring
+  (GNOME Keyring, KWallet, KeePassXC with Secret Service enabled…), under
+  the service `com.sussurro.app`. Without one — a headless box, a minimal
+  window manager with no keyring daemon — Sussurro falls back to saving the
+  key in clear text in `settings.json`, and the profile editor says so. Start
+  a keyring (e.g. `gnome-keyring-daemon`) and restart Sussurro: keys still
+  in the file are moved into it at startup.
 
 - **Clipboard (required on both X11 and Wayland).** Sussurro's Copy buttons and
   paste-injection put text on the system clipboard, and on Linux a clipboard set

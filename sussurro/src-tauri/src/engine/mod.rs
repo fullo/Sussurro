@@ -254,6 +254,10 @@ pub struct Job {
     /// the embedder, loaded when the first segment needs it. `None` (the
     /// default) = no speakers, no embeddings.
     pub speakers: Option<crate::speakers::Tracker>,
+    /// The subtitles setting is *Always* (P7, #133): write `transcript.srt`
+    /// once the item is final (meetings and transcriptions only; a
+    /// `transcript.srt` the user edited is kept).
+    pub write_subtitles: bool,
 }
 
 /// A [`Cleaner`] whose first call records the run's external send in the
@@ -395,6 +399,7 @@ fn run_inner(
         meta,
         external_cleanup,
         mut speakers,
+        write_subtitles,
     } = job;
     let reindex = |id: &str| {
         if let Some(db) = &index_db {
@@ -505,6 +510,13 @@ fn run_inner(
             return (Err(e), kept);
         }
     };
+    if write_subtitles {
+        // The transcript is saved; subtitles are a derived extra, so a
+        // failure here is logged, not a failed run.
+        if let Err(e) = archive::export::refresh_subtitles(&archive_dir, &item_id) {
+            eprintln!("engine: transcript.srt of {item_id} not written ({e:#})");
+        }
+    }
     if item_id != placeholder_id {
         // A search during the session may have indexed the old folder.
         if let Some(db) = &index_db {

@@ -4,6 +4,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { CollapsibleCard, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, fmtCount } from "../lib/format";
+import type { SubtitlesMode } from "../lib/types";
 import { BehaviorCard } from "../settings/BehaviorCard";
 import { CleanupCard } from "../settings/CleanupCard";
 import { DictationCard } from "../settings/DictationCard";
@@ -161,6 +162,20 @@ function ArchiveCard({ ctl }: { ctl: Ctl }) {
             Show in {fileManagerName()}
           </button>
         </div>
+      </div>
+      <div className="field">
+        <div className="field-label">
+          <span>Subtitles <Tip text="For meetings and transcriptions (notes never get subtitles): transcript.srt, next to the transcript, with at most two short rows per subtitle. Automatically, it is written and kept up to date every time the transcript is saved — but never over a transcript.srt you edited yourself. Otherwise, use Create .srt or Export in the document's side panel." /></span>
+          <small>transcript.srt for meetings and transcriptions</small>
+        </div>
+        <select
+          value={settings.subtitles ?? "on_request"}
+          onChange={(e) => save({ ...settings, subtitles: e.target.value as SubtitlesMode })}
+          aria-label="Subtitles"
+        >
+          <option value="on_request">Only when I ask</option>
+          <option value="always">Create .srt automatically on every save</option>
+        </select>
       </div>
       <div className="field">
         <div className="field-label">

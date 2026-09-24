@@ -28,7 +28,15 @@ pub struct LlmProfile {
     pub base_url: String,
     /// Bearer token for the OpenAI-compatible API. Optional — most local
     /// servers ignore it. Never sent to the Ollama native API.
+    ///
+    /// In memory (and over IPC to the settings UI) this is the key itself.
+    /// On disk it is written only when [`LlmProfile::api_key_storage`] says
+    /// it is not in the OS credential store (#159, see `crate::secrets`).
     pub api_key: String,
+    /// Where [`LlmProfile::api_key`] is kept (#159). Set by the backend
+    /// (`crate::secrets`), never trusted from the UI.
+    #[serde(default, skip_serializing_if = "KeyStorage::is_none")]
+    pub api_key_storage: KeyStorage,
     /// Model name (Ollama) or id (OpenAI-compatible).
     pub model: String,
     /// Text sent to this profile leaves the machine. Inferred from
@@ -52,6 +60,38 @@ pub struct LlmProfile {
     /// profiles.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cleanup_opt_in: String,
+}
+
+/// Where a profile's API key lives (#159).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyStorage {
+    /// Not placed anywhere yet: no key, or a clear-text key from a file
+    /// written before #159 that the next start moves to the credential store.
+    #[default]
+    None,
+    /// In the OS credential store (macOS Keychain, Windows Credential
+    /// Manager, Secret Service); `settings.json` holds no key.
+    Keychain,
+    /// In clear text in `settings.json`: no credential store worked when it
+    /// was saved. The profile editor warns about it, and every start tries
+    /// the store again.
+    File,
+    /// In the credential store, but reading it failed this session (locked
+    /// keychain, denied prompt): the key is unknown until the next start.
+    /// Written to disk as [`KeyStorage::Keychain`], so the entry is kept.
+    Unreadable,
+}
+
+impl KeyStorage {
+    pub fn is_none(&self) -> bool {
+        *self == KeyStorage::None
+    }
+
+    /// The key has (or may have) an entry in the credential store.
+    pub fn in_store(self) -> bool {
+        matches!(self, KeyStorage::Keychain | KeyStorage::Unreadable)
+    }
 }
 
 /// Context window assumed when a profile doesn't state one: small enough
@@ -96,6 +136,7 @@ impl LlmProfile {
             api,
             base_url: base_url.to_string(),
             api_key: api_key.to_string(),
+            api_key_storage: KeyStorage::None,
             model: model.to_string(),
             external: infer_external(base_url),
             context_tokens: 0,

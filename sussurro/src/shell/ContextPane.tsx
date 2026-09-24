@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName } from "../lib/format";
 import {
@@ -17,9 +18,10 @@ import {
   questionProblem,
   runName,
 } from "../lib/ask";
+import { type ExportChoice, exportChoices, exportFileName, hasSubtitles, subtitlesInfo } from "../lib/export";
 import { profileHostOf } from "../lib/privacy";
 import { companionFileName, progressFraction, progressLabel } from "../lib/recipes";
-import type { Item, Recipe, RecipeFinished, RecipeProgress, RecipeRunStatus } from "../lib/types";
+import type { Item, Recipe, RecipeFinished, RecipeProgress, RecipeRunStatus, SubtitlesStatus } from "../lib/types";
 import { useExternalConsent } from "./ConsentDialog";
 import { Markdown } from "./Markdown";
 import { SpeakerPanel } from "./SpeakerPanel";
@@ -108,6 +110,25 @@ export function ContextPane({
   idRef.current = id;
   const paneRef = useRef<HTMLElement>(null);
   const { consentFor, dialog, asking } = useExternalConsent();
+  const [exporting, setExporting] = useState(false);
+  const [srtBusy, setSrtBusy] = useState(false);
+  const [srtStatus, setSrtStatus] = useState<SubtitlesStatus | null>(null);
+
+  // Where transcript.srt stands; again after every save of the item (the
+  // Always setting rewrites it then).
+  useEffect(() => {
+    if (!hasSubtitles(item.meta.type)) {
+      setSrtStatus(null);
+      return;
+    }
+    let live = true;
+    invoke<SubtitlesStatus>("archive_subtitles_status", { id })
+      .then((st) => live && setSrtStatus(st))
+      .catch(() => live && setSrtStatus(null));
+    return () => {
+      live = false;
+    };
+  }, [id, item]);
 
   useEffect(() => {
     invoke<Recipe[]>("recipes_list")
@@ -231,6 +252,45 @@ export function ContextPane({
       ctl.setBusy(String(e));
     }
   };
+
+  const exportAs = async (c: ExportChoice) => {
+    let path: string | null;
+    try {
+      path = await saveDialog({
+        title: `Export as ${c.label}`,
+        defaultPath: exportFileName(id, c.format),
+        filters: [{ name: c.filter, extensions: [c.format] }],
+      });
+    } catch (e) {
+      ctl.setBusy(String(e));
+      return;
+    }
+    if (!path) return;
+    setExporting(true);
+    try {
+      const written = await invoke<string>("archive_export", { id, format: c.format, path });
+      ctl.flash(`Exported to ${written}`);
+    } catch (e) {
+      ctl.setBusy(String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const createSrt = async () => {
+    setSrtBusy(true);
+    try {
+      const st = await invoke<SubtitlesStatus>("archive_create_subtitles", { id });
+      if (idRef.current === id) setSrtStatus(st);
+      ctl.flash(`${st.file} written next to the transcript.`);
+    } catch (e) {
+      ctl.setBusy(String(e));
+    } finally {
+      setSrtBusy(false);
+    }
+  };
+
+  const subtitles = subtitlesInfo(item.meta.type, settings.subtitles ?? "on_request", srtStatus, !!item.recording);
 
   const questionIssue = question.trim() ? questionProblem(question) : "";
   const note = externalNote(profile);
@@ -426,7 +486,21 @@ export function ContextPane({
 
       <section className="ctx-sect" aria-labelledby="ctx-export-h">
         <h3 id="ctx-export-h">Export</h3>
-        <div className="ctx-exports">
+        <div className="ctx-exports" role="group" aria-label="Save as a file">
+          {exportChoices(item.meta.type).map((c) => (
+            <button
+              key={c.format}
+              type="button"
+              className="btn-ghost sh-btn"
+              onClick={() => exportAs(c)}
+              disabled={exporting}
+              title={`${c.title} — choose where to save it`}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+        <div className="ctx-exports ctx-exports-more">
           <button type="button" className="btn-ghost sh-btn" onClick={() => copy(plainText(item), "Text")} disabled={!plainText(item)}>
             Copy text
           </button>
@@ -442,7 +516,22 @@ export function ContextPane({
             Show folder
           </button>
         </div>
-        <p className="ctx-note">Subtitles (.srt, .vtt) arrive in a later release.</p>
+        {subtitles && (
+          <div className="ctx-subs">
+            <p className="ctx-note">{subtitles.note}</p>
+            {subtitles.action && (
+              <button
+                type="button"
+                className="btn-ghost sh-btn"
+                onClick={createSrt}
+                disabled={srtBusy}
+                title="Writes transcript.srt next to the transcript"
+              >
+                {srtBusy ? "Writing…" : subtitles.action}
+              </button>
+            )}
+          </div>
+        )}
       </section>
       {dialog}
     </aside>

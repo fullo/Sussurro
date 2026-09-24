@@ -1,6 +1,7 @@
 name: Test
 
-# Fast feedback on every push/PR: frontend type-check + full Rust test suite.
+# Fast feedback on every push/PR: frontend type-check + full Rust test suite,
+# plus the browser extension (build + web-ext lint) in a parallel job.
 # Runs on Ubuntu (CPU-only whisper build — no Vulkan SDK needed).
 on:
   push:
@@ -8,6 +9,44 @@ on:
   pull_request:
 
 jobs:
+  # Browser extension (extension/): type-check, unit tests, both builds and
+  # `web-ext lint` on the Firefox build. Its own job, so it runs in parallel
+  # with the Rust one and needs no Rust toolchain.
+  extension:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build (Chrome + Firefox)
+        run: npm run build
+
+      - name: web-ext lint (Firefox build)
+        run: npm run lint
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-zips
+          path: extension/dist/*.zip
+          retention-days: 14
+
   test:
     # 24.04: the ort (onnxruntime) prebuilt binaries need glibc >= 2.38
     runs-on: ubuntu-24.04

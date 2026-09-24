@@ -128,6 +128,7 @@ fn job(dir: &std::path::Path, audio: Vec<f32>, policy: Policy) -> Job {
         journal: Some(dir.join(checkpoint::JOURNAL_FILE)),
         external_cleanup: None,
         speakers: None,
+        write_subtitles: false,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: "file:test.wav".into(),
@@ -724,6 +725,46 @@ fn local_cleanup_logs_nothing() {
     assert!(archive::read_item(&archive_dir, &r.item_id).unwrap().external_hosts.is_empty());
 }
 
+/// The subtitles setting *Always* (#133): the finished item gets its
+/// `transcript.srt`; a note never does (P10), and *On request* writes none.
+#[test]
+fn always_subtitles_write_the_sidecar_at_the_end_of_a_run() {
+    for (item_type, write, expect) in [
+        (ItemType::Transcription, true, true),
+        (ItemType::Meeting, true, true),
+        (ItemType::Note, true, false),
+        (ItemType::Transcription, false, false),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let audio = bursts(&[(false, 1.0), (true, 3.0), (false, 2.0), (true, 2.0), (false, 1.0)]);
+        let mut j = job(dir.path(), audio, Policy::Block { max_queued: 2 });
+        j.meta.item_type = item_type;
+        j.write_subtitles = write;
+        let mut stt = FakeStt {
+            calls: 0,
+            fail_on: None,
+        };
+        let r = run(
+            j,
+            &mut stt,
+            &FakeCleaner::default(),
+            Arc::new(VecSink::default()),
+        )
+        .unwrap();
+        let srt = dir
+            .path()
+            .join("archive")
+            .join(&r.item_id)
+            .join(archive::export::SUBTITLES_FILE);
+        assert_eq!(srt.is_file(), expect, "{item_type:?} write={write}");
+        if expect {
+            let text = std::fs::read_to_string(&srt).unwrap();
+            assert!(text.starts_with("1\n00:00:0"), "{text}");
+            assert!(text.contains(" --> "), "{text}");
+        }
+    }
+}
+
 #[test]
 fn silence_only_input_is_an_error_not_an_empty_item() {
     let dir = tempfile::tempdir().unwrap();
@@ -1022,6 +1063,7 @@ fn engine_end_to_end_with_a_real_model() {
         journal: None,
         external_cleanup: None,
         speakers: None,
+        write_subtitles: false,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(&input),
@@ -1116,6 +1158,7 @@ fn engine_long_file_streams_with_bounded_memory() {
         journal: None,
         external_cleanup: None,
         speakers: None,
+        write_subtitles: false,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(path),

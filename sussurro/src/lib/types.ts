@@ -18,6 +18,17 @@ export interface AppStyle {
 /** Chat API an LLM profile speaks (P6): Ollama native or OpenAI-compatible. */
 export type LlmApi = "ollama" | "openai";
 
+/** Where a profile's API key lives (llm::KeyStorage). */
+export type KeyStorage = "none" | "keychain" | "file" | "unreadable";
+
+/** The OS credential store as the profile editor sees it (secrets::StoreStatus). */
+export interface CredentialStoreStatus {
+  available: boolean;
+  /** "the macOS Keychain", "Windows Credential Manager", … */
+  name: string;
+  error: string;
+}
+
 /** A named LLM connection (llm/profile.rs). */
 export interface LlmProfile {
   id: string;
@@ -26,6 +37,11 @@ export interface LlmProfile {
   base_url: string;
   /** Bearer token, OpenAI-compatible only; "" = none. */
   api_key: string;
+  /** Where the key is kept (#159), set by the backend and ignored when
+   *  sent back: the OS credential store, settings.json as a fallback when no
+   *  store works, or a store entry that couldn't be read this session.
+   *  Absent = no key (or not placed yet). */
+  api_key_storage?: KeyStorage;
   model: string;
   /** Text sent to this profile leaves the machine (inferred from the URL,
    *  overridable). Drives the privacy warning. */
@@ -113,6 +129,25 @@ export interface Settings {
   ui_v2: boolean;
   /** 0.9 meeting preview (E12): speaker labels and the speaker panel. */
   meetings_enabled?: boolean;
+  /** Subtitles setting (P7, #133): `transcript.srt` only when asked, or on
+   *  every save. Meetings and transcriptions only (P10). */
+  subtitles: SubtitlesMode;
+}
+
+export type SubtitlesMode = "on_request" | "always";
+
+/** What an archive item can be exported as (#133). */
+export type ExportFormat = "md" | "txt" | "srt" | "vtt";
+
+/** Where an item's `transcript.srt` stands (`archive_subtitles_status`). */
+export interface SubtitlesStatus {
+  /** `transcript.srt`. */
+  file: string;
+  /** A meeting or a transcription: notes have no subtitles (P10). */
+  applicable: boolean;
+  exists: boolean;
+  /** Changed since the app wrote it (or not the app's): never overwritten. */
+  edited_externally: boolean;
 }
 
 export interface OllamaStatus {

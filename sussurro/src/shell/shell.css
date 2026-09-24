@@ -720,6 +720,10 @@ button.pchip-name:hover { text-decoration: underline; }
 .ctx-saved { font-size: 12px; overflow-wrap: anywhere; }
 .ctx-exports { display: flex; flex-wrap: wrap; gap: 6px; }
 .ctx-exports .sh-btn { font-size: 12px; }
+.ctx-exports-more { margin-top: 6px; }
+.ctx-subs { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; }
+.ctx-subs .ctx-note { margin: 0; }
+.ctx-subs .sh-btn { font-size: 12px; }
 .ctx-toggle { display: inline-flex; align-items: center; gap: 6px; }
 .ctx-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c-dark); }
 .ctx-dot.running { animation: daruma-pulse 1.2s ease-in-out infinite; }

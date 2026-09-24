@@ -16,7 +16,7 @@ pub fn set_settings(
     app: AppHandle,
     state: State<'_, AppState>,
     mut settings: Settings,
-) -> Result<(), String> {
+) -> Result<Settings, String> {
     // Valid LLM profiles and a cleanup selection that names one (#119).
     settings.normalize();
     // The model name flows into models_dir.join(name) for download and load —
@@ -32,6 +32,11 @@ pub fn set_settings(
     } else if !settings.autostart && currently_enabled {
         autolaunch.disable().map_err(|e| e.to_string())?;
     }
+    // Profile API keys go to the OS credential store (#159) — written when
+    // new or changed, deleted when cleared or when their profile is. Where
+    // no store works, a key stays in settings.json (the editor warns).
+    let prev = state.settings.lock().unwrap().clone();
+    crate::secrets::sync_keys(&mut settings, &prev, &crate::secrets::OsStore);
     settings
         .save(&state.paths.settings_file)
         .map_err(|e| e.to_string())?;
@@ -42,11 +47,23 @@ pub fn set_settings(
         (current.ui_v2 != settings.ui_v2).then_some(settings.ui_v2)
     };
     // Main thread: must never wait for the transcriber (#154).
+    // The UI learns where each key ended up (keychain, or the file fallback).
+    let saved = settings.clone();
     crate::pipeline::swap_settings(&state, settings);
     if let Some(on) = workspace {
         crate::apply_main_window_layout(&app, on);
     }
-    Ok(())
+    Ok(saved)
+}
+
+/// Whether a profile API key saved now goes to the OS credential store
+/// (#159); the profile editor warns when it would land in settings.json.
+#[tauri::command]
+pub async fn credential_store_status() -> Result<crate::secrets::StoreStatus, String> {
+    // May block on D-Bus (Linux): off the main thread.
+    tauri::async_runtime::spawn_blocking(|| crate::secrets::status(&crate::secrets::OsStore))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Drive dictation from the in-app Dictate button: mirrors the global hotkey
@@ -686,15 +703,17 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
             settings.hotkey,
             if settings.push_to_talk { "push-to-talk" } else { "toggle" }
         );
+        // Never the key itself (#159): only where it is kept.
         let _ = writeln!(
             r,
-            "Cleanup: {:?} · profile \"{}\" ({:?}, {}) · {} @ {} (running: {llm_running}, model present: {llm_has_model}) · {} profile(s)",
+            "Cleanup: {:?} · profile \"{}\" ({:?}, {}) · {} @ {} (running: {llm_running}, model present: {llm_has_model}) · API key: {} · {} profile(s)",
             settings.cleanup_level,
             profile.name,
             profile.api,
             if profile.external { "external" } else { "local" },
             profile.model,
-            profile.base_url,
+            crate::secrets::redact_url(&profile.base_url),
+            crate::secrets::key_summary(&profile),
             settings.llm_profiles.len()
         );
         let _ = writeln!(
@@ -846,6 +865,23 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| e.to_string())?
 }
 
+/// Whether the subtitles setting is *Always* (P7, #133).
+fn subtitles_always(state: &AppState) -> bool {
+    state.settings.lock().unwrap().subtitles == crate::settings::SubtitlesMode::Always
+}
+
+/// With the *Always* subtitles setting, bring the item's `transcript.srt`
+/// up to date after its transcript was saved. The save already succeeded:
+/// a failure here is only logged.
+fn refresh_subtitles_if(always: bool, root: &Path, id: &str) {
+    if !always {
+        return;
+    }
+    if let Err(e) = archive::export::refresh_subtitles(root, id) {
+        eprintln!("archive: transcript.srt of {id} not updated ({e:#})");
+    }
+}
+
 /// Keep the index in step after the app changed an item. The files are
 /// already written, so an index failure is only logged: the next search
 /// re-syncs (or rebuilds) from the folder anyway.
@@ -901,9 +937,12 @@ pub async fn archive_update_meta(
     meta: ItemMeta,
 ) -> Result<Item, String> {
     let (dir, db) = archive_paths(&state)?;
+    let always = subtitles_always(&state);
     blocking(move || {
         let item = archive::update_meta(&dir, &id, &meta)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
+        // Speaker labels and the item type shape the subtitles too.
+        refresh_subtitles_if(always, &dir, &id);
         Ok(item.without_embeddings())
     })
     .await
@@ -940,12 +979,14 @@ async fn edit_segment_command(
 ) -> Result<Item, String> {
     let (dir, db) = archive_paths(state)?;
     let journal = crate::engine::session::journal_path(state);
+    let always = subtitles_always(state);
     blocking(move || {
         // A live item can't be line-edited (#158): the store refuses the
         // `recording` marker, this a session that still owns the item.
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         let item = archive::edit_segment(&dir, &id, segment_id, edit)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
+        refresh_subtitles_if(always, &dir, &id);
         Ok(item.without_embeddings())
     })
     .await
@@ -1000,10 +1041,13 @@ async fn edit_speakers_command(
 ) -> Result<Item, String> {
     let (dir, db) = archive_paths(state)?;
     let journal = crate::engine::session::journal_path(state);
+    let always = subtitles_always(state);
     blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         let item = archive::edit_speakers(&dir, &id, edit)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
+        // Speaker names and moves change the subtitles too.
+        refresh_subtitles_if(always, &dir, &id);
         Ok(item.without_embeddings())
     })
     .await
@@ -1060,6 +1104,56 @@ pub fn archive_reveal(
 pub async fn archive_rebuild_index(state: State<'_, AppState>) -> Result<usize, String> {
     let (dir, db) = archive_paths(&state)?;
     blocking(move || archive::rebuild_index(&dir, &db)).await
+}
+
+/// Export an item to a file the user picked in the save dialog: `.md`,
+/// `.txt`, `.srt` or `.vtt` (#133; subtitles refused for notes, P10). The
+/// format's extension is added when the path lacks it. Returns the path
+/// written.
+#[tauri::command]
+pub async fn archive_export(
+    state: State<'_, AppState>,
+    id: String,
+    format: archive::export::ExportFormat,
+    path: String,
+) -> Result<String, String> {
+    let (dir, _) = archive_paths(&state)?;
+    if path.trim().is_empty() {
+        return Err("no file chosen".to_string());
+    }
+    blocking(move || {
+        let written = archive::export::export_to_file(&dir, &id, format, Path::new(&path))?;
+        Ok(written.display().to_string())
+    })
+    .await
+}
+
+/// Whether the item can have subtitles and where its `transcript.srt`
+/// stands (missing, the app's, edited outside).
+#[tauri::command]
+pub async fn archive_subtitles_status(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<archive::export::SubtitlesStatus, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || archive::export::subtitles_status(&dir, &id)).await
+}
+
+/// "Create .srt": write or update the item's `transcript.srt` (#133).
+/// Refused for notes (P10), live items and a `transcript.srt` edited
+/// outside the app.
+#[tauri::command]
+pub async fn archive_create_subtitles(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<archive::export::SubtitlesStatus, String> {
+    let (dir, _) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
+    blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        archive::export::create_subtitles(&dir, &id)
+    })
+    .await
 }
 
 // ---- Recipes (0.8, #120): prompts that write companion documents ----

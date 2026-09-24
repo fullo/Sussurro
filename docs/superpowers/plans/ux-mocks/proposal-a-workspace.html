@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Proposal A (adapted) — Workspace with sidebar</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="mock.css">
+<style>
+/* Page-local additions. Red stays reserved for the recording state, so selection,
+   editing and focus use ink (--c-dark) here instead of the brand colour. */
+:root { --warn:#92400e; --warn-soft:#fef3c7; --warn-border:#f5d38a; --tx-soft:#e6f4f1; --mt-soft:#e8f0fd; }
+.changes { max-width:1120px; background:var(--c-surface); border:1px solid var(--border); border-radius:var(--radius-lg); padding:14px 18px; margin:0 0 8px; font-size:13px; }
+.changes h2 { font-size:14px; margin:0 0 6px; }
+.changes ul { margin:6px 0 0; padding-left:18px; }
+.changes li { margin:2px 0; }
+.caption { max-width:1120px; font-size:12px; color:var(--c-text-light); margin:8px 0 0; }
+
+.app { display:grid; grid-template-columns:160px minmax(0,1fr); height:720px; }
+.rail { background:var(--c-surface); border-right:1px solid var(--border); display:flex; flex-direction:column; padding:14px 10px; min-width:0; }
+.rail .brand { display:flex; align-items:center; gap:8px; font-weight:700; font-size:15px; padding:4px 8px 16px; }
+.nav a { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:var(--radius); color:var(--c-text); text-decoration:none; font-size:14px; }
+.nav a .ic { width:16px; text-align:center; color:var(--c-text-light); font-size:13px; }
+.nav a.active { background:var(--c-surface-alt); font-weight:600; }
+.nav a.active .ic { color:var(--c-dark); }
+.nav a .n { margin-left:auto; font-size:11px; color:var(--c-text-light); background:var(--c-surface-alt); border-radius:var(--pill); padding:0 7px; }
+.nav a.active .n { background:#fff; }
+.rail .foot { margin-top:auto; display:flex; flex-direction:column; gap:6px; font-size:11.5px; color:var(--c-text-light); padding:8px; border-top:1px solid var(--border); }
+.main { display:grid; grid-template-rows:52px minmax(0,1fr); min-width:0; min-height:0; }
+.topbar { display:flex; align-items:center; gap:10px; padding:0 16px; border-bottom:1px solid var(--border); background:var(--c-surface); min-width:0; }
+.topbar h1 { font-size:16px; margin:0; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.topbar .right { margin-left:auto; display:flex; gap:8px; align-items:center; flex-shrink:0; }
+.body { display:grid; grid-template-columns:232px minmax(0,1fr) 268px; min-height:0; }
+
+/* library list */
+.lib { border-right:1px solid var(--border); background:var(--c-bg); display:flex; flex-direction:column; min-width:0; overflow:hidden; }
+.lib .filters { padding:10px 12px; display:flex; flex-direction:column; gap:8px; border-bottom:1px solid var(--border); }
+.lib .search { display:flex; align-items:center; gap:6px; }
+.lib .search .input { flex:1; min-width:0; }
+.fchips { display:flex; flex-wrap:wrap; gap:4px; }
+.fchip { font-size:11.5px; padding:2px 9px; border-radius:var(--pill); border:1px solid var(--border-strong); background:var(--c-surface); color:var(--c-text-light); white-space:nowrap; }
+.fchip.on { background:var(--c-dark); color:#fff; border-color:var(--c-dark); }
+.fchip.facet { border-style:dashed; }
+.fchip.facet.set { border-style:solid; background:var(--c-surface-alt); color:var(--c-text); }
+.lib .item { padding:9px 12px; border-bottom:1px solid var(--border); font-size:13px; border-left:3px solid transparent; }
+.lib .item.active { background:var(--c-surface); border-left-color:var(--c-dark); }
+.lib .item b { display:block; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lib .item .sub { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; color:var(--c-text-light); font-size:11.5px; margin-top:3px; }
+.lib .count { margin-top:auto; padding:8px 12px; font-size:11.5px; color:var(--c-text-light); border-top:1px solid var(--border); }
+
+/* item-type badges and the external-LLM marker */
+.tb { display:inline-block; font-size:10.5px; font-weight:600; letter-spacing:.02em; padding:0 7px; border-radius:var(--pill); line-height:17px; }
+.tb.note { background:var(--c-surface-alt); color:var(--c-text); border:1px solid var(--border); }
+.tb.meeting { background:var(--mt-soft); color:#1a4fa8; }
+.tb.transcription { background:var(--tx-soft); color:#0b5e57; }
+.ext { display:inline-flex; align-items:center; gap:3px; font-size:10.5px; font-weight:600; color:var(--warn); background:var(--warn-soft); border:1px solid var(--warn-border); border-radius:var(--pill); padding:0 6px; line-height:16px; }
+
+/* document pane */
+.doc { background:var(--c-surface); display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; }
+.tabs { display:flex; gap:2px; padding:0 14px; border-bottom:1px solid var(--border); }
+.tabs span { padding:10px 10px 9px; font-size:13px; color:var(--c-text-light); border-bottom:2px solid transparent; white-space:nowrap; }
+.tabs span.active { color:var(--c-dark); font-weight:600; border-bottom-color:var(--c-dark); }
+.tabs span.off { color:#a3a39c; }
+.tabs span small { font-size:10.5px; font-weight:400; }
+.meta { padding:10px 14px; border-bottom:1px solid var(--border); display:grid; grid-template-columns:78px minmax(0,1fr); gap:6px 8px; font-size:12px; align-items:center; }
+.meta .k { color:var(--c-text-light); }
+.meta .v { display:flex; flex-wrap:wrap; gap:4px; min-width:0; }
+.mtag { display:inline-flex; align-items:center; gap:4px; font-size:11.5px; padding:1px 8px; border-radius:var(--pill); background:var(--c-surface-alt); border:1px solid var(--border); white-space:nowrap; }
+.mtag .x { color:var(--c-text-light); }
+.mtag.add { background:transparent; border-style:dashed; color:var(--c-text-light); }
+.pchip { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; padding:1px 8px 1px 6px; border-radius:var(--pill); background:var(--c-surface); border:1px solid var(--border-strong); white-space:nowrap; }
+.pchip i { width:8px; height:8px; border-radius:50%; display:block; }
+.pchip .em { color:var(--c-text-light); }
+.pchip.anon { border-style:dashed; }
+.docscroll { padding:8px 10px; overflow:hidden; min-height:0; flex:1; }
+.line { grid-template-columns:100px minmax(0,1fr); gap:2px 10px; }
+.line .chip { grid-column:1; grid-row:1; }
+.line .t { grid-column:1; grid-row:2; padding:0 0 0 4px; }
+.line .txt { grid-column:2; grid-row:1 / span 2; }
+.line .chip { justify-self:start; max-width:100px; overflow:hidden; white-space:nowrap; }
+.chip.v1 { background:var(--sp-3); } .chip.v2 { background:var(--sp-4); }
+.line .txt.editing { outline:2px solid var(--c-dark); }
+.line .txt .cursor { background:var(--c-dark); }
+.line-actions { grid-column:2; grid-row:3; flex-wrap:wrap; padding-top:4px; }
+.livebar { display:flex; align-items:center; gap:8px; padding:6px 14px; border-top:1px solid var(--border); font-size:11.5px; color:var(--c-text-light); background:var(--c-bg); }
+
+/* context pane */
+.ctx { border-left:1px solid var(--border); padding:12px 14px; background:var(--c-bg); display:flex; flex-direction:column; gap:14px; overflow:hidden; min-width:0; }
+.ctx h3 { font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--c-text-light); margin:0 0 6px; display:flex; align-items:baseline; gap:6px; }
+.ctx h3 .hint { text-transform:none; letter-spacing:0; font-weight:400; font-size:11px; margin-left:auto; }
+.spk { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; padding:3px 0; font-size:12px; }
+.spk .src { color:var(--c-text-light); font-size:11px; }
+.spk .pct { margin-left:auto; color:var(--c-text-light); font-size:11px; }
+.spk .acts { flex-basis:100%; display:flex; gap:10px; padding-left:4px; font-size:11.5px; }
+.lnk { color:var(--c-dark); text-decoration:underline; text-underline-offset:2px; text-decoration-color:var(--border-strong); }
+.recipes { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.recipes .btn { justify-content:center; font-size:12px; padding:6px 8px; }
+.ask { display:flex; gap:6px; margin-top:6px; }
+.ask .input { flex:1; min-width:0; height:34px; display:flex; align-items:center; font-size:12px; }
+.profiles { margin-top:8px; border:1px solid var(--border); border-radius:var(--radius); background:var(--c-surface); font-size:12px; }
+.profiles .p { display:flex; align-items:center; gap:7px; padding:6px 9px; }
+.profiles .p + .p { border-top:1px solid var(--border); }
+.profiles .dot { width:12px; height:12px; border-radius:50%; border:1.5px solid var(--border-strong); flex-shrink:0; }
+.profiles .dot.on { border:4px solid var(--c-dark); }
+.badge-local { margin-left:auto; font-size:10.5px; font-weight:600; color:#166534; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:var(--pill); padding:0 6px; }
+.badge-ext { margin-left:auto; font-size:10.5px; font-weight:600; color:var(--warn); background:var(--warn-soft); border:1px solid var(--warn-border); border-radius:var(--pill); padding:0 6px; white-space:nowrap; }
+.exports { display:flex; flex-wrap:wrap; gap:5px; }
+.exports .btn { font-family:var(--f-mono); font-size:11.5px; padding:4px 9px; }
+.exports .btn.dis { color:#a3a39c; background:var(--c-surface-alt); border-style:dashed; }
+.small { font-size:11.5px; }
+
+/* screen 2 — New */
+.newbody { padding:0 22px 20px; overflow:hidden; background:var(--c-bg); }
+.srctabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin:0 -22px 18px; padding:0 22px; background:var(--c-surface); }
+.srctabs span { padding:11px 12px 10px; font-size:13px; color:var(--c-text-light); border-bottom:2px solid transparent; white-space:nowrap; }
+.srctabs span.active { color:var(--c-dark); font-weight:600; border-bottom-color:var(--c-dark); }
+.newgrid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:18px; }
+.drop { border:2px dashed var(--border-strong); border-radius:var(--radius-lg); background:var(--c-surface); padding:22px; text-align:center; color:var(--c-text-light); }
+.drop b { color:var(--c-text); display:block; font-size:15px; margin-bottom:4px; }
+.file { display:flex; align-items:center; gap:10px; margin-top:12px; padding:9px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--c-surface); font-size:13px; text-align:left; }
+.file .mono { color:var(--c-text-light); }
+.types { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.typecard { border:1px solid var(--border); border-radius:var(--radius); background:var(--c-surface); padding:10px 12px; font-size:12px; color:var(--c-text-light); }
+.typecard b { display:flex; align-items:center; gap:7px; color:var(--c-text); font-size:13px; margin-bottom:3px; }
+.typecard.sel { border-color:var(--c-dark); box-shadow:0 0 0 1px var(--c-dark); }
+.typecard .dot { width:12px; height:12px; border-radius:50%; border:1.5px solid var(--border-strong); }
+.typecard.sel .dot { border:4px solid var(--c-dark); }
+.opt { display:grid; grid-template-columns:118px minmax(0,1fr); gap:8px 12px; align-items:center; font-size:13px; }
+.opt .k { color:var(--c-text-light); font-size:12px; }
+.opt .note { grid-column:2; font-size:11.5px; color:var(--c-text-light); margin-top:-4px; }
+.seg { display:inline-flex; border:1px solid var(--border-strong); border-radius:var(--radius); overflow:hidden; background:var(--c-surface); }
+.seg span { padding:4px 10px; font-size:12px; border-right:1px solid var(--border); color:var(--c-text-light); }
+.seg span:last-child { border-right:0; }
+.seg span.on { background:var(--c-dark); color:#fff; }
+.sect { font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--c-text-light); margin:0 0 10px; }
+
+/* screen 3 — formatted document */
+.md { padding:14px 22px; overflow:hidden; font-family:var(--f-serif); color:var(--c-text); flex:1; }
+.prov { font-family:var(--f-sans); font-size:11.5px; color:var(--c-text-light); display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:12px; }
+.tldr { font-family:var(--f-sans); background:var(--c-surface-alt); border:1px solid var(--border); border-left:3px solid var(--c-dark); border-radius:var(--radius); padding:9px 12px; font-size:13px; margin-bottom:12px; }
+.tldr b { font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin-right:6px; }
+.md h1 { font-size:21px; margin:4px 0 8px; }
+.md h2 { font-size:16px; margin:14px 0 6px; font-family:var(--f-sans); }
+.md h3 { font-size:13.5px; margin:10px 0 4px; font-family:var(--f-sans); }
+.md p { margin:0 0 6px; font-size:14px; }
+.md table { border-collapse:collapse; font-family:var(--f-sans); font-size:12.5px; margin-top:6px; width:100%; }
+.md th, .md td { border:1px solid var(--border); padding:5px 9px; text-align:left; }
+.md th { background:var(--c-surface-alt); font-weight:600; }
+
+/* screen 4 — settings */
+.setbody { display:grid; grid-template-columns:180px minmax(0,1fr); min-height:0; }
+.subnav { border-right:1px solid var(--border); padding:12px 10px; background:var(--c-bg); display:flex; flex-direction:column; gap:2px; }
+.subnav span { padding:7px 10px; border-radius:var(--radius); font-size:13px; }
+.subnav span.active { background:var(--c-surface); font-weight:600; box-shadow:var(--shadow); }
+.setcards { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px; padding:18px; align-content:start; background:var(--c-bg); }
+.setcards .opt { grid-template-columns:96px minmax(0,1fr); }
+.toggle { flex-shrink:0; }
+.kbd { font-family:var(--f-mono); font-size:12px; padding:2px 7px; border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:5px; background:var(--c-surface); }
+.radio { display:flex; align-items:flex-start; gap:8px; font-size:13px; padding:4px 0; }
+.radio .dot { width:14px; height:14px; border-radius:50%; border:1.5px solid var(--border-strong); margin-top:2px; flex-shrink:0; }
+.radio .dot.on { border:4.5px solid var(--c-dark); }
+.path { font-family:var(--f-mono); font-size:12px; padding:6px 10px; border:1px solid var(--border-strong); border-radius:var(--radius); background:var(--c-surface); flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* narrow variant */
+.app.narrow { grid-template-columns:56px minmax(0,1fr); height:400px; position:relative; }
+.app.narrow .rail { padding:14px 6px; align-items:center; }
+.app.narrow .nav a { justify-content:center; padding:9px 0; width:40px; }
+.app.narrow .nav a .ic { width:auto; }
+.app.narrow .body { grid-template-columns:200px minmax(0,1fr); }
+.drawer { position:absolute; top:52px; right:0; bottom:0; width:276px; border-left:1px solid var(--border-strong); box-shadow:-12px 0 28px rgba(0,0,0,.12); }
+.scrim { position:absolute; top:52px; left:56px; right:276px; bottom:0; background:rgba(26,26,26,.08); }
+</style></head>
+<body>
+<a class="back" href="../2026-09-24-sussurro-speech-workbench.md">← Back to the plan</a>
+<h1 class="mock-title">Proposal A (adapted) — Workspace with sidebar</h1>
+<p class="mock-sub">Chosen proposal (P1), updated for the speech-to-text workbench re-scope (plan section 9). The app is a desktop workspace; hotkey dictation stays tray-first and is configured under Settings. Window ≈ 1120×740.</p>
+
+<div class="changes">
+  <h2>What changed versus the original proposal A</h2>
+  <ul>
+    <li><b>Rail</b> is now New · Library · People · Recipes · Models · Settings. <i>Meetings</i>, <i>Voices</i>, <i>Dictate</i> and <i>History</i> are gone: every source starts from <b>New</b>, every result lands in <b>Library</b> as a note, meeting or transcription (P10), and the dictation history moves under Settings → Dictation.</li>
+    <li>The <b>document pane</b> gains tabs (Transcript · Document · Audio) and a metadata header with editable tags, categories and participant chips (name + email from the People registry, P5).</li>
+    <li><b>Speakers</b> are only Meet names and generic <i>Voice N</i> labels (P8): no "known voice" matching and no voice map in the main view (optional card in 0.10). A voice can be renamed or linked to a person.</li>
+    <li>The <b>context pane</b> is Speakers · Ask · Export. Ask runs recipes on a chosen LLM profile, with external profiles visibly marked (P6); the Library marks items sent to an external LLM.</li>
+    <li>Engine and cleanup labels follow the current stack (Whisper / Ollama or any OpenAI-compatible server); no bundled-model claims. Audio is saved only on request (P9), subtitles per setting (P7).</li>
+  </ul>
+</div>
+
+<!-- ========================================================= SCREEN 1 -->
+<div class="screen-label">Screen 1 — Library + document (meeting item, live)</div>
+<div class="win" style="width:1120px">
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>Sussurro</div>
+  <div class="app">
+    <aside class="rail">
+      <div class="brand"><span class="daruma rec"></span> Sussurro</div>
+      <nav class="nav">
+        <a href="#"><span class="ic">＋</span>New</a>
+        <a href="#" class="active"><span class="ic">▤</span>Library <span class="n">142</span></a>
+        <a href="#"><span class="ic">◎</span>People <span class="n">18</span></a>
+        <a href="#"><span class="ic">☰</span>Recipes</a>
+        <a href="#"><span class="ic">◇</span>Models</a>
+        <a href="#"><span class="ic">⚙&#xFE0E;</span>Settings</a>
+      </nav>
+      <div class="foot">
+        <span><span class="pill rec">● Recording</span></span>
+        <span>STT: Whisper small · Metal</span>
+        <span>Cleanup: Local · Ollama qwen3</span>
+        <span>Extension: Chrome paired ✓</span>
+      </div>
+    </aside>
+    <section class="main">
+      <div class="topbar">
+        <h1>Weekly sync — release 0.7</h1>
+        <span class="pill rec">● Live 00:14:32</span>
+        <span class="muted small">meet.google.com · Chrome</span>
+        <div class="right">
+          <button class="btn sm">Re-detect speakers</button>
+          <button class="btn sm danger">■ Stop</button>
+        </div>
+      </div>
+      <div class="body">
+        <!-- Library list -->
+        <div class="lib">
+          <div class="filters">
+            <div class="search"><span class="input">⌕ Search title, text, people…</span></div>
+            <div class="fchips"><span class="fchip on">All</span><span class="fchip">Notes</span><span class="fchip">Meetings</span><span class="fchip">Transcriptions</span></div>
+            <div class="fchips"><span class="fchip facet">Tag ▾</span><span class="fchip facet">Category ▾</span><span class="fchip facet">Participant ▾</span><span class="fchip facet set">Date: Sep 2026 ×</span></div>
+          </div>
+          <div class="item active"><b>Weekly sync — release 0.7</b><div class="sub"><span class="tb meeting">Meeting</span>Today · live · 5 speakers</div></div>
+          <div class="item"><b>Idee per l'onboarding</b><div class="sub"><span class="tb note">Note</span>Today 08:40 · 3 min</div></div>
+          <div class="item"><b>Podcast Daruma, ep. 12 — intervista</b><div class="sub"><span class="tb transcription">Transcription</span>Yesterday · 48 min <span class="ext" title="A recipe on this item ran on an external LLM profile">↗ Sent to external LLM</span></div></div>
+          <div class="item"><b>Call con Studio Verdi</b><div class="sub"><span class="tb meeting">Meeting</span>22 Sep · 38 min · 3 speakers</div></div>
+          <div class="item"><b>Lezione: diritto d'autore e IA</b><div class="sub"><span class="tb transcription">Transcription</span>19 Sep · 1 h 12</div></div>
+          <div class="item"><b>Appunti treno per Bologna</b><div class="sub"><span class="tb note">Note</span>18 Sep · 2 min</div></div>
+          <div class="count">11 of 142 items · ~/Documents/Sussurro</div>
+        </div>
+
+        <!-- Document pane -->
+        <div class="doc">
+          <div class="tabs"><span class="active">Transcript</span><span>Document</span><span class="off">Audio <small>· not saved</small></span></div>
+          <div class="meta">
+            <span class="k">Tags</span>
+            <span class="v"><span class="mtag">release <span class="x">×</span></span><span class="mtag">roadmap <span class="x">×</span></span><span class="mtag add">+ tag</span></span>
+            <span class="k">Categories</span>
+            <span class="v"><span class="mtag">team <span class="x">×</span></span><span class="mtag add">+ category</span></span>
+            <span class="k">Participants</span>
+            <span class="v">
+              <span class="pchip"><i style="background:var(--sp-you)"></i>Francesco Fullone <span class="em">· you</span></span>
+              <span class="pchip"><i style="background:var(--sp-1)"></i>Anna Rossi <span class="em">· anna@example.com</span></span>
+              <span class="pchip"><i style="background:var(--sp-2)"></i>Marco Bianchi <span class="em">· marco@example.com</span></span>
+              <span class="pchip anon"><i style="background:var(--sp-3)"></i>Voice 1</span>
+              <span class="pchip anon"><i style="background:var(--sp-4)"></i>Voice 2</span>
+              <span class="mtag add">+ person</span>
+            </span>
+          </div>
+          <div class="docscroll">
+            <div class="tx">
+              <div class="line"><span class="t">00:00:04</span><span class="chip you"><i></i>You</span><span class="txt">Ok, partiamo dalla release 0.7: archivio e schermata New.</span></div>
+              <div class="line"><span class="t">00:00:11</span><span class="chip s1"><i></i>Anna Rossi</span><span class="txt">La cartella in Documenti funziona su tutti e tre i sistemi, manca il test con OneDrive.</span></div>
+              <div class="line"><span class="t">00:00:19</span><span class="chip s2"><i></i>Marco</span><span class="txt">Ho importato un file da un'ora: la memoria resta piatta, nessun picco.</span></div>
+              <div class="line sel"><span class="t">00:00:27</span><span class="chip v1"><i></i>Voice 1</span><span class="txt editing">Perfetto, allora chiudiamo il ramo entro venerdì?<span class="cursor"></span></span>
+                <span class="line-actions"><button class="btn sm">✎ Edit</button><button class="btn sm">Move to speaker ▾</button><button class="btn sm">Delete</button></span></div>
+              <div class="line"><span class="t">00:00:34</span><span class="chip v2"><i></i>Voice 2</span><span class="txt">Scusate, siamo in sala con Luca, vi sentiamo un po' a scatti.</span></div>
+              <div class="line"><span class="t">00:00:40</span><span class="chip you"><i></i>You</span><span class="txt">Nessun problema. Anna, le note del changelog le prepari tu?</span></div>
+              <div class="line partial"><span class="t">00:14:29</span><span class="chip you"><i></i>You</span><span class="txt">Quindi riassumendo: test OneDrive, changelog, poi…</span></div>
+            </div>
+          </div>
+          <div class="livebar"><span>Transcribing · 2 s behind</span><span style="margin-left:auto">Saving to transcript.md</span></div>
+        </div>
+
+        <!-- Context pane -->
+        <div class="ctx">
+          <div>
+            <h3>Speakers <span class="hint">this document</span></h3>
+            <div class="spk"><span class="chip you"><i></i>You</span><span class="src">mic channel</span><span class="pct">36%</span></div>
+            <div class="spk"><span class="chip s1"><i></i>Anna Rossi</span><span class="src">from Meet</span><span class="pct">27%</span></div>
+            <div class="spk"><span class="chip s2"><i></i>Marco</span><span class="src">from Meet</span><span class="pct">21%</span></div>
+            <div class="spk"><span class="chip v1"><i></i>Voice 1</span><span class="pct">9%</span><span class="acts"><a class="lnk">Rename</a><a class="lnk">Link to person…</a></span></div>
+            <div class="spk"><span class="chip v2"><i></i>Voice 2</span><span class="pct">7%</span><span class="acts"><a class="lnk">Rename</a><a class="lnk">Link to person…</a></span></div>
+          </div>
+          <div>
+            <h3>Ask</h3>
+            <div class="recipes">
+              <button class="btn">Formatted document</button><button class="btn">Summary</button>
+              <button class="btn">Action items</button><button class="btn">Decisions</button>
+            </div>
+            <div class="ask"><span class="input">Ask about this meeting…</span><button class="btn sm primary">Ask</button></div>
+            <div class="profiles">
+              <div class="p"><span class="dot on"></span>Local · Ollama qwen3<span class="badge-local">Local</span></div>
+              <div class="p"><span class="dot"></span>Work · api.example.com<span class="badge-ext">↗ External</span></div>
+            </div>
+            <p class="muted small" style="margin:6px 0 0">External runs show what goes where and need a click every time.</p>
+          </div>
+          <div>
+            <h3>Export</h3>
+            <div class="exports">
+              <button class="btn">.md</button><button class="btn">.txt</button><button class="btn">.srt</button><button class="btn">.vtt</button>
+              <button class="btn dis" title="Audio was not saved for this item">.wav · not saved</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+<p class="caption">Below ~1000 px of window width the context pane (Speakers · Ask · Export) collapses into a drawer opened from the top bar, and the rail shrinks to icons — today's window is 700 px wide. Narrow variant:</p>
+
+<div class="win" style="width:900px;margin-top:10px">
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>Sussurro · 900 px</div>
+  <div class="app narrow">
+    <aside class="rail">
+      <div class="brand" style="padding:4px 0 16px"><span class="daruma rec"></span></div>
+      <nav class="nav">
+        <a href="#"><span class="ic">＋</span></a>
+        <a href="#" class="active"><span class="ic">▤</span></a>
+        <a href="#"><span class="ic">◎</span></a>
+        <a href="#"><span class="ic">☰</span></a>
+        <a href="#"><span class="ic">◇</span></a>
+        <a href="#"><span class="ic">⚙&#xFE0E;</span></a>
+      </nav>
+    </aside>
+    <section class="main">
+      <div class="topbar">
+        <h1>Weekly sync — release 0.7</h1>
+        <span class="pill rec">● Live 00:14:32</span>
+        <div class="right"><button class="btn sm">Speakers · Ask · Export ▸</button><button class="btn sm danger">■ Stop</button></div>
+      </div>
+      <div class="body">
+        <div class="lib">
+          <div class="filters"><div class="search"><span class="input">⌕ Search…</span></div><div class="fchips"><span class="fchip on">All</span><span class="fchip">Notes</span><span class="fchip">Meetings</span></div></div>
+          <div class="item active"><b>Weekly sync — release 0.7</b><div class="sub"><span class="tb meeting">Meeting</span>Today · live</div></div>
+          <div class="item"><b>Idee per l'onboarding</b><div class="sub"><span class="tb note">Note</span>Today</div></div>
+          <div class="item"><b>Podcast Daruma, ep. 12</b><div class="sub"><span class="tb transcription">Transcription</span><span class="ext">↗ External</span></div></div>
+        </div>
+        <div class="doc">
+          <div class="tabs"><span class="active">Transcript</span><span>Document</span><span class="off">Audio</span></div>
+          <div class="docscroll"><div class="tx">
+            <div class="line"><span class="t">00:00:04</span><span class="chip you"><i></i>You</span><span class="txt">Ok, partiamo dalla release 0.7.</span></div>
+            <div class="line"><span class="t">00:00:11</span><span class="chip s1"><i></i>Anna Rossi</span><span class="txt">Manca il test con OneDrive.</span></div>
+            <div class="line"><span class="t">00:00:27</span><span class="chip v1"><i></i>Voice 1</span><span class="txt">Chiudiamo il ramo entro venerdì?</span></div>
+          </div></div>
+        </div>
+      </div>
+      <div class="scrim"></div>
+      <div class="ctx drawer">
+        <div><h3>Speakers <span class="hint">✕ close</span></h3>
+          <div class="spk"><span class="chip you"><i></i>You</span><span class="pct">36%</span></div>
+          <div class="spk"><span class="chip s1"><i></i>Anna Rossi</span><span class="pct">27%</span></div>
+          <div class="spk"><span class="chip v1"><i></i>Voice 1</span><span class="pct">9%</span><span class="acts"><a class="lnk">Rename</a><a class="lnk">Link to person…</a></span></div>
+        </div>
+        <div><h3>Ask</h3><div class="recipes"><button class="btn">Summary</button><button class="btn">Action items</button></div></div>
+        <div><h3>Export</h3><div class="exports"><button class="btn">.md</button><button class="btn">.srt</button><button class="btn dis">.wav · not saved</button></div></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ========================================================= SCREEN 2 -->
+<div class="screen-label">Screen 2 — New (File tab)</div>
+<div class="win" style="width:1120px">
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>Sussurro</div>
+  <div class="app" style="height:500px">
+    <aside class="rail">
+      <div class="brand"><span class="daruma"></span> Sussurro</div>
+      <nav class="nav">
+        <a href="#" class="active"><span class="ic">＋</span>New</a>
+        <a href="#"><span class="ic">▤</span>Library <span class="n">142</span></a>
+        <a href="#"><span class="ic">◎</span>People <span class="n">18</span></a>
+        <a href="#"><span class="ic">☰</span>Recipes</a>
+        <a href="#"><span class="ic">◇</span>Models</a>
+        <a href="#"><span class="ic">⚙&#xFE0E;</span>Settings</a>
+      </nav>
+      <div class="foot"><span class="pill">Idle</span><span>STT: Whisper small · Metal</span></div>
+    </aside>
+    <section class="main">
+      <div class="topbar"><h1>New</h1><span class="muted small">Every source becomes an item in your Library</span></div>
+      <div class="newbody">
+        <div class="srctabs"><span>Microphone</span><span class="active">File</span><span>Link</span><span>Meeting in the browser</span><span>System audio + mic</span></div>
+        <div class="newgrid">
+          <div class="stack" style="gap:14px">
+            <div class="drop">
+              <b>Drop an audio file here</b>
+              wav, mp3, m4a · or <a class="lnk">choose a file…</a>
+              <div class="file"><span>♪</span><span style="flex:1;min-width:0">memo-idee-onboarding.m4a</span><span class="mono">3 min 12 s · 2.9 MB</span><span class="muted">×</span></div>
+            </div>
+            <div>
+              <div class="sect">Item type</div>
+              <div class="types">
+                <div class="typecard sel"><b><span class="dot"></span>Note <span class="muted" style="font-weight:400;font-size:11px">default</span></b>Your own voice: a voice memo, a dictated idea. No speakers, no subtitles.</div>
+                <div class="typecard"><b><span class="dot"></span>Transcription</b>Audio recorded by others: podcast, interview, lecture. Optional speakers and subtitles.</div>
+              </div>
+            </div>
+            <div class="opt" style="grid-template-columns:118px minmax(0,1fr)">
+              <span class="k">Identify voices</span>
+              <span class="row"><span class="toggle"></span><span class="muted small">Label speakers as Voice 1, Voice 2… (File and Link)</span></span>
+            </div>
+          </div>
+          <div class="card" style="padding:16px 18px">
+            <div class="sect">Options — same for every source</div>
+            <div class="opt">
+              <span class="k">Language</span><span><span class="input">Italian ▾</span></span>
+              <span class="k">Cleanup level</span><span class="seg"><span>None</span><span class="on">Light</span><span>Medium</span><span>High</span></span>
+              <span class="k">Save audio</span><span class="row"><span class="toggle"></span><span class="muted small">Off</span></span>
+              <span class="note">Saved in Documents/Sussurro — may sync to iCloud/OneDrive</span>
+              <span class="k">Default tags</span><span class="row" style="flex-wrap:wrap;gap:4px"><span class="mtag">idee <span class="x">×</span></span><span class="mtag add">+ tag</span></span>
+              <span class="k">Category</span><span><span class="input">prodotto ▾</span></span>
+            </div>
+            <div class="row" style="margin-top:18px;justify-content:flex-end"><span class="muted small" style="margin-right:auto">Engine: Whisper small</span><button class="btn">Cancel</button><button class="btn primary">Transcribe</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ========================================================= SCREEN 3 -->
+<div class="screen-label">Screen 3 — Document tab of a note (recipe output)</div>
+<div class="win" style="width:1120px">
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>Sussurro</div>
+  <div class="app" style="height:700px">
+    <aside class="rail">
+      <div class="brand"><span class="daruma"></span> Sussurro</div>
+      <nav class="nav">
+        <a href="#"><span class="ic">＋</span>New</a>
+        <a href="#" class="active"><span class="ic">▤</span>Library <span class="n">142</span></a>
+        <a href="#"><span class="ic">◎</span>People <span class="n">18</span></a>
+        <a href="#"><span class="ic">☰</span>Recipes</a>
+        <a href="#"><span class="ic">◇</span>Models</a>
+        <a href="#"><span class="ic">⚙&#xFE0E;</span>Settings</a>
+      </nav>
+      <div class="foot"><span class="pill">Idle</span><span>Cleanup: Local · Ollama qwen3</span></div>
+    </aside>
+    <section class="main">
+      <div class="topbar"><h1>Idee per l'onboarding</h1><span class="tb note">Note</span><span class="muted small">Today 08:40 · 3 min · microphone</span>
+        <div class="right"><button class="btn sm">Open folder</button></div></div>
+      <div class="body">
+        <div class="lib">
+          <div class="filters">
+            <div class="search"><span class="input">⌕ Search title, text, people…</span></div>
+            <div class="fchips"><span class="fchip">All</span><span class="fchip on">Notes</span><span class="fchip">Meetings</span><span class="fchip">Transcriptions</span></div>
+          </div>
+          <div class="item active"><b>Idee per l'onboarding</b><div class="sub"><span class="tb note">Note</span>Today 08:40 · 3 min</div></div>
+          <div class="item"><b>Appunti treno per Bologna</b><div class="sub"><span class="tb note">Note</span>18 Sep · 2 min</div></div>
+          <div class="item"><b>Bozza post: Sussurro 0.7</b><div class="sub"><span class="tb note">Note</span>15 Sep · 6 min</div></div>
+          <div class="item"><b>Lista regali di Natale</b><div class="sub"><span class="tb note">Note</span>11 Sep · 1 min</div></div>
+          <div class="count">4 notes</div>
+        </div>
+        <div class="doc">
+          <div class="tabs"><span>Transcript</span><span class="active">Document</span><span class="off">Audio <small>· not saved</small></span></div>
+          <div class="meta">
+            <span class="k">Tags</span><span class="v"><span class="mtag">onboarding <span class="x">×</span></span><span class="mtag">idee <span class="x">×</span></span><span class="mtag add">+ tag</span></span>
+            <span class="k">Categories</span><span class="v"><span class="mtag">prodotto <span class="x">×</span></span><span class="mtag add">+ category</span></span>
+          </div>
+          <div class="md">
+            <div class="prov">Generated by <b>Formatted document</b> · Local · qwen3 1.7B · document.md <span style="margin-left:auto"><a class="lnk">Regenerate</a></span></div>
+            <div class="tldr"><b>tl;dr</b>Tre idee per un primo avvio più semplice: chiedere l'accesso a Documenti durante l'onboarding, riusare un modello già installato e proporre una nota di prova.</div>
+            <h1>Idee per l'onboarding</h1>
+            <h2>Primo avvio</h2>
+            <h3>Permessi</h3>
+            <p>Su macOS la richiesta per la cartella Documenti va fatta subito, mai durante una registrazione.</p>
+            <h3>Modelli</h3>
+            <p>Se Ollama ha già un modello, lo usiamo e lo diciamo all'utente invece di chiedere un download.</p>
+            <h2>Priorità</h2>
+            <table>
+              <tr><th>Idea</th><th>Impegno</th><th>Release</th></tr>
+              <tr><td>Accesso a Documenti all'onboarding</td><td>Basso</td><td>0.7</td></tr>
+              <tr><td>Riuso del modello installato</td><td>Medio</td><td>0.7</td></tr>
+              <tr><td>Nota di prova guidata</td><td>Medio</td><td>0.8</td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="ctx">
+          <div>
+            <h3>Ask</h3>
+            <div class="recipes">
+              <button class="btn">Formatted document ✓</button><button class="btn">Summary</button>
+              <button class="btn">Action items</button><button class="btn">Decisions</button>
+            </div>
+            <div class="ask"><span class="input">Ask about this note…</span><button class="btn sm primary">Ask</button></div>
+            <div class="profiles">
+              <div class="p"><span class="dot on"></span>Local · Ollama qwen3<span class="badge-local">Local</span></div>
+              <div class="p"><span class="dot"></span>Work · api.example.com<span class="badge-ext">↗ External</span></div>
+            </div>
+          </div>
+          <div>
+            <h3>Export</h3>
+            <div class="exports">
+              <button class="btn">.md</button><button class="btn">.txt</button>
+              <button class="btn dis" title="Notes have no subtitles">.srt</button><button class="btn dis" title="Notes have no subtitles">.vtt</button>
+              <button class="btn dis">.wav · not saved</button>
+            </div>
+            <p class="muted small" style="margin:6px 0 0">Notes have no speakers or subtitles.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ========================================================= SCREEN 4 -->
+<div class="screen-label">Screen 4 — Settings → Dictation and Archive</div>
+<div class="win" style="width:1120px">
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>Sussurro</div>
+  <div class="app" style="height:400px">
+    <aside class="rail">
+      <div class="brand"><span class="daruma"></span> Sussurro</div>
+      <nav class="nav">
+        <a href="#"><span class="ic">＋</span>New</a>
+        <a href="#"><span class="ic">▤</span>Library <span class="n">142</span></a>
+        <a href="#"><span class="ic">◎</span>People <span class="n">18</span></a>
+        <a href="#"><span class="ic">☰</span>Recipes</a>
+        <a href="#"><span class="ic">◇</span>Models</a>
+        <a href="#" class="active"><span class="ic">⚙&#xFE0E;</span>Settings</a>
+      </nav>
+      <div class="foot"><span class="pill">Idle</span></div>
+    </aside>
+    <section class="main">
+      <div class="topbar"><h1>Settings</h1></div>
+      <div class="setbody">
+        <div class="subnav"><span>General</span><span class="active">Dictation</span><span class="active">Archive</span><span>LLM profiles</span><span>Dictionary &amp; snippets</span><span>Local API</span><span>About</span></div>
+        <div class="setcards">
+          <div class="card">
+            <h2>Dictation</h2>
+            <div class="opt">
+              <span class="k">Hotkey</span><span class="row"><span class="kbd">⌘ ⇧ Space</span><button class="btn sm">Change…</button></span>
+              <span class="k">Hold to talk</span><span class="row"><span class="toggle on"></span><span class="muted small">Off: tap to start and stop</span></span>
+              <span class="k">Cleanup level</span><span class="seg"><span>None</span><span class="on">Light</span><span>Medium</span><span>High</span></span>
+              <span class="k">History</span><span class="row"><span class="muted small">132 dictations</span><a class="lnk small">Open history</a></span>
+            </div>
+            <p class="muted small" style="margin:12px 0 0">Dictation stays in the tray and pastes where your cursor is. It does not create Library items.</p>
+          </div>
+          <div class="card">
+            <h2>Archive</h2>
+            <div class="stack" style="gap:8px">
+              <span class="k muted small">Archive folder</span>
+              <div class="row"><span class="path">~/Documents/Sussurro</span><button class="btn sm">Move…</button><button class="btn sm">Show</button></div>
+              <span class="muted small">Documents syncs to iCloud Drive on this Mac, so the archive (and any saved audio) syncs too.</span>
+            </div>
+            <div style="margin-top:14px">
+              <span class="muted small">Subtitles (.srt)</span>
+              <div class="radio"><span class="dot on"></span><span>Only when I ask</span></div>
+              <div class="radio"><span class="dot"></span><span>Create automatically on every save</span></div>
+            </div>
+            <div class="row" style="margin-top:10px"><span class="muted small">Search index: 142 items</span><a class="lnk small">Rebuild</a></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+</body></html>

@@ -12,6 +12,7 @@ pub mod llm;
 pub mod permissions;
 pub mod pipeline;
 pub mod recipes;
+pub mod secrets;
 pub mod settings;
 pub mod snippets;
 pub mod sources;
@@ -86,11 +87,15 @@ pub fn run() {
             let handle = app.handle();
             let _ = APP_HANDLE.set(handle.clone());
             let paths = AppPaths::from_app(handle);
-            let (settings, migrated) = Settings::load_migrating(&paths.settings_file);
+            let (mut settings, migrated) = Settings::load_migrating(&paths.settings_file);
+            // Profile API keys live in the OS credential store (#159): read
+            // them, and move clear-text ones in (settings.json then keeps
+            // only the reference). Only profiles with a key touch the store.
+            let keys_moved = secrets::load_keys(&mut settings, &secrets::OsStore);
             // Pre-0.8 cleanup settings became the "Local" LLM profile (#119):
             // write the new shape once. Best effort — the in-memory settings
             // are already migrated, and the next load would migrate again.
-            if migrated {
+            if migrated || keys_moved {
                 if let Err(e) = settings.save(&paths.settings_file) {
                     eprintln!("could not save the migrated settings: {e}");
                 }
@@ -199,6 +204,7 @@ pub fn run() {
             commands::get_default_prompts,
             commands::ollama_status,
             commands::diagnostics,
+            commands::credential_store_status,
             commands::pull_ollama_model,
             commands::translate_entry,
             commands::check_permissions,
@@ -216,6 +222,9 @@ pub fn run() {
             commands::archive_delete,
             commands::archive_reveal,
             commands::archive_rebuild_index,
+            commands::archive_export,
+            commands::archive_subtitles_status,
+            commands::archive_create_subtitles,
             commands::recipes_list,
             commands::recipe_documents,
             commands::recipe_run,
