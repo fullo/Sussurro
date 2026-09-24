@@ -46,7 +46,7 @@ pub fn render_transcript(meta: &ItemMeta, segs: &SegmentsFile) -> Result<String>
 }
 
 /// Notes: cleaned text joined into paragraphs, broken on long pauses.
-fn note_paragraphs(segs: &SegmentsFile) -> Vec<String> {
+pub(crate) fn note_paragraphs(segs: &SegmentsFile) -> Vec<String> {
     let mut paras: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut last_end: Option<u64> = None;
