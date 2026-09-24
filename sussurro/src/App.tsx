@@ -6,7 +6,15 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { parseDictionaryFile, parseSnippetFile } from "./utils";
+import {
+  describeDictionaryMerge,
+  describeSnippetMerge,
+  mergeDictionary,
+  mergeSnippets,
+  parseDictionaryFile,
+  parseSnippetFile,
+} from "./utils";
+import "./App.css";
 
 interface OllamaStatus {
   installed: boolean;
@@ -689,7 +697,8 @@ export default function App() {
     ? Math.max(0, Math.min(100, ((20 * Math.log10(micLevel) + 60) / 60) * 100))
     : 0;
 
-  const save = async (next: Settings) => {
+  // Resolves false (after showing the error) when the backend rejects the save.
+  const save = async (next: Settings): Promise<boolean> => {
     const serverChanged =
       next.ollama_url !== settings.ollama_url ||
       next.cleanup_api !== settings.cleanup_api ||
@@ -701,29 +710,73 @@ export default function App() {
       setModelReady(await invoke<boolean>("model_is_downloaded"));
       loadWhisperModels();
       if (serverChanged) loadOllamaModels();
+      return true;
+    } catch (e) {
+      setBusy(String(e));
+      return false;
+    }
+  };
+
+  const downloadModel = async () => {
+    setDownloadingModel(true);
+    setBusy("Downloading model — this can take a while…");
+    try {
+      await invoke("download_model");
+      setBusy("");
+      setModelReady(true);
+    } catch (e) {
+      setBusy(String(e));
+    } finally {
+      setDownloadingModel(false);
+    }
+  };
+
+  const clearHistory = async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 3000);
+      return;
+    }
+    setConfirmClear(false);
+    try {
+      await invoke("clear_history");
+      setHistory([]);
     } catch (e) {
       setBusy(String(e));
     }
   };
 
+  // Bulk import: pick a file, read its text via the narrow `read_import_file`
+  // command (.txt/.csv only), then MERGE into the current list — existing
+  // entries are never replaced. Empty/unparseable files change nothing.
+  const readImportFile = async (title: string, name: string, ext: string) => {
+    const path = await openDialog({
+      title,
+      multiple: false,
+      directory: false,
+      filters: [{ name, extensions: [ext] }],
+    });
+    if (!path || typeof path !== "string") return null;
+    return invoke<string>("read_import_file", { path });
+  };
+
+  const flashResult = (msg: string) => {
+    setBusy(msg);
+    setTimeout(() => setBusy(""), 4000);
+  };
+
   const handleImportDictionary = async () => {
     try {
-      const selected = await openDialog({
-        title: "Import Dictionary",
-        filters: [{ name: "Text Files", extensions: ["txt"] }],
-      });
-      if (selected) {
-        const content = await openDialog({
-          title: "Select Dictionary File",
-          files: [selected],
-        });
-        if (content) {
-          const dict = parseDictionaryFile(content);
-          save({ ...settings, dictionary: dict });
-          setBusy("Dictionary imported successfully");
-          setTimeout(() => setBusy(""), 2000);
-        }
+      const content = await readImportFile("Import dictionary", "Text files", "txt");
+      if (content === null) return;
+      const words = parseDictionaryFile(content);
+      if (words.length === 0) {
+        setBusy("Import failed: no words found — expected a .txt file with one word or phrase per line.");
+        return;
       }
+      const result = mergeDictionary(settings.dictionary, words);
+      if (result.added > 0 && !(await save({ ...settings, dictionary: result.merged }))) return;
+      flashResult(describeDictionaryMerge(result));
     } catch (e) {
       setBusy(String(e));
     }
@@ -731,22 +784,16 @@ export default function App() {
 
   const handleImportSnippets = async () => {
     try {
-      const selected = await openDialog({
-        title: "Import Snippets",
-        filters: [{ name: "CSV Files", extensions: ["csv"] }],
-      });
-      if (selected) {
-        const content = await openDialog({
-          title: "Select Snippet File",
-          files: [selected],
-        });
-        if (content) {
-          const snippets = parseSnippetFile(content);
-          save({ ...settings, snippets });
-          setBusy("Snippets imported successfully");
-          setTimeout(() => setBusy(""), 2000);
-        }
+      const content = await readImportFile("Import snippets", "CSV files", "csv");
+      if (content === null) return;
+      const imported = parseSnippetFile(content);
+      if (imported.length === 0) {
+        setBusy('Import failed: no snippets found — expected a .csv file with one "cue,text" per line.');
+        return;
       }
+      const result = mergeSnippets(settings.snippets, imported);
+      if (result.added > 0 && !(await save({ ...settings, snippets: result.merged }))) return;
+      flashResult(describeSnippetMerge(result));
     } catch (e) {
       setBusy(String(e));
     }
@@ -1265,33 +1312,26 @@ export default function App() {
             <span>Personal dictionary <Tip text="Names, brands and jargon the models tend to misspell (e.g. Sussurro, Tauri). One per line. They are fed to Whisper as recognition hints and to the LLM as preferred spellings." /></span>
             <small>names & jargon, one per line — biases both Whisper and the LLM</small>
           </div>
-          <div className="dict-import-row" style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-            <textarea
-              ref={dictRef}
-              rows={3}
-              value={dictText}
-              onChange={(e) => {
-                setDictText(e.target.value);
-                setSettings({
-                  ...settings,
-                  dictionary: e.target.value.split("\n").map((w) => w.trim()).filter(Boolean),
-                });
-              }}
-              onBlur={() => save(settings)}
-              spellCheck={false}
-              placeholder="Sussurro&#10;Tauri"
-            />
+          <textarea
+            ref={dictRef}
+            rows={3}
+            value={dictText}
+            onChange={(e) => {
+              setDictText(e.target.value);
+              setSettings({
+                ...settings,
+                dictionary: e.target.value.split("\n").map((w) => w.trim()).filter(Boolean),
+              });
+            }}
+            onBlur={() => save(settings)}
+            spellCheck={false}
+            placeholder="Sussurro&#10;Tauri"
+          />
+          <div className="list-actions">
             <button
               className="btn-ghost"
               onClick={handleImportDictionary}
-              title="Import dictionary from .txt file"
-            >
-              Import .txt
-            </button>
-            <button
-              className="btn-ghost"
-              onClick={handleImportDictionary}
-              title="Import dictionary from .txt file"
+              title="Add words from a .txt file (one per line) — existing words are kept"
             >
               Import .txt
             </button>
@@ -1370,54 +1410,54 @@ export default function App() {
             <span>Snippets <Tip text="Example: cue 'firma email' → pastes your full signature. Matching ignores case and punctuation, and skips the AI cleanup entirely." /></span>
             <small>say a cue exactly — Sussurro pastes the full text instead of transcribing</small>
           </div>
-          <div className="snippet-import-row" style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-            {settings.snippets.map((s, i) => (
-              <div className="snippet-row" key={i}>
-                <input
-                  placeholder="cue (what you say)"
-                  value={s.cue}
-                  onChange={(e) => {
-                    const snippets = settings.snippets.slice();
-                    snippets[i] = { ...s, cue: e.target.value };
-                    setSettings({ ...settings, snippets });
-                  }}
-                  onBlur={() => save(settings)}
-                  spellCheck={false}
-                />
-                <textarea
-                  placeholder="text to paste"
-                  rows={2}
-                  value={s.text}
-                  onChange={(e) => {
-                    const snippets = settings.snippets.slice();
-                    snippets[i] = { ...s, text: e.target.value };
-                    setSettings({ ...settings, snippets });
-                  }}
-                  onBlur={() => save(settings)}
-                  spellCheck={false}
-                />
-                <button
-                  className="btn-ghost"
-                  onClick={() =>
-                    save({ ...settings, snippets: settings.snippets.filter((_, j) => j !== i) })
-                  }
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
+          {settings.snippets.map((s, i) => (
+          <div className="snippet-row" key={i}>
+            <input
+              placeholder="cue (what you say)"
+              value={s.cue}
+              onChange={(e) => {
+                const snippets = settings.snippets.slice();
+                snippets[i] = { ...s, cue: e.target.value };
+                setSettings({ ...settings, snippets });
+              }}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+            />
+            <textarea
+              placeholder="text to paste"
+              rows={2}
+              value={s.text}
+              onChange={(e) => {
+                const snippets = settings.snippets.slice();
+                snippets[i] = { ...s, text: e.target.value };
+                setSettings({ ...settings, snippets });
+              }}
+              onBlur={() => save(settings)}
+              spellCheck={false}
+            />
             <button
               className="btn-ghost"
               onClick={() =>
-                setSettings({ ...settings, snippets: [...settings.snippets, { cue: "", text: "" }] })
+                save({ ...settings, snippets: settings.snippets.filter((_, j) => j !== i) })
               }
             >
-              + Add
+              Remove
             </button>
+          </div>
+        ))}
+          <button
+            className="btn-ghost"
+            onClick={() =>
+              setSettings({ ...settings, snippets: [...settings.snippets, { cue: "", text: "" }] })
+            }
+          >
+            + Add snippet
+          </button>
+          <div className="list-actions">
             <button
               className="btn-ghost"
               onClick={handleImportSnippets}
-              title="Import snippets from .csv file"
+              title='Add snippets from a .csv file (one "cue,text" per line; quote text with commas or line breaks) — existing snippets are kept'
             >
               Import .csv
             </button>

@@ -217,8 +217,8 @@ fn endpoint_host(url: &str) -> Option<String> {
     if let Some(at) = authority.rfind('@') {
         authority = &authority[at + 1..];
     }
-    let host = if authority.starts_with('[') {
-        authority[1..].split_once(']').map(|(inner, _)| inner.to_string())
+    let host = if let Some(bracketed) = authority.strip_prefix('[') {
+        bracketed.split_once(']').map(|(inner, _)| inner.to_string())
     } else if let Some(colon) = authority.rfind(':') {
         Some(authority[..colon].to_string())
     } else {
