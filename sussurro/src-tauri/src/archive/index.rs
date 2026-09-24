@@ -365,7 +365,7 @@ impl Index {
     /// hosts (#122), read from its folder.
     pub fn search(&self, query: &str, filters: &SearchFilters) -> Result<Vec<ItemSummary>> {
         let rows = self.with_conn(|conn| search_conn(conn, query, filters))?;
-        Ok(rows.into_iter().map(|s| s.with_external_hosts(&self.archive)).collect())
+        Ok(rows.into_iter().map(|s| s.with_folder_details(&self.archive)).collect())
     }
 
     /// [`Index::search`] plus the Library's facet counts (#135), from the
@@ -379,7 +379,7 @@ impl Index {
             ))
         })?;
         Ok(FacetedSearch {
-            items: rows.into_iter().map(|s| s.with_external_hosts(&self.archive)).collect(),
+            items: rows.into_iter().map(|s| s.with_folder_details(&self.archive)).collect(),
             facets,
         })
     }

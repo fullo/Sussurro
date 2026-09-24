@@ -20,7 +20,13 @@
 //! the run starts (`status: recording`) and every finished segment is saved
 //! into it at once, so a crash keeps what was transcribed; the next app
 //! start marks such an item `interrupted`.
+//!
+//! **Saved audio** (#141, P9: only on request, [`Job::save_audio`]): the
+//! ingest thread writes every frame to one incremental WAV per channel in
+//! the item folder ([`audio_out`]); a run that doesn't save audio creates no
+//! audio file at all.
 
+pub mod audio_out;
 pub mod checkpoint;
 pub mod identify;
 pub mod priority;
@@ -272,6 +278,9 @@ pub struct Job {
     /// once the item is final (meetings and transcriptions only; a
     /// `transcript.srt` the user edited is kept).
     pub write_subtitles: bool,
+    /// Save the run's audio in the item folder (#141, P9): `audio.wav`, or
+    /// one file per channel. `false` (the default) writes no audio at all.
+    pub save_audio: bool,
 }
 
 /// A [`Cleaner`] whose first call records the run's external send in the
@@ -414,6 +423,7 @@ fn run_inner(
         external_cleanup,
         mut speakers,
         write_subtitles,
+        save_audio,
     } = job;
     let reindex = |id: &str| {
         if let Some(db) = &index_db {
@@ -432,6 +442,18 @@ fn run_inner(
     let mut item = match checkpoint::LiveItem::begin(&archive_dir, &meta, journal.as_deref()) {
         Ok(item) => item,
         Err(e) => return (Err(e), None),
+    };
+    // Saved audio (#141): only when asked, written into the item folder.
+    let audio = if save_audio {
+        match archive::paths::item_dir(&archive_dir, item.id()) {
+            Ok(dir) => Some(audio_out::AudioOut::new(&dir)),
+            Err(e) => {
+                eprintln!("engine: the audio of {} is not saved ({e:#})", item.id());
+                None
+            }
+        }
+    } else {
+        None
     };
     sink.emit(&EngineEvent::Started(StartedPayload {
         session_id,
@@ -453,7 +475,7 @@ fn run_inner(
         Some(l) => l,
         None => cleaner,
     };
-    let captured = capture(
+    let (captured, audio) = capture(
         session_id,
         source,
         detector,
@@ -468,13 +490,18 @@ fn run_inner(
         speakers.as_mut(),
         &sink,
         &mut item,
+        audio,
     );
+    // Every header patched and the files closed before the item is
+    // finalized, kept or discarded (and before its folder may be renamed).
+    let audio_files = audio.map(audio_out::AudioOut::finish);
     let (worked, ingested, queue) = match captured {
         Captured::Cancelled => {
             let kept = item.discard();
             return (Err(anyhow!("cancelled")), kept);
         }
         Captured::Failed(e) => {
+            // Kept as `interrupted`: its audio is listed like after a crash.
             let kept = item.abandon();
             if let Some(id) = &kept {
                 reindex(id);
@@ -509,7 +536,11 @@ fn run_inner(
     let n = item.segments().len();
     let placeholder_id = item.id().to_string();
     let finished = item.finish(&meta, |m| {
-        finalize_meta_with_text(m, &text, duration_ms, detected.as_deref())
+        let mut m = finalize_meta_with_text(m, &text, duration_ms, detected.as_deref());
+        if let Some(files) = &audio_files {
+            archive::audio::set_listed(&mut m, files);
+        }
+        m
     });
     let (item_id, meta) = match finished {
         Ok(done) => done,
@@ -571,7 +602,8 @@ fn capture(
     speakers: Option<&mut crate::speakers::Tracker>,
     sink: &Arc<dyn EngineSink>,
     item: &mut checkpoint::LiveItem,
-) -> Captured {
+    audio: Option<audio_out::AudioOut>,
+) -> (Captured, Option<audio_out::AudioOut>) {
     let shared = Arc::new(Shared {
         queue: SegmentQueue::new(policy, spool_path),
         backlog: Mutex::new(Backlog::default()),
@@ -583,16 +615,24 @@ fn capture(
         let shared = shared.clone();
         let cancel = cancel.clone();
         let sink = sink.clone();
+        let mut audio = audio;
         std::thread::spawn(move || {
             let r = ingest(
-                source, detector, params, &shared, &cancel, &*sink, session_id,
+                source,
+                detector,
+                params,
+                &shared,
+                &cancel,
+                &*sink,
+                session_id,
+                audio.as_mut(),
             );
             if r.is_err() {
                 shared.queue.abort();
             } else {
                 shared.queue.close();
             }
-            r
+            (r, audio)
         })
     };
 
@@ -615,32 +655,41 @@ fn capture(
         cancel.store(true, Ordering::Relaxed);
         shared.queue.abort();
     }
-    let Ok(ingested) = ingest.join() else {
-        return Captured::Failed(anyhow!("the ingest thread panicked"));
+    let Ok((ingested, audio)) = ingest.join() else {
+        // The audio writers went down with the thread (their files are
+        // repaired when the item is kept as interrupted).
+        return (
+            Captured::Failed(anyhow!("the ingest thread panicked")),
+            None,
+        );
     };
     let worked = match worked {
         Ok(w) => w,
-        Err(_) if user_cancelled => return Captured::Cancelled,
-        Err(e) => return Captured::Failed(e),
+        Err(_) if user_cancelled => return (Captured::Cancelled, audio),
+        Err(e) => return (Captured::Failed(e), audio),
     };
     if let Err(e) = ingested {
-        return if cancel.load(Ordering::Relaxed) {
+        let c = if cancel.load(Ordering::Relaxed) {
             Captured::Cancelled
         } else {
             Captured::Failed(e)
         };
+        return (c, audio);
     }
     // Final state: everything ingested is processed, nothing queued.
     sink.emit(&shared.progress(session_id));
     if cancel.load(Ordering::Relaxed) {
-        return Captured::Cancelled;
+        return (Captured::Cancelled, audio);
     }
     let ingested = shared.backlog.lock().unwrap().ingested;
-    Captured::Done {
-        worked,
-        ingested,
-        queue: shared.queue.stats(),
-    }
+    (
+        Captured::Done {
+            worked,
+            ingested,
+            queue: shared.queue.stats(),
+        },
+        audio,
+    )
 }
 
 /// One logical channel's segmentation state. A single-channel source has
@@ -706,7 +755,9 @@ fn lane_for<'a>(
 
 /// Source → per-channel aligner → detector → segmenter → queue. Frames of
 /// one channel must be contiguous on the run's clock (a source fills gaps
-/// with silence); the first frame of a channel may start after 0.
+/// with silence); the first frame of a channel may start after 0. With
+/// `audio`, every frame is also saved as it arrives (#141).
+#[allow(clippy::too_many_arguments)]
 fn ingest(
     mut source: Box<dyn Source>,
     detector: Box<dyn SpeechDetector>,
@@ -715,6 +766,7 @@ fn ingest(
     cancel: &AtomicBool,
     sink: &dyn EngineSink,
     session_id: u64,
+    mut audio: Option<&mut audio_out::AudioOut>,
 ) -> Result<()> {
     let mut spare = Some(detector);
     let mut lanes: Vec<Lane> = Vec::new();
@@ -727,6 +779,9 @@ fn ingest(
     while let Some(frame) = source.next_frame()? {
         if cancel.load(Ordering::Relaxed) {
             anyhow::bail!("cancelled");
+        }
+        if let Some(a) = audio.as_deref_mut() {
+            a.push(&frame);
         }
         {
             // The run's clock: the furthest any channel has got.

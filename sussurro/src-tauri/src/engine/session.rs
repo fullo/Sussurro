@@ -204,9 +204,18 @@ pub struct RunOptions {
     /// "Voice N". Off by default; ignored for notes (never) and meetings
     /// (the 0.9 preview decides, see [`speaker_options`]).
     pub identify_voices: bool,
+    /// "Save audio" (P9, #141) for this run: `None` = the per-app default
+    /// ([`Settings::save_audio`], off unless the user turned it on).
+    pub save_audio: Option<bool>,
 }
 
 impl RunOptions {
+    /// Whether this run saves its audio: the run's choice, else the
+    /// per-app default. Pure.
+    pub fn saves_audio(&self, global: &Settings) -> bool {
+        self.save_audio.unwrap_or(global.save_audio)
+    }
+
     /// The settings a run uses: a copy of `global` with this run's
     /// overrides. Pure — `global` is only read.
     pub fn apply(&self, global: &Settings) -> Settings {
@@ -534,6 +543,7 @@ where
             external_cleanup: external_cleanup_entry(&settings),
             speakers,
             write_subtitles: settings.subtitles == crate::settings::SubtitlesMode::Always,
+            save_audio: req.options.saves_audio(&global),
             meta: start_meta(
                 &settings,
                 req.item_type,
@@ -1074,6 +1084,7 @@ mod tests {
             language: Some(" en ".into()),
             cleanup_level: Some(CleanupLevel::None),
             identify_voices: true,
+            save_audio: Some(true),
         };
         let s = o.apply(&global);
         assert_eq!(
@@ -1175,6 +1186,30 @@ mod tests {
         )
         .unwrap();
         assert!(b.two_channel && b.clusters(Channel::Remote) && !b.clusters(Channel::Mic));
+    }
+
+    /// P9 (#141): audio is saved only on request — the run's choice wins,
+    /// an unset choice follows the per-app default, which is off.
+    #[test]
+    fn save_audio_is_off_unless_asked() {
+        let off = Settings::default();
+        assert!(!off.save_audio);
+        assert!(!RunOptions::default().saves_audio(&off));
+        let on = Settings {
+            save_audio: true,
+            ..Default::default()
+        };
+        assert!(RunOptions::default().saves_audio(&on));
+        let no = RunOptions {
+            save_audio: Some(false),
+            ..Default::default()
+        };
+        assert!(!no.saves_audio(&on));
+        let yes = RunOptions {
+            save_audio: Some(true),
+            ..Default::default()
+        };
+        assert!(yes.saves_audio(&off));
     }
 
     #[test]

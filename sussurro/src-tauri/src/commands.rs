@@ -438,7 +438,9 @@ pub struct EngineResult {
 /// `language` / `cleanup_level`: this run only (#157); omitted = the
 /// dictation settings, which are never modified. `identify_voices`: label
 /// a transcription's voices "Voice N" (P11, #134; off when omitted,
-/// ignored for notes).
+/// ignored for notes). `save_audio`: keep the decoded 16 kHz audio as
+/// `audio.wav` in the item folder (P9, #141; omitted = the per-app default).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn transcribe_file(
     app: AppHandle,
@@ -448,6 +450,7 @@ pub async fn transcribe_file(
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
     identify_voices: Option<bool>,
+    save_audio: Option<bool>,
 ) -> Result<EngineResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let r = crate::engine::session::transcribe_file(
@@ -459,6 +462,7 @@ pub async fn transcribe_file(
                 language,
                 cleanup_level,
                 identify_voices: identify_voices.unwrap_or(false),
+                save_audio,
             },
         )
         .map_err(|e| format!("{e:#}"))?;
@@ -480,7 +484,9 @@ pub async fn transcribe_file(
 /// Returns the session id; the item arrives as `engine-done` after
 /// `engine_stop_mic`. `defer`: transcribe only after the stop, for slow
 /// machines. `language` / `cleanup_level`: this run only (#157); omitted =
-/// the dictation settings, which are never modified.
+/// the dictation settings, which are never modified. `save_audio`: keep the
+/// recording as `audio.wav` in the item folder (P9, #141; omitted = the
+/// per-app default).
 #[tauri::command]
 pub fn engine_start_mic(
     app: AppHandle,
@@ -489,6 +495,7 @@ pub fn engine_start_mic(
     defer: Option<bool>,
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
+    save_audio: Option<bool>,
 ) -> Result<u64, String> {
     crate::engine::session::start_mic(
         &app,
@@ -498,6 +505,7 @@ pub fn engine_start_mic(
         crate::engine::session::RunOptions {
             language,
             cleanup_level,
+            save_audio,
             ..Default::default()
         },
     )
@@ -512,7 +520,9 @@ pub fn engine_start_mic(
 /// or the local network (refused by default). An invalid link, a missing
 /// yt-dlp or an unwritable archive fail here, before any download.
 /// `identify_voices`: label the voices "Voice N" (P11, #134; off when
-/// omitted).
+/// omitted). `save_audio`: keep the downloaded audio, decoded to 16 kHz, as
+/// `audio.wav` in the item folder (P9, #141; omitted = the per-app default).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn engine_start_link(
     app: AppHandle,
@@ -522,6 +532,7 @@ pub fn engine_start_link(
     language: Option<String>,
     cleanup_level: Option<crate::settings::CleanupLevel>,
     identify_voices: Option<bool>,
+    save_audio: Option<bool>,
 ) -> Result<u64, String> {
     crate::engine::session::start_link(
         &app,
@@ -532,6 +543,7 @@ pub fn engine_start_link(
             language,
             cleanup_level,
             identify_voices: identify_voices.unwrap_or(false),
+            save_audio,
         },
     )
     .map_err(|e| format!("{e:#}"))
@@ -1247,6 +1259,23 @@ pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<()
             eprintln!("archive: original file of {id} not forgotten ({e:#})");
         }
         Ok(())
+    })
+    .await
+}
+
+/// "Delete audio, keep transcript" (#141): the item's saved audio goes to
+/// the OS trash (never a hard delete) and the frontmatter stops listing it;
+/// the transcript and everything else stay. Returns the updated item.
+/// Refused for an item a capture session is writing.
+#[tauri::command]
+pub async fn archive_delete_audio(state: State<'_, AppState>, id: String) -> Result<Item, String> {
+    let (dir, db) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
+    blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        archive::audio::delete_audio(&dir, &id)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        Ok(archive::read_item(&dir, &id)?.without_embeddings())
     })
     .await
 }
