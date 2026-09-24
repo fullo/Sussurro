@@ -171,16 +171,45 @@ pub fn parse_url(url: &str) -> (&str, HashMap<String, String>) {
 ///   ([`auth`]); absent while `meetings_enabled` is off.
 pub fn spawn(app: AppHandle, port: u16) {
     std::thread::spawn(move || {
-        let server = match tiny_http::Server::http(("127.0.0.1", port)) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("local API: cannot bind 127.0.0.1:{port}: {e}");
-                return;
-            }
-        };
-        eprintln!("local API listening on http://127.0.0.1:{port}");
+        let Some(server) = bind(port) else { return };
         serve(server, Arc::new(AppHost { app }));
     });
+}
+
+/// Whether this run of the app serves the local API (#127). Its settings
+/// apply at startup: Settings → Browser extension compares them with this
+/// to say when a restart is needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ListenState {
+    /// Not started (the local API is off, or still starting).
+    Off,
+    Listening { port: u16 },
+    /// The port was taken (or refused): the API is not running.
+    Failed { port: u16 },
+}
+
+static LISTEN_STATE: std::sync::Mutex<ListenState> = std::sync::Mutex::new(ListenState::Off);
+
+pub fn listen_state() -> ListenState {
+    *LISTEN_STATE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Bind `127.0.0.1:port` and record the outcome in [`listen_state`].
+fn bind(port: u16) -> Option<tiny_http::Server> {
+    let (server, state) = match tiny_http::Server::http(("127.0.0.1", port)) {
+        Ok(s) => {
+            let actual = s.server_addr().to_ip().map_or(port, |a| a.port());
+            eprintln!("local API listening on http://127.0.0.1:{actual}");
+            (Some(s), ListenState::Listening { port: actual })
+        }
+        Err(e) => {
+            eprintln!("local API: cannot bind 127.0.0.1:{port}: {e}");
+            (None, ListenState::Failed { port })
+        }
+    };
+    *LISTEN_STATE.lock().unwrap_or_else(|e| e.into_inner()) = state;
+    server
 }
 
 /// Answer requests until the server is dropped or unblocked. WebSocket

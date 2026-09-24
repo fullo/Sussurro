@@ -173,6 +173,7 @@ pub fn run() {
             commands::set_settings,
             commands::extension_token_get,
             commands::extension_token_regenerate,
+            commands::local_api_status,
             commands::get_history,
             commands::search_history,
             commands::clear_history,

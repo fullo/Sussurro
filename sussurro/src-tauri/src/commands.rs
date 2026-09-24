@@ -70,34 +70,53 @@ pub async fn credential_store_status() -> Result<crate::secrets::StoreStatus, St
 }
 
 /// The browser extension's pairing token (#126, E6), created on first use.
-/// The pairing UI (#127) shows it for copying into the extension.
+/// Settings → Browser extension (#127) copies it into the pairing code.
 #[tauri::command]
 pub fn extension_token_get(state: State<'_, AppState>) -> Result<String, String> {
-    if let Some(t) = Some(state.settings.lock().unwrap().extension_token.clone())
-        .filter(|t| !t.trim().is_empty())
-    {
-        return Ok(t);
-    }
-    set_extension_token(&state)
+    current_or_new_token(&state.settings, &state.paths.settings_file)
 }
 
 /// Replace the extension token: a paired extension must be paired again.
+/// The local API reads the token on every request, so the old one stops
+/// working at once.
 #[tauri::command]
 pub fn extension_token_regenerate(state: State<'_, AppState>) -> Result<String, String> {
-    set_extension_token(&state)
+    replace_extension_token(&state.settings, &state.paths.settings_file)
+}
+
+/// The current token, or a fresh (saved) one when none exists yet.
+fn current_or_new_token(
+    settings: &std::sync::Mutex<Settings>,
+    file: &std::path::Path,
+) -> Result<String, String> {
+    let current = settings.lock().unwrap().extension_token.clone();
+    if !current.trim().is_empty() {
+        return Ok(current);
+    }
+    replace_extension_token(settings, file)
 }
 
 /// A fresh token, saved; on a failed save the old one stays in effect.
-fn set_extension_token(state: &AppState) -> Result<String, String> {
-    let mut settings = state.settings.lock().unwrap();
+fn replace_extension_token(
+    settings: &std::sync::Mutex<Settings>,
+    file: &std::path::Path,
+) -> Result<String, String> {
+    let mut settings = settings.lock().unwrap();
     let mut next = settings.clone();
     let token = next
         .regenerate_extension_token()
         .map_err(|e| e.to_string())?;
-    next.save(&state.paths.settings_file)
-        .map_err(|e| e.to_string())?;
+    next.save(file).map_err(|e| e.to_string())?;
     settings.extension_token = token.clone();
     Ok(token)
+}
+
+/// Whether the local API is listening, and on which port (#127). Its
+/// settings apply at startup, so Settings → Browser extension compares
+/// this with them to tell when a restart is needed.
+#[tauri::command]
+pub fn local_api_status() -> crate::api::ListenState {
+    crate::api::listen_state()
 }
 
 /// Drive dictation from the in-app Dictate button: mirrors the global hotkey
@@ -1689,5 +1708,52 @@ mod recipe_tests {
         assert!(consent_for(&store, "2026/09/b", &recipe, &work, Some(&token)).is_err(), "bound to the item");
         let local = LlmProfile::default();
         assert!(consent_for(&store, "2026/09/a", &recipe, &local, None).unwrap().is_none());
+    }
+}
+
+#[cfg(test)]
+mod extension_token_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    fn saved_token(file: &std::path::Path) -> String {
+        Settings::load(file).extension_token
+    }
+
+    #[test]
+    fn the_token_is_created_once_and_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let first = current_or_new_token(&settings, &file).unwrap();
+        assert_eq!(first.len(), 64);
+        assert_eq!(saved_token(&file), first);
+        assert_eq!(current_or_new_token(&settings, &file).unwrap(), first, "stable once created");
+    }
+
+    #[test]
+    fn regenerating_replaces_the_old_token_in_memory_and_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let old = current_or_new_token(&settings, &file).unwrap();
+        let new = replace_extension_token(&settings, &file).unwrap();
+        assert_ne!(old, new);
+        assert_eq!(settings.lock().unwrap().extension_token, new);
+        assert_eq!(saved_token(&file), new);
+        assert_eq!(current_or_new_token(&settings, &file).unwrap(), new);
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_old_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let old = current_or_new_token(&settings, &file).unwrap();
+        // A directory where the file should be: the save fails.
+        let blocked = dir.path().join("blocked");
+        std::fs::create_dir_all(blocked.join("settings.json")).unwrap();
+        assert!(replace_extension_token(&settings, &blocked.join("settings.json")).is_err());
+        assert_eq!(settings.lock().unwrap().extension_token, old);
     }
 }
