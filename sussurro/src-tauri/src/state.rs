@@ -55,11 +55,44 @@ pub fn resolve_archive_dir(paths: &AppPaths, settings: &Settings) -> anyhow::Res
     )
 }
 
+/// What a transcriber was loaded for. When the settings no longer match,
+/// whoever next takes the transcriber lock reloads it (see
+/// `pipeline::lock_transcriber`) — so changing the model never has to wait
+/// for the lock (#154).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelKey {
+    pub engine: crate::settings::SttEngine,
+    /// Whisper model file name; empty for Parakeet (one model).
+    pub whisper_model: String,
+    pub models_dir: PathBuf,
+}
+
+impl ModelKey {
+    pub fn of(paths: &AppPaths, settings: &Settings) -> Self {
+        use crate::settings::SttEngine;
+        Self {
+            engine: settings.engine.clone(),
+            whisper_model: match settings.engine {
+                SttEngine::Whisper => settings.whisper_model.clone(),
+                SttEngine::Parakeet => String::new(),
+            },
+            models_dir: resolve_models_dir(paths, settings),
+        }
+    }
+}
+
+/// A loaded model and the settings it was loaded for.
+pub struct Loaded<T> {
+    pub key: ModelKey,
+    pub model: T,
+}
+
 pub struct AppState {
     pub recorder: Mutex<Recorder>,
-    /// Lazily loaded on first dictation; reset to None when engine/model
-    /// change, and dropped again after idle time (see pipeline's idle unload).
-    pub transcriber: Mutex<Option<AnyTranscriber>>,
+    /// Lazily loaded on first dictation; reloaded by the next user when the
+    /// engine/model settings change, and dropped again after idle time (see
+    /// pipeline's idle unload).
+    pub transcriber: Mutex<Option<Loaded<AnyTranscriber>>>,
     /// When the transcriber was last loaded or used — drives the idle unload.
     /// Written while holding the `transcriber` lock so load/refresh stays
     /// atomic with respect to the unloader.
@@ -72,6 +105,9 @@ pub struct AppState {
     pub stream: Mutex<StreamState>,
     /// Long-form engine sessions (mic and file, #113).
     pub engine: crate::engine::session::Sessions,
+    /// A hotkey dictation is recording or waiting for its final pass: the
+    /// engine starts no new segment meanwhile (#154).
+    pub dictation: crate::engine::priority::DictationGate,
 }
 
 /// What streaming injection has already done for the current recording.

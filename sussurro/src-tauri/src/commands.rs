@@ -33,17 +33,8 @@ pub fn set_settings(
     settings
         .save(&state.paths.settings_file)
         .map_err(|e| e.to_string())?;
-    let model_changed = {
-        let mut current = state.settings.lock().unwrap();
-        let changed = current.whisper_model != settings.whisper_model
-            || current.engine != settings.engine
-            || current.models_dir != settings.models_dir;
-        *current = settings;
-        changed
-    };
-    if model_changed {
-        *state.transcriber.lock().unwrap() = None; // reload lazily with the new engine/model
-    }
+    // Main thread: must never wait for the transcriber (#154).
+    crate::pipeline::swap_settings(&state, settings);
     Ok(())
 }
 

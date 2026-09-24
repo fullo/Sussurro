@@ -48,10 +48,27 @@ impl Drop for Spool {
     }
 }
 
+/// High-water marks of a queue over its life: what the memory bound in the
+/// engine's module docs promises, measured (tests, #154).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct QueueStats {
+    /// Most segments waiting at once.
+    pub peak_len: usize,
+    /// Most segments whose audio was in RAM at once.
+    pub peak_in_ram: usize,
+    /// Most audio held in RAM by the queue at once, in samples.
+    pub peak_ram_samples: u64,
+    /// Segments written to the disk spool.
+    pub spilled: usize,
+}
+
 #[derive(Default)]
 struct Inner {
     items: VecDeque<Queued>,
     in_ram: usize,
+    /// Audio of the in-RAM segments, in samples.
+    ram_samples: u64,
+    stats: QueueStats,
     closed: bool,
     aborted: bool,
     spool: Option<Spool>,
@@ -121,10 +138,12 @@ impl SegmentQueue {
                 spool.file.seek(SeekFrom::Start(offset))?;
                 spool.file.write_all(&bytes).context("writing spool")?;
                 spool.end += bytes.len() as u64;
+                g.stats.spilled += 1;
                 Payload::Disk { offset, len }
             }
             _ => {
                 g.in_ram += 1;
+                g.ram_samples += len as u64;
                 Payload::Ram(seg.samples)
             }
         };
@@ -133,6 +152,11 @@ impl SegmentQueue {
             len,
             payload,
         });
+        let (n, in_ram, ram_samples) = (g.items.len(), g.in_ram, g.ram_samples);
+        let s = &mut g.stats;
+        s.peak_len = s.peak_len.max(n);
+        s.peak_in_ram = s.peak_in_ram.max(in_ram);
+        s.peak_ram_samples = s.peak_ram_samples.max(ram_samples);
         self.cv.notify_all();
         Ok(true)
     }
@@ -158,6 +182,7 @@ impl SegmentQueue {
         let samples = match item.payload {
             Payload::Ram(s) => {
                 g.in_ram -= 1;
+                g.ram_samples -= s.len() as u64;
                 s
             }
             Payload::Disk { offset, len } => {
@@ -190,6 +215,7 @@ impl SegmentQueue {
         g.aborted = true;
         g.items.clear();
         g.in_ram = 0;
+        g.ram_samples = 0;
         self.cv.notify_all();
     }
 
@@ -220,6 +246,11 @@ impl SegmentQueue {
     /// Segments whose audio is held in RAM right now.
     pub fn in_ram(&self) -> usize {
         self.inner.lock().unwrap().in_ram
+    }
+
+    /// High-water marks so far.
+    pub fn stats(&self) -> QueueStats {
+        self.inner.lock().unwrap().stats
     }
 }
 
@@ -292,6 +323,15 @@ mod tests {
         }
         assert!(spool.exists());
         assert_eq!(q.len(), 6);
+        assert_eq!(
+            q.stats(),
+            QueueStats {
+                peak_len: 6,
+                peak_in_ram: 2,
+                peak_ram_samples: 200,
+                spilled: 4,
+            }
+        );
         q.close();
         for i in 0..6 {
             assert_eq!(q.pop(false).unwrap().unwrap(), seg(i * 100, 100));

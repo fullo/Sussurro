@@ -85,6 +85,7 @@ pub fn run() {
                 mic_test: std::sync::atomic::AtomicBool::new(false),
                 stream: Mutex::new(state::StreamState::default()),
                 engine: Default::default(),
+                dictation: Default::default(),
             });
             // Long-form sessions the last run never finished (crash, forced
             // quit): keep their items as "interrupted" (#153). Off the main
