@@ -26,6 +26,7 @@ export const RECORDING_NOTICE = {
   cancel: "Cancel",
   /** The line shown while (and before) other people are recorded. */
   reminder: "Recording other people — let them know.",
+  reminderMore: "Why?",
   /** Settings / options: bring the notice back. */
   reshow: "Show the notice again",
   reshowDone: "The notice will be shown before the next meeting recording.",

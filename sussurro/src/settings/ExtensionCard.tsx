@@ -4,6 +4,9 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { CollapsibleCard, Switch, Tip } from "../components/ui";
 import { apiNotice } from "../lib/localApi";
 import { encodePairingCode, maskedPairingCode } from "../lib/pairingCode";
+import { needsMeetingNotice, withNoticeReset } from "../lib/meetingNotice";
+import { RECORDING_NOTICE } from "../lib/recordingNotice";
+import { RecordingPrivacyLink } from "../shell/RecordingNotice";
 import type { ListenState } from "../lib/types";
 import type { CardProps } from "./DictationCard";
 
@@ -73,6 +76,29 @@ export function ExtensionCard({ ctl, collapsible }: CardProps) {
           onChange={(v) => save({ ...settings, meetings_enabled: v })}
           label="Enable meetings from the browser extension"
         />
+      </div>
+
+      <div className="field">
+        <div className="field-label">
+          <span>
+            Recording notice <Tip text={RECORDING_NOTICE.reshowHint} />
+          </span>
+          <small>
+            {needsMeetingNotice(settings) ? "shown before the next meeting recording" : "hidden — you chose not to see it again"}
+            {" · "}
+            <RecordingPrivacyLink />
+          </small>
+        </div>
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={needsMeetingNotice(settings)}
+          onClick={async () => {
+            if (await save(withNoticeReset(settings))) flash(RECORDING_NOTICE.reshowDone);
+          }}
+        >
+          {RECORDING_NOTICE.reshow}
+        </button>
       </div>
 
       <div className="field field-col">
