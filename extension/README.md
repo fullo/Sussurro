@@ -6,9 +6,30 @@ Sussurro app running on the same computer, which transcribes and saves it.
 The extension is a capture device plus a live mirror; editing happens in the
 app (plan decision E3).
 
-**Status: scaffold.** The entry points are wired but empty: capture (#128),
-pairing (#127) and the live side panel (#129) come next. There is nothing to
-use yet. Build it only to work on it.
+**Status: preview.** Pairing with the app works (#127); capture (#128) and
+the live side panel (#129) come next. Build it only to work on it.
+
+## Pairing
+
+1. In Sussurro: Settings → Browser extension → turn on **Meetings**, and
+   make sure the local API is on (it starts with the app).
+2. Click **Copy pairing code**: one string, `sussurro:<port>:<token>`.
+3. In the extension's options page (right-click the toolbar button →
+   Options), paste it and **Save and test**. Port and token can also be
+   entered separately.
+
+**Test connection** calls `GET /app/version` with the token and reports,
+distinctly: app not reachable (not running, local API off, wrong port),
+wrong token, meetings off, another protocol, or a reply blocked by the
+browser. **Regenerate token** in the app invalidates the old token at once;
+every paired browser must be paired again.
+
+The pairing lives in `storage.local` under the keys `port` and `token`,
+read and written only through `src/shared/pairing.ts` (`getPairing`,
+`setPairing`, `onPairingChanged`, `liveUrl`…). The pairing-code format is
+defined once in the app (`sussurro/src/lib/pairingCode.ts`) and imported
+here as `@sussurro/pairing`. The token is never logged and the options
+page shows it only masked once saved.
 
 ## Layout
 
@@ -20,8 +41,8 @@ use yet. Build it only to work on it.
 | `src/content/main-world.ts` | MAIN-world content script (the `RTCPeerConnection` hook, E4) |
 | `src/content/isolated-world.ts` | ISOLATED-world content script (relay to the background) |
 | `src/sidepanel/`, `sidepanel.html` | side panel (Chrome) / sidebar (Firefox) |
-| `src/options/`, `options.html` | options page (pairing with the app, from #127) |
-| `src/shared/` | helpers shared by the entry points |
+| `src/options/`, `options.html` | options page: pairing with the app, Test connection (#127) |
+| `src/shared/` | helpers shared by the entry points (`pairing.ts`: storage keys and URLs; `connection.ts`: the connection test) |
 | `scripts/build.ts` | the build: pages + scripts + manifest + icons + zip |
 
 Permissions stay minimal: `storage` (plus `sidePanel` on Chrome), and host
@@ -30,7 +51,8 @@ No `<all_urls>`. The unit tests check this.
 
 Transcript components are shared with the app. They live in
 `sussurro/src/transcript/` and are imported as `@sussurro/transcript` (a
-Vite alias plus a tsconfig path). React always resolves to this package's
+Vite alias plus a tsconfig path); the pairing-code format likewise as
+`@sussurro/pairing`. React always resolves to this package's
 copy, so the extension builds without `sussurro/node_modules`.
 
 The extension version always matches the app. The build reads it from
