@@ -567,6 +567,7 @@ mod tests {
             label: "Anna".into(),
             color: "#123456".into(),
             person_id: None,
+            ..Default::default()
         });
         let emb = vec![1.0f32; 4];
         let label = |id: u32, start: u64, end: u64, voice: &str, new: bool| VoiceLabel {

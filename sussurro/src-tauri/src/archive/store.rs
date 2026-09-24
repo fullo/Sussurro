@@ -781,7 +781,7 @@ pub(crate) fn modify_segments(
     id: &str,
     change: impl FnOnce(&mut SegmentsFile) -> Result<()>,
 ) -> Result<Item> {
-    modify_segments_with(archive, id, &|_| {}, change)
+    modify_segments_with(archive, id, &|_| {}, |_meta, segments| change(segments))
 }
 
 /// Read-modify-write of an item's `segments.json` from the app's editors
