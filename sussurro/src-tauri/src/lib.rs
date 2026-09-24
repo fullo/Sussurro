@@ -83,6 +83,18 @@ pub fn run() {
                 })
                 .build(),
         )
+        // Saved audio for the Audio tab's player (#142): range-served WAVs of
+        // archive items only (see archive::playback for the confinement).
+        .register_asynchronous_uri_scheme_protocol(
+            archive::playback::SCHEME,
+            |ctx, request, responder| {
+                let app = ctx.app_handle().clone();
+                let webview = ctx.webview_label().to_string();
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(commands::serve_audio(&app, &webview, &request));
+                });
+            },
+        )
         .setup(|app| {
             let handle = app.handle();
             let _ = APP_HANDLE.set(handle.clone());
