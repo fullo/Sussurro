@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Ctl } from "../hooks/useAppController";
 import {
   MAX_LABEL_CHARS,
   canAddSpeakerToPeople,
+  identifyOffer,
   isVoice,
   labelProblem,
   linkChoices,
@@ -13,12 +14,14 @@ import {
   speakerShares,
   speakerSource,
 } from "../lib/speakers";
-import type { DocSpeaker, Item, Person } from "../lib/types";
+import type { DocSpeaker, Item, Person, VoiceSource } from "../lib/types";
 
-/** The context pane's *Speakers* section (#130, 0.9 preview): the
- *  document's speakers with colour and share of speech, rename for this
- *  document, and "Re-detect speakers". Moving a line is on the line itself
- *  (transcript line actions). */
+/** The context pane's *Speakers* section (#130): the document's speakers
+ *  with colour and share of speech, rename for this document, link to a
+ *  person, and "Re-detect speakers". Moving a line is on the line itself
+ *  (transcript line actions). On a transcription without voice data it
+ *  offers "Identify voices" from the original file, or says why it can't
+ *  (#134). */
 export function SpeakerPanel({
   ctl,
   item,
@@ -42,6 +45,22 @@ export function SpeakerPanel({
   const editable = !item.recording && !item.edited_externally;
   const blocked = redetectBlocked(item);
   const id = item.id;
+  const isTranscription = item.meta.type === "transcription";
+  // "Identify voices" (#134): can the original file give the voices back?
+  const [source, setSource] = useState<VoiceSource | null>(null);
+  const wantsSource = isTranscription && !item.embedded_segments && !item.recording;
+  useEffect(() => {
+    setSource(null);
+    if (!wantsSource) return;
+    let alive = true;
+    invoke<VoiceSource>("archive_voice_source", { id })
+      .then((s) => alive && setSource(s))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [id, wantsSource, item.edited_externally, item.meta.source]);
+  const offer = identifyOffer(item, source);
 
   const call = async (cmd: string, args: Record<string, unknown>, done?: string) => {
     setBusy(true);
@@ -96,6 +115,8 @@ export function SpeakerPanel({
     await call("archive_redetect_speakers", {}, "Speakers re-detected.");
   };
 
+  const identify = () => call("archive_identify_voices", {}, "Voices identified.");
+
   const problem = renaming ? labelProblem(renaming.id, renaming.label) : "";
 
   return (
@@ -104,7 +125,13 @@ export function SpeakerPanel({
         Speakers <span className="ctx-hint">this document</span>
       </h3>
       {shares.length === 0 ? (
-        <p className="ctx-note">{blocked && !item.recording ? blocked : "No speakers yet."}</p>
+        <p className="ctx-note">
+          {isTranscription
+            ? "No speakers yet: this transcription was made without Identify voices."
+            : blocked && !item.recording
+              ? blocked
+              : "No speakers yet."}
+        </p>
       ) : (
         <ul className="spk-list">
           {shares.map(({ speaker, percent, lines }) => (
@@ -195,6 +222,19 @@ export function SpeakerPanel({
       ) : (
         shares.length > 0 && blocked && <p className="ctx-note">{blocked}</p>
       )}
+      {offer === "identify" && editable && (
+        <div className="spk-identify">
+          <p className="ctx-note">
+            Tell the voices apart as Voice 1, Voice 2… from the original file
+            {source?.file_name ? ` “${source.file_name}”` : ""}. The speaker model is downloaded on first use; a long
+            file takes a while. Nothing leaves this computer.
+          </p>
+          <button type="button" className="btn-ghost sh-btn" onClick={identify} disabled={busy}>
+            {busy ? "Identifying voices…" : "Identify voices"}
+          </button>
+        </div>
+      )}
+      {offer === "explain" && source && <p className="ctx-note">{source.reason}</p>}
     </section>
   );
 }

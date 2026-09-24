@@ -31,6 +31,7 @@ import { CleanupLevelPicker } from "../settings/CleanupCard";
 import { AUDIO_EXTENSIONS, pickAudioFile } from "../settings/AudioFileCard";
 import { LANGUAGES } from "../lib/constants";
 import { differsFromDictation, effectiveRun, runArgs, type RunChoice } from "../lib/runOptions";
+import { identifyVoicesArg } from "../lib/speakers";
 import { ChipEditor } from "./ChipEditor";
 import { sttLabel } from "./labels";
 
@@ -402,6 +403,25 @@ function MicPanel({
   );
 }
 
+/* ---------- "Identify voices" (P11, #134) ---------- */
+
+/** Per-run toggle for transcriptions (off by default): label the voices
+ *  "Voice 1, Voice 2…" with the same clustering as meetings. */
+function IdentifyVoices({ checked, onChange }: { checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <label className="check-row">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span>
+        Identify voices{" "}
+        <span className="sh-muted">
+          — label who speaks as Voice 1, Voice 2… (rename them in the document; the speaker model is downloaded on
+          first use)
+        </span>
+      </span>
+    </label>
+  );
+}
+
 /* ---------- File ---------- */
 
 function FilePanel({
@@ -420,6 +440,7 @@ function FilePanel({
   const run = engine.runs.file;
   const [path, setPath] = useState<string | null>(null);
   const [itemType, setItemType] = useState<Exclude<ItemType, "meeting">>("note");
+  const [identify, setIdentify] = useState(false);
   const [title, setTitle] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const setBusy = ctl.setBusy;
@@ -466,6 +487,7 @@ function FilePanel({
             engine.dismiss("file");
             setPath(null);
             setTitle("");
+            setIdentify(false);
           }}
           againLabel="Transcribe another file"
         />
@@ -562,6 +584,9 @@ function FilePanel({
         ))}
       </fieldset>
 
+      {/* Notes are the user's own voice: never speakers (P10). */}
+      {itemType === "transcription" && <IdentifyVoices checked={identify} onChange={setIdentify} />}
+
       <label className="field-stack">
         <span className="opt-k">Title <span className="sh-muted">(optional — the file name if empty)</span></span>
         <input value={title} onChange={(e) => setTitle(e.target.value)} spellCheck={false} />
@@ -575,7 +600,10 @@ function FilePanel({
           onClick={async () => {
             if (!path) return;
             onRunStart("file");
-            await engine.startFile(path, itemType, title, options);
+            await engine.startFile(path, itemType, title, {
+              ...options,
+              identifyVoices: identifyVoicesArg(itemType, identify),
+            });
           }}
         >
           Transcribe
@@ -611,6 +639,7 @@ function LinkPanel({
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [allowLocal, setAllowLocal] = useState(false);
+  const [identify, setIdentify] = useState(false);
   const [info, setInfo] = useState<LinkInfo | null>(null);
   const [ytDlp, setYtDlp] = useState<YtDlpStatus | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
@@ -661,6 +690,7 @@ function LinkPanel({
             setUrl("");
             setTitle("");
             setAllowLocal(false);
+            setIdentify(false);
           }}
           againLabel="Transcribe another link"
         />
@@ -778,6 +808,13 @@ function LinkPanel({
             <span className="sh-muted">(this computer, your router, a NAS — off unless you need it)</span>
           </span>
         </label>
+        <IdentifyVoices checked={identify} onChange={setIdentify} />
+        {identify && (
+          <p className="sh-note">
+            Decide now: the download is deleted after the transcription, so voices can't be identified later without
+            transcribing the link again.
+          </p>
+        )}
         <label className="field-stack">
           <span className="opt-k">Title <span className="sh-muted">(optional — the video's title, or the file name, if empty)</span></span>
           <input value={title} onChange={(e) => setTitle(e.target.value)} spellCheck={false} />
@@ -792,7 +829,10 @@ function LinkPanel({
             onClick={async () => {
               if (!info?.label) return;
               onRunStart("link");
-              const err = await engine.startLink(url, title, info.label, allowLocal, options);
+              const err = await engine.startLink(url, title, info.label, allowLocal, {
+                ...options,
+                identifyVoices: identifyVoicesArg("transcription", identify),
+              });
               setStartError(err);
             }}
           >

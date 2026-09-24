@@ -87,10 +87,50 @@ interface Stored {
   /** Voice each line "really" has, standing in for the stored embeddings:
    *  what "Re-detect speakers" gives back. */
   voiceOf?: Record<number, string>;
+  /** The original file of a transcription, as `source-files.json` knows it
+   *  (#134): absent = not recorded (made before #134, or a link). */
+  sourceFile?: "available" | "missing" | "changed";
 }
 
 const VOICE_COLORS = ["#0f766e", "#7e22ce", "#1f6feb", "#c2410c", "#be185d", "#4d7c0f", "#0369a1", "#9a3412"];
 const voice = (n: number): DocSpeaker => ({ id: `voice:${n}`, label: `Voice ${n}`, color: VOICE_COLORS[(n - 1) % VOICE_COLORS.length] });
+
+/** The preview's stand-in for the tracker (#134): two voices taking turns. */
+const mockVoiceOf = (segmentId: number) => `voice:${(segmentId % 2) + 1}`;
+
+/** "Identify voices" on a stored transcription, as engine::identify does. */
+function labelVoices(s: Stored) {
+  const truth: Record<number, string> = {};
+  for (const x of s.segments) if (!x.stt_error && x.text.trim()) truth[x.id] = mockVoiceOf(x.id);
+  s.segments = s.segments.map((x) => (truth[x.id] ? { ...x, speaker_id: truth[x.id] } : x));
+  const used = [...new Set(Object.values(truth))].sort();
+  s.speakers = used.map((id) => voice(Number(id.split(":")[1])));
+  s.voiceOf = truth;
+}
+
+/** Mirrors engine::identify::availability (#134). */
+function voiceSource(s: Stored) {
+  const file = s.meta.source.startsWith("file:") ? s.meta.source.slice(5) : "";
+  const no = (reason: string) => ({ available: false, reason, file_name: file });
+  if (s.meta.type === "note") return no("Notes are your own voice: they have no speakers.");
+  if (s.meta.type === "meeting") return no("Meetings get their voices while they are recorded.");
+  if (s.recording) return no("Available when the recording ends.");
+  if (s.edited_externally) return no("The transcript was edited outside Sussurro.");
+  if (s.voiceOf) return no("This transcription already has voice data: use Re-detect speakers.");
+  if (s.meta.source.startsWith("url:"))
+    return no("Voices are found in the audio, and a link's download is deleted once it is transcribed (downloading it again is not supported yet). Transcribe the link again with Identify voices on.");
+  if (!file) return no("The original audio of this transcription is not available.");
+  switch (s.sourceFile) {
+    case "available":
+      return { available: true, reason: "", file_name: file };
+    case "missing":
+      return no(`The original file “${file}” is no longer where it was transcribed from. Transcribe it again with Identify voices on.`);
+    case "changed":
+      return no(`The file “${file}” changed since it was transcribed, so its voices would not match the lines. Transcribe it again with Identify voices on.`);
+    default:
+      return no(`Sussurro doesn't know where “${file}” is: it was transcribed before voices could be identified later, or on another computer. Transcribe it again with Identify voices on.`);
+  }
+}
 
 const at = (daysAgo: number, h: number, m: number) => {
   const d = new Date();
@@ -138,6 +178,8 @@ let items: Stored[] = params.get("empty")
           "Parliamo anche di licenze: AGPL per proteggere il lavoro della comunità.",
           "Grazie a tutti per l'ascolto, alla prossima puntata.",
         ], 21000),
+        // Its file is still on disk: the speaker panel offers "Identify voices".
+        sourceFile: "available",
       },
       {
         id: "2026/09/call-con-studio-verdi",
@@ -366,7 +408,9 @@ function cancel(id: number): boolean {
 
 let fileRun: { id: number; cancelled: boolean } | null = null;
 
-async function transcribeFile(path: string, itemType: "note" | "transcription", title: string | null, language: string) {
+async function transcribeFile(path: string, itemType: "note" | "transcription", title: string | null, language: string, identify: boolean) {
+  // Notes never get voices (P10), whatever the toggle said (#134).
+  const voices = identify && itemType === "transcription";
   const id = nextSession++;
   fileRun = { id, cancelled: false };
   const name = path.split("/").pop() ?? path;
@@ -383,7 +427,7 @@ async function transcribeFile(path: string, itemType: "note" | "transcription", 
       ev("engine-error", { session_id: id, error: "cancelled" });
       throw "cancelled";
     }
-    const seg: Segment = { id: i, start_ms: i * 24000, end_ms: i * 24000 + 23000, raw: FAKE_LINES[i % 5], text: FAKE_LINES[i % 5] };
+    const seg: Segment = { id: i, start_ms: i * 24000, end_ms: i * 24000 + 23000, raw: FAKE_LINES[i % 5], text: FAKE_LINES[i % 5], ...(voices ? { speaker_id: mockVoiceOf(i) } : {}) };
     find(itemId)?.segments.push(seg);
     ev("engine-segment", { session_id: id, segment: seg });
     ev("engine-progress", { session_id: id, processed_s: (i + 1) * 24, ingested_s: Math.min(total, (i + 2) * 24), total_s: total, backlog_s: 24, queue_len: 1, segments_done: i + 1 });
@@ -391,6 +435,9 @@ async function transcribeFile(path: string, itemType: "note" | "transcription", 
   const s = find(itemId)!;
   s.recording = false;
   s.meta.duration = "00:03:12";
+  if (voices) labelVoices(s);
+  // A transcription's file path is remembered on this machine (#134).
+  if (itemType === "transcription") s.sourceFile = "available";
   fileRun = null;
   const result = { session_id: id, item_id: itemId, item_type: itemType, title: s.meta.title, text: "", segments: 8, duration_s: total };
   ev("engine-done", result);
@@ -423,7 +470,7 @@ function linkInspect(input: string) {
 
 let linkRun: { id: number; cancelled: boolean; label: string } | null = null;
 
-function startLink(url: string, title: string | null, language: string): number {
+function startLink(url: string, title: string | null, language: string, identify: boolean): number {
   if (linkRun) throw "a link is already being transcribed";
   const info = linkInspect(url);
   if (info.error) throw info.error;
@@ -455,7 +502,7 @@ function startLink(url: string, title: string | null, language: string): number 
         items = items.filter((x) => x.id !== itemId);
         return fail();
       }
-      const seg: Segment = { id: i, start_ms: i * 24000, end_ms: i * 24000 + 23000, raw: FAKE_LINES[i % 5], text: FAKE_LINES[i % 5] };
+      const seg: Segment = { id: i, start_ms: i * 24000, end_ms: i * 24000 + 23000, raw: FAKE_LINES[i % 5], text: FAKE_LINES[i % 5], ...(identify ? { speaker_id: mockVoiceOf(i) } : {}) };
       find(itemId)?.segments.push(seg);
       ev("engine-segment", { session_id: id, segment: seg });
       ev("engine-progress", { session_id: id, processed_s: (i + 1) * 24, ingested_s: Math.min(144, (i + 2) * 24), total_s: 144, backlog_s: 24, queue_len: 1, segments_done: i + 1 });
@@ -463,6 +510,7 @@ function startLink(url: string, title: string | null, language: string): number 
     const s = find(itemId)!;
     s.recording = false;
     s.meta.duration = "00:02:24";
+    if (identify) labelVoices(s);
     linkRun = null;
     ev("engine-done", { session_id: id, item_id: itemId, item_type: "transcription", title: name, text: "", segments: 6, duration_s: 144 });
   })();
@@ -937,6 +985,24 @@ function handle(cmd: string, a: Args): unknown {
       }
       return toItem(s);
     }
+    case "archive_voice_source": {
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      return voiceSource(s);
+    }
+    case "archive_identify_voices": {
+      // Mirrors engine::identify (#134), simplified.
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      const v = voiceSource(s);
+      if (!v.available) throw v.reason;
+      return new Promise((r) =>
+        setTimeout(() => {
+          labelVoices(s);
+          r(toItem(s));
+        }, 1200),
+      );
+    }
     case "archive_delete":
       items = items.filter((s) => s.id !== a.id);
       return null;
@@ -993,7 +1059,7 @@ function handle(cmd: string, a: Args): unknown {
         ? { found: true, path: "/opt/homebrew/bin/yt-dlp", version: "2025.09.26", install_help: "" }
         : { found: false, path: null, version: null, install_help: "Install yt-dlp with Homebrew: `brew install yt-dlp` (or `pipx install yt-dlp`). It is not bundled with Sussurro: video sites change often and yt-dlp is updated to follow them." };
     case "engine_start_link":
-      return startLink(String(a.url), (a.title as string | null) ?? null, runLanguage(a));
+      return startLink(String(a.url), (a.title as string | null) ?? null, runLanguage(a), !!a.identifyVoices);
     case "engine_start_mic":
       if (mic) throw "a microphone session is already running";
       return startMic((a.title as string | null) ?? null, runLanguage(a));
@@ -1007,6 +1073,7 @@ function handle(cmd: string, a: Args): unknown {
         (a.itemType as "note" | "transcription") ?? "note",
         (a.title as string | null) ?? null,
         runLanguage(a),
+        !!a.identifyVoices,
       );
     case "recipes_list":
       return allRecipes();
