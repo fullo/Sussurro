@@ -385,6 +385,24 @@ project decisions here, not in per-machine memory.**
   raw words (else the line is lit as a whole). The clock is a 40 ms timer,
   not rAF (frames stop in a hidden window and the audio would run into
   other speakers' lines).
+- **Voice map (0.10, #144)** (`speakers/map.rs`, `archive_voice_map`,
+  `src/lib/voiceMap.ts`, `shell/VoiceMapCard.tsx`): a card in the Speakers
+  panel — hidden for notes, while recording, and with voice data on < 2
+  lines. PCA on the L2-normalised per-line embeddings, computed in Rust
+  with **no linear-algebra crate**: covariance + subspace iteration on two
+  vectors + a 2 × 2 Rayleigh–Ritz step (plain power iteration with
+  deflation stalls when λ1 ≈ λ2, e.g. three equidistant voices).
+  Deterministic: fixed start vectors, sign = largest loading positive, so
+  line order never mirrors the map. The command returns
+  `{points: [{segment_id, speaker_id, x, y}], total, explained}` — never
+  the embeddings; beyond 5,000 lines the points are downsampled per
+  speaker in proportion, evenly over time (projection still uses all).
+  The UI colours/labels dots from the item's *current* speakers (a moved
+  line recolours without a refetch; refetch only on item id or
+  `embedded_segments` change). Click/Enter selects the line: marked in
+  the transcript (`TranscriptView.selectedId`), and the Audio tab's player
+  seeks there (no autoplay). Keyboard: the SVG is one listbox, arrows walk
+  lines in time order.
 - Workflow: **branch → PR → merge** — no direct pushes to `main`.
 - **Product direction: speech-to-text workbench** (decided 2026-09-24).
   Full plan: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`
