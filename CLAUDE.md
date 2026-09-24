@@ -277,6 +277,21 @@ project decisions here, not in per-machine memory.**
   Forget pairing). A "Recording other people" line shows on those tabs and
   while such a run records. README → Privacy → *Recording meetings and
   consent* is the notice's link target — keep the anchor stable.
+- **Extension browsers (0.9, #137)**: one Chrome build for Chrome, Edge
+  and Brave, one Firefox build (≥ 128); feature parity except the
+  Chrome-only tab-capture fallback, which is compiled out of the Firefox
+  build (the build fails if `background.js` calls tabCapture/offscreen).
+  Firefox's MV3 background is an event page (no persistent background)
+  that unloads after 30 s without extension events or API calls — its
+  WebSocket doesn't count — so from Start until the app's `done` the
+  background calls `runtime.getPlatformInfo()` every second
+  (`holdsBackground`); nothing keeps it loaded otherwise. The harness
+  proves it: Firefox runs with a 2 s idle timeout and its own DevTools
+  attachment ignored (set through the parent process over RDP), the fake
+  app is silent 5 s after Stop, and suspensions are counted; it also opens
+  the real Firefox sidebar. `edge` runs in CI (the runner's Edge,
+  `msedge` channel); `brave` only when named locally. `web-ext lint`: 0
+  errors, 4 warnings justified in `extension/README.md`.
 - **Library facets (0.9, #135)** (`archive/facets.rs`, `archive_facets`):
   not behind `meetings_enabled`. OR within a facet, AND across facets and
   with the text query; counts are disjunctive (a facet ignores its own
