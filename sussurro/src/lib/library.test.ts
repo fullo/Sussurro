@@ -45,6 +45,17 @@ describe("filterByType / matchesQuery", () => {
     expect(matchesQuery(items[1], "podcast idee")).toBe(false);
     expect(matchesQuery(items[0], "  ")).toBe(true);
   });
+
+  it("matches participant names and emails", () => {
+    const withPeople = item("c", {
+      type: "transcription",
+      participants: [{ name: "Anna Rossi", email: "anna@example.com" }, { name: "Ospite" }],
+    });
+    expect(matchesQuery(withPeople, "rossi")).toBe(true);
+    expect(matchesQuery(withPeople, "anna@example")).toBe(true);
+    expect(matchesQuery(withPeople, "ospite")).toBe(true);
+    expect(matchesQuery(withPeople, "marco")).toBe(false);
+  });
 });
 
 describe("itemSubtitle", () => {

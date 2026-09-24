@@ -892,7 +892,8 @@ pub async fn archive_get(state: State<'_, AppState>, id: String) -> Result<Item,
     blocking(move || archive::read_item(&dir, &id)).await
 }
 
-/// Replace an item's frontmatter; returns the updated item.
+/// Replace an item's frontmatter; returns the updated item. Participants
+/// are refused on notes (P10, see `archive::update_meta`).
 #[tauri::command]
 pub async fn archive_update_meta(
     state: State<'_, AppState>,

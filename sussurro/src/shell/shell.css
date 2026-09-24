@@ -365,6 +365,27 @@ html.ui-v2, html.ui-v2 body, html.ui-v2 #root { height: 100%; overflow: hidden; 
 .mtag.add { background: transparent; border-style: dashed; color: var(--c-text-light); padding: 0 10px; }
 .mtag.add:hover { border-color: var(--c-dark); color: var(--c-dark); }
 .mtag-input { font-size: 12px; min-height: 26px; padding: 2px 9px; border-radius: var(--radius-pill); width: 150px; }
+/* Participant chips (#124): name, then the email in muted text. */
+.pchip { max-width: 100%; min-width: 0; overflow: hidden; }
+.pchip-name {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
+  max-width: 16em;
+}
+.pchip .mtag-x { flex: none; }
+button.pchip-name { cursor: pointer; }
+button.pchip-name:hover { text-decoration: underline; }
+.pchip-em { color: var(--c-text-light); overflow: hidden; text-overflow: ellipsis; margin-left: 3px; min-width: 0; flex-shrink: 100; }
+.pchip-edit { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.pchip-input { width: 240px; max-width: 100%; }
+.pchip-input[aria-invalid="true"] { border-color: var(--warn); }
+.pchip-error { font-size: 11.5px; color: var(--warn); }
 
 /* ---------- Library ---------- */
 
