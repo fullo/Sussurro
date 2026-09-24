@@ -318,6 +318,7 @@ pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
             models::model_exists(&models_dir, &settings.whisper_model)
         }
         crate::settings::SttEngine::Parakeet => models::parakeet_exists(&models_dir),
+        crate::settings::SttEngine::Qwen3Asr => models::qwen3_asr_exists(&models_dir),
     }
 }
 
@@ -864,6 +865,11 @@ pub async fn diagnostics(state: State<'_, AppState>) -> Result<String, String> {
             "parakeet-tdt-0.6b-v3-int8".to_string(),
             models::parakeet_exists(&models_dir),
         ),
+        crate::settings::SttEngine::Qwen3Asr => (
+            "qwen3-asr (llama-server sidecar)",
+            crate::stt::remote::QWEN3_ASR_MODEL.to_string(),
+            models::qwen3_asr_exists(&models_dir),
+        ),
     };
     tauri::async_runtime::spawn_blocking(move || {
         use std::fmt::Write as _;
@@ -1026,6 +1032,7 @@ pub async fn download_model(state: State<'_, AppState>) -> Result<String, String
         let result = match engine {
             crate::settings::SttEngine::Whisper => models::ensure_model(&dir, &file),
             crate::settings::SttEngine::Parakeet => models::ensure_parakeet(&dir),
+            crate::settings::SttEngine::Qwen3Asr => models::ensure_qwen3_asr(&dir),
         };
         result
             .map(|p| p.display().to_string())

@@ -1,7 +1,7 @@
 //! Where the bundled `llama-server` sidecar lives (plan E9, #116).
 //!
-//! Packaging only: this module finds the files, it never starts them (the
-//! lifecycle is #117). The sidecar is a pinned upstream llama.cpp build
+//! This module finds the files; [`super::remote`] starts and stops them
+//! (#117). The sidecar is a pinned upstream llama.cpp build
 //! (`sidecar/llama-server.lock.json`), fetched and SHA-256-verified by
 //! `npm run sidecar` and merged into bundling builds by
 //! `tauri.sidecar.conf.json`. A build without that config simply has no
@@ -54,12 +54,38 @@ pub fn resolve(exe_dir: &Path, resource_dir: &Path) -> Option<SidecarPaths> {
     (binary.is_file() && lib_dir.is_dir()).then_some(SidecarPaths { binary, lib_dir })
 }
 
-/// The sidecar's paths in the running app, if it was bundled.
+/// The sidecar's paths in the running app: bundled, else (debug builds)
+/// the checkout's `npm run sidecar` output ([`dev_paths`]).
 pub fn locate<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<SidecarPaths> {
+    bundled(app).or_else(dev_paths)
+}
+
+fn bundled<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<SidecarPaths> {
     use tauri::Manager;
     let exe = std::env::current_exe().ok()?;
     let resource_dir = app.path().resource_dir().ok()?;
     resolve(exe.parent()?, &resource_dir)
+}
+
+/// `npm run sidecar`'s output in `src-tauri/binaries/`, still carrying the
+/// target triple: a plain `tauri dev` (without the sidecar `--config`)
+/// then runs Qwen3-ASR too. Debug builds only — a release build never
+/// looks into the source checkout.
+pub fn dev_paths() -> Option<SidecarPaths> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    dev_resolve(&Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries"))
+}
+
+fn dev_resolve(binaries: &Path) -> Option<SidecarPaths> {
+    let binary = binaries.join(format!(
+        "{SIDECAR_NAME}-{}{}",
+        env!("SUSSURRO_TARGET_TRIPLE"),
+        std::env::consts::EXE_SUFFIX
+    ));
+    let lib_dir = binaries.join(LIB_DIR);
+    (binary.is_file() && lib_dir.is_dir()).then_some(SidecarPaths { binary, lib_dir })
 }
 
 /// Whether this build ships the `llama-server` sidecar.
@@ -90,6 +116,27 @@ mod tests {
             Some(SidecarPaths {
                 binary: exe_dir.join(binary_file_name()),
                 lib_dir: res_dir.join(LIB_DIR),
+            })
+        );
+    }
+
+    #[test]
+    fn dev_checkout_layout_keeps_the_target_triple() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(dev_resolve(tmp.path()), None);
+        let binary = tmp.path().join(format!(
+            "{SIDECAR_NAME}-{}{}",
+            env!("SUSSURRO_TARGET_TRIPLE"),
+            std::env::consts::EXE_SUFFIX
+        ));
+        fs::write(&binary, b"bin").unwrap();
+        assert_eq!(dev_resolve(tmp.path()), None, "libs missing");
+        fs::create_dir(tmp.path().join(LIB_DIR)).unwrap();
+        assert_eq!(
+            dev_resolve(tmp.path()),
+            Some(SidecarPaths {
+                binary,
+                lib_dir: tmp.path().join(LIB_DIR),
             })
         );
     }

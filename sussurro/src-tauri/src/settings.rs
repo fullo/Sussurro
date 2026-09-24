@@ -20,6 +20,10 @@ pub enum SttEngine {
     /// NVIDIA Parakeet TDT v3 (ONNX) — CPU-optimized, ~10x faster than
     /// Whisper on CPU, auto-detects 25 European languages.
     Parakeet,
+    /// Qwen3-ASR 1.7B Q8 in the bundled `llama-server` sidecar (#117):
+    /// optional, never the default (#152) — no dictionary prompt, and
+    /// whisper large-v3-turbo is more accurate on Italian (#109).
+    Qwen3Asr,
 }
 
 /// Which chat API the cleanup LLM is driven through.

@@ -210,7 +210,8 @@ impl Drop for SessionGuard {
     }
 }
 
-/// `whisper-<model>` or `parakeet-tdt-0.6b-v3` for the frontmatter. Pure.
+/// `whisper-<model>`, `parakeet-tdt-0.6b-v3` or `qwen3-asr-1.7b-q8` for the
+/// frontmatter. Pure.
 pub fn engine_label(settings: &Settings) -> String {
     match settings.engine {
         SttEngine::Whisper => {
@@ -220,6 +221,7 @@ pub fn engine_label(settings: &Settings) -> String {
             format!("whisper-{m}")
         }
         SttEngine::Parakeet => "parakeet-tdt-0.6b-v3".to_string(),
+        SttEngine::Qwen3Asr => crate::stt::remote::QWEN3_ASR_LABEL.to_string(),
     }
 }
 
@@ -1479,5 +1481,7 @@ mod tests {
         assert_eq!(engine_label(&s), "whisper-large-v3-turbo-q5_0");
         s.engine = SttEngine::Parakeet;
         assert_eq!(engine_label(&s), "parakeet-tdt-0.6b-v3");
+        s.engine = SttEngine::Qwen3Asr;
+        assert_eq!(engine_label(&s), "qwen3-asr-1.7b-q8");
     }
 }

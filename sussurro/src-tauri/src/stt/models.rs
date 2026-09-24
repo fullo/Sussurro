@@ -206,6 +206,23 @@ fn ensure_hf_file(models_dir: &Path, repo: &str, file: &str) -> Result<PathBuf> 
     Ok(path)
 }
 
+/// Both Qwen3-ASR files (model + audio encoder) are in the models folder.
+pub fn qwen3_asr_exists(models_dir: &Path) -> bool {
+    crate::stt::remote::QWEN3_ASR_FILES
+        .iter()
+        .all(|f| models_dir.join(f).is_file())
+}
+
+/// Download Qwen3-ASR 1.7B Q8 and its audio encoder (~2.5 GB) if missing,
+/// each verified against the SHA-256 the HuggingFace repo publishes (fail
+/// closed), like the whisper models. Returns the model's path. Blocking.
+pub fn ensure_qwen3_asr(models_dir: &Path) -> Result<PathBuf> {
+    use crate::stt::remote::{QWEN3_ASR_MMPROJ, QWEN3_ASR_MODEL, QWEN3_ASR_REPO};
+    // The small encoder first: a failure there costs less.
+    ensure_hf_file(models_dir, QWEN3_ASR_REPO, QWEN3_ASR_MMPROJ)?;
+    ensure_hf_file(models_dir, QWEN3_ASR_REPO, QWEN3_ASR_MODEL)
+}
+
 /// Parakeet ships as a tar.gz containing the model directory.
 pub fn parakeet_exists(models_dir: &Path) -> bool {
     models_dir
@@ -351,6 +368,26 @@ mod tests {
         if let Ok(canon_dir) = dir.path().canonicalize() {
             assert!(got.starts_with(&canon_dir));
         }
+    }
+
+    #[test]
+    fn qwen3_asr_needs_both_files_and_reuses_them_without_network() {
+        use crate::stt::remote::{QWEN3_ASR_MMPROJ, QWEN3_ASR_MODEL, QWEN3_ASR_REPO};
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!qwen3_asr_exists(dir.path()));
+        std::fs::write(dir.path().join(QWEN3_ASR_MODEL), b"fake").unwrap();
+        assert!(!qwen3_asr_exists(dir.path()), "the encoder is missing");
+        std::fs::write(dir.path().join(QWEN3_ASR_MMPROJ), b"fake").unwrap();
+        assert!(qwen3_asr_exists(dir.path()));
+        let got = ensure_qwen3_asr(dir.path()).unwrap();
+        assert_eq!(got.file_name().and_then(|n| n.to_str()), Some(QWEN3_ASR_MODEL));
+        // Valid names, fetched from the gate's repo.
+        assert!(validate_model_name(QWEN3_ASR_MODEL).is_ok());
+        assert!(validate_model_name(QWEN3_ASR_MMPROJ).is_ok());
+        assert_eq!(
+            hf_resolve_url(QWEN3_ASR_REPO, QWEN3_ASR_MODEL),
+            "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/Qwen3-ASR-1.7B-Q8_0.gguf"
+        );
     }
 
     #[test]

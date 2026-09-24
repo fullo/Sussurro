@@ -62,7 +62,8 @@ pub fn resolve_archive_dir(paths: &AppPaths, settings: &Settings) -> anyhow::Res
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelKey {
     pub engine: crate::settings::SttEngine,
-    /// Whisper model file name; empty for Parakeet (one model).
+    /// Whisper model file name; empty for Parakeet and Qwen3-ASR (one
+    /// model each).
     pub whisper_model: String,
     pub models_dir: PathBuf,
 }
@@ -74,7 +75,7 @@ impl ModelKey {
             engine: settings.engine.clone(),
             whisper_model: match settings.engine {
                 SttEngine::Whisper => settings.whisper_model.clone(),
-                SttEngine::Parakeet => String::new(),
+                SttEngine::Parakeet | SttEngine::Qwen3Asr => String::new(),
             },
             models_dir: resolve_models_dir(paths, settings),
         }
