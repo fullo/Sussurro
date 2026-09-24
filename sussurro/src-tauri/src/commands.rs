@@ -261,6 +261,14 @@ pub fn export_config(state: State<'_, AppState>, path: String) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
+/// Read a user-picked dictionary (.txt) or snippets (.csv) file for the bulk
+/// import in Settings. Returns the text; the frontend parses and merges it.
+#[tauri::command]
+pub fn read_import_file(path: String) -> Result<String, String> {
+    crate::config_io::read_import_text(std::path::Path::new(&path))
+        .map_err(|e| format!("could not read file: {e:#}"))
+}
+
 /// Merge a config bundle from `path` into settings. Returns a summary string.
 #[tauri::command]
 pub fn import_config(state: State<'_, AppState>, path: String) -> Result<String, String> {

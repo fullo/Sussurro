@@ -563,6 +563,8 @@ kbd {
   border-top: 1px solid var(--border);
 }
 .snippet-row textarea { margin: 0; }
+/* Secondary actions under a list (bulk import), right-aligned. */
+.list-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 /* Per-app output language: its own line under the rule, aligned left. */
 .style-lang {
   grid-column: 1 / -1;
