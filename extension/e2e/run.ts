@@ -9,15 +9,19 @@
  * page, the Meet name observer (#131) sends the contributing-
  * source timeline, the bound names, the participants and its health.
  *
- *   npm run build && npm run test:e2e            (all configurations)
- *   npm run test:e2e -- chromium firefox          (a subset)
+ *   npm run build && npm run test:e2e            (chromium, chromium-json, firefox)
+ *   npm run test:e2e -- chromium firefox edge     (a choice)
  *   HEADED=1 npm run test:e2e -- chromium
  *
  * Configurations: `chromium` (structured-clone messaging, Meet-like
  * `replaceTrack`), `chromium-json` (the manifest key removed: base64 over
  * JSON messaging, as on Chrome < 148), `firefox` (a temporary add-on
  * installed over the remote debugging protocol — Playwright can't load
- * Firefox extensions itself; the harness drives its background over RDP).
+ * Firefox extensions itself; the harness drives its background over RDP,
+ * with a short event-page idle timeout, and also opens the real sidebar).
+ * Only when named: `edge` (the installed Microsoft Edge, Playwright's
+ * `msedge` channel) and `brave` (the installed Brave, or BRAVE_PATH), both
+ * with the Chrome build.
  *
  * Needs the Playwright browsers (`npx playwright install chromium firefox`;
  * set PLAYWRIGHT_BROWSERS_PATH to keep them out of the home folder).
@@ -49,10 +53,22 @@ const NO_TAB = 999_999;
 const FIREFOX_IDLE_MS = 2000;
 const FINISH_MS = 5000;
 
-type Config = "chromium" | "chromium-json" | "firefox";
+type Config = "chromium" | "chromium-json" | "firefox" | "edge" | "brave";
+/** Run by default (and in CI). `edge` and `brave` (the Chrome build in the
+ *  installed browsers) run only when named. */
 const ALL: Config[] = ["chromium", "chromium-json", "firefox"];
+const EXTRA: Config[] = ["edge", "brave"];
 const wanted = process.argv.slice(2).filter((a) => !a.startsWith("-")) as Config[];
+const unknown = wanted.filter((c) => !ALL.includes(c) && !EXTRA.includes(c));
+if (unknown.length) throw new Error(`unknown configuration(s): ${unknown.join(", ")} (${[...ALL, ...EXTRA].join(", ")})`);
 const configs = wanted.length ? wanted : ALL;
+
+/** Where Brave lives when BRAVE_PATH is not set. */
+const BRAVE_DEFAULT: Partial<Record<NodeJS.Platform, string>> = {
+  darwin: "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+  linux: "/usr/bin/brave-browser",
+  win32: "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+};
 
 const tmpRoot = mkdtempSync(join(process.env.E2E_TMPDIR ?? tmpdir(), "sussurro-e2e-"));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -152,7 +168,10 @@ interface Launched {
 async function launchChromium(config: Config): Promise<Launched> {
   const ext = testExtension("chrome", config);
   const ctx = await chromium.launchPersistentContext(join(tmpRoot, `profile-${config}`), {
-    channel: "chromium",
+    // Playwright's Chromium; Edge through its `msedge` channel (the
+    // installed Edge); Brave by path. Branded builds ignore --load-extension
+    // unless this feature is switched off.
+    ...(config === "edge" ? { channel: "msedge" } : config === "brave" ? { executablePath: process.env.BRAVE_PATH ?? BRAVE_DEFAULT[process.platform] } : { channel: "chromium" }),
     headless,
     // "Create .srt" downloads a file: keep it in the temp dir.
     downloadsPath: join(tmpRoot, "downloads"),
@@ -163,6 +182,7 @@ async function launchChromium(config: Config): Promise<Launched> {
       "--use-fake-device-for-media-stream",
       `--use-file-for-fake-audio-capture=${toneWav()}`,
       "--autoplay-policy=no-user-gesture-required",
+      ...(config === "edge" || config === "brave" ? ["--disable-features=DisableLoadExtensionCommandLineSwitch"] : []),
     ],
   });
   const sw = ctx.serviceWorkers()[0] ?? (await ctx.waitForEvent("serviceworker", { timeout: 15_000 }));
