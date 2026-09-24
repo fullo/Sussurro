@@ -1,3 +1,4 @@
+import { describe, expect, it } from "vitest";
 import { parseDictionaryFile, parseSnippetFile } from "./utils";
 
 describe("File Parsing Helpers", () => {

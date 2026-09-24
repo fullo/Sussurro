@@ -7,6 +7,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { parseDictionaryFile, parseSnippetFile } from "./utils";
+import "./App.css";
 
 interface OllamaStatus {
   installed: boolean;
@@ -706,6 +707,35 @@ export default function App() {
     }
   };
 
+  const downloadModel = async () => {
+    setDownloadingModel(true);
+    setBusy("Downloading model — this can take a while…");
+    try {
+      await invoke("download_model");
+      setBusy("");
+      setModelReady(true);
+    } catch (e) {
+      setBusy(String(e));
+    } finally {
+      setDownloadingModel(false);
+    }
+  };
+
+  const clearHistory = async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 3000);
+      return;
+    }
+    setConfirmClear(false);
+    try {
+      await invoke("clear_history");
+      setHistory([]);
+    } catch (e) {
+      setBusy(String(e));
+    }
+  };
+
   const handleImportDictionary = async () => {
     try {
       const selected = await openDialog({
@@ -1281,13 +1311,6 @@ export default function App() {
               spellCheck={false}
               placeholder="Sussurro&#10;Tauri"
             />
-            <button
-              className="btn-ghost"
-              onClick={handleImportDictionary}
-              title="Import dictionary from .txt file"
-            >
-              Import .txt
-            </button>
             <button
               className="btn-ghost"
               onClick={handleImportDictionary}
