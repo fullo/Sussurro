@@ -742,8 +742,47 @@ function startLink(url: string, title: string | null, language: string, identify
 
 /** Fake model listing per profile: Ollama and localhost servers answer,
  *  "*.example.com" hosts behave as unreachable (to preview the error). */
+/* ---------- the bundled LLM (#118) ---------- */
+
+/** `?bundled=missing`: its model isn't downloaded; `?sidecar=0`: a build
+ *  without the llama-server sidecar; `?ollama=down`: the local Ollama
+ *  can't be reached (the "Use the bundled model" offer). */
+const bundled = {
+  available: params.get("sidecar") !== "0",
+  downloaded: params.get("bundled") !== "missing",
+};
+const BUNDLED_PROFILE: LlmProfile = {
+  id: "bundled",
+  name: "Local (bundled)",
+  api: "openai",
+  base_url: "http://127.0.0.1",
+  api_key: "",
+  model: "qwen3-1.7b",
+  external: false,
+  context_tokens: 8192,
+  bundled: true,
+};
+if (bundled.available) settings.llm_profiles.push({ ...BUNDLED_PROFILE });
+const ollamaDown = params.get("ollama") === "down";
+
+function bundledStatus() {
+  return { ...bundled, running: false, model: "Qwen3 1.7B", download_bytes: 2_165_039_200 };
+}
+
+async function bundledDownload(): Promise<void> {
+  if (!bundled.available) throw "this build has no bundled llama-server";
+  if (!bundled.downloaded) await new Promise((r) => setTimeout(r, 1500));
+  bundled.downloaded = true;
+}
+
 function listModels(p: LlmProfile | undefined): string[] {
   if (!p) throw "no profile";
+  if (p.bundled) {
+    if (!bundled.available) throw "this build has no bundled llama-server";
+    if (!bundled.downloaded) throw "the bundled model is not downloaded yet";
+    return ["qwen3-1.7b"];
+  }
+  if (ollamaDown && p.api === "ollama") throw "ollama not reachable";
   if (/example\.com/.test(p.base_url)) throw "OpenAI-compatible server not reachable";
   return p.api === "ollama" ? ["llama3.2:3b", "qwen2.5:3b"] : ["qwen2.5-7b-instruct", "gemma-3-4b-it"];
 }
@@ -1082,8 +1121,26 @@ function handle(cmd: string, a: Args): unknown {
       return ["MacBook Pro Microphone", "USB Audio Device"];
     case "get_default_prompts":
       return ["Remove fillers, fix grammar.", "Also tighten for clarity.", "Rewrite for brevity."];
-    case "ollama_status":
-      return { installed: true, running: true, has_model: true };
+    case "ollama_status": {
+      // As the backend: whether the cleanup profile's server lists its model.
+      const p = settings.llm_profiles.find((x) => x.id === settings.cleanup_profile) ?? settings.llm_profiles[0];
+      try {
+        const models = listModels(p);
+        return { installed: true, running: true, has_model: models.includes(p.model) || p.api === "ollama" };
+      } catch {
+        return { installed: !ollamaDown, running: false, has_model: false };
+      }
+    }
+    case "bundled_llm_status":
+      return bundledStatus();
+    case "bundled_llm_download":
+      return bundledDownload();
+    case "bundled_llm_use":
+      return bundledDownload().then(() => {
+        if (!settings.llm_profiles.some((p) => p.bundled)) settings.llm_profiles.push({ ...BUNDLED_PROFILE });
+        settings.cleanup_profile = "bundled";
+        return { ...settings };
+      });
     case "check_permissions":
       return { microphone: "granted", accessibility: "granted" };
     case "mic_level":

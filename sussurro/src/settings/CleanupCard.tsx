@@ -1,7 +1,16 @@
 import { AdvancedGroup, CollapsibleCard, EndpointNote, Switch, Tip } from "../components/ui";
 import { CLEANUP_LEVELS, LANGUAGES } from "../lib/constants";
 import type { Ctl } from "../hooks/useAppController";
-import { API_LABELS, cleanupProfile, keyStorageWarning, patchCleanupProfile, profileSummary } from "../lib/llmProfiles";
+import {
+  API_LABELS,
+  bundledNote,
+  cleanupProfile,
+  isBundled,
+  keyStorageWarning,
+  patchCleanupProfile,
+  profileSummary,
+} from "../lib/llmProfiles";
+import { BundledOffer, BundledProblem } from "./BundledLlm";
 import { cleanupActive, cleanupGate, withCleanupOptIn } from "../lib/privacy";
 import type { CleanupLevel, LlmApi, LlmProfile } from "../lib/types";
 import type { CardProps } from "./DictationCard";
@@ -55,7 +64,13 @@ export function CleanupProfileField({ ctl }: { ctl: Ctl }) {
     <div className="field">
       <div className="field-label">
         <span>Profile <Tip text="The LLM profile that cleans your dictations, microphone sessions and files, and the local API's /clean. A profile is a server (Ollama or any OpenAI-compatible /v1 server), a model and an optional API key." /></span>
-        <small>{current?.external ? "external: needs your opt-in below" : "runs on this machine"}</small>
+        <small>
+          {current?.external
+            ? "external: needs your opt-in below"
+            : isBundled(current)
+              ? "runs on this machine, inside Sussurro"
+              : "runs on this machine"}
+        </small>
       </div>
       <select
         value={current?.id ?? ""}
@@ -65,7 +80,7 @@ export function CleanupProfileField({ ctl }: { ctl: Ctl }) {
         {settings.llm_profiles.map((p) => (
           <option key={p.id} value={p.id}>
             {p.name}
-            {p.external ? " (external)" : ""}
+            {p.external ? " (external)" : isBundled(p) ? " — no setup needed" : ""}
           </option>
         ))}
       </select>
@@ -231,6 +246,8 @@ export function CleanupCard({
 
       <CleanupProfileField ctl={ctl} />
       <ExternalCleanupOptIn ctl={ctl} />
+      <BundledOffer ctl={ctl} />
+      <BundledProblem ctl={ctl} />
 
       {profile && onEditProfiles && (
         <div className="field field-col">
@@ -243,7 +260,10 @@ export function CleanupCard({
           {/* An external profile's warning is the opt-in above (#122). */}
         </div>
       )}
-      {profile && !onEditProfiles && <ClassicProfileFields ctl={ctl} profile={profile} />}
+      {profile && !onEditProfiles && isBundled(profile) && (
+        <p className="card-hint">{bundledNote(ctl.bundledLlm)}</p>
+      )}
+      {profile && !onEditProfiles && !isBundled(profile) && <ClassicProfileFields ctl={ctl} profile={profile} />}
       {modelAdoptNote && <small className="model-note">✓ {modelAdoptNote}</small>}
 
       <AdvancedGroup>

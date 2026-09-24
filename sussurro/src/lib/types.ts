@@ -53,6 +53,23 @@ export interface LlmProfile {
    *  to send dictations and transcriptions to. Absent/"" = not agreed, and
    *  cleanup keeps the raw text. Bound to the host. */
   cleanup_opt_in?: string;
+  /** The built-in "Local (bundled)" profile (#118): Sussurro's own
+   *  llama-server with a small model. Its fields are fixed by the backend
+   *  (never external); absent/false on every other profile. */
+  bundled?: boolean;
+}
+
+/** The bundled LLM (`bundled_llm_status`, #118). */
+export interface BundledLlmStatus {
+  /** This build ships the llama-server sidecar. */
+  available: boolean;
+  /** The model file is in the models folder. */
+  downloaded: boolean;
+  /** Its server runs right now. */
+  running: boolean;
+  /** "Qwen3 1.7B" */
+  model: string;
+  download_bytes: number;
 }
 
 /** What a run on an external profile would send, and where

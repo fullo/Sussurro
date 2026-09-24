@@ -4,8 +4,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { cleanupProfile, cleanupServerChanged, mergeKeyStorage, modelListed, patchCleanupProfile } from "../lib/llmProfiles";
+import { cleanupProfile, cleanupServerChanged, formatGb, mergeKeyStorage, modelListed, patchCleanupProfile } from "../lib/llmProfiles";
 import type {
+  BundledLlmStatus,
   HistoryEntry,
   OllamaStatus,
   Permissions,
@@ -31,6 +32,10 @@ export function useAppController() {
   const [installedWhisper, setInstalledWhisper] = useState<string[]>([]);
   /** This build ships the llama-server sidecar Qwen3-ASR needs (#117). */
   const [sidecarAvailable, setSidecarAvailable] = useState(false);
+  /** The bundled LLM (#118): available in this build, downloaded, running. */
+  const [bundledLlm, setBundledLlm] = useState<BundledLlmStatus | null>(null);
+  /** "Use the bundled model" / its download is in progress. */
+  const [bundledBusy, setBundledBusy] = useState(false);
   /** Info shown when an installed Ollama model was auto-selected for cleanup. */
   const [modelAdoptNote, setModelAdoptNote] = useState<string | null>(null);
   const [inputDevices, setInputDevices] = useState<string[]>([]);
@@ -71,6 +76,14 @@ export function useAppController() {
     }
   };
 
+  const loadBundledLlm = async () => {
+    try {
+      setBundledLlm(await invoke<BundledLlmStatus>("bundled_llm_status"));
+    } catch {
+      setBundledLlm(null);
+    }
+  };
+
   const loadWhisperModels = async () => {
     try {
       setInstalledWhisper(await invoke<string[]>("list_whisper_models"));
@@ -93,6 +106,7 @@ export function useAppController() {
     invoke<string[]>("list_input_devices").then(setInputDevices).catch(() => {});
     invoke<string[]>("get_default_prompts").then(setDefaultPrompts).catch(() => {});
     invoke<boolean>("stt_sidecar_available").then(setSidecarAvailable).catch(() => setSidecarAvailable(false));
+    loadBundledLlm();
     checkOllama();
     checkPermissions();
     const unlisten = listen<string>("pipeline-status", (e) => {
@@ -118,6 +132,8 @@ export function useAppController() {
       setBusy("");
       setModelReady(await invoke<boolean>("model_is_downloaded"));
       loadWhisperModels();
+      // The models folder may have changed (the bundled model lives there).
+      loadBundledLlm();
       if (serverChanged) {
         loadOllamaModels();
         checkOllama();
@@ -220,6 +236,38 @@ export function useAppController() {
     }
   };
 
+  /** Download the bundled model (#118); with `select`, also make the
+   *  "Local (bundled)" profile the cleanup profile — the user's click, the
+   *  only way it is ever selected. Resolves false on failure (shown). */
+  const bundledModel = async (select: boolean): Promise<boolean> => {
+    setBundledBusy(true);
+    const size = bundledLlm ? ` (${formatGb(bundledLlm.download_bytes)})` : "";
+    setBusy(
+      bundledLlm?.downloaded
+        ? "Switching cleanup to the bundled model…"
+        : `Downloading the bundled model${size} — this can take a while…`
+    );
+    try {
+      if (select) {
+        const saved = await invoke<Settings>("bundled_llm_use");
+        setSettings(saved);
+      } else {
+        await invoke("bundled_llm_download");
+      }
+      setBusy("");
+      loadBundledLlm();
+      loadOllamaModels();
+      checkOllama();
+      if (select) flash("Cleanup now uses “Local (bundled)”, on this machine.");
+      return true;
+    } catch (e) {
+      setBusy(String(e));
+      return false;
+    } finally {
+      setBundledBusy(false);
+    }
+  };
+
   /** Show a message for a few seconds, then clear it. */
   const flash = (msg: string, ms = 4000) => {
     setBusy(msg);
@@ -277,6 +325,11 @@ export function useAppController() {
     loadOllamaModels,
     installedWhisper,
     sidecarAvailable,
+    bundledLlm,
+    loadBundledLlm,
+    bundledBusy,
+    pickBundledForCleanup: () => bundledModel(true),
+    downloadBundledModel: () => bundledModel(false),
     modelAdoptNote,
     inputDevices,
     defaultPrompts,

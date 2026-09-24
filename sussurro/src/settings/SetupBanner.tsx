@@ -2,19 +2,23 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Ctl } from "../hooks/useAppController";
-import { cleanupProfile } from "../lib/llmProfiles";
+import { bundledProblem, cleanupProfile, offerBundled } from "../lib/llmProfiles";
+import { BundledOffer, BundledProblem } from "./BundledLlm";
 
-/** First-run checklist: permissions, Ollama, speech model. Hidden once
- *  everything is in place or when dismissed for this window session. */
+/** First-run checklist: permissions, Ollama (or the bundled model, #118),
+ *  speech model. Hidden once everything is in place or when dismissed for
+ *  this window session. */
 export function SetupBanner({ ctl }: { ctl: Ctl }) {
   const [setupDismissed, setSetupDismissed] = useState(false);
-  const { settings, ollamaStatus, ollamaModels, permissions, modelReady } = ctl;
+  const { settings, ollamaStatus, ollamaModels, permissions, modelReady, bundledLlm } = ctl;
   // The Ollama checks only concern an Ollama cleanup profile (#119).
   const onOllama = cleanupProfile(settings)?.api === "ollama";
 
   const needed =
     (ollamaStatus !== null &&
       (!ollamaStatus.running || !ollamaStatus.has_model || !modelReady)) ||
+    offerBundled(settings, bundledLlm, ollamaStatus) ||
+    bundledProblem(settings, bundledLlm) !== null ||
     permissions?.microphone === "denied" ||
     permissions?.accessibility === "denied";
   if (setupDismissed || !needed) return null;
@@ -29,6 +33,7 @@ export function SetupBanner({ ctl }: { ctl: Ctl }) {
             onClick={() => {
               ctl.checkOllama();
               ctl.checkPermissions();
+              ctl.loadBundledLlm();
             }}
           >
             Re-check
@@ -100,6 +105,8 @@ export function SetupBanner({ ctl }: { ctl: Ctl }) {
             </button>
           </li>
         )}
+        <BundledOffer ctl={ctl} inline />
+        <BundledProblem ctl={ctl} inline />
         {!modelReady && (
           <li>
             <span className="setup-bad">✗</span> Speech model not downloaded yet.
