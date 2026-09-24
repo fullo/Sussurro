@@ -452,6 +452,12 @@ project decisions here, not in per-machine memory.**
 - Push a `v*` tag (from any branch) to trigger `.github/workflows/release.yml`
   → draft release with signed installers + `latest.json`. Publish by
   un-drafting.
+- Run the Release workflow manually on main to verify the three-OS build
+  without publishing (`gh workflow run release.yml --ref main`, #210): off a
+  tag it creates no tag and no release — the bundles (installers, updater
+  archives + `.sig`) and extension zips become 3-day workflow artifacts; no
+  `latest.json` is produced. Dispatching on a tag ref behaves like a tag push.
+  A full run costs the same Actions minutes as a release.
 - Never force-move an existing release tag; bump the patch version instead
   (version lives in `sussurro/package.json`, `sussurro/src-tauri/tauri.conf.json`,
   `sussurro/src-tauri/Cargo.toml` + `Cargo.lock`).

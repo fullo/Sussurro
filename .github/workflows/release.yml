@@ -3,6 +3,12 @@ name: Release
 # Builds signed installers for Windows / macOS / Linux and publishes a GitHub
 # release (with the updater's latest.json) whenever a v* tag is pushed; the
 # browser-extension zips are attached to the same draft release.
+#
+# Run by hand (workflow_dispatch) from a branch, it builds exactly the same
+# thing but creates no tag and no release (#210): tauri-action gets no
+# tagName/releaseName, so it only builds, and the bundles + extension zips are
+# uploaded as short-lived workflow artifacts instead. Dispatched from a tag it
+# behaves like a tag push.
 on:
   push:
     tags:
@@ -121,8 +127,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: sussurro
-          tagName: ${{ github.ref_name }}
-          releaseName: "Sussurro ${{ github.ref_name }}"
+          # Empty off a tag: tauri-action then only builds (no release, no
+          # tag, no latest.json upload); the updater .sig files are still
+          # produced by the build itself from TAURI_SIGNING_PRIVATE_KEY.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Sussurro {0}', github.ref_name) || '' }}
           releaseBody: "Local voice dictation. See README for setup (Ollama + a Whisper/Parakeet model)."
           releaseDraft: true
           args: ${{ matrix.args }}
@@ -137,8 +146,32 @@ jobs:
           esac
           bash scripts/verify-sidecar-bundle.sh "${{ matrix.triple }}" "$TD"
 
+      # Build-only run (no tag): keep the bundles (installers, updater
+      # archives + .sig) as workflow artifacts instead of release assets.
+      - name: Bundle directory (build-only run)
+        id: bundle
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            windows-latest) TD="$(cygpath -m "$CARGO_TARGET_DIR")" ;;
+            macos-latest) TD=sussurro/src-tauri/target/aarch64-apple-darwin ;;
+            *) TD=sussurro/src-tauri/target ;;
+          esac
+          echo "dir=$TD/release/bundle" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bundles (build-only run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sussurro-${{ matrix.triple }}
+          path: ${{ steps.bundle.outputs.dir }}
+          if-no-files-found: error
+          retention-days: 3
+
   # Browser extension zips (Chrome/Edge/Brave + Firefox), attached to the draft
-  # release the build job created. Store listings are not part of the release.
+  # release the build job created (a workflow artifact on a build-only run).
+  # Store listings are not part of the release.
   extension:
     needs: build
     if: ${{ !cancelled() }}
@@ -161,6 +194,16 @@ jobs:
           npm run lint
 
       - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" extension/dist/*.zip --clobber --repo "${{ github.repository }}"
+
+      - name: Upload extension zips (build-only run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: extension/dist/*.zip
+          if-no-files-found: error
+          retention-days: 3
