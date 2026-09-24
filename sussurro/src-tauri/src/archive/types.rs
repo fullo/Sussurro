@@ -120,6 +120,70 @@ pub struct ItemMeta {
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
+/// Frontmatter key of the capture-session marker (#153). It lives in
+/// [`ItemMeta::extra`] (not a typed field) so a UI that round-trips only the
+/// fields it knows can never drop it; the store additionally treats the
+/// marker values as app-owned (see `store::update_meta`).
+pub const SESSION_KEY: &str = "status";
+
+/// Where a long-form capture session stands, as written in the frontmatter
+/// under [`SESSION_KEY`]. No marker means the item is complete.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionState {
+    /// The engine is (or was, if the app died) still writing the item.
+    Recording,
+    /// The app stopped before the session was finalized (crash, forced
+    /// quit, power loss, an engine error): the item holds the segments
+    /// saved until then.
+    Interrupted,
+}
+
+impl SessionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionState::Recording => "recording",
+            SessionState::Interrupted => "interrupted",
+        }
+    }
+
+    /// Exact (case-insensitive) parse of a marker value; a user's own
+    /// `status: draft` is not a marker and is never touched by the app.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "recording" => Some(SessionState::Recording),
+            "interrupted" => Some(SessionState::Interrupted),
+            _ => None,
+        }
+    }
+}
+
+impl ItemMeta {
+    /// The capture-session marker, if the frontmatter carries one.
+    pub fn session_state(&self) -> Option<SessionState> {
+        self.extra
+            .get(SESSION_KEY)
+            .and_then(|v| v.as_str())
+            .and_then(SessionState::parse)
+    }
+
+    /// Set or clear the marker. Clearing removes the key only when it holds
+    /// a marker value, so a user's own `status:` survives.
+    pub fn set_session_state(&mut self, state: Option<SessionState>) {
+        match state {
+            Some(s) => {
+                self.extra
+                    .insert(SESSION_KEY.to_string(), s.as_str().into());
+            }
+            None => {
+                if self.session_state().is_some() {
+                    self.extra.remove(SESSION_KEY);
+                }
+            }
+        }
+    }
+}
+
 /// Logical capture channel a segment came from.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -167,6 +231,11 @@ pub struct Segment {
     pub words_estimated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
+    /// Speech-to-text failed on this stretch of audio: the segment keeps its
+    /// time range with empty text, and the error, instead of the whole run
+    /// failing. Omitted from JSON when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stt_error: Option<String>,
 }
 
 /// A speaker as known to one document.
@@ -307,10 +376,12 @@ mod tests {
                 }],
                 words_estimated: false,
                 embedding: None,
+                stt_error: None,
             }],
         };
         let json = serde_json::to_string(&f).unwrap();
         assert!(!json.contains("embedding"));
+        assert!(!json.contains("stt_error"));
         assert!(!json.contains("words_estimated"));
         assert!(!json.contains("person_id"));
         assert_eq!(serde_json::from_str::<SegmentsFile>(&json).unwrap(), f);
@@ -342,5 +413,29 @@ mod tests {
         assert_eq!(m.participants.len(), 2);
         assert_eq!(m.participants[1].email.as_deref(), Some("bob@example.com"));
         assert_eq!(m.extra["aliases"], serde_json::json!(["weekly"]));
+    }
+
+    #[test]
+    fn session_marker_lives_in_extra_and_spares_user_values() {
+        let mut m = ItemMeta::default();
+        assert_eq!(m.session_state(), None);
+        m.set_session_state(Some(SessionState::Recording));
+        assert_eq!(m.extra[SESSION_KEY], "recording");
+        assert_eq!(m.session_state(), Some(SessionState::Recording));
+        // Round-trips through JSON (and so through the YAML frontmatter).
+        let back: ItemMeta = serde_json::from_value(serde_json::to_value(&m).unwrap()).unwrap();
+        assert_eq!(back.session_state(), Some(SessionState::Recording));
+        m.set_session_state(None);
+        assert!(!m.extra.contains_key(SESSION_KEY));
+
+        // A user's own `status: draft` is not a marker and is never cleared.
+        m.extra.insert(SESSION_KEY.into(), "draft".into());
+        assert_eq!(m.session_state(), None);
+        m.set_session_state(None);
+        assert_eq!(m.extra[SESSION_KEY], "draft");
+        assert_eq!(
+            SessionState::parse(" Interrupted "),
+            Some(SessionState::Interrupted)
+        );
     }
 }

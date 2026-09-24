@@ -444,12 +444,12 @@ fn search_conn(
         let (id, meta_json, edited, snippet) = row?;
         let meta: ItemMeta =
             serde_json::from_str(&meta_json).with_context(|| format!("index row for {id}"))?;
-        out.push(ItemSummary {
+        out.push(ItemSummary::new(
             id,
             meta,
-            edited_externally: edited,
-            snippet: snippet.filter(|s| !s.trim().is_empty()),
-        });
+            edited,
+            snippet.filter(|s| !s.trim().is_empty()),
+        ));
     }
     Ok(out)
 }

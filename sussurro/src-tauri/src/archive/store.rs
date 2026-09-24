@@ -15,7 +15,7 @@
 use super::frontmatter;
 use super::paths::{folder_name, id_from_dir, item_dir, month_dir, slugify};
 use super::render::render_transcript;
-use super::types::{ItemMeta, SegmentsFile, SEGMENTS_VERSION};
+use super::types::{ItemMeta, SegmentsFile, SessionState, SEGMENTS_VERSION, SESSION_KEY};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -42,6 +42,12 @@ pub struct Item {
     /// `transcript.md` changed since the app last wrote it: the app will not
     /// regenerate it from the segments any more.
     pub edited_externally: bool,
+    /// A capture session is writing this item right now (`status:
+    /// recording` in the frontmatter, #153).
+    pub recording: bool,
+    /// The app stopped before the session was finalized (`status:
+    /// interrupted`): the item holds the segments saved until then.
+    pub interrupted: bool,
 }
 
 /// A list/search row.
@@ -53,6 +59,29 @@ pub struct ItemSummary {
     /// Highlighted excerpt around the match (search results only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
+    /// See [`Item::recording`].
+    pub recording: bool,
+    /// See [`Item::interrupted`].
+    pub interrupted: bool,
+}
+
+impl ItemSummary {
+    pub(crate) fn new(
+        id: String,
+        meta: ItemMeta,
+        edited_externally: bool,
+        snippet: Option<String>,
+    ) -> Self {
+        let state = meta.session_state();
+        Self {
+            id,
+            meta,
+            edited_externally,
+            snippet,
+            recording: state == Some(SessionState::Recording),
+            interrupted: state == Some(SessionState::Interrupted),
+        }
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -65,6 +94,16 @@ struct ItemState {
 pub fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Serializes read-modify-write cycles on items within the process: the
+/// engine checkpoints a live item (#153) while the UI may edit its metadata,
+/// and both read `transcript.md`, check the content hash and write it back.
+static ITEM_LOCK: Mutex<()> = Mutex::new(());
+
+pub(super) fn lock_items() -> std::sync::MutexGuard<'static, ()> {
+    // A panic elsewhere must not wedge the archive: the files are the state.
+    ITEM_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// A fresh temp name next to `path`: dot-prefixed (skipped by the item scan
@@ -86,8 +125,10 @@ fn temp_path(path: &Path) -> Result<PathBuf> {
     Ok(dir.join(format!(".{name}.tmp-{}-{n}-{nanos:09}", std::process::id())))
 }
 
-/// Write `bytes` to a new temp file next to `path` and return its path.
-/// `create_new` guarantees the file is ours alone.
+/// Write `bytes` to a new temp file next to `path` (same folder: rename is
+/// atomic only within one filesystem) and return its path. `create_new`
+/// guarantees the file is ours alone; it is flushed to disk before it is
+/// returned (#153), so a later rename never exposes an empty file.
 fn write_temp(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
     use std::io::Write;
     let mut attempts = 0;
@@ -105,7 +146,7 @@ fn write_temp(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
             Err(e) => return Err(e).with_context(|| format!("creating {}", tmp.display())),
         }
     };
-    if let Err(e) = file.write_all(bytes) {
+    if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
         drop(file);
         let _ = std::fs::remove_file(&tmp);
         return Err(e).with_context(|| format!("writing {}", tmp.display()));
@@ -114,23 +155,30 @@ fn write_temp(path: &Path, bytes: &[u8]) -> Result<PathBuf> {
 }
 
 /// Move a staged temp file over `path` (removing the temp file on failure).
+/// On Unix the folder entry is flushed after the rename, so a power loss
+/// leaves either the old or the new file, never an empty one.
 fn rename_into(tmp: &Path, path: &Path) -> Result<()> {
     if let Err(e) = std::fs::rename(tmp, path) {
         let _ = std::fs::remove_file(tmp);
         return Err(e).with_context(|| format!("replacing {}", path.display()));
+    }
+    #[cfg(unix)]
+    if let Some(Ok(d)) = path.parent().map(std::fs::File::open) {
+        let _ = d.sync_all();
     }
     Ok(())
 }
 
 /// Write via a dot-prefixed temp file + rename, so a crash or a sync client
 /// never sees a half-written document.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = write_temp(path, bytes)?;
     rename_into(&tmp, path)
 }
 
 /// Serializes the app's own check-and-replace of `transcript.md` files, so
-/// two saves in this process can't both pass the freshness check.
+/// two saves in this process can't both pass the freshness check. Taken
+/// after [`lock_items`] when both are held.
 static TRANSCRIPT_COMMIT: Mutex<()> = Mutex::new(());
 
 /// Replace `transcript.md` in `dir` with `doc`, but only if the file still
@@ -143,7 +191,7 @@ static TRANSCRIPT_COMMIT: Mutex<()> = Mutex::new(());
 ///
 /// `before_commit` runs after staging, right before the check (a test hook
 /// to simulate an external save in that window).
-fn commit_transcript(
+pub(super) fn commit_transcript(
     dir: &Path,
     doc: &[u8],
     expected_sha: &str,
@@ -173,7 +221,7 @@ fn commit_transcript(
     Ok(())
 }
 
-fn transcript_path(dir: &Path) -> PathBuf {
+pub(super) fn transcript_path(dir: &Path) -> PathBuf {
     dir.join(TRANSCRIPT_FILE)
 }
 
@@ -184,7 +232,7 @@ fn read_state(dir: &Path) -> ItemState {
         .unwrap_or_default()
 }
 
-fn write_state(dir: &Path, transcript: &[u8]) -> Result<()> {
+pub(super) fn write_state(dir: &Path, transcript: &[u8]) -> Result<()> {
     let meta_dir = dir.join(META_DIR);
     std::fs::create_dir_all(&meta_dir)?;
     let state = ItemState {
@@ -199,12 +247,12 @@ fn write_state(dir: &Path, transcript: &[u8]) -> Result<()> {
 /// Whether `transcript` differs from what the app last wrote. No stored hash
 /// (a folder made by hand, or state lost) counts as edited: never overwrite
 /// a file of unknown provenance.
-fn is_edited_externally(dir: &Path, transcript: &[u8]) -> bool {
+pub(super) fn is_edited_externally(dir: &Path, transcript: &[u8]) -> bool {
     let state = read_state(dir);
     state.transcript_sha256.is_empty() || state.transcript_sha256 != sha256_hex(transcript)
 }
 
-fn read_segments(dir: &Path) -> Result<SegmentsFile> {
+pub(super) fn read_segments(dir: &Path) -> Result<SegmentsFile> {
     let path = dir.join(META_DIR).join(SEGMENTS_FILE);
     match std::fs::read_to_string(&path) {
         Ok(s) => serde_json::from_str(&s).with_context(|| format!("parsing {}", path.display())),
@@ -214,7 +262,7 @@ fn read_segments(dir: &Path) -> Result<SegmentsFile> {
     }
 }
 
-fn write_segments(dir: &Path, segments: &SegmentsFile) -> Result<()> {
+pub(super) fn write_segments(dir: &Path, segments: &SegmentsFile) -> Result<()> {
     let meta_dir = dir.join(META_DIR);
     std::fs::create_dir_all(&meta_dir)?;
     let mut segments = segments.clone();
@@ -228,7 +276,7 @@ fn write_segments(dir: &Path, segments: &SegmentsFile) -> Result<()> {
 /// Folder of an existing item: the id must be valid, confined, and point at a
 /// folder holding a `transcript.md` (so an id like `2026` can never address a
 /// whole year of items).
-fn existing_item_dir(archive: &Path, id: &str) -> Result<PathBuf> {
+pub(super) fn existing_item_dir(archive: &Path, id: &str) -> Result<PathBuf> {
     let dir = item_dir(archive, id)?;
     if !transcript_path(&dir).is_file() {
         bail!("no archive item '{id}'");
@@ -305,12 +353,15 @@ fn read_item_at(id: &str, dir: &Path) -> Result<Item> {
     if meta.title.trim().is_empty() {
         meta.title = fallback_title(&body, dir);
     }
+    let state = meta.session_state();
     Ok(Item {
         id: id.to_string(),
         meta,
         segments: read_segments(dir)?,
         body,
         edited_externally: is_edited_externally(dir, &bytes),
+        recording: state == Some(SessionState::Recording),
+        interrupted: state == Some(SessionState::Interrupted),
     })
 }
 
@@ -332,15 +383,8 @@ pub(crate) fn summary_at(id: &str, dir: &Path) -> Result<(ItemSummary, String)> 
     if meta.title.trim().is_empty() {
         meta.title = fallback_title(&body, dir);
     }
-    Ok((
-        ItemSummary {
-            id: id.to_string(),
-            meta,
-            edited_externally: is_edited_externally(dir, &bytes),
-            snippet: None,
-        },
-        body,
-    ))
+    let edited = is_edited_externally(dir, &bytes);
+    Ok((ItemSummary::new(id.to_string(), meta, edited, None), body))
 }
 
 /// Every item folder under `archive`: `(id, folder)`. Dot-dirs and symlinks
@@ -411,6 +455,11 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
 /// after an external edit only the frontmatter is replaced and the user's
 /// body is kept verbatim. Returns the updated item.
 ///
+/// The capture-session marker (`status: recording|interrupted`, #153) is
+/// owned by the engine: a marker value in `meta` is ignored and the file's
+/// marker is kept, so a UI sending back a stale copy can neither resurrect
+/// `recording` on a finished item nor clear it on a live one.
+///
 /// Refused (nothing written) when the current frontmatter is not valid YAML
 /// — replacing it would silently drop the user's edits there — and when the
 /// file changes on disk while the update is being written (#155).
@@ -424,6 +473,7 @@ fn update_meta_with(
     meta: &ItemMeta,
     before_commit: &dyn Fn(&Path),
 ) -> Result<Item> {
+    let _lock = lock_items();
     let dir = existing_item_dir(archive, id)?;
     let path = transcript_path(&dir);
     let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
@@ -437,6 +487,10 @@ fn update_meta_with(
         )
     })?;
     let mut meta = meta.clone();
+    // The file's own marker (if any) comes back with the merge below.
+    if meta.session_state().is_some() {
+        meta.extra.remove(SESSION_KEY);
+    }
     // Keys the UI doesn't know (e.g. Obsidian's `aliases`) are kept.
     for (k, v) in old.extra {
         meta.extra.entry(k).or_insert(v);
@@ -470,17 +524,34 @@ fn save_segments_with(
     segments: &SegmentsFile,
     before_commit: &dyn Fn(&Path),
 ) -> Result<bool> {
+    let _lock = lock_items();
     let dir = existing_item_dir(archive, id)?;
     write_segments(&dir, segments)?;
-    let path = transcript_path(&dir);
+    rerender_if_unchanged_with(&dir, segments, before_commit)
+}
+
+/// Regenerate `transcript.md` from its own frontmatter and `segments` if it
+/// is still what the app last wrote (the content-hash rule). Returns whether
+/// it was regenerated. The replace itself goes through the freshness check
+/// of [`commit_transcript`] (#155). Callers hold [`lock_items`].
+pub(super) fn rerender_if_unchanged(dir: &Path, segments: &SegmentsFile) -> Result<bool> {
+    rerender_if_unchanged_with(dir, segments, &|_| {})
+}
+
+fn rerender_if_unchanged_with(
+    dir: &Path,
+    segments: &SegmentsFile,
+    before_commit: &dyn Fn(&Path),
+) -> Result<bool> {
+    let path = transcript_path(dir);
     let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
-    if is_edited_externally(&dir, &bytes) {
+    if is_edited_externally(dir, &bytes) {
         return Ok(false);
     }
     let (meta, _) = frontmatter::parse(&String::from_utf8_lossy(&bytes))?;
     let doc = render_transcript(&meta, segments)?;
     commit_transcript(
-        &dir,
+        dir,
         doc.as_bytes(),
         &sha256_hex(&bytes),
         true,
