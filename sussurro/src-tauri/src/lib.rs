@@ -15,6 +15,7 @@ pub mod recipes;
 pub mod settings;
 pub mod snippets;
 pub mod sources;
+pub mod speakers;
 pub mod state;
 pub mod stats;
 pub mod stt;
