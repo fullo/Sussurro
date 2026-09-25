@@ -638,7 +638,7 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03; last release 0.6.3 — 0.7–0.10 merged on `main`, shipping together as 0.10.0)
+## Roadmap (agreed 2026-07-03; current version 0.10.0 — released 2026-09-25)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -754,17 +754,15 @@ Work is tracked as GitHub issues in milestones `Phase 0 — Spikes`, `0.7 — No
 (#147–#152; Future is the single tracking issue #146); agents take issues
 labelled `agent-ready`.
 
-**Single final release** (plan change 2026-09-25): 0.7, 0.8, 0.9, 0.10 and
-Track E are **all merged on `main` and ship together as 0.10.0** — no
-intermediate 0.7/0.8/0.9 tags. The version files still say 0.6.3 until the
-bump. Remaining before the tag (which stays with the maintainer): manual QA
-**#177** (0.7/0.8: long mic/file sessions, archive, recipes, links, privacy
-gate) and **#184** (0.9/0.10: extension on Meet/Teams/Zoom × browsers × OS,
-Meet names selector set, system audio native + virtual devices, saved
-audio/replay); the website and manual **#180**; then the version bump and
-a build-only release run. The security follow-ups #215–#217 are merged
-(PRs #220–#222); docs and release notes are #145
-(`docs/releases/0.10.0.md`).
+**Single release 0.10.0 — published 2026-09-25** (plan change 2026-09-25):
+0.7, 0.8, 0.9, 0.10 and Track E shipped together as `v0.10.0` (tag on
+`763e1d0`, release notes `docs/releases/0.10.0.md`); no intermediate
+0.7/0.8/0.9 tags. The updater endpoint serves 0.10.0 on all nine platform
+entries; the Firefox `.xpi` is signed on AMO (unlisted, secrets
+`AMO_JWT_ISSUER`/`AMO_JWT_SECRET`) and `docs/extension/updates.json` lists
+it. Still open: manual QA **#177** (0.7/0.8) and **#184** (0.9/0.10,
+real Meet/Teams/Zoom calls, Meet names selector set, system audio) —
+fixes from them ship as 0.10.x patch releases.
 
 - **Phase 0** — spikes #106–#108 closed (Silero VAD, WeSpeaker embeddings,
   word timings). #104/#105 (browser capture, Meet names) were desk studies
