@@ -420,6 +420,23 @@ project decisions here, not in per-machine memory.**
   match `audio(-[a-z]+)?.wav`, never names from the frontmatter.
   "Delete audio" and a cancelled/speechless run with audio go to the OS
   trash. Toggle off = no `AudioOut` at all (tests assert no `.wav`).
+- **Saved audio as Ogg Opus (0.11, #247, P16/E15)** (`archive/opus.rs`):
+  `Settings.saved_audio_format` (`wav` | `opus`) picks the format of every
+  run's channel files (`AudioWriter` over `WavWriter`/`OpusWriter`; same
+  session clock, silence padding and ~37 h duration cap `MAX_SAMPLES`);
+  names `audio(-<channel>)?.(wav|opus)`, frontmatter `audio:` lists them
+  (the extension is the format record); items saved earlier are never
+  touched. libopus 1.6 via `opus` 0.4 + `opusic-sys` (static, CMake) and the
+  `ogg` 0.9 muxer: 16 kHz mono VOIP, 24 kb/s VBR, complexity 10, 20 ms
+  packets, one page per second flushed (fsync every 10 pages), pre-skip =
+  lookahead × 3 and end trimming on the last granule (decoded length and
+  positions exact). Startup recovery (`repair_any`) cuts a crashed `.opus`
+  after its last whole page and sets EOS (empty stream if the headers were
+  cut); foreign files untouched. **Default stays WAV until #248** (Opus
+  playback by decode-to-WAV in the scheme) — then flip `#[default]` on
+  `AudioFormat`; until then the scheme serves `.opus` as `audio/ogg`
+  (WebView2, macOS 15.4+). Windows MSVC link is checked on every PR by the
+  `opus-windows` job (`cargo test -p opus`).
 - **Speaker-aware recipes and Ask (0.10, #143)** (`recipes/`): built-ins
   *Meeting minutes* and *Who said what* are `speakers_only` — offered and
   run only on meetings/transcriptions whose transcript names its speakers
