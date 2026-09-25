@@ -404,7 +404,7 @@ refused upload closes the connection instead of being read; at most two
 otherwise), so a long transcription never stalls the extension.
 
 The same API serves the [browser extension](#browser-extension-meetings):
-its routes (`/app/version`, `/live`, `/items/…`) always need the pairing
+its routes (`/app/version`, `/app/languages`, `/live`, `/items/…`) always need the pairing
 token and accept only browser-extension origins, never a web page, and
 `/items/…` reach only the meetings the extension recorded — not your notes,
 dictations or other transcriptions. `settings.json`, which holds the pairing

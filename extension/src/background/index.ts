@@ -8,8 +8,10 @@
  * - checks the app with `GET /app/version` before starting and before each
  *   reconnect ("app not running", bad token, app too old, other protocol);
  * - on the side panel's Start, asks the page to connect and arm the hook,
- *   opens the socket, sends `start {title, url, platform, rate, channels}`
- *   and forwards the audio frames, numbering `seq` per connection;
+ *   opens the socket, sends `start {title, url, platform, rate, channels,
+ *   language?}` (the language chosen in the panel, #288, kept for the
+ *   reconnects of that meeting) and forwards the audio frames, numbering
+ *   `seq` per connection;
  * - when the scripts run in several frames of the tab (Zoom's meeting
  *   iframe, #287), arms only the frame with the call and sends only its
  *   audio (frames.ts): one capture per tab, shown in the tab's panel;
@@ -44,9 +46,10 @@ import { decodePayload, makeProbe, type TransportMode } from "../shared/transpor
 import type { CaptureSnapshot, FromBackground, PageInfo, PanelBroadcast, PanelRequest, PanelState, ToBackground, ToOffscreen, ToPage } from "../shared/messages";
 import { detectPlatform, type Platform } from "../shared/platform";
 import { applyLive, initialTranscript, parseAppMessage, type LiveAction, type LiveTranscript } from "../shared/live";
-import { holdsBackground, initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
+import { canTakeStart, holdsBackground, initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
 import { pickCaptureFrame } from "./frames";
 import { SpeakerRelay, sanitizePageSpeaker } from "../shared/speakerEvents";
+import { isLanguageCode } from "../shared/language";
 
 // ---- storage.local: trusted contexts only (Chrome ≥ 140, #217) ------------------
 
@@ -128,6 +131,9 @@ interface Tab {
   speakerRate: RateLimiter;
   /** What the side panel shows (#129). */
   transcript: LiveTranscript;
+  /** The meeting's language chosen at Start (#288); null: none sent (the
+   *  app uses its dictation language). */
+  language: string | null;
 }
 
 /** Names this background's transcripts: after a restart (Chrome may stop an
@@ -158,6 +164,7 @@ function tabState(tabId: number): Tab {
       speakers: new SpeakerRelay(),
       speakerRate: new RateLimiter(BACKGROUND_EVENTS.burst, BACKGROUND_EVENTS.perSec),
       transcript: initialTranscript(EPOCH),
+      language: null,
     };
     tabs.set(tabId, t);
   }
@@ -388,6 +395,8 @@ function sendStart(t: Tab) {
     platform: page?.platform ?? "other",
     rate: t.session.rate,
     channels: 2,
+    // #288: an app older than it ignores the field.
+    ...(t.language ? { language: t.language } : {}),
   });
   // What the page already said about speakers goes to the new item first
   // (#131); timed events wait for this connection's first frame.
@@ -708,6 +717,7 @@ async function panelState(t: Tab, info?: PageInfo | null): Promise<PanelState> {
     tabCapture: t.tabCapture,
     transport: t.transport,
     names: t.speakers.lastHealth,
+    language: t.language,
   };
 }
 
@@ -737,9 +747,14 @@ browser.runtime.onMessage.addListener((raw: unknown, sender: Runtime.MessageSend
       })();
     case "panel:transcript":
       return Promise.resolve(tabs.get(m.tabId)?.transcript ?? initialTranscript(EPOCH));
-    case "panel:start":
-      dispatch(tabState(m.tabId), { type: "start" });
+    case "panel:start": {
+      const t = tabState(m.tabId);
+      // The language is fixed for the meeting: a Start while one runs
+      // (ignored by the session) doesn't change it.
+      if (canTakeStart(t.session)) t.language = isLanguageCode(m.language) ? m.language : null;
+      dispatch(t, { type: "start" });
       return Promise.resolve(true);
+    }
     case "panel:stop":
       dispatch(tabState(m.tabId), { type: "stop" });
       return Promise.resolve(true);

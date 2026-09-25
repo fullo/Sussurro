@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { holdsBackground, initialSession, isCapturing, shouldTabCapture, step, TAB_CAPTURE_AFTER_MS, type Session, type SessionEvent } from "./session";
+import { canTakeStart, holdsBackground, initialSession, isCapturing, shouldTabCapture, step, TAB_CAPTURE_AFTER_MS, type Session, type SessionEvent } from "./session";
 
 const OK = { type: "check", result: { ok: true, app: "0.9.0" } } as const;
 const run = (events: SessionEvent[], from: Session = initialSession()) => {
@@ -26,6 +26,16 @@ describe("capture session", () => {
     ]);
     expect(effects).toEqual([["check"], ["arm"], ["connect"], ["send-start"], [], ["disarm", "send-stop"], ["close"]]);
     expect(s).toMatchObject({ phase: "done", rate: 48000, itemId: "2026-09-24-weekly-sync" });
+  });
+
+  it("takes a Start (and its language, #288) only when no meeting runs", () => {
+    const phases: Session["phase"][] = ["idle", "checking", "arming", "connecting", "live", "reconnecting", "stopping", "done", "error"];
+    for (const phase of phases) {
+      const s: Session = { phase, attempt: 0 };
+      const takes = canTakeStart(s);
+      expect(takes).toBe(phase === "idle" || phase === "done" || phase === "error");
+      expect(step(s, { type: "start" }).effects.some((e) => e.type === "check")).toBe(takes);
+    }
   });
 
   it("never captures before an explicit start", () => {

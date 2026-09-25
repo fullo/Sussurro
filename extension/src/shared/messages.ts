@@ -96,13 +96,18 @@ export interface PanelState {
    *  not a Meet page or not capturing). `names_unavailable`: new speakers
    *  stay "Voice N". */
   names?: HealthReport | null;
+  /** The language sent with the current meeting's `start` (#288; null:
+   *  none, the app's dictation language). Shown while recording. */
+  language?: string | null;
 }
 
 export type PanelRequest =
   | { type: "panel:get"; tabId: number }
   /** The tab's live transcript (#129): a snapshot, then `panel:live`. */
   | { type: "panel:transcript"; tabId: number }
-  | { type: "panel:start"; tabId: number }
+  /** `language` (#288): `auto` or a code from `GET /app/languages`;
+   *  absent with an app that doesn't list its languages. */
+  | { type: "panel:start"; tabId: number; language?: string }
   | { type: "panel:stop"; tabId: number };
 
 /** Broadcast by the background to every open panel. */

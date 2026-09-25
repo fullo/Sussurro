@@ -13,6 +13,12 @@
 //!   panel offers "Create .srt" only when the app doesn't write it itself
 //!   (#129); `live_auth: "message"` says `/live` accepts the token as its
 //!   first message (#217)
+//! - `GET /app/languages` → `{engine, default, languages: [{code, name}]}`
+//!   (#288): what the side panel offers for a meeting — the active
+//!   engine's languages with their native names (`auto` is always
+//!   accepted and not listed) and the dictation's language setting, the
+//!   panel's first-time choice. An app without it (404) takes no
+//!   `start.language`.
 //! - `WS /live` (`?token=`, or `auth {token}` first) → a meeting session
 //!   ([`live`], [`protocol`])
 //! - `POST /items/{id}/open` → the app comes to the front on that item
@@ -60,6 +66,12 @@ pub struct ApiConfig {
     pub subtitles: crate::settings::SubtitlesMode,
     /// The token-less scripting routes answer (`Settings.api_scripting`).
     pub scripting: bool,
+    /// The languages the active engine offers (#288): `GET /app/languages`
+    /// and the check of `/live`'s `start.language`.
+    pub languages: crate::stt::languages::LanguageSet,
+    /// The dictation's language setting (`auto` or a code): a meeting
+    /// without `start.language` uses it.
+    pub dictation_language: String,
 }
 
 /// Routes exposed by the local API. Pure mapping — unit tested.
@@ -69,6 +81,8 @@ pub enum Route {
     Transcribe,
     History,
     AppVersion,
+    /// `GET /app/languages` (#288).
+    AppLanguages,
     Live,
     OpenItem(String),
     ExportItem(String),
@@ -88,6 +102,7 @@ impl Route {
         matches!(
             self,
             Route::AppVersion
+                | Route::AppLanguages
                 | Route::Live
                 | Route::OpenItem(_)
                 | Route::ExportItem(_)
@@ -124,6 +139,7 @@ fn item_path(path: &str, action: &str) -> Option<String> {
 
 fn is_meeting_path(path: &str) -> bool {
     path == "/app/version"
+        || path == "/app/languages"
         || path == "/live"
         || item_path(path, "open").is_some()
         || item_path(path, "export").is_some()
@@ -136,6 +152,7 @@ pub fn route(method: &str, path: &str) -> Route {
         ("POST", "/transcribe") => Route::Transcribe,
         ("GET", "/history") => Route::History,
         ("GET", "/app/version") => Route::AppVersion,
+        ("GET", "/app/languages") => Route::AppLanguages,
         ("GET", "/live") => Route::Live,
         ("OPTIONS", p) if is_meeting_path(p) => Route::Preflight,
         ("POST", p) => item_path(p, "open").map_or(Route::NotFound, Route::OpenItem),
@@ -525,6 +542,7 @@ fn handle_meeting(
             }),
             &cors,
         ),
+        Route::AppLanguages => respond_json_with(request, 200, languages_json(config), &cors),
         Route::OpenItem(id) => {
             let archive = match archive() {
                 Ok(a) => a,
@@ -620,6 +638,19 @@ fn upgrade_live(host: &Arc<dyn Host>, request: tiny_http::Request, auth: live::L
 
 // ---- the app's host ----------------------------------------------------------
 
+/// `GET /app/languages` (#288): the active engine and its languages, and
+/// the dictation's language (normalized; `auto` when unset or malformed).
+/// Pure.
+pub fn languages_json(config: &ApiConfig) -> serde_json::Value {
+    let default = crate::stt::languages::normalize(&config.dictation_language)
+        .unwrap_or_else(|| crate::stt::languages::AUTO.to_string());
+    serde_json::json!({
+        "engine": config.languages.engine(),
+        "default": default,
+        "languages": config.languages.languages(),
+    })
+}
+
 /// [`Host`] backed by the running app.
 pub struct AppHost {
     pub app: AppHandle,
@@ -633,6 +664,8 @@ impl Host for AppHost {
             extension_token: s.extension_token.clone(),
             subtitles: s.subtitles,
             scripting: s.api_scripting,
+            languages: crate::stt::languages::LanguageSet::for_settings(&s),
+            dictation_language: s.language.clone(),
         }
     }
 
