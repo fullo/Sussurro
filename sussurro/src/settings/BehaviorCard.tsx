@@ -102,8 +102,8 @@ export function BehaviorCard({ ctl }: CardProps) {
       <AdvancedGroup>
         <div className="field">
           <div className="field-label">
-            <span>Local API <Tip text="HTTP API on 127.0.0.1 for scripting: POST /clean (text → cleaned), POST /transcribe?ext=wav (audio file → transcript), GET /history?q=. Loopback only — but any local process can call it. Applied at app restart. curl examples in the README." /></span>
-            <small>for scripts & automation · restart required</small>
+            <span>Local API <Tip text="HTTP API on 127.0.0.1 (this computer only). The browser extension talks to Sussurro through it with its own token; the scripting routes below are a separate switch. Applied at app restart." /></span>
+            <small>browser extension & scripts · restart required</small>
           </div>
           <div className="model-row">
             <Switch
@@ -123,6 +123,17 @@ export function BehaviorCard({ ctl }: CardProps) {
               title="Port"
             />
           </div>
+        </div>
+        <div className="field">
+          <div className="field-label">
+            <span>Scripting routes <Tip text="POST /clean (text → cleaned), POST /transcribe?ext=wav (audio file → transcript) and GET /history?q= — without a token, so any program on this computer can use them (web pages can't: other sites' requests are refused). Leave off unless your own scripts use them. curl examples in the README." /></span>
+            <small>token-less /clean, /transcribe, /history · applies at once</small>
+          </div>
+          <Switch
+            checked={settings.api_scripting}
+            onChange={(v) => save({ ...settings, api_scripting: v })}
+            label="Scripting routes"
+          />
         </div>
       </AdvancedGroup>
     </Card>
