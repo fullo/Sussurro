@@ -206,7 +206,7 @@ pub fn guess_language(transcript: &str) -> Option<&'static str> {
         .iter()
         .map(|(lang, markers)| (*lang, words.iter().filter(|w| markers.contains(w)).count()))
         .collect();
-    scores.sort_by(|a, b| b.1.cmp(&a.1));
+    scores.sort_by_key(|s| std::cmp::Reverse(s.1));
     let (best, hits) = scores[0];
     let runner_up = scores[1].1;
     (hits >= 2 && hits >= 2 * runner_up).then_some(best)
