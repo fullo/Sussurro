@@ -543,7 +543,7 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03, current version 0.6.3 — released)
+## Roadmap (agreed 2026-07-03; last release 0.6.3 — 0.7–0.10 merged on `main`, shipping together as 0.10.0)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -648,9 +648,10 @@ project decisions here, not in per-machine memory.**
     races a dictation) — model RAM is only held while dictating. The
     published v0.6.3 release includes this along with the #88–#95 batch.
 
-### 0.7–0.10 — speech-to-text workbench (agreed 2026-09-24)
+### 0.7–0.10 — speech-to-text workbench (agreed 2026-09-24; status 2026-09-25)
 
-Plan and checklists: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`.
+Plan and checklists: `docs/superpowers/plans/2026-09-24-sussurro-speech-workbench.md`
+(its *Status* section maps each release to its merged PRs).
 
 Work is tracked as GitHub issues in milestones `Phase 0 — Spikes`, `0.7 — Notetaking`,
 `0.8 — Advanced notetaking + links`, `0.9 — Meeting`, `0.10 — Advanced meeting`,
@@ -658,23 +659,43 @@ Work is tracked as GitHub issues in milestones `Phase 0 — Spikes`, `0.7 — No
 (#147–#152; Future is the single tracking issue #146); agents take issues
 labelled `agent-ready`.
 
-- **Phase 0** — spikes (browser capture on Meet/Teams/Zoom web, Meet
-  speaker names, Silero VAD, speaker embeddings vs Sortformer, word
-  timings, Qwen3-ASR benchmark). Gates 0.9 and Track E only.
-- **0.7 — Notetaking**: remove command mode; archive core; long-form
-  engine for mic + file (streamed decode, VAD segments, chunked cleanup);
-  UI shell A (the only UI since #115, with the first-run onboarding).
-- **0.8 — Advanced notetaking + links**: LLM profiles, recipes (formatted
-  companion document with tl;dr/headings/tables), Ask panel, URL source
-  (`yt-dlp` on PATH).
-- **0.9 — Meeting**: browser extension (Chromium + Firefox), Meet names +
-  "Voice N", People registry, SRT/VTT, facet search.
-- **0.10 — Advanced meeting**: system audio as a second channel, opt-in
-  WAV, per-speaker replay.
-- **Track E** (parallel): Qwen3-ASR via `llama-server` sidecar if the
-  benchmark gate passes.
+**Single final release** (plan change 2026-09-25): 0.7, 0.8, 0.9, 0.10 and
+Track E are **all merged on `main` and ship together as 0.10.0** — no
+intermediate 0.7/0.8/0.9 tags. The version files still say 0.6.3 until the
+bump. Remaining before the tag (which stays with the maintainer): manual QA
+**#177** (0.7/0.8: long mic/file sessions, archive, recipes, links, privacy
+gate) and **#184** (0.9/0.10: extension on Meet/Teams/Zoom × browsers × OS,
+Meet names selector set, system audio native + virtual devices, saved
+audio/replay); the website and manual **#180**; the security follow-ups
+#215–#217; then docs/release notes (#145, `docs/releases/0.10.0.md`), the
+version bump and a build-only release run.
+
+- **Phase 0** — spikes #106–#108 closed (Silero VAD, WeSpeaker embeddings,
+  word timings). #104/#105 (browser capture, Meet names) were desk studies
+  that the implementation followed; they stay open until #184 checks real
+  calls. #109 (engine benchmark) is measured on the Mac only (Windows/Vulkan
+  half open); on it Qwen3-ASR 1.7B Q8 passed the Track E gate, 0.6B did not.
+- **0.7 — Notetaking** — **done** (merged; pending release): command mode
+  removed, markdown archive + FTS index, long-form engine for mic + file
+  (streamed decode, VAD segments, chunked cleanup, crash checkpoints,
+  dictation priority), workspace shell A (the only UI since #115, with the
+  first-run onboarding and "What's new").
+- **0.8 — Advanced notetaking + links** — **done**: LLM profiles (keys in
+  the OS keychain), recipes + companion document, Ask panel, privacy gate
+  for external profiles, link source (direct media or `yt-dlp` on PATH),
+  participants on transcriptions.
+- **0.9 — Meeting** — **done** (on by default since #138): browser
+  extension (Chrome/Edge/Brave + Firefox), pairing, side panel, Meet names +
+  "Voice N", People registry, SRT/VTT, Identify voices on transcriptions,
+  Library facets, recording notice.
+- **0.10 — Advanced meeting** — **done**: system audio + mic (any input
+  device, then native loopback per OS), opt-in saved WAV, per-speaker
+  replay, speaker-aware recipes/Ask, voice map.
+- **Track E** — **done**: pinned `llama-server` sidecar (b11146), Qwen3-ASR
+  1.7B engine (optional, never default), *Local (bundled)* LLM profile
+  (Qwen3 1.7B).
 - **Future (tracked, not built)**: voice recognition after training,
-  text-to-speech, voice cloning with consent.
+  text-to-speech, voice cloning with consent (#146).
 
 ### Candidate / not committed
 
