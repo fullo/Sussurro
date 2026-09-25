@@ -310,6 +310,13 @@ pub fn mic_level(state: State<'_, AppState>) -> f32 {
     state.recorder.lock().unwrap().level().unwrap_or(0.0)
 }
 
+/// Whisper runs on the GPU in this build (Metal / Vulkan). Settings uses it
+/// to explain the live preview's cost on a CPU-only build (#98).
+#[tauri::command]
+pub fn whisper_gpu() -> bool {
+    crate::stt::WHISPER_GPU
+}
+
 #[tauri::command]
 pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     let settings = state.settings.lock().unwrap();

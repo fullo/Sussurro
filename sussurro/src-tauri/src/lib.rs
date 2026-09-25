@@ -191,6 +191,7 @@ pub fn run() {
             commands::start_mic_test,
             commands::stop_mic_test,
             commands::mic_level,
+            commands::whisper_gpu,
             commands::trigger_dictation,
             commands::copy_text,
             commands::reclean,
