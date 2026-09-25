@@ -38,5 +38,11 @@ supported release).
 
 Permissions: storage (pairing token, settings); host permissions for the
 three meeting sites (content scripts that read the meeting's audio and
-participant names) and http://127.0.0.1/* (the local app).
+participant names) and http://127.0.0.1/* (the local app). Teams is
+matched on its three hosts: teams.microsoft.com, teams.live.com and
+teams.cloud.microsoft (where Microsoft moves organisational tenants from
+2026-09-30). On Zoom (https://*.zoom.us/wc/* only) the content scripts
+also run in frames (all_frames), because Zoom's web client runs the
+meeting in a same-origin iframe under /wc/; only one frame per tab is
+captured.
 data_collection_permissions: none.

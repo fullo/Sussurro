@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- A fake Zoom web-client page for the capture harness (#287), served at
+     https://app.zoom.us/wc/e2e/join by a Playwright route. Like Zoom's, the
+     call runs in a same-origin iframe under /wc/ (loopback.html). The top
+     frame also opens the microphone (a preview), so the hook has something
+     to report there too: the extension must capture the iframe's call, and
+     only it. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>e2e zoom</title>
+  </head>
+  <body>
+    <iframe id="webclient" src="/wc/e2e/meeting" allow="microphone; autoplay" width="400" height="200"></iframe>
+    <script>
+      window.preview = navigator.mediaDevices.getUserMedia({ audio: true }).then(
+        (s) => s.getAudioTracks().length,
+        (e) => String(e),
+      );
+    </script>
+  </body>
+</html>

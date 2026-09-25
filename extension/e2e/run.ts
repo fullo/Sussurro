@@ -7,7 +7,10 @@
  * lines with their speaker chips and backlog, and its Open in Sussurro /
  * Copy as text / Create .srt reach the app's item routes. On a fake Meet
  * page, the Meet name observer (#131) sends the contributing-
- * source timeline, the bound names, the participants and its health.
+ * source timeline, the bound names, the participants and its health. On a
+ * fake page at the Teams cloud host, and on a fake Zoom page whose call
+ * runs in a same-origin iframe (#287), capture works with the shipped
+ * match patterns — the iframe's call, once, not the top frame's mic.
  *
  *   npm run build && npm run test:e2e            (chromium, chromium-json, firefox)
  *   npm run test:e2e -- chromium firefox edge     (a choice)
@@ -83,13 +86,15 @@ async function until<T>(what: string, f: () => T | Promise<T>, ms = 10_000): Pro
   }
 }
 
-/** The built extension, copied, with the content scripts also matching the
- *  local call page (the shipped manifest only matches the meeting sites). */
+/** The built extension, copied, with the top-frame content scripts also
+ *  matching the local call page (the shipped manifest only matches the
+ *  meeting sites; the all-frames Zoom entries stay as shipped, or the call
+ *  page would get each script twice). */
 function testExtension(target: "chrome" | "firefox", config: Config): string {
   const dir = join(tmpRoot, `ext-${config}`);
   cpSync(join(EXT, "dist", target), dir, { recursive: true });
   const mf = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
-  for (const cs of mf.content_scripts) cs.matches.push("http://127.0.0.1/*");
+  for (const cs of mf.content_scripts) if (!cs.all_frames) cs.matches.push("http://127.0.0.1/*");
   if (config === "chromium-json") delete mf.message_serialization;
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(mf, null, 2));
   return dir;
@@ -558,6 +563,10 @@ async function runConfig(config: Config): Promise<Check[]> {
     //    tiles and faked contributing sources, in every browser.
     await meetNames();
 
+    // 4b. The Teams cloud host and Zoom's meeting iframe (#287).
+    await hostCapture("teams");
+    await hostCapture("zoom");
+
     // 5. Firefox: the keep-alive lets go once no meeting is on.
     if (b.suspends) {
       const before = await b.suspends();
@@ -609,6 +618,79 @@ async function runConfig(config: Config): Promise<Check[]> {
     const health = ctl("observer_health").at(-1);
     check("Meet: observer health ok, with the selector set", health?.state === "ok" && health?.set === "meet-2026-09a", health);
     await M.close();
+  }
+
+  /** Capture on a host the shipped patterns match (#287), served by a route:
+   *  Teams' cloud host (loopback call in the top frame), or a Zoom web-client
+   *  page whose loopback call runs in a same-origin iframe while its top
+   *  frame holds a mic preview. */
+  async function hostCapture(kind: "teams" | "zoom") {
+    const html = (file: string) => ({ status: 200, contentType: "text/html; charset=utf-8", body: readFileSync(join(EXT, "e2e", file), "utf8") });
+    const label = kind === "teams" ? "Teams (teams.cloud.microsoft)" : "Zoom (meeting iframe)";
+    let url: string;
+    if (kind === "teams") {
+      await b.ctx.route("https://teams.cloud.microsoft/**", (r) => r.fulfill(html("loopback.html")));
+      url = "https://teams.cloud.microsoft/v2/?meetingjoin=true";
+    } else {
+      await b.ctx.route("https://app.zoom.us/**", (r) => r.fulfill(html(new URL(r.request().url()).pathname.startsWith("/wc/e2e/meeting") ? "loopback.html" : "zoom.html")));
+      url = "https://app.zoom.us/wc/e2e/join";
+    }
+    const P = await b.ctx.newPage();
+    await P.goto(url);
+    const hooked = () => Symbol.for("sussurro.capture.v1") in window;
+    let call = P.mainFrame();
+    if (kind === "zoom") {
+      call = (await until("the meeting iframe", () => P.frames().find((f) => f.url().endsWith("/wc/e2e/meeting")), 10_000))!;
+      await until("the meeting iframe to load", () => call.evaluate(() => typeof (window as any).callState === "function").catch(() => false), 10_000);
+      const preview = await P.evaluate(() => (window as any).preview);
+      check("Zoom: the hook runs in the top frame (with a mic preview) and in the meeting iframe", (await P.evaluate(hooked)) && (await call.evaluate(hooked)) && preview === 1, preview);
+    } else {
+      check("Teams cloud host: the hook is installed", await P.evaluate(hooked));
+    }
+    await call.click("#join");
+    await until(`the ${kind} loopback call`, () => call.evaluate(() => (window as any).callState().joined), 10_000);
+    const panel = await b.openPanel(await b.tabIdOf(new URL(url).host));
+    shownPanel = panel;
+    await until(`Start on the ${kind} tab`, () => panel.canClick("start"));
+    const before = server.sessions.length;
+    const t0 = Date.now();
+    await panel.click("start");
+    await until(`${kind} session live`, async () => (await panel.status("phase")) === "live", 15_000);
+    const name = kind === "teams" ? "Microsoft Teams" : "Zoom";
+    const shown = await panel.text();
+    check(`${label}: the tab's panel shows the capture`, shown.includes(`Recording ${name}`), shown.replace(/\s+/g, " "));
+    await sleep(5000);
+    await panel.click("stop");
+    const wallSec = (Date.now() - t0) / 1000;
+    await until(`${kind} session done`, async () => (await panel.status("phase")) === "done", 10_000);
+    const s = server.sessions[before];
+    check(`${label}: one /live session for the tab`, server.sessions.length === before + 1, server.sessions.length - before);
+    const start = s?.start ?? {};
+    const rate = Number(start.rate);
+    check(
+      `${label}: start says platform ${kind}, with the tab's URL and title`,
+      start.platform === kind && String(start.url) === url && start.title === (kind === "teams" ? "e2e loopback" : "e2e zoom"),
+      start,
+    );
+    const mic = s?.channels.get(0);
+    const remote = s?.channels.get(1);
+    const info = (c: typeof mic) => c && { frames: c.frames, gaps: c.seqGaps, sec: +((c.frames * 2048) / rate).toFixed(2), rms: +rms(c).toFixed(4), tone300: +toneShare(c.tail, rate, 300).toFixed(3) };
+    // Both channels carry the call's 300 Hz tone: the top frame's mic
+    // preview (another tone, and no remote audio) is not what is captured.
+    check(
+      `${label}: both channels carry the call`,
+      !!mic && !!remote && rms(mic) > 0.01 && rms(remote) > 0.01 && toneShare(mic.tail, rate, 300) > 0.8 && toneShare(remote.tail, rate, 300) > 0.8,
+      { mic: info(mic), remote: info(remote) },
+    );
+    // Captured once: the audio's length fits the wall clock (two capturing
+    // frames would send about twice as many frames), with no seq gaps.
+    const sec = (c: typeof mic) => (c ? (c.frames * 2048) / rate : 0);
+    check(
+      `${label}: captured once (audio length fits the clock, no seq gaps)`,
+      !!mic && !!remote && sec(mic) > wallSec * 0.4 && sec(mic) < wallSec * 1.2 && sec(remote) < wallSec * 1.2 && mic.seqGaps === 0 && remote.seqGaps === 0,
+      { wallSec: +wallSec.toFixed(2), mic: info(mic), remote: info(remote) },
+    );
+    await P.close();
   }
 }
 

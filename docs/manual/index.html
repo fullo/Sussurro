@@ -372,6 +372,7 @@ participants:
 <section class="chapter" id="meetings" aria-labelledby="h-meetings">
 <h2 id="h-meetings"><span class="n">Chapter 7</span>Meetings with the browser extension</h2>
 <p class="lead">The Sussurro extension records web meetings — <b>Google Meet</b>, <b>Microsoft Teams</b> and <b>Zoom in the browser</b> — and streams the audio to the Sussurro app on the same computer, which transcribes it live into a <b>Meeting</b>. It works in Chrome, Edge and Brave (116 or later) and Firefox on the desktop (140 or later; Firefox for Android is not supported).</p>
+<p>It works on these addresses only: Google Meet at <code>meet.google.com</code>; Microsoft Teams at <code>teams.microsoft.com</code>, <code>teams.live.com</code> and <code>teams.cloud.microsoft</code> (where work and school accounts move from 30 September 2026); and the Zoom web client, pages under <code>zoom.us/wc/</code>, including the meeting that Zoom shows inside them.</p>
 
 <h3 id="extension-install">Install</h3>
 <p>The extension is not in the browser stores yet. Each <a href="https://github.com/fullo/Sussurro/releases/latest">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and, for Firefox, the add-on signed by Mozilla, <code>sussurro-extension-firefox-&lt;version&gt;.xpi</code>: use the one with the same version as your app.</p>
@@ -582,7 +583,7 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
   <dt>The extension says Sussurro is not reachable</dt>
   <dd>Check that the app is running and that Settings → Browser extension says the local API is listening — after turning it on, restart Sussurro. “Wrong token”: pair again with a fresh <span class="ui">Copy pairing code</span>. “Different versions”: install the extension from the same release as the app. On Brave, allow localhost access. On Firefox, install the signed <code>.xpi</code>: a temporary add-on is gone after a restart.</dd>
   <dt>“Open a Google Meet, Microsoft Teams or Zoom web call”</dt>
-  <dd>The panel doesn't see a meeting in this tab: reload the meeting page (it was open before the extension), or click <span class="ui">Allow access</span> if offered. Zoom works only in its web client.</dd>
+  <dd>The panel doesn't see a meeting in this tab: reload the meeting page (it was open before the extension), or click <span class="ui">Allow access</span> if offered — Firefox asks again after an update adds an address, such as <code>teams.cloud.microsoft</code>. Zoom works only in its web client.</dd>
   <dt>Meet names are missing</dt>
   <dd>When the extension can't read the names reliably it falls back to Voice N rather than guess; Meet's pages change often. Teams and Zoom always get You and Voice N. Rename voices or link them to People afterwards.</dd>
   <dt>Voices are mixed up</dt>
