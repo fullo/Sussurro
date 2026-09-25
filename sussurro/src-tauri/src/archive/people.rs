@@ -148,7 +148,9 @@ pub fn link_new_participants(old: &[Participant], new: &mut ItemMeta, people: &[
         return 0;
     }
     let known: HashSet<String> = old.iter().map(|p| name_key(&p.name)).collect();
-    link_participants(&mut new.participants, people, |p| known.contains(&name_key(&p.name)))
+    link_participants(&mut new.participants, people, |p| {
+        known.contains(&name_key(&p.name))
+    })
 }
 
 /// [`link_new_participants`] against item `id`'s current frontmatter and
@@ -253,7 +255,12 @@ pub fn usage(people: &[Person], rows: &[(String, String, String)]) -> HashMap<St
     }
     people
         .iter()
-        .map(|p| (p.id.clone(), items.get(p.id.as_str()).map_or(0, HashSet::len)))
+        .map(|p| {
+            (
+                p.id.clone(),
+                items.get(p.id.as_str()).map_or(0, HashSet::len),
+            )
+        })
         .collect()
 }
 
@@ -306,7 +313,12 @@ pub fn clean(person: &Person) -> Result<Person> {
         .map(|a| collapse(a))
         .filter(|a| !a.is_empty() && seen.insert(name_key(a)))
         .collect();
-    Ok(Person { id: person.id.clone(), name, email, aliases })
+    Ok(Person {
+        id: person.id.clone(),
+        name,
+        email,
+        aliases,
+    })
 }
 
 /// Refuse `p` when another person (not `skip_id`) has the same name or the
@@ -316,11 +328,17 @@ fn check_conflicts(people: &[Person], p: &Person, skip_id: &str) -> Result<()> {
     let key = name_key(&p.name);
     for other in people.iter().filter(|o| o.id != skip_id) {
         if name_key(&other.name) == key {
-            bail!("{} is already in People — edit that entry or merge the two", other.name);
+            bail!(
+                "{} is already in People — edit that entry or merge the two",
+                other.name
+            );
         }
         if let (Some(a), Some(b)) = (&p.email, &other.email) {
             if email_key(a) == email_key(b) {
-                bail!("{b} already belongs to {} — merge the two instead", other.name);
+                bail!(
+                    "{b} already belongs to {} — merge the two instead",
+                    other.name
+                );
             }
         }
     }
@@ -342,7 +360,10 @@ pub fn new_id() -> String {
 
 /// Stable id for a hand-written entry without one (same name, same id).
 fn derived_id(name: &str) -> String {
-    format!("p-{}", &super::store::sha256_hex(name_key(name).as_bytes())[..12])
+    format!(
+        "p-{}",
+        &super::store::sha256_hex(name_key(name).as_bytes())[..12]
+    )
 }
 
 /// Add a new person (a fresh id is assigned). Returns it as stored.
@@ -442,7 +463,10 @@ fn person_from_value(v: &Value) -> Option<Person> {
         _ => String::new(),
     };
     let p = match v {
-        Value::String(s) => Person { name: s.clone(), ..Default::default() },
+        Value::String(s) => Person {
+            name: s.clone(),
+            ..Default::default()
+        },
         Value::Object(m) => Person {
             id: text(m.get("id")).trim().to_string(),
             name: text(m.get("name")),
@@ -455,7 +479,14 @@ fn person_from_value(v: &Value) -> Option<Person> {
         },
         _ => return None,
     };
-    let mut p = clean(&p).or_else(|_| clean(&Person { email: None, ..p.clone() })).ok()?;
+    let mut p = clean(&p)
+        .or_else(|_| {
+            clean(&Person {
+                email: None,
+                ..p.clone()
+            })
+        })
+        .ok()?;
     if p.id.is_empty() {
         p.id = derived_id(&p.name);
     }
@@ -480,7 +511,9 @@ pub fn parse_people(text: &str) -> Result<Vec<Person>> {
     let mut ids = HashSet::new();
     let mut out = Vec::new();
     for entry in list {
-        let Some(mut p) = person_from_value(entry) else { continue };
+        let Some(mut p) = person_from_value(entry) else {
+            continue;
+        };
         let base = p.id.clone();
         let mut n = 2;
         while !ids.insert(p.id.clone()) {
@@ -494,7 +527,10 @@ pub fn parse_people(text: &str) -> Result<Vec<Person>> {
 
 /// The registry file as JSON text.
 pub fn to_json(people: &[Person]) -> Result<String> {
-    Ok(serde_json::to_string_pretty(&PeopleFile { version: PEOPLE_VERSION, people })?)
+    Ok(serde_json::to_string_pretty(&PeopleFile {
+        version: PEOPLE_VERSION,
+        people,
+    })?)
 }
 
 /// Strict load for a write: missing = empty, unreadable = error.
@@ -559,7 +595,10 @@ mod tests {
     }
 
     fn part(name: &str, email: Option<&str>) -> Participant {
-        Participant { name: name.into(), email: email.map(Into::into) }
+        Participant {
+            name: name.into(),
+            email: email.map(Into::into),
+        }
     }
 
     fn registry(list: &[Person]) -> Vec<Person> {
@@ -584,8 +623,18 @@ mod tests {
 
     #[test]
     fn matches_name_and_aliases_ignoring_case_and_accents() {
-        let people = registry(&[person("Nicolò Rossi", Some("nico@example.com"), &["Nico", "N. Rossi"])]);
-        for display in ["nicolo rossi", "NICOLÒ ROSSI", "  Nicolò  Rossi ", "nico", "n. rossi"] {
+        let people = registry(&[person(
+            "Nicolò Rossi",
+            Some("nico@example.com"),
+            &["Nico", "N. Rossi"],
+        )]);
+        for display in [
+            "nicolo rossi",
+            "NICOLÒ ROSSI",
+            "  Nicolò  Rossi ",
+            "nico",
+            "n. rossi",
+        ] {
             assert!(match_person(&people, display).is_some(), "{display}");
         }
         for display in ["Nicola Rossi", "Rossi", "", "   "] {
@@ -617,8 +666,16 @@ mod tests {
             part("Voice 2", None),
         ];
         assert_eq!(link_participants(&mut list, &people, |_| false), 1);
-        assert_eq!(list[0], part("annie", Some("anna@example.com")), "name kept, email added");
-        assert_eq!(list[1].email.as_deref(), Some("other@example.com"), "never replaced");
+        assert_eq!(
+            list[0],
+            part("annie", Some("anna@example.com")),
+            "name kept, email added"
+        );
+        assert_eq!(
+            list[1].email.as_deref(),
+            Some("other@example.com"),
+            "never replaced"
+        );
         assert_eq!(list[2].email, None, "a person without email adds nothing");
         assert_eq!(list[3].email, None);
     }
@@ -636,14 +693,21 @@ mod tests {
         };
         assert_eq!(link_new_participants(&old, &mut meta, &people), 1);
         assert_eq!(meta.participants[0].email, None);
-        assert_eq!(meta.participants[1].email.as_deref(), Some("anna@example.com"));
+        assert_eq!(
+            meta.participants[1].email.as_deref(),
+            Some("anna@example.com")
+        );
 
         let mut note = ItemMeta {
             item_type: ItemType::Note,
             participants: vec![part("Anna Rossi", None)],
             ..Default::default()
         };
-        assert_eq!(link_new_participants(&[], &mut note, &people), 0, "P10: notes untouched");
+        assert_eq!(
+            link_new_participants(&[], &mut note, &people),
+            0,
+            "P10: notes untouched"
+        );
     }
 
     #[test]
@@ -657,17 +721,30 @@ mod tests {
             ..Default::default()
         };
         let id = create_item(&archive, &meta, &SegmentsFile::default()).unwrap();
-        modify(&archive, |p| add_person(p, &person("Anna Rossi", Some("anna@example.com"), &["Annie"])))
-            .unwrap();
+        modify(&archive, |p| {
+            add_person(
+                p,
+                &person("Anna Rossi", Some("anna@example.com"), &["Annie"]),
+            )
+        })
+        .unwrap();
 
         let mut next = read_item(&archive, &id).unwrap().meta;
         next.participants = vec![part("Annie", None), part("Ospite", None)];
         assert_eq!(link_on_save(&archive, &id, &mut next), 1);
         update_meta(&archive, &id, &next).unwrap();
         let saved = read_item(&archive, &id).unwrap().meta.participants;
-        assert_eq!(saved, vec![part("Annie", Some("anna@example.com")), part("Ospite", None)]);
+        assert_eq!(
+            saved,
+            vec![
+                part("Annie", Some("anna@example.com")),
+                part("Ospite", None)
+            ]
+        );
         let text = std::fs::read_to_string(
-            crate::archive::paths::item_dir(&archive, &id).unwrap().join("transcript.md"),
+            crate::archive::paths::item_dir(&archive, &id)
+                .unwrap()
+                .join("transcript.md"),
         )
         .unwrap();
         assert!(text.contains("anna@example.com"), "{text}");
@@ -677,8 +754,16 @@ mod tests {
     fn speakers_link_by_label_without_overriding() {
         let people = registry(&[person("Anna Rossi", None, &["Anna R."])]);
         let mut speakers = vec![
-            DocSpeaker { id: "meet:Anna R.".into(), label: "anna r.".into(), ..Default::default() },
-            DocSpeaker { id: "voice:2".into(), label: "Voice 2".into(), ..Default::default() },
+            DocSpeaker {
+                id: "meet:Anna R.".into(),
+                label: "anna r.".into(),
+                ..Default::default()
+            },
+            DocSpeaker {
+                id: "voice:2".into(),
+                label: "Voice 2".into(),
+                ..Default::default()
+            },
             DocSpeaker {
                 id: "meet:Anna".into(),
                 label: "Anna Rossi".into(),
@@ -687,22 +772,36 @@ mod tests {
             },
         ];
         assert_eq!(link_speakers(&mut speakers, &people), 1);
-        assert_eq!(speakers[0].person_id.as_deref(), Some(people[0].id.as_str()));
+        assert_eq!(
+            speakers[0].person_id.as_deref(),
+            Some(people[0].id.as_str())
+        );
         assert_eq!(speakers[1].person_id, None);
         assert_eq!(speakers[2].person_id.as_deref(), Some("p-kept"));
     }
 
     #[test]
     fn clean_trims_and_dedups_and_checks_email() {
-        let p = clean(&person("  Anna   Rossi ", Some("  "), &["Annie", " annie ", "", "ANNA ROSSI", "Anna R."]))
-            .unwrap();
+        let p = clean(&person(
+            "  Anna   Rossi ",
+            Some("  "),
+            &["Annie", " annie ", "", "ANNA ROSSI", "Anna R."],
+        ))
+        .unwrap();
         assert_eq!(p.name, "Anna Rossi");
         assert_eq!(p.email, None);
         assert_eq!(p.aliases, vec!["Annie", "Anna R."]);
         assert!(clean(&person("  ", None, &[])).is_err());
         assert!(clean(&person("Anna", Some("anna at example"), &[])).is_err());
         assert!(is_valid_email("anna.rossi+x@mail.example.it"));
-        for bad in ["anna@example", "@example.com", "a b@example.com", "a@b@c.com", "a@.com", "a@b."] {
+        for bad in [
+            "anna@example",
+            "@example.com",
+            "a b@example.com",
+            "a@b@c.com",
+            "a@.com",
+            "a@b.",
+        ] {
             assert!(!is_valid_email(bad), "{bad}");
         }
     }
@@ -710,8 +809,18 @@ mod tests {
     #[test]
     fn add_and_update_refuse_duplicates() {
         let mut people = registry(&[person("Anna Rossi", Some("anna@example.com"), &[])]);
-        assert!(add_person(&mut people, &person("anna ROSSÌ", None, &[])).is_err(), "same name");
-        assert!(add_person(&mut people, &person("A. Rossi", Some("ANNA@example.com"), &[])).is_err(), "same email");
+        assert!(
+            add_person(&mut people, &person("anna ROSSÌ", None, &[])).is_err(),
+            "same name"
+        );
+        assert!(
+            add_person(
+                &mut people,
+                &person("A. Rossi", Some("ANNA@example.com"), &[])
+            )
+            .is_err(),
+            "same email"
+        );
         let bruno = add_person(&mut people, &person("Bruno", None, &["Anna Rossi"])).unwrap();
         assert!(bruno.id.starts_with("p-") && bruno.id != people[0].id);
 
@@ -720,7 +829,10 @@ mod tests {
         assert!(update_person(&mut people, &edit).is_err());
         edit.email = Some("bruno@example.com".into());
         edit.name = "Bruno Neri".into();
-        assert_eq!(update_person(&mut people, &edit).unwrap().name, "Bruno Neri");
+        assert_eq!(
+            update_person(&mut people, &edit).unwrap().name,
+            "Bruno Neri"
+        );
         edit.id = "p-missing".into();
         assert!(update_person(&mut people, &edit).is_err());
     }
@@ -753,8 +865,10 @@ mod tests {
     fn deleting_a_person_never_edits_items() {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("Sussurro");
-        let anna = modify(&archive, |p| add_person(p, &person("Anna Rossi", Some("anna@example.com"), &[])))
-            .unwrap();
+        let anna = modify(&archive, |p| {
+            add_person(p, &person("Anna Rossi", Some("anna@example.com"), &[]))
+        })
+        .unwrap();
         let meta = ItemMeta {
             item_type: ItemType::Meeting,
             title: "Sync".into(),
@@ -784,14 +898,20 @@ mod tests {
         assert!(read_people(&archive).is_empty());
         assert!(list_people(&archive).unwrap().is_empty());
 
-        let z = modify(&archive, |p| add_person(p, &person("Zoë", Some("zoe@example.com"), &["Zo"]))).unwrap();
+        let z = modify(&archive, |p| {
+            add_person(p, &person("Zoë", Some("zoe@example.com"), &["Zo"]))
+        })
+        .unwrap();
         let a = modify(&archive, |p| add_person(p, &person("anna", None, &[]))).unwrap();
         let path = people_path(&archive);
         assert_eq!(path, archive.join(".sussurro").join("people.json"));
         let json: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(json["version"], 1);
         assert_eq!(json["people"][0]["email"], "zoe@example.com");
-        assert!(json["people"][1].get("email").is_none(), "no email = no key");
+        assert!(
+            json["people"][1].get("email").is_none(),
+            "no email = no key"
+        );
 
         assert_eq!(read_people(&archive), vec![z.clone(), a.clone()]);
         assert_eq!(list_people(&archive).unwrap(), vec![a, z], "listed by name");
@@ -820,7 +940,10 @@ mod tests {
         let names: Vec<&str> = people.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, vec!["Anna Rossi", "Bruno", "Carla", "Dario", "Eva"]);
         assert_eq!(people[0].aliases, vec!["Annie"]);
-        assert_eq!(people[1].email, None, "a bad email is dropped, the person kept");
+        assert_eq!(
+            people[1].email, None,
+            "a bad email is dropped, the person kept"
+        );
         assert_eq!(people[1].aliases, vec!["Bru", "7"]);
         assert_eq!(people[3].id, "p-1-2", "repeated id made unique");
         assert_eq!(people[2].id, derived_id("Carla"), "missing id derived");
@@ -843,7 +966,10 @@ mod tests {
         assert!(list_people(&archive).is_err(), "the screen says so");
         let err = modify(&archive, |p| add_person(p, &person("Bruno", None, &[]))).unwrap_err();
         assert!(format!("{err:#}").contains("won't overwrite"), "{err:#}");
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ \"people\": [ { \"name\": \"Anna\" ");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{ \"people\": [ { \"name\": \"Anna\" "
+        );
     }
 
     #[test]
@@ -861,7 +987,9 @@ mod tests {
             person("Bruno", None, &[]),
             person("Carla", None, &[]),
         ]);
-        let row = |id: &str, name: &str, email: &str| (id.to_string(), name.to_string(), email.to_string());
+        let row = |id: &str, name: &str, email: &str| {
+            (id.to_string(), name.to_string(), email.to_string())
+        };
         let rows = vec![
             row("a", "Anna Rossi", "anna@example.com"),
             row("a", "Annie", ""),
@@ -879,12 +1007,24 @@ mod tests {
     #[test]
     fn matcher_agrees_with_match_person() {
         let people = registry(&[
-            person("Nicolò Rossi", Some("nico@example.com"), &["Nico", "nicolo rossi"]),
+            person(
+                "Nicolò Rossi",
+                Some("nico@example.com"),
+                &["Nico", "nicolo rossi"],
+            ),
             person("Marco Bianchi", Some("mb@example.com"), &["Marco"]),
             person("Marco Verdi", None, &["marco"]),
         ]);
         let m = PeopleMatcher::new(&people);
-        for name in ["NICOLO  rossi", "nico", "Marco", "marco verdi", "Nobody", "", "  "] {
+        for name in [
+            "NICOLO  rossi",
+            "nico",
+            "Marco",
+            "marco verdi",
+            "Nobody",
+            "",
+            "  ",
+        ] {
             assert_eq!(
                 m.person_for(name, ""),
                 match_person(&people, name).map(|p| p.id.as_str()),
@@ -907,11 +1047,17 @@ mod tests {
         let mut people = registry(&[person("Anna Rossi", Some("anna@example.com"), &[])]);
         let taken = people[0].id.clone();
         let incoming = vec![
-            Person { id: taken.clone(), ..person("Bruno", None, &[]) },
+            Person {
+                id: taken.clone(),
+                ..person("Bruno", None, &[])
+            },
             person("anna rossi", None, &[]),
             person("A. R.", Some("anna@example.com"), &[]),
             person("", None, &[]),
-            Person { id: "p-carla".into(), ..person("Carla", Some("carla@example.com"), &[]) },
+            Person {
+                id: "p-carla".into(),
+                ..person("Carla", Some("carla@example.com"), &[])
+            },
         ];
         assert_eq!(import_people(&mut people, &incoming), 2);
         assert_eq!(people.len(), 3);

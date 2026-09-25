@@ -66,7 +66,10 @@ pub fn prepare_archive_dir(dir: &Path) -> Result<()> {
     let hint = "allow Sussurro in System Settings → Privacy & Security → Files and Folders, or choose another folder";
     if let Err(e) = std::fs::create_dir_all(dir) {
         if denied(&e) && cfg!(target_os = "macos") {
-            bail!("cannot create {}: access was denied — {hint}", dir.display());
+            bail!(
+                "cannot create {}: access was denied — {hint}",
+                dir.display()
+            );
         }
         return Err(e).with_context(|| format!("cannot create {}", dir.display()));
     }
@@ -274,7 +277,10 @@ mod tests {
         assert!(dir.is_dir());
         std::fs::write(dir.join("keep.md"), "x").unwrap();
         prepare_archive_dir(&dir).unwrap();
-        assert!(dir.join("keep.md").is_file(), "an existing archive is left alone");
+        assert!(
+            dir.join("keep.md").is_file(),
+            "an existing archive is left alone"
+        );
     }
 
     #[test]

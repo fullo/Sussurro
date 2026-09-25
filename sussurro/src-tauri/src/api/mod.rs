@@ -104,7 +104,14 @@ pub struct ApiConfig {
 impl std::fmt::Debug for ApiConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ApiConfig")
-            .field("extension_token", &if self.extension_token.is_empty() { "" } else { "<redacted>" })
+            .field(
+                "extension_token",
+                &if self.extension_token.is_empty() {
+                    ""
+                } else {
+                    "<redacted>"
+                },
+            )
             .field("subtitles", &self.subtitles)
             .field("scripting", &self.scripting)
             .field("archive", &self.archive)
@@ -337,9 +344,13 @@ pub fn spawn(app: AppHandle, port: u16) {
 pub enum ListenState {
     /// Not started (the local API is off, or still starting).
     Off,
-    Listening { port: u16 },
+    Listening {
+        port: u16,
+    },
     /// The port was taken (or refused): the API is not running.
-    Failed { port: u16 },
+    Failed {
+        port: u16,
+    },
 }
 
 static LISTEN_STATE: std::sync::Mutex<ListenState> = std::sync::Mutex::new(ListenState::Off);
@@ -431,7 +442,10 @@ fn body_error(e: guard::BodyError, cap: usize) -> (u16, serde_json::Value) {
         ),
         guard::BodyError::Empty => (400, serde_json::json!({"error": "empty body"})),
         guard::BodyError::Io => (400, serde_json::json!({"error": "could not read the body"})),
-        guard::BodyError::TooSlow => (408, serde_json::json!({"error": "the body did not arrive in time"})),
+        guard::BodyError::TooSlow => (
+            408,
+            serde_json::json!({"error": "the body did not arrive in time"}),
+        ),
     }
 }
 
@@ -477,10 +491,20 @@ fn respond_json_with(
 fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
     // On every route, before anything else (#215).
     if !guard::host_allowed(header(&request, "Host").as_deref(), ctx.port) {
-        return respond_json_with(request, 403, serde_json::json!({"error": "host not allowed"}), &[]);
+        return respond_json_with(
+            request,
+            403,
+            serde_json::json!({"error": "host not allowed"}),
+            &[],
+        );
     }
     if !guard::origin_allowed(header(&request, "Origin").as_deref()) {
-        return respond_json_with(request, 403, serde_json::json!({"error": "origin not allowed"}), &[]);
+        return respond_json_with(
+            request,
+            403,
+            serde_json::json!({"error": "origin not allowed"}),
+            &[],
+        );
     }
     let host = &ctx.host;
     let url = request.url().to_string();
@@ -575,7 +599,13 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
 }
 
 /// The archive middleware (E14, #249), then the archive router.
-fn handle_archive(ctx: &Arc<Ctx>, request: tiny_http::Request, method: &str, url: &str, config: &ApiConfig) {
+fn handle_archive(
+    ctx: &Arc<Ctx>,
+    request: tiny_http::Request,
+    method: &str,
+    url: &str,
+    config: &ApiConfig,
+) {
     let authorization = header(&request, "Authorization");
     let origin = header(&request, "Origin");
     let authorized = match tokens::authorize(
@@ -603,10 +633,17 @@ fn handle_archive(ctx: &Arc<Ctx>, request: tiny_http::Request, method: &str, url
 
 /// Headers on every archive answer: nothing cached, nothing sniffed —
 /// and never a CORS header.
-const ARCHIVE_HEADERS: [(&str, &str); 2] = [("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")];
+const ARCHIVE_HEADERS: [(&str, &str); 2] = [
+    ("Cache-Control", "no-store"),
+    ("X-Content-Type-Options", "nosniff"),
+];
 
 fn archive_busy() -> archive::Reply {
-    let mut r = archive::Reply::error(503, "busy", "too many archive requests at once, retry later");
+    let mut r = archive::Reply::error(
+        503,
+        "busy",
+        "too many archive requests at once, retry later",
+    );
     r.headers.push(("Retry-After", "1".to_string()));
     r
 }
@@ -614,12 +651,27 @@ fn archive_busy() -> archive::Reply {
 /// `POST /archive/items` (#251): the body is read (capped, before taking
 /// an archive slot, so a slow upload holds none), then
 /// [`archive_write::create`].
-fn create_note(ctx: &Arc<Ctx>, request: &mut tiny_http::Request, auth: &tokens::Authorized, url: &str) -> archive::Reply {
+fn create_note(
+    ctx: &Arc<Ctx>,
+    request: &mut tiny_http::Request,
+    auth: &tokens::Authorized,
+    url: &str,
+) -> archive::Reply {
     if url.split_once('?').is_some_and(|(_, q)| !q.is_empty()) {
-        return archive::Reply::error(400, "bad_request", "unknown query parameter; this route accepts: none");
+        return archive::Reply::error(
+            400,
+            "bad_request",
+            "unknown query parameter; this route accepts: none",
+        );
     }
     let cap = archive_write::MAX_BODY_BYTES;
-    let too_large = || archive::Reply::error(413, "too_large", &format!("the body is too large (at most {} MiB)", cap >> 20));
+    let too_large = || {
+        archive::Reply::error(
+            413,
+            "too_large",
+            &format!("the body is too large (at most {} MiB)", cap >> 20),
+        )
+    };
     let declared = request.body_length();
     // Before `as_reader()`, which tells an `Expect: 100-continue` client
     // to send the body.
@@ -631,9 +683,15 @@ fn create_note(ctx: &Arc<Ctx>, request: &mut tiny_http::Request, auth: &tokens::
         Ok(b) => b,
         Err(guard::BodyError::TooLarge) => return too_large(),
         Err(guard::BodyError::Empty) => {
-            return archive::Reply::error(400, "invalid_json", "the body must be a UTF-8 JSON object")
+            return archive::Reply::error(
+                400,
+                "invalid_json",
+                "the body must be a UTF-8 JSON object",
+            )
         }
-        Err(guard::BodyError::Io) => return archive::Reply::error(400, "bad_request", "could not read the body"),
+        Err(guard::BodyError::Io) => {
+            return archive::Reply::error(400, "bad_request", "could not read the body")
+        }
         Err(guard::BodyError::TooSlow) => {
             return archive::Reply::error(408, "too_slow", "the body did not arrive in time")
         }
@@ -661,7 +719,13 @@ fn create_note(ctx: &Arc<Ctx>, request: &mut tiny_http::Request, auth: &tokens::
 
 /// The archive routes, for an authorized request: `POST /archive/items`
 /// ([`archive_write`], #251), else the read routes ([`archive::handle`]).
-fn archive_route(ctx: &Arc<Ctx>, mut request: tiny_http::Request, auth: &tokens::Authorized, method: &str, url: &str) {
+fn archive_route(
+    ctx: &Arc<Ctx>,
+    mut request: tiny_http::Request,
+    auth: &tokens::Authorized,
+    method: &str,
+    url: &str,
+) {
     let path = url.split_once('?').map_or(url, |(p, _)| p);
     let reply = if archive_write::is_create(method, path) {
         create_note(ctx, &mut request, auth, url)
@@ -674,15 +738,25 @@ fn archive_route(ctx: &Arc<Ctx>, mut request: tiny_http::Request, auth: &tokens:
             },
         }
     };
-    let mut headers: Vec<(&str, String)> = ARCHIVE_HEADERS.iter().map(|(k, v)| (*k, v.to_string())).collect();
+    let mut headers: Vec<(&str, String)> = ARCHIVE_HEADERS
+        .iter()
+        .map(|(k, v)| (*k, v.to_string()))
+        .collect();
     headers.extend(reply.headers.iter().cloned());
     match reply.body {
         archive::Body::Json(body) => respond_json_with(request, reply.status, body, &headers),
-        archive::Body::File { content_type, filename, text } => {
+        archive::Body::File {
+            content_type,
+            filename,
+            text,
+        } => {
             headers.push(("Content-Type", content_type.to_string()));
             headers.push((
                 "Content-Disposition",
-                format!("attachment; filename=\"{}\"", filename.replace(['"', '\\', '\r', '\n'], "")),
+                format!(
+                    "attachment; filename=\"{}\"",
+                    filename.replace(['"', '\\', '\r', '\n'], "")
+                ),
             ));
             let response = tiny_http::Response::from_string(text).with_status_code(reply.status);
             let _ = request.respond(with_headers(response, &headers));
@@ -701,7 +775,12 @@ fn handle_meeting(
     let origin = header(&request, "Origin");
     let cors = auth::cors_headers(origin.as_deref());
     let deny = |request: tiny_http::Request, d: auth::Denied| {
-        respond_json_with(request, d.status(), serde_json::json!({"error": d.message()}), &cors)
+        respond_json_with(
+            request,
+            d.status(),
+            serde_json::json!({"error": d.message()}),
+            &cors,
+        )
     };
 
     if route == Route::Preflight {
@@ -731,8 +810,12 @@ fn handle_meeting(
     // The item routes: only items the extension recorded (#215).
     let item_error = |request: tiny_http::Request, e: export::ExportError| {
         let (status, body) = match e {
-            export::ExportError::NotFound(e) => (404, serde_json::json!({"error": format!("{e:#}")})),
-            export::ExportError::Refused(e) => (422, serde_json::json!({"error": format!("{e:#}")})),
+            export::ExportError::NotFound(e) => {
+                (404, serde_json::json!({"error": format!("{e:#}")}))
+            }
+            export::ExportError::Refused(e) => {
+                (422, serde_json::json!({"error": format!("{e:#}")}))
+            }
             export::ExportError::NotExtensionItem => (
                 403,
                 serde_json::json!({
@@ -776,7 +859,8 @@ fn handle_meeting(
             }
         }
         Route::ExportItem(id) => {
-            let Some(format) = export::parse_format(params.get("format").map(String::as_str)) else {
+            let Some(format) = export::parse_format(params.get("format").map(String::as_str))
+            else {
                 return respond_json_with(
                     request,
                     400,
@@ -802,7 +886,12 @@ fn handle_meeting(
                 Err(e) => item_error(request, e),
             }
         }
-        _ => respond_json_with(request, 404, serde_json::json!({"error": "unknown endpoint"}), &[]),
+        _ => respond_json_with(
+            request,
+            404,
+            serde_json::json!({"error": "unknown endpoint"}),
+            &[],
+        ),
     }
 }
 
@@ -813,13 +902,19 @@ pub fn websocket_accept(
     version: Option<&str>,
     key: Option<&str>,
 ) -> Result<String, &'static str> {
-    if !upgrade.is_some_and(|u| u.split(',').any(|p| p.trim().eq_ignore_ascii_case("websocket"))) {
+    if !upgrade.is_some_and(|u| {
+        u.split(',')
+            .any(|p| p.trim().eq_ignore_ascii_case("websocket"))
+    }) {
         return Err("expected a WebSocket upgrade");
     }
     if version.map(str::trim) != Some("13") {
         return Err("unsupported WebSocket version (13 required)");
     }
-    let key = key.map(str::trim).filter(|k| !k.is_empty()).ok_or("missing Sec-WebSocket-Key")?;
+    let key = key
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .ok_or("missing Sec-WebSocket-Key")?;
     Ok(tungstenite::handshake::derive_accept_key(key.as_bytes()))
 }
 
@@ -832,7 +927,8 @@ fn upgrade_live(host: &Arc<dyn Host>, request: tiny_http::Request, auth: live::L
         Ok(a) => a,
         Err(e) => {
             let mut r = tiny_http::Response::from_string(e).with_status_code(426);
-            if let Ok(h) = tiny_http::Header::from_bytes(&b"Sec-WebSocket-Version"[..], &b"13"[..]) {
+            if let Ok(h) = tiny_http::Header::from_bytes(&b"Sec-WebSocket-Version"[..], &b"13"[..])
+            {
                 r.add_header(h);
             }
             let _ = request.respond(r);
@@ -864,7 +960,10 @@ impl archive_write::NoteHost for AppHost {
         archive_write::cleanup_gate(s.cleanup_active(), s.cleanup_llm().external)
     }
 
-    fn clean_note(&self, paragraphs: &[String]) -> Result<Vec<String>, archive_write::CleanupRefused> {
+    fn clean_note(
+        &self,
+        paragraphs: &[String],
+    ) -> Result<Vec<String>, archive_write::CleanupRefused> {
         let state = self.app.state::<AppState>();
         // Checked and cleaned with the same settings: a profile switched to
         // an external one meanwhile is refused, never used.
@@ -873,7 +972,9 @@ impl archive_write::NoteHost for AppHost {
         let mut previous: Option<&str> = None;
         let mut out = Vec::with_capacity(paragraphs.len());
         for p in paragraphs {
-            out.push(crate::cleanup::ollama::cleanup_with_context(&settings, previous, p));
+            out.push(crate::cleanup::ollama::cleanup_with_context(
+                &settings, previous, p,
+            ));
             previous = Some(p);
         }
         Ok(out)
@@ -881,7 +982,9 @@ impl archive_write::NoteHost for AppHost {
 
     fn note_created(&self, id: &str) {
         // The Library refreshes (it doesn't change the selection).
-        let _ = self.app.emit_to("main", "archive-item-created", id.to_string());
+        let _ = self
+            .app
+            .emit_to("main", "archive-item-created", id.to_string());
     }
 }
 
@@ -912,7 +1015,11 @@ impl Host for AppHost {
             subtitles: s.subtitles,
             scripting: s.api_scripting,
             archive: s.api_archive,
-            archive_tokens: if s.api_archive { s.archive_tokens.clone() } else { Vec::new() },
+            archive_tokens: if s.api_archive {
+                s.archive_tokens.clone()
+            } else {
+                Vec::new()
+            },
             languages: crate::stt::languages::LanguageSet::for_settings(&s),
             dictation_language: s.language.clone(),
         }

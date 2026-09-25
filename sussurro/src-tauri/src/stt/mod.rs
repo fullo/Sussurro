@@ -78,7 +78,10 @@ pub fn dictionary_prompt(words: &[String]) -> Option<String> {
     if words.is_empty() {
         return None;
     }
-    Some(format!("Glossary of terms that may appear: {}.", words.join(", ")))
+    Some(format!(
+        "Glossary of terms that may appear: {}.",
+        words.join(", ")
+    ))
 }
 
 #[cfg(test)]

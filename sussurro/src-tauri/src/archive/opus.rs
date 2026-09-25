@@ -703,8 +703,8 @@ impl OpusReader {
             .find_map(|p| p.end)
             .unwrap_or(0)
             .saturating_sub(pre);
-        let mut dec = opus::Decoder::new(RATE, opus::Channels::Mono)
-            .context("starting the Opus decoder")?;
+        let mut dec =
+            opus::Decoder::new(RATE, opus::Channels::Mono).context("starting the Opus decoder")?;
         if gain != 0 {
             dec.set_gain(gain as i32)?;
         }

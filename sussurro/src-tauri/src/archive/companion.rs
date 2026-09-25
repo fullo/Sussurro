@@ -19,7 +19,9 @@
 //! ([`write_companion_new`], #121) never replace anything.
 
 use super::frontmatter;
-use super::store::{existing_item_dir, lock_items, sha256_hex, write_atomic, META_DIR, TRANSCRIPT_FILE};
+use super::store::{
+    existing_item_dir, lock_items, sha256_hex, write_atomic, META_DIR, TRANSCRIPT_FILE,
+};
 use super::types::SessionState;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -127,7 +129,10 @@ fn read_hashes(dir: &Path) -> BTreeMap<String, String> {
 
 fn write_hashes(dir: &Path, hashes: &BTreeMap<String, String>) -> Result<()> {
     std::fs::create_dir_all(dir.join(META_DIR))?;
-    write_atomic(&state_path(dir), serde_json::to_string_pretty(hashes)?.as_bytes())
+    write_atomic(
+        &state_path(dir),
+        serde_json::to_string_pretty(hashes)?.as_bytes(),
+    )
 }
 
 /// A regular file (symlinks are never followed out of the item folder).
@@ -141,7 +146,11 @@ fn is_plain_file(path: &Path) -> bool {
 /// back to the transcript.
 pub fn render_companion(meta: &CompanionMeta, body: &str) -> Result<String> {
     let yaml = serde_saphyr::to_string(meta).context("serializing document frontmatter")?;
-    let yaml = if yaml.ends_with('\n') { yaml } else { format!("{yaml}\n") };
+    let yaml = if yaml.ends_with('\n') {
+        yaml
+    } else {
+        format!("{yaml}\n")
+    };
     let mut out = format!("---\n{yaml}---\n\n{}\n", body.trim());
     if !meta.transcript.is_empty() {
         out.push_str(&format!(
@@ -302,8 +311,8 @@ fn write_with(
             }
             Err(e) => return Err(e).with_context(|| format!("checking {}", path.display())),
             Ok(m) if m.file_type().is_file() => {
-                let current = std::fs::read(&path)
-                    .with_context(|| format!("reading {}", path.display()))?;
+                let current =
+                    std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
                 let ours = hashes
                     .get(&name)
                     .is_some_and(|h| *h == sha256_hex(&current));
@@ -420,10 +429,20 @@ mod tests {
     #[test]
     fn external_provenance_carries_the_host() {
         let local = render_companion(&meta(), "x").unwrap();
-        assert!(!local.contains("host:"), "no host line on a local document: {local}");
-        let ext = CompanionMeta { external: true, host: "api.example.com".into(), ..meta() };
+        assert!(
+            !local.contains("host:"),
+            "no host line on a local document: {local}"
+        );
+        let ext = CompanionMeta {
+            external: true,
+            host: "api.example.com".into(),
+            ..meta()
+        };
         let doc = render_companion(&ext, "x").unwrap();
-        assert!(doc.contains("external: true\n") && doc.contains("host: api.example.com\n"), "{doc}");
+        assert!(
+            doc.contains("external: true\n") && doc.contains("host: api.example.com\n"),
+            "{doc}"
+        );
         let (back, _) = parse_companion(&doc);
         assert_eq!(back, ext);
         assert!(!back.extra.contains_key("host"));
@@ -437,7 +456,12 @@ mod tests {
         let dir = archive.join(&id);
         assert!(external_hosts_at(&dir).is_empty());
         write_companion(&archive, &id, "document.md", &meta(), "local").unwrap();
-        let ext = CompanionMeta { external: true, host: "API.example.com".into(), recipe: "summary".into(), ..meta() };
+        let ext = CompanionMeta {
+            external: true,
+            host: "API.example.com".into(),
+            recipe: "summary".into(),
+            ..meta()
+        };
         write_companion(&archive, &id, "summary.md", &ext, "sent").unwrap();
         // A file written by hand that says it was external, without a host.
         std::fs::write(dir.join("notes.md"), "---\nexternal: true\n---\nx").unwrap();
@@ -453,8 +477,17 @@ mod tests {
         assert!(validate_companion_name("document.md").is_ok());
         assert!(validate_companion_name("action-items.MD").is_ok());
         for bad in [
-            "", ".md", "transcript.md", "Transcript.md", ".hidden.md", "../x.md", "a/b.md",
-            "a\\b.md", "c:x.md", "notes.txt", "x\0.md",
+            "",
+            ".md",
+            "transcript.md",
+            "Transcript.md",
+            ".hidden.md",
+            "../x.md",
+            "a/b.md",
+            "a\\b.md",
+            "c:x.md",
+            "notes.txt",
+            "x\0.md",
         ] {
             assert!(validate_companion_name(bad).is_err(), "{bad:?}");
         }
@@ -476,7 +509,8 @@ mod tests {
 
     #[test]
     fn parse_is_lenient() {
-        let (m, body) = parse_companion("---\ntitle: 2026\nexternal: \"true\"\naliases: [x]\n---\nhi");
+        let (m, body) =
+            parse_companion("---\ntitle: 2026\nexternal: \"true\"\naliases: [x]\n---\nhi");
         assert_eq!(m.title, "2026");
         assert!(m.external);
         assert_eq!(m.extra["aliases"], serde_json::json!(["x"]));
@@ -496,19 +530,34 @@ mod tests {
         let id = item(&archive);
         let dir = archive.join(&id);
 
-        assert_eq!(write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "v1").unwrap(), "document.md");
+        assert_eq!(
+            write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "v1").unwrap(),
+            "document.md"
+        );
         // Regenerating replaces the app's own output in place.
-        assert_eq!(write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "v2").unwrap(), "document.md");
+        assert_eq!(
+            write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "v2").unwrap(),
+            "document.md"
+        );
         let docs = list_companions(&archive, &id).unwrap();
         assert_eq!(docs.len(), 1);
         assert!(docs[0].body.contains("v2") && !docs[0].edited_externally);
 
         // The user edits document.md: it is kept, the new output goes next to it.
         std::fs::write(dir.join("document.md"), "my own notes").unwrap();
-        assert_eq!(write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "v3").unwrap(), "document-2.md");
-        assert_eq!(std::fs::read_to_string(dir.join("document.md")).unwrap(), "my own notes");
+        assert_eq!(
+            write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "v3").unwrap(),
+            "document-2.md"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("document.md")).unwrap(),
+            "my own notes"
+        );
         // …and the next regeneration replaces document-2.md, the app's copy.
-        assert_eq!(write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "v4").unwrap(), "document-2.md");
+        assert_eq!(
+            write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "v4").unwrap(),
+            "document-2.md"
+        );
 
         let docs = list_companions(&archive, &id).unwrap();
         let files: Vec<_> = docs.iter().map(|d| d.file.as_str()).collect();
@@ -526,13 +575,22 @@ mod tests {
         answer.recipe = "question".into();
         answer.extra.insert(KIND_KEY.into(), KIND_ANSWER.into());
         // A saved answer that took the name summary.md…
-        assert_eq!(write_companion_new(&archive, &id, "summary.md", &answer, "a").unwrap(), "summary.md");
+        assert_eq!(
+            write_companion_new(&archive, &id, "summary.md", &answer, "a").unwrap(),
+            "summary.md"
+        );
         // …is not replaced by the Summary recipe, which writes next to it…
         let mut summary = meta();
         summary.recipe = "summary".into();
-        assert_eq!(write_companion(&archive, &id, "summary.md", &summary, "s1").unwrap(), "summary-2.md");
+        assert_eq!(
+            write_companion(&archive, &id, "summary.md", &summary, "s1").unwrap(),
+            "summary-2.md"
+        );
         // …and then regenerates its own file in place.
-        assert_eq!(write_companion(&archive, &id, "summary.md", &summary, "s2").unwrap(), "summary-2.md");
+        assert_eq!(
+            write_companion(&archive, &id, "summary.md", &summary, "s2").unwrap(),
+            "summary-2.md"
+        );
         let saved = std::fs::read_to_string(archive.join(&id).join("summary.md")).unwrap();
         let (m, body) = parse_companion(&saved);
         assert_eq!(m.extra[KIND_KEY], "answer");
@@ -547,11 +605,16 @@ mod tests {
         let mut answer = meta();
         answer.extra.insert(KIND_KEY.into(), KIND_ANSWER.into());
         let names: Vec<_> = (0..3)
-            .map(|i| write_companion_new(&archive, &id, "who.md", &answer, &format!("a{i}")).unwrap())
+            .map(|i| {
+                write_companion_new(&archive, &id, "who.md", &answer, &format!("a{i}")).unwrap()
+            })
             .collect();
         assert_eq!(names, ["who.md", "who-2.md", "who-3.md"]);
         let docs = list_companions(&archive, &id).unwrap();
-        assert!(docs.iter().all(|d| !d.edited_externally), "saved answers are the app's own files");
+        assert!(
+            docs.iter().all(|d| !d.edited_externally),
+            "saved answers are the app's own files"
+        );
     }
 
     #[test]
@@ -560,8 +623,14 @@ mod tests {
         let archive = tmp.path().join("Sussurro");
         let id = item(&archive);
         std::fs::write(archive.join(&id).join("summary.md"), "mine").unwrap();
-        assert_eq!(write_companion(&archive, &id, "summary.md", &meta(), "x").unwrap(), "summary-2.md");
-        assert_eq!(std::fs::read_to_string(archive.join(&id).join("summary.md")).unwrap(), "mine");
+        assert_eq!(
+            write_companion(&archive, &id, "summary.md", &meta(), "x").unwrap(),
+            "summary-2.md"
+        );
+        assert_eq!(
+            std::fs::read_to_string(archive.join(&id).join("summary.md")).unwrap(),
+            "mine"
+        );
     }
 
     #[test]
@@ -584,7 +653,13 @@ mod tests {
         assert!(read_companion(&archive, &id, "transcript.md").is_err());
         assert!(read_companion(&archive, &id, "../x.md").is_err());
         assert!(read_companion(&archive, &id, "missing.md").is_err());
-        assert_eq!(read_companion(&archive, &id, "summary.md").unwrap().meta.recipe, "formatted-document");
+        assert_eq!(
+            read_companion(&archive, &id, "summary.md")
+                .unwrap()
+                .meta
+                .recipe,
+            "formatted-document"
+        );
     }
 
     #[cfg(unix)]
@@ -600,7 +675,10 @@ mod tests {
         assert!(read_companion(&archive, &id, "link.md").is_err());
         // Writing never follows it either: the output goes to a fresh name.
         std::os::unix::fs::symlink(&outside, archive.join(&id).join("document.md")).unwrap();
-        assert_eq!(write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "x").unwrap(), "document-2.md");
+        assert_eq!(
+            write_companion(&archive, &id, DOCUMENT_FILE, &meta(), "x").unwrap(),
+            "document-2.md"
+        );
         assert_eq!(std::fs::read_to_string(&outside).unwrap(), "secret");
     }
 

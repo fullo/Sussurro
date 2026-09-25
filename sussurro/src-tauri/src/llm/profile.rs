@@ -226,7 +226,10 @@ mod tests {
 
     #[test]
     fn effective_context_has_a_floor_and_a_default() {
-        let mut p = LlmProfile { context_tokens: 32_768, ..Default::default() };
+        let mut p = LlmProfile {
+            context_tokens: 32_768,
+            ..Default::default()
+        };
         assert_eq!(p.effective_context_tokens(), 32_768);
         p.context_tokens = 100;
         assert_eq!(p.effective_context_tokens(), MIN_CONTEXT_TOKENS);
@@ -256,7 +259,10 @@ mod tests {
     #[test]
     fn set_base_url_reinfers_and_replaces_a_manual_override() {
         // Manual override on a local URL.
-        let mut p = LlmProfile { external: true, ..Default::default() };
+        let mut p = LlmProfile {
+            external: true,
+            ..Default::default()
+        };
         assert!(p.external);
         p.set_base_url("https://llm.example.com");
         assert!(p.external);
@@ -269,7 +275,14 @@ mod tests {
 
     #[test]
     fn serde_roundtrip_uses_snake_case_api() {
-        let p = LlmProfile::new("w", "Work", CleanupApi::Openai, "https://x.example/v1", "k", "gpt");
+        let p = LlmProfile::new(
+            "w",
+            "Work",
+            CleanupApi::Openai,
+            "https://x.example/v1",
+            "k",
+            "gpt",
+        );
         let json = serde_json::to_value(&p).unwrap();
         assert_eq!(json["api"], "openai");
         assert_eq!(json["external"], true);
@@ -279,10 +292,20 @@ mod tests {
 
     #[test]
     fn host_is_the_lowercased_hostname() {
-        let p = LlmProfile::new("w", "W", CleanupApi::Openai, "https://API.Example.com:443/v1", "", "m");
+        let p = LlmProfile::new(
+            "w",
+            "W",
+            CleanupApi::Openai,
+            "https://API.Example.com:443/v1",
+            "",
+            "m",
+        );
         assert_eq!(p.host(), "api.example.com");
         assert_eq!(p.host_label(), "api.example.com");
-        let odd = LlmProfile { base_url: "".into(), ..Default::default() };
+        let odd = LlmProfile {
+            base_url: "".into(),
+            ..Default::default()
+        };
         assert_eq!(odd.host(), "");
         assert_eq!(odd.host_label(), "“”");
     }
@@ -291,7 +314,14 @@ mod tests {
     fn cleanup_needs_an_opt_in_bound_to_the_host_on_external_profiles() {
         // Local: always.
         assert!(LlmProfile::default().cleanup_allowed());
-        let mut p = LlmProfile::new("w", "W", CleanupApi::Openai, "https://api.example.com/v1", "", "m");
+        let mut p = LlmProfile::new(
+            "w",
+            "W",
+            CleanupApi::Openai,
+            "https://api.example.com/v1",
+            "",
+            "m",
+        );
         assert!(!p.cleanup_allowed(), "external without opt-in");
         p.cleanup_opt_in = "api.example.com".into();
         assert!(p.cleanup_allowed());
@@ -302,15 +332,20 @@ mod tests {
         p.set_base_url("https://api.example.com:8443/openai/v1");
         assert!(p.cleanup_allowed());
         // A local URL marked external by hand needs it too.
-        let mut lan = LlmProfile { external: true, ..Default::default() };
+        let mut lan = LlmProfile {
+            external: true,
+            ..Default::default()
+        };
         assert!(!lan.cleanup_allowed());
         lan.cleanup_opt_in = "localhost".into();
         assert!(lan.cleanup_allowed());
         // Not serialized when empty; a pre-#122 profile has none.
         let json = serde_json::to_value(LlmProfile::default()).unwrap();
         assert!(json.get("cleanup_opt_in").is_none());
-        let old: LlmProfile =
-            serde_json::from_str(r#"{"id":"w","base_url":"https://api.example.com","external":true}"#).unwrap();
+        let old: LlmProfile = serde_json::from_str(
+            r#"{"id":"w","base_url":"https://api.example.com","external":true}"#,
+        )
+        .unwrap();
         assert!(!old.cleanup_allowed());
     }
 

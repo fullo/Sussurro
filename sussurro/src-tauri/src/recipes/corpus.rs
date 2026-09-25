@@ -8,7 +8,9 @@
 //! `date`, `language`, `participant: Name <email>`, `speaker: id = Label`);
 //! a `---` line; then one segment per line, `HH:MM:SS speaker-id | text`.
 
-use crate::archive::{create_item, DocSpeaker, ItemMeta, ItemType, Participant, Segment, SegmentsFile};
+use crate::archive::{
+    create_item, DocSpeaker, ItemMeta, ItemType, Participant, Segment, SegmentsFile,
+};
 use std::path::Path;
 
 /// One transcript of the corpus.
@@ -21,7 +23,11 @@ pub struct Fixture {
 impl Fixture {
     /// Speaker labels, in the order they are declared.
     pub fn speakers(&self) -> Vec<String> {
-        self.segments.speakers.iter().map(|s| s.label.clone()).collect()
+        self.segments
+            .speakers
+            .iter()
+            .map(|s| s.label.clone())
+            .collect()
     }
 
     /// Everyone a result may name: speakers and participants.
@@ -54,7 +60,10 @@ pub fn all() -> Vec<Fixture> {
 
 /// One fixture by name.
 pub fn fixture(name: &str) -> Fixture {
-    all().into_iter().find(|f| f.name == name).unwrap_or_else(|| panic!("no fixture {name}"))
+    all()
+        .into_iter()
+        .find(|f| f.name == name)
+        .unwrap_or_else(|| panic!("no fixture {name}"))
 }
 
 fn parse_ts(ts: &str) -> u64 {
@@ -66,16 +75,25 @@ fn parse(name: &'static str, src: &str) -> Fixture {
     let mut meta = ItemMeta::default();
     let mut segs = SegmentsFile::default();
     let mut body = false;
-    for line in src.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+    for line in src
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+    {
         if line == "---" {
             body = true;
             continue;
         }
         if body {
-            let (head, text) = line.split_once(" | ").unwrap_or_else(|| panic!("{name}: {line}"));
+            let (head, text) = line
+                .split_once(" | ")
+                .unwrap_or_else(|| panic!("{name}: {line}"));
             let (ts, speaker) = head.split_once(' ').unwrap();
             let start = parse_ts(ts);
-            assert!(segs.speakers.iter().any(|s| s.id == speaker), "{name}: unknown speaker {speaker}");
+            assert!(
+                segs.speakers.iter().any(|s| s.id == speaker),
+                "{name}: unknown speaker {speaker}"
+            );
             if let Some(prev) = segs.segments.last_mut() {
                 prev.end_ms = start.saturating_sub(200).max(prev.start_ms);
             }
@@ -90,7 +108,9 @@ fn parse(name: &'static str, src: &str) -> Fixture {
             });
             continue;
         }
-        let (key, value) = line.split_once(": ").unwrap_or_else(|| panic!("{name}: {line}"));
+        let (key, value) = line
+            .split_once(": ")
+            .unwrap_or_else(|| panic!("{name}: {line}"));
         match key {
             "type" => {
                 meta.item_type = match value {
@@ -107,23 +127,35 @@ fn parse(name: &'static str, src: &str) -> Fixture {
                     Some((n, e)) => (n, Some(e.trim_end_matches('>').to_string())),
                     None => (value, None),
                 };
-                meta.participants.push(Participant { name: name.to_string(), email });
+                meta.participants.push(Participant {
+                    name: name.to_string(),
+                    email,
+                });
             }
             "speaker" => {
                 let (id, label) = value.split_once(" = ").unwrap();
-                segs.speakers.push(DocSpeaker { id: id.into(), label: label.into(), ..Default::default() });
+                segs.speakers.push(DocSpeaker {
+                    id: id.into(),
+                    label: label.into(),
+                    ..Default::default()
+                });
             }
             other => panic!("{name}: unknown header {other}"),
         }
     }
-    Fixture { name, meta, segments: segs }
+    Fixture {
+        name,
+        meta,
+        segments: segs,
+    }
 }
 
 // ---- Structural checks on a recipe result ----
 
 fn heading_text(line: &str) -> Option<(usize, String)> {
     let level = line.chars().take_while(|c| *c == '#').count();
-    (level > 0 && line[level..].starts_with(' ')).then(|| (level, line[level..].trim().to_lowercase()))
+    (level > 0 && line[level..].starts_with(' '))
+        .then(|| (level, line[level..].trim().to_lowercase()))
 }
 
 /// The lines under the first heading whose text contains one of `names`
@@ -155,7 +187,12 @@ pub fn action_owners(doc: &str) -> Option<Vec<String>> {
         .iter()
         .map(|l| l.trim())
         .filter(|l| l.starts_with('|'))
-        .map(|l| l.trim_matches('|').split('|').map(|c| c.trim().to_string()).collect())
+        .map(|l| {
+            l.trim_matches('|')
+                .split('|')
+                .map(|c| c.trim().to_string())
+                .collect()
+        })
         .collect();
     if rows.len() < 2 {
         return None;
@@ -163,7 +200,10 @@ pub fn action_owners(doc: &str) -> Option<Vec<String>> {
     Some(
         rows[1..]
             .iter()
-            .filter(|r| !r.iter().all(|c| c.chars().all(|ch| matches!(ch, '-' | ':' | ' '))))
+            .filter(|r| {
+                !r.iter()
+                    .all(|c| c.chars().all(|ch| matches!(ch, '-' | ':' | ' ')))
+            })
             .map(|r| r.get(1).cloned().unwrap_or_default())
             .collect(),
     )
@@ -191,13 +231,30 @@ pub fn owner_known(owner: &str, known: &[String]) -> bool {
             o.replace_range(a..=b, "");
         }
     }
-    let none = ["", "—", "-", "–", "n/a", "tbd", "none", "nessuno", "non specificato", "not stated", "non indicato"];
+    let none = [
+        "",
+        "—",
+        "-",
+        "–",
+        "n/a",
+        "tbd",
+        "none",
+        "nessuno",
+        "non specificato",
+        "not stated",
+        "non indicato",
+    ];
     if none.contains(&o.trim().to_lowercase().as_str()) {
         return true;
     }
     let known: Vec<Vec<String>> = known.iter().map(|k| words(k)).collect();
     o.split([',', '/', '&', ';'])
-        .flat_map(|p| p.split(" e ").flat_map(|q| q.split(" and ")).map(str::to_string).collect::<Vec<_>>())
+        .flat_map(|p| {
+            p.split(" e ")
+                .flat_map(|q| q.split(" and "))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
         .map(|p| words(&p))
         .filter(|w| !w.is_empty())
         .all(|w| known.iter().any(|k| w.iter().all(|x| k.contains(x))))
@@ -220,20 +277,43 @@ mod tests {
         let all = all();
         assert_eq!(all.len(), 3);
         for f in &all {
-            assert!(!f.meta.title.is_empty() && !f.meta.language.is_empty(), "{}", f.name);
+            assert!(
+                !f.meta.title.is_empty() && !f.meta.language.is_empty(),
+                "{}",
+                f.name
+            );
             assert!(f.segments.segments.len() >= 14, "{}", f.name);
             assert!(f.segments.speakers.len() >= 2, "{}: multi-speaker", f.name);
-            assert!(f.speakers().iter().any(|s| s.starts_with("Voice ")), "{}: has a generic voice", f.name);
-            let used: std::collections::HashSet<_> =
-                f.segments.segments.iter().filter_map(|s| s.speaker_id.as_deref()).collect();
-            assert_eq!(used.len(), f.segments.speakers.len(), "{}: every speaker speaks", f.name);
+            assert!(
+                f.speakers().iter().any(|s| s.starts_with("Voice ")),
+                "{}: has a generic voice",
+                f.name
+            );
+            let used: std::collections::HashSet<_> = f
+                .segments
+                .segments
+                .iter()
+                .filter_map(|s| s.speaker_id.as_deref())
+                .collect();
+            assert_eq!(
+                used.len(),
+                f.segments.speakers.len(),
+                "{}: every speaker speaks",
+                f.name
+            );
         }
         let it = fixture("it-standup");
         assert_eq!(it.meta.item_type, ItemType::Meeting);
-        assert_eq!(it.meta.participants[0].email.as_deref(), Some("marco.bianchi@example.com"));
+        assert_eq!(
+            it.meta.participants[0].email.as_deref(),
+            Some("marco.bianchi@example.com")
+        );
         assert_eq!(it.segments.segments[1].start_ms, 15_000);
         assert_eq!(fixture("en-planning").meta.participants[2].email, None);
-        assert_eq!(fixture("it-intervista").meta.item_type, ItemType::Transcription);
+        assert_eq!(
+            fixture("it-intervista").meta.item_type,
+            ItemType::Transcription
+        );
         assert!(fixture("it-intervista").meta.participants.is_empty());
     }
 
@@ -258,7 +338,10 @@ mod tests {
     fn sections_and_action_owners_are_read_from_markdown() {
         let att = section(MINUTES, &ATTENDEES).unwrap();
         assert!(att.iter().any(|l| l.contains("Marco Bianchi")));
-        assert!(!att.iter().any(|l| l.contains("Azione")), "stops at the next heading");
+        assert!(
+            !att.iter().any(|l| l.contains("Azione")),
+            "stops at the next heading"
+        );
         let owners = action_owners(MINUTES).unwrap();
         assert_eq!(owners, ["**Giulia Verdi**", "Marco", "Voice 1", "—"]);
         assert!(action_owners("## Summary\nnothing").is_none());
@@ -268,12 +351,24 @@ mod tests {
     #[test]
     fn owners_must_be_known_people() {
         let known = fixture("it-standup").people();
-        for ok in ["Giulia Verdi", "**Giulia**", "Marco, Giulia", "Marco e Giulia", "Voice 1", "—", "", "Paolo Neri (paolo.neri@example.org)"] {
+        for ok in [
+            "Giulia Verdi",
+            "**Giulia**",
+            "Marco, Giulia",
+            "Marco e Giulia",
+            "Voice 1",
+            "—",
+            "",
+            "Paolo Neri (paolo.neri@example.org)",
+        ] {
             assert!(owner_known(ok, &known), "{ok}");
         }
         for bad in ["Luca", "Voice 3", "Giulia Rossi", "Marco, Luca", "il team"] {
             assert!(!owner_known(bad, &known), "{bad}");
         }
-        assert_eq!(h2_names("## Anna Rossi\n- a\n## **Voice 2**\n### x"), ["Anna Rossi", "Voice 2"]);
+        assert_eq!(
+            h2_names("## Anna Rossi\n- a\n## **Voice 2**\n### x"),
+            ["Anna Rossi", "Voice 2"]
+        );
     }
 }

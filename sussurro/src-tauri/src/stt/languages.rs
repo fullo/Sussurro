@@ -124,14 +124,14 @@ const NAMES: &[(&str, &str)] = &[
 
 /// Parakeet TDT 0.6B v3's languages.
 const PARAKEET: &[&str] = &[
-    "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv", "lt", "mt", "pl", "pt",
-    "ro", "sk", "sl", "es", "sv", "ru", "uk",
+    "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv", "lt", "mt",
+    "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
 ];
 
 /// Qwen3-ASR's languages (Cantonese and the Chinese dialects under `zh`).
 const QWEN3_ASR: &[&str] = &[
-    "zh", "en", "ar", "de", "fr", "es", "pt", "id", "it", "ko", "ru", "th", "vi", "ja", "tr", "hi", "ms", "nl",
-    "sv", "da", "fi", "pl", "cs", "tl", "fa", "el", "hu", "mk", "ro",
+    "zh", "en", "ar", "de", "fr", "es", "pt", "id", "it", "ko", "ru", "th", "vi", "ja", "tr", "hi",
+    "ms", "nl", "sv", "da", "fi", "pl", "cs", "tl", "fa", "el", "hu", "mk", "ro",
 ];
 
 /// Detect the language (always accepted, never listed).
@@ -250,7 +250,11 @@ mod tests {
         ] {
             let codes = set.codes();
             let langs = set.languages();
-            assert_eq!(langs.len(), codes.len(), "{set:?}: every code has a native name");
+            assert_eq!(
+                langs.len(),
+                codes.len(),
+                "{set:?}: every code has a native name"
+            );
             let mut unique = codes.clone();
             unique.sort();
             unique.dedup();

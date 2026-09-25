@@ -61,7 +61,10 @@ mod tests {
     #[test]
     fn newline_commands_in_both_languages() {
         assert_eq!(apply_basic_commands("ciao a capo mondo"), "ciao\nmondo");
-        assert_eq!(apply_basic_commands("ciao, nuova riga, mondo"), "ciao\nmondo");
+        assert_eq!(
+            apply_basic_commands("ciao, nuova riga, mondo"),
+            "ciao\nmondo"
+        );
         assert_eq!(apply_basic_commands("hello new line world"), "hello\nworld");
     }
 
@@ -121,6 +124,9 @@ mod tests {
             apply_basic_commands("una linea nuova di codice"),
             "una linea nuova di codice"
         );
-        assert_eq!(apply_basic_commands("capolavoro a parte"), "capolavoro a parte");
+        assert_eq!(
+            apply_basic_commands("capolavoro a parte"),
+            "capolavoro a parte"
+        );
     }
 }

@@ -191,9 +191,11 @@ fn read_import_text_with(
     before_open: &dyn Fn(),
 ) -> anyhow::Result<String> {
     let bytes = read_picked_file_with(path, kind.extension(), MAX_IMPORT_BYTES, before_open)?;
-    let text = String::from_utf8(bytes)
-        .map_err(|_| anyhow::anyhow!("file is not UTF-8 text"))?;
-    Ok(text.strip_prefix('\u{feff}').map(str::to_owned).unwrap_or(text))
+    let text = String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("file is not UTF-8 text"))?;
+    Ok(text
+        .strip_prefix('\u{feff}')
+        .map(str::to_owned)
+        .unwrap_or(text))
 }
 
 /// The bytes of a file the user picked in a native dialog, with the same
@@ -316,10 +318,17 @@ mod tests {
     use super::*;
 
     fn snip(cue: &str) -> Snippet {
-        Snippet { cue: cue.into(), text: format!("{cue}-text") }
+        Snippet {
+            cue: cue.into(),
+            text: format!("{cue}-text"),
+        }
     }
     fn style(m: &str) -> AppStyle {
-        AppStyle { app_match: m.into(), style: format!("{m}-style"), ..Default::default() }
+        AppStyle {
+            app_match: m.into(),
+            style: format!("{m}-style"),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -366,7 +375,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let txt = dir.path().join("dict.TXT");
         std::fs::write(&txt, "\u{feff}Sussurro\nTauri\n").unwrap();
-        assert_eq!(read_import_text(&txt, Dictionary).unwrap(), "Sussurro\nTauri\n");
+        assert_eq!(
+            read_import_text(&txt, Dictionary).unwrap(),
+            "Sussurro\nTauri\n"
+        );
         let csv = dir.path().join("snips.csv");
         std::fs::write(&csv, "cue,text\n").unwrap();
         assert_eq!(read_import_text(&csv, Snippets).unwrap(), "cue,text\n");
@@ -475,7 +487,10 @@ mod tests {
         let f = load_import_file(&csv, Snippets).unwrap();
         assert_eq!(
             f,
-            ImportFile { name: "snips.csv".into(), contents: "sig,Best regards\n".into() }
+            ImportFile {
+                name: "snips.csv".into(),
+                contents: "sig,Best regards\n".into()
+            }
         );
         // Nothing but these two fields crosses IPC: no path, no directory.
         let json = serde_json::to_value(&f).unwrap();
@@ -517,9 +532,12 @@ mod tests {
     #[test]
     fn list_export_writes_text_that_the_import_reads_back() {
         let dir = tempfile::tempdir().unwrap();
-        let written =
-            write_list_export(&dir.path().join("snips"), Snippets, "cue,text\nfirma,\"a, b\"\n")
-                .unwrap();
+        let written = write_list_export(
+            &dir.path().join("snips"),
+            Snippets,
+            "cue,text\nfirma,\"a, b\"\n",
+        )
+        .unwrap();
         assert_eq!(written, dir.path().join("snips.csv"));
         assert_eq!(
             read_import_text(&written, Snippets).unwrap(),
@@ -557,8 +575,14 @@ mod tests {
 
     #[test]
     fn import_kind_deserializes_from_lowercase_only() {
-        assert_eq!(serde_json::from_str::<ImportKind>("\"dictionary\"").unwrap(), Dictionary);
-        assert_eq!(serde_json::from_str::<ImportKind>("\"snippets\"").unwrap(), Snippets);
+        assert_eq!(
+            serde_json::from_str::<ImportKind>("\"dictionary\"").unwrap(),
+            Dictionary
+        );
+        assert_eq!(
+            serde_json::from_str::<ImportKind>("\"snippets\"").unwrap(),
+            Snippets
+        );
         assert!(serde_json::from_str::<ImportKind>("\"settings\"").is_err());
         assert!(serde_json::from_str::<ImportKind>("\"/etc/passwd\"").is_err());
     }
@@ -572,11 +596,23 @@ mod tests {
         use crate::settings::CleanupApi;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cfg.json");
-        let mut in_store =
-            LlmProfile::new("a", "A", CleanupApi::Openai, "https://a.example/v1", "sk-store-key", "m");
+        let mut in_store = LlmProfile::new(
+            "a",
+            "A",
+            CleanupApi::Openai,
+            "https://a.example/v1",
+            "sk-store-key",
+            "m",
+        );
         in_store.api_key_storage = KeyStorage::Keychain;
-        let mut in_file =
-            LlmProfile::new("b", "B", CleanupApi::Openai, "https://b.example/v1", "sk-file-key", "m");
+        let mut in_file = LlmProfile::new(
+            "b",
+            "B",
+            CleanupApi::Openai,
+            "https://b.example/v1",
+            "sk-file-key",
+            "m",
+        );
         in_file.api_key_storage = KeyStorage::File;
         let s = Settings {
             llm_profiles: vec![in_store, in_file],
@@ -597,7 +633,8 @@ mod tests {
         use crate::api::tokens::{create, Scope};
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cfg.json");
-        let (stored, new) = create(&[], "backup script", &[Scope::Read], chrono::Utc::now()).unwrap();
+        let (stored, new) =
+            create(&[], "backup script", &[Scope::Read], chrono::Utc::now()).unwrap();
         let s = Settings {
             archive_tokens: vec![stored.clone()],
             api_archive: true,
@@ -607,7 +644,13 @@ mod tests {
         };
         export_to(&path, &s, &[]).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        for secret in [new.token.as_str(), stored.sha256.as_str(), "backup script", "ext-secret-token", "archive_tokens"] {
+        for secret in [
+            new.token.as_str(),
+            stored.sha256.as_str(),
+            "backup script",
+            "ext-secret-token",
+            "archive_tokens",
+        ] {
             assert!(!text.contains(secret), "{secret} in {text}");
         }
     }
@@ -623,10 +666,16 @@ mod tests {
     fn people_are_exported_only_when_passed() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cfg.json");
-        let s = Settings { dictionary: vec!["Sussurro".into()], ..Default::default() };
+        let s = Settings {
+            dictionary: vec!["Sussurro".into()],
+            ..Default::default()
+        };
         export_to(&path, &s, &[]).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(!text.contains("people"), "default: no People key at all\n{text}");
+        assert!(
+            !text.contains("people"),
+            "default: no People key at all\n{text}"
+        );
 
         let anna = Person {
             id: "p-1".into(),

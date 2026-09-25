@@ -381,6 +381,10 @@ export interface Segment {
   words?: Word[];
   /** STT failed on this stretch (#153): empty text, shown as "[not transcribed]". */
   stt_error?: string;
+  /** Overlapping speech inside the line (#244), on the session clock; only
+   *  on lines that count as overlapped. `speaker_id` = the second speaker
+   *  (the line keeps its own). */
+  overlap?: { start_ms: number; end_ms: number; speaker_id?: string }[];
 }
 
 /** A speaker as known to one document (#130): `you`, `meet:<name>` or

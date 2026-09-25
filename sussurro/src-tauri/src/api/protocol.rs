@@ -268,7 +268,11 @@ pub fn clean_health(
     state: &str,
     set: Option<&str>,
     hooks: &std::collections::BTreeMap<String, String>,
-) -> (String, Option<String>, std::collections::BTreeMap<String, String>) {
+) -> (
+    String,
+    Option<String>,
+    std::collections::BTreeMap<String, String>,
+) {
     let state = match state.trim() {
         s @ ("ok" | "names_unavailable" | "off") => s.to_string(),
         _ => "unknown".to_string(),
@@ -276,7 +280,9 @@ pub fn clean_health(
     let hooks = hooks
         .iter()
         .filter(|(k, _)| {
-            !k.is_empty() && k.len() <= 32 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            !k.is_empty()
+                && k.len() <= 32
+                && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
         .take(MAX_HEALTH_HOOKS)
         .map(|(k, v)| {
@@ -317,9 +323,13 @@ pub fn validate_start(info: &StartInfo) -> Result<Start, ProtocolError> {
         )));
     }
     if !(1..=2).contains(&info.channels) {
-        return Err(bad(format!("channels must be 1 or 2, got {}", info.channels)));
+        return Err(bad(format!(
+            "channels must be 1 or 2, got {}",
+            info.channels
+        )));
     }
-    let host = page_host(&info.url).ok_or_else(|| bad("url must be the meeting page's http(s) address"))?;
+    let host = page_host(&info.url)
+        .ok_or_else(|| bad("url must be the meeting page's http(s) address"))?;
     let platform = match info.platform.trim().to_ascii_lowercase().as_str() {
         p @ ("meet" | "teams" | "zoom") => p.to_string(),
         _ => "other".to_string(),
@@ -542,7 +552,8 @@ pub enum ServerMessage {
 
 impl ServerMessage {
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| r#"{"type":"status","state":"error"}"#.into())
+        serde_json::to_string(self)
+            .unwrap_or_else(|_| r#"{"type":"status","state":"error"}"#.into())
     }
 }
 
@@ -627,15 +638,22 @@ mod tests {
                 names: vec!["Anna".into(), "Bo".into()]
             }
         );
-        assert_eq!(parse_control(r#"{"type":"stop"}"#).unwrap(), ClientMessage::Stop);
-        assert_eq!(parse_control(r#"{"type":"ping","extra":1}"#).unwrap(), ClientMessage::Ping);
+        assert_eq!(
+            parse_control(r#"{"type":"stop"}"#).unwrap(),
+            ClientMessage::Stop
+        );
+        assert_eq!(
+            parse_control(r#"{"type":"ping","extra":1}"#).unwrap(),
+            ClientMessage::Ping
+        );
     }
 
     #[test]
     fn protocol_two_messages_parse_and_protocol_one_still_does() {
         assert_eq!((MIN_PROTOCOL, PROTOCOL_VERSION), (1, 2));
         assert_eq!(
-            parse_control(r#"{"type":"speaker_active","id":"csrc:12","t":10,"source":"rtp"}"#).unwrap(),
+            parse_control(r#"{"type":"speaker_active","id":"csrc:12","t":10,"source":"rtp"}"#)
+                .unwrap(),
             ClientMessage::SpeakerActive {
                 name: None,
                 id: Some("csrc:12".into()),
@@ -664,11 +682,19 @@ mod tests {
         .unwrap() else {
             panic!()
         };
-        assert_eq!((state.as_str(), set.as_deref(), hooks.len()), ("ok", Some("meet-2026-09a"), 1));
+        assert_eq!(
+            (state.as_str(), set.as_deref(), hooks.len()),
+            ("ok", Some("meet-2026-09a"), 1)
+        );
         // A protocol 1 message is exactly what it was.
         assert!(matches!(
             parse_control(r#"{"type":"speaker_active","name":"Anna","t":1}"#).unwrap(),
-            ClientMessage::SpeakerActive { name: Some(_), id: None, source: None, .. }
+            ClientMessage::SpeakerActive {
+                name: Some(_),
+                id: None,
+                source: None,
+                ..
+            }
         ));
     }
 
@@ -687,8 +713,14 @@ mod tests {
             clean_speaker(Some("csrc:1"), Some("  Anna\n")),
             Ok((Some("csrc:1".into()), Some("Anna".into())))
         );
-        assert_eq!(clean_speaker(None, Some("Bo")), Ok((None, Some("Bo".into()))));
-        assert_eq!(clean_speaker(Some("csrc:1"), Some(" ")), Ok((Some("csrc:1".into()), None)));
+        assert_eq!(
+            clean_speaker(None, Some("Bo")),
+            Ok((None, Some("Bo".into())))
+        );
+        assert_eq!(
+            clean_speaker(Some("csrc:1"), Some(" ")),
+            Ok((Some("csrc:1".into()), None))
+        );
         assert!(clean_speaker(None, Some(" ")).is_err());
         assert!(clean_speaker(None, None).is_err());
         assert!(clean_speaker(Some("bad id!"), Some("Anna")).is_err());
@@ -723,7 +755,12 @@ mod tests {
 
     #[test]
     fn start_is_validated() {
-        let s = validate_start(&info(48_000, 2, "https://Meet.Google.com/abc-defg-hij?authuser=0")).unwrap();
+        let s = validate_start(&info(
+            48_000,
+            2,
+            "https://Meet.Google.com/abc-defg-hij?authuser=0",
+        ))
+        .unwrap();
         assert_eq!(s.title, "Weekly sync");
         assert_eq!(s.host, "meet.google.com");
         assert_eq!(s.platform, "meet");
@@ -731,18 +768,30 @@ mod tests {
         let mut other = info(16_000, 1, "http://localhost:8080/room");
         other.platform = "jitsi".into();
         let s = validate_start(&other).unwrap();
-        assert_eq!((s.host.as_str(), s.platform.as_str()), ("localhost", "other"));
+        assert_eq!(
+            (s.host.as_str(), s.platform.as_str()),
+            ("localhost", "other")
+        );
         let long = StartInfo {
             title: "x".repeat(1000),
             ..info(48_000, 2, "https://teams.microsoft.com/")
         };
-        assert_eq!(validate_start(&long).unwrap().title.chars().count(), MAX_TITLE_CHARS);
+        assert_eq!(
+            validate_start(&long).unwrap().title.chars().count(),
+            MAX_TITLE_CHARS
+        );
 
         assert!(validate_start(&info(7_999, 2, "https://a.b")).is_err());
         assert!(validate_start(&info(192_001, 2, "https://a.b")).is_err());
         assert!(validate_start(&info(48_000, 0, "https://a.b")).is_err());
         assert!(validate_start(&info(48_000, 3, "https://a.b")).is_err());
-        for url in ["", "meet.google.com", "file:///etc/passwd", "https://", "https://a b.com"] {
+        for url in [
+            "",
+            "meet.google.com",
+            "file:///etc/passwd",
+            "https://",
+            "https://a b.com",
+        ] {
             assert!(validate_start(&info(48_000, 2, url)).is_err(), "{url}");
         }
         // Only the host is kept: userinfo, port and path go.
@@ -754,14 +803,18 @@ mod tests {
     fn start_language_is_optional_and_checked_against_the_engine() {
         use crate::stt::languages::LanguageSet;
         // An older client sends none: the dictation setting applies.
-        let ClientMessage::Start(old) =
-            parse_control(r#"{"type":"start","url":"https://meet.google.com/x","rate":48000,"channels":2}"#)
-                .unwrap()
-        else {
+        let ClientMessage::Start(old) = parse_control(
+            r#"{"type":"start","url":"https://meet.google.com/x","rate":48000,"channels":2}"#,
+        )
+        .unwrap() else {
             panic!()
         };
         assert_eq!(old.language, None);
-        assert_eq!(validate_start(&old).unwrap().language, None, "set by the connection only");
+        assert_eq!(
+            validate_start(&old).unwrap().language,
+            None,
+            "set by the connection only"
+        );
         let ClientMessage::Start(new) = parse_control(
             r#"{"type":"start","url":"https://meet.google.com/x","rate":48000,"channels":2,"language":"en"}"#,
         )
@@ -779,7 +832,10 @@ mod tests {
         assert_eq!(meeting_language(Some("ja"), w), Ok(Some("ja".into())));
         // Not one the engine offers, or not a code at all.
         assert!(meeting_language(Some("ja"), LanguageSet::Parakeet).is_err());
-        assert_eq!(meeting_language(Some("auto"), LanguageSet::Parakeet), Ok(Some("auto".into())));
+        assert_eq!(
+            meeting_language(Some("auto"), LanguageSet::Parakeet),
+            Ok(Some("auto".into()))
+        );
         assert!(meeting_language(Some("it"), LanguageSet::WhisperEnglish).is_err());
         assert!(meeting_language(Some("xx"), w).is_err());
         let e = meeting_language(Some("english"), w).unwrap_err();
@@ -806,7 +862,11 @@ mod tests {
     #[test]
     fn audio_frames_round_trip() {
         let bytes = encode_audio_frame(1, 0x0102_0304, &[0, 16_384, -32_768, 32_767]);
-        assert_eq!(&bytes[..5], &[1, 4, 3, 2, 1], "channel then seq, little endian");
+        assert_eq!(
+            &bytes[..5],
+            &[1, 4, 3, 2, 1],
+            "channel then seq, little endian"
+        );
         let f = parse_audio_frame(&bytes).unwrap();
         assert_eq!(f.channel, Channel::Remote);
         assert_eq!(f.seq, 0x0102_0304);
@@ -819,7 +879,10 @@ mod tests {
     fn bad_audio_frames_are_errors() {
         assert!(parse_audio_frame(&[]).is_err());
         assert!(parse_audio_frame(&[0, 0, 0, 0]).is_err(), "short header");
-        assert!(parse_audio_frame(&encode_audio_frame(2, 0, &[1])).is_err(), "channel 2");
+        assert!(
+            parse_audio_frame(&encode_audio_frame(2, 0, &[1])).is_err(),
+            "channel 2"
+        );
         assert!(parse_audio_frame(&encode_audio_frame(255, 0, &[1])).is_err());
         let mut odd = encode_audio_frame(0, 0, &[1, 2]);
         odd.push(7);

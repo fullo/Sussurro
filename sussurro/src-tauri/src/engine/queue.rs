@@ -234,7 +234,13 @@ impl SegmentQueue {
     /// the front of the queue; with several (#126) segments are queued in
     /// the order they close, so take the minimum.
     pub fn oldest_start(&self) -> Option<u64> {
-        self.inner.lock().unwrap().items.iter().map(|q| q.start).min()
+        self.inner
+            .lock()
+            .unwrap()
+            .items
+            .iter()
+            .map(|q| q.start)
+            .min()
     }
 
     /// Audio waiting in the queue, in samples.

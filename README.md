@@ -120,7 +120,10 @@ Models · Settings**.
   told apart by voice as **Voice 1, Voice 2…**, on this computer, with a
   small speaker model (WeSpeaker, downloaded on first use). Rename voices,
   link them to people, or **Re-detect speakers** over the whole call.
-  Transcriptions can do the same with *Identify voices*.
+  Transcriptions can do the same with *Identify voices*. Where two people
+  talk at once, the line keeps its speaker and notes who else was speaking
+  (*+ Voice 3 also speaking*), found by a second small model (pyannote
+  segmentation-3.0, 6 MB, MIT, downloaded on first use).
 - **People**: a registry of names, emails and aliases. Participants whose
   name matches get the person's email automatically, and the registry
   travels with the archive.

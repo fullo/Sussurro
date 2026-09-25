@@ -126,7 +126,11 @@ fn check_auth_message(msg: &Message, expected: &str, late: bool) -> Result<(), &
         return Err("authentication required");
     };
     match serde_json::from_str::<AuthMessage>(text.as_str()) {
-        Ok(a) if a.kind == "auth" && !expected.is_empty() && auth::tokens_match(expected, &a.token) => {
+        Ok(a)
+            if a.kind == "auth"
+                && !expected.is_empty()
+                && auth::tokens_match(expected, &a.token) =>
+        {
             Ok(())
         }
         Ok(a) if a.kind == "auth" => Err("wrong extension token"),
@@ -182,7 +186,11 @@ struct ChannelSink(Mutex<Sender<EngineEvent>>);
 
 impl EngineSink for ChannelSink {
     fn emit(&self, event: &EngineEvent) {
-        let _ = self.0.lock().unwrap_or_else(|e| e.into_inner()).send(event.clone());
+        let _ = self
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .send(event.clone());
     }
 }
 
@@ -318,7 +326,10 @@ impl<'a> Conn<'a> {
     /// and the connection's rate. A drop warns once per spell.
     fn admit_page_event(&mut self, out: &mut Vec<ServerMessage>) -> bool {
         let now = (self.clock)();
-        let full = self.live.as_ref().is_some_and(|l| l.page_events >= MAX_PAGE_EVENTS);
+        let full = self
+            .live
+            .as_ref()
+            .is_some_and(|l| l.page_events >= MAX_PAGE_EVENTS);
         if !full && self.events.allow(now) {
             self.throttled = false;
             return true;
@@ -338,7 +349,10 @@ impl<'a> Conn<'a> {
     fn warn(&mut self, out: &mut Vec<ServerMessage>, message: impl Into<String>) {
         if self.warnings < MAX_WARNINGS {
             self.warnings += 1;
-            out.push(ServerMessage::Status(Status::message(State::Warning, message)));
+            out.push(ServerMessage::Status(Status::message(
+                State::Warning,
+                message,
+            )));
         }
     }
 
@@ -396,14 +410,20 @@ impl<'a> Conn<'a> {
                 let mut start = match protocol::validate_start(&info) {
                     Ok(s) => s,
                     Err(e) => {
-                        out.push(ServerMessage::Status(Status::message(State::Error, e.to_string())));
+                        out.push(ServerMessage::Status(Status::message(
+                            State::Error,
+                            e.to_string(),
+                        )));
                         return Flow::Continue;
                     }
                 };
                 // The meeting's language (#288), checked against the
                 // engine the run will use; a bad one never stops the
                 // meeting: the dictation's language applies.
-                match protocol::meeting_language(info.language.as_deref(), self.host.config().languages) {
+                match protocol::meeting_language(
+                    info.language.as_deref(),
+                    self.host.config().languages,
+                ) {
                     Ok(language) => start.language = language,
                     Err(e) => self.warn(out, format!("{e}: using the dictation language")),
                 }
@@ -446,7 +466,12 @@ impl<'a> Conn<'a> {
                 }
                 Flow::Continue
             }
-            ClientMessage::SpeakerActive { name, id, t, source } => {
+            ClientMessage::SpeakerActive {
+                name,
+                id,
+                t,
+                source,
+            } => {
                 let Some(live) = self.live.as_mut() else {
                     self.warn(out, "speaker_active before start");
                     return Flow::Continue;
@@ -536,7 +561,10 @@ impl<'a> Conn<'a> {
                 }
                 let bytes: usize = names.iter().map(|n| n.len() + 1).sum();
                 if live.participants_bytes + bytes > MAX_PARTICIPANTS_BYTES {
-                    self.warn(out, "too many participant updates for one meeting: ignoring the rest");
+                    self.warn(
+                        out,
+                        "too many participant updates for one meeting: ignoring the rest",
+                    );
                     return Flow::Continue;
                 }
                 live.participants_bytes += bytes;
@@ -584,7 +612,10 @@ impl<'a> Conn<'a> {
                 .unwrap_or_default();
             self.warn(
                 out,
-                format!("{} {ch} audio frame(s) lost, filled with silence", pushed.lost),
+                format!(
+                    "{} {ch} audio frame(s) lost, filled with silence",
+                    pushed.lost
+                ),
             );
         }
     }
@@ -698,14 +729,21 @@ fn send<S: Read + Write>(ws: &mut WebSocket<S>, msg: &ServerMessage) -> bool {
 
 /// [`LiveAuth::FirstMessage`]: read the first message and check it; on a
 /// failure the client gets an error status and the socket is closed.
-fn first_message_auth<S: Read + Write>(ws: &mut WebSocket<S>, expected: &str, deadline: Instant) -> bool {
+fn first_message_auth<S: Read + Write>(
+    ws: &mut WebSocket<S>,
+    expected: &str,
+    deadline: Instant,
+) -> bool {
     let Ok(msg) = ws.read() else {
         return false;
     };
     match check_auth_message(&msg, expected, Instant::now() > deadline) {
         Ok(()) => true,
         Err(why) => {
-            let _ = send(ws, &ServerMessage::Status(Status::message(State::Error, why)));
+            let _ = send(
+                ws,
+                &ServerMessage::Status(Status::message(State::Error, why)),
+            );
             let _ = ws.close(Some(CloseFrame {
                 code: CloseCode::Policy,
                 reason: "unauthorized".into(),
@@ -828,8 +866,14 @@ mod tests {
         let mut c = Conn::new(&host);
         let mut out = Vec::new();
         let audio = protocol::encode_audio_frame(0, 0, &[1, 2, 3]);
-        assert_eq!(c.on_message(Message::binary(audio), &mut out), Flow::Continue);
-        c.on_message(Message::text(r#"{"type":"speaker_active","name":"A","t":1}"#), &mut out);
+        assert_eq!(
+            c.on_message(Message::binary(audio), &mut out),
+            Flow::Continue
+        );
+        c.on_message(
+            Message::text(r#"{"type":"speaker_active","name":"A","t":1}"#),
+            &mut out,
+        );
         c.on_message(Message::text("garbage"), &mut out);
         assert_eq!(states(&out), [State::Warning; 3]);
         out.clear();
@@ -848,10 +892,15 @@ mod tests {
             &mut out,
         );
         assert_eq!(states(&out), [State::Error, State::Error]);
-        let ServerMessage::Status(s) = &out[1] else { panic!() };
+        let ServerMessage::Status(s) = &out[1] else {
+            panic!()
+        };
         assert!(s.message.as_deref().unwrap().contains("already"));
         assert!(c.live.is_none());
-        assert_eq!(c.on_message(Message::text(r#"{"type":"stop"}"#), &mut out), Flow::Stop);
+        assert_eq!(
+            c.on_message(Message::text(r#"{"type":"stop"}"#), &mut out),
+            Flow::Stop
+        );
         assert_eq!(c.on_message(Message::Close(None), &mut out), Flow::Closed);
     }
 
@@ -972,7 +1021,10 @@ mod tests {
         let (lang, warned) = start(LanguageSet::Parakeet, r#","language":"ja""#);
         assert_eq!(lang, None);
         assert_eq!(warned.len(), 1);
-        assert!(warned[0].contains("Parakeet") && warned[0].contains("dictation language"), "{warned:?}");
+        assert!(
+            warned[0].contains("Parakeet") && warned[0].contains("dictation language"),
+            "{warned:?}"
+        );
         let (lang, warned) = start(LanguageSet::Whisper, r#","language":"klingon""#);
         assert_eq!((lang, warned.len()), (None, 1));
     }
@@ -983,7 +1035,9 @@ mod tests {
         c.clock = Box::new(move || now.get());
         let mut out = Vec::new();
         c.on_message(
-            Message::text(r#"{"type":"start","url":"https://meet.google.com/a","rate":16000,"channels":2}"#),
+            Message::text(
+                r#"{"type":"start","url":"https://meet.google.com/a","rate":16000,"channels":2}"#,
+            ),
             &mut out,
         );
         assert!(c.live.is_some(), "{out:?}");
@@ -1014,17 +1068,24 @@ mod tests {
     #[test]
     fn a_live_upgrade_takes_the_url_token_or_waits_for_the_first_message() {
         assert_eq!(authorize(T, Some(T), Some(EXT)), Ok(LiveAuth::Done));
-        assert_eq!(authorize(T, Some("x"), Some(EXT)), Err(Denied::Unauthorized));
+        assert_eq!(
+            authorize(T, Some("x"), Some(EXT)),
+            Err(Denied::Unauthorized)
+        );
         assert_eq!(authorize(T, Some(T), None), Err(Denied::Forbidden));
         let before = Instant::now();
-        let Ok(LiveAuth::FirstMessage { expected, deadline }) = authorize(T, None, Some(EXT)) else {
+        let Ok(LiveAuth::FirstMessage { expected, deadline }) = authorize(T, None, Some(EXT))
+        else {
             panic!("no token: first-message auth")
         };
         assert_eq!(expected, T);
         assert!(deadline >= before + AUTH_TIMEOUT && deadline <= Instant::now() + AUTH_TIMEOUT);
         // Still an extension origin and a paired app, before any upgrade.
         assert_eq!(authorize(T, None, None), Err(Denied::Forbidden));
-        assert_eq!(authorize(T, None, Some("https://meet.google.com")), Err(Denied::Forbidden));
+        assert_eq!(
+            authorize(T, None, Some("https://meet.google.com")),
+            Err(Denied::Forbidden)
+        );
         assert_eq!(authorize("  ", None, Some(EXT)), Err(Denied::Unauthorized));
     }
 
@@ -1032,16 +1093,28 @@ mod tests {
     fn the_first_message_must_be_the_right_token_in_time() {
         let auth = |t: &str| Message::text(format!(r#"{{"type":"auth","token":"{t}"}}"#));
         assert_eq!(check_auth_message(&auth(T), T, false), Ok(()));
-        assert_eq!(check_auth_message(&auth(T), T, true), Err("authentication timed out"));
-        assert_eq!(check_auth_message(&auth("nope"), T, false), Err("wrong extension token"));
-        assert_eq!(check_auth_message(&auth(""), "", false), Err("wrong extension token"));
+        assert_eq!(
+            check_auth_message(&auth(T), T, true),
+            Err("authentication timed out")
+        );
+        assert_eq!(
+            check_auth_message(&auth("nope"), T, false),
+            Err("wrong extension token")
+        );
+        assert_eq!(
+            check_auth_message(&auth(""), "", false),
+            Err("wrong extension token")
+        );
         for other in [
             Message::text(r#"{"type":"ping"}"#),
             Message::text(r#"{"type":"start","url":"x","rate":1,"channels":1}"#),
             Message::text("garbage"),
             Message::binary(vec![0u8; 9]),
         ] {
-            assert_eq!(check_auth_message(&other, T, false), Err("authentication required"));
+            assert_eq!(
+                check_auth_message(&other, T, false),
+                Err("authentication required")
+            );
         }
     }
 
@@ -1067,20 +1140,31 @@ mod tests {
         let now = std::rc::Rc::new(std::cell::Cell::new(Duration::ZERO));
         let mut c = started(&host, now.clone());
         let mut out = Vec::new();
-        let name = |i: usize| Message::text(format!(r#"{{"type":"speaker_name","id":"csrc:{i}","name":"P{i}"}}"#));
+        let name = |i: usize| {
+            Message::text(format!(
+                r#"{{"type":"speaker_name","id":"csrc:{i}","name":"P{i}"}}"#
+            ))
+        };
         for i in 0..1_000 {
             c.on_message(name(i), &mut out);
         }
         let live = c.live.as_ref().unwrap();
         assert_eq!(live.page_events, EVENTS_BURST as usize);
-        assert_eq!(warnings(&out), ["page events too fast: some were dropped"], "one warning per spell");
+        assert_eq!(
+            warnings(&out),
+            ["page events too fast: some were dropped"],
+            "one warning per spell"
+        );
         // One second later, the rate's worth more.
         now.set(Duration::from_secs(1));
         out.clear();
         for i in 0..100 {
             c.on_message(name(i), &mut out);
         }
-        assert_eq!(c.live.as_ref().unwrap().page_events, EVENTS_BURST as usize + EVENTS_PER_SEC as usize);
+        assert_eq!(
+            c.live.as_ref().unwrap().page_events,
+            EVENTS_BURST as usize + EVENTS_PER_SEC as usize
+        );
         assert_eq!(warnings(&out).len(), 1);
         // Pings, audio and stop are not page events.
         now.set(Duration::from_secs(2));
@@ -1095,7 +1179,10 @@ mod tests {
             c.on_message(name(i), &mut out);
         }
         assert_eq!(c.live.as_ref().unwrap().page_events, MAX_PAGE_EVENTS);
-        assert_eq!(warnings(&out), ["too many page events for one meeting: ignoring the rest"]);
+        assert_eq!(
+            warnings(&out),
+            ["too many page events for one meeting: ignoring the rest"]
+        );
     }
 
     #[test]
@@ -1105,7 +1192,8 @@ mod tests {
         let now = std::rc::Rc::new(std::cell::Cell::new(Duration::ZERO));
         let mut c = started(&host, now);
         let mut out = Vec::new();
-        let list = |names: &str| Message::text(format!(r#"{{"type":"participants","names":[{names}]}}"#));
+        let list =
+            |names: &str| Message::text(format!(r#"{{"type":"participants","names":[{names}]}}"#));
         c.on_message(list(r#""Anna","Bo""#), &mut out);
         // The same list (after cleaning) again and again: recorded once.
         for _ in 0..50 {
@@ -1114,7 +1202,11 @@ mod tests {
         assert_eq!(c.live.as_ref().unwrap().page_events, 1);
         c.on_message(list(r#""Anna","Bo","Cy""#), &mut out);
         c.on_message(list(r#""Anna","Bo""#), &mut out);
-        assert_eq!(c.live.as_ref().unwrap().page_events, 3, "a change back is new");
+        assert_eq!(
+            c.live.as_ref().unwrap().page_events,
+            3,
+            "a change back is new"
+        );
         assert!(warnings(&out).is_empty(), "{out:?}");
         // The meeting's byte budget.
         c.live.as_mut().unwrap().participants_bytes = MAX_PARTICIPANTS_BYTES - 5;
@@ -1135,7 +1227,11 @@ mod tests {
         let mut c = started(&host, now);
         let mut out = Vec::new();
         let id = meeting_item(&archive);
-        let ev = |i: usize| Message::text(format!(r#"{{"type":"speaker_name","id":"csrc:{i}","name":"P{i}"}}"#));
+        let ev = |i: usize| {
+            Message::text(format!(
+                r#"{{"type":"speaker_name","id":"csrc:{i}","name":"P{i}"}}"#
+            ))
+        };
         // Before the item exists the events wait; then they land in order.
         c.on_message(ev(0), &mut out);
         assert!(c.live.as_ref().unwrap().writer.is_none());
@@ -1147,21 +1243,46 @@ mod tests {
         for i in 1..4 {
             c.on_message(ev(i), &mut out);
         }
-        let writer_id = c.live.as_ref().unwrap().writer.as_ref().map(|w| w.id().to_string());
+        let writer_id = c
+            .live
+            .as_ref()
+            .unwrap()
+            .writer
+            .as_ref()
+            .map(|w| w.id().to_string());
         assert_eq!(writer_id.as_deref(), Some(id.as_str()), "one open file");
-        assert_eq!(crate::archive::meeting::read_events(&archive, &id).unwrap().len(), 4);
+        assert_eq!(
+            crate::archive::meeting::read_events(&archive, &id)
+                .unwrap()
+                .len(),
+            4
+        );
         // Another id (a renamed folder): the writer follows it.
         let other = meeting_item(&archive);
         c.live.as_mut().unwrap().item_id = Some(other.clone());
         c.on_message(ev(4), &mut out);
-        let writer_id = c.live.as_ref().unwrap().writer.as_ref().map(|w| w.id().to_string());
+        let writer_id = c
+            .live
+            .as_ref()
+            .unwrap()
+            .writer
+            .as_ref()
+            .map(|w| w.id().to_string());
         assert_eq!(writer_id.as_deref(), Some(other.as_str()));
-        assert_eq!(crate::archive::meeting::read_events(&archive, &other).unwrap().len(), 1);
+        assert_eq!(
+            crate::archive::meeting::read_events(&archive, &other)
+                .unwrap()
+                .len(),
+            1
+        );
         // An item that can't be written is not retried per event.
         c.live.as_mut().unwrap().item_id = Some("2026/09/missing".into());
         c.on_message(ev(5), &mut out);
         c.on_message(ev(6), &mut out);
-        assert_eq!(c.live.as_ref().unwrap().unwritable.as_deref(), Some("2026/09/missing"));
+        assert_eq!(
+            c.live.as_ref().unwrap().unwritable.as_deref(),
+            Some("2026/09/missing")
+        );
         // The end of the audio closes the file.
         c.live.as_mut().unwrap().item_id = Some(id.clone());
         c.on_message(ev(7), &mut out);
@@ -1180,15 +1301,24 @@ mod tests {
         let mut out = Vec::new();
         let pcm = [0i16; 320];
         // 5-byte frames (no samples) jumping a million frames each.
-        c.on_message(Message::binary(protocol::encode_audio_frame(1, 0, &pcm)), &mut out);
+        c.on_message(
+            Message::binary(protocol::encode_audio_frame(1, 0, &pcm)),
+            &mut out,
+        );
         for k in 1..200u32 {
-            c.on_message(Message::binary(protocol::encode_audio_frame(1, k * 1_000_000, &[])), &mut out);
+            c.on_message(
+                Message::binary(protocol::encode_audio_frame(1, k * 1_000_000, &[])),
+                &mut out,
+            );
         }
         let pos = c.live.as_ref().unwrap().mux.position();
         assert!(pos <= 320 + SILENCE_GRACE_SAMPLES, "{pos}");
         // With time passing, the budget grows with it, never faster.
         now.set(Duration::from_secs(10));
-        c.on_message(Message::binary(protocol::encode_audio_frame(1, 4_000_000_000, &pcm)), &mut out);
+        c.on_message(
+            Message::binary(protocol::encode_audio_frame(1, 4_000_000_000, &pcm)),
+            &mut out,
+        );
         let pos = c.live.as_ref().unwrap().mux.position();
         assert!(pos <= 640 + SILENCE_GRACE_SAMPLES + 10 * 16_000, "{pos}");
     }

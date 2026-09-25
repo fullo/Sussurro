@@ -182,7 +182,10 @@ impl SymphoniaStream {
                 }
             }
             let (_, r) = self.resampler.get_or_insert_with(|| {
-                (channels, StreamResampler::new(channels, self.src_rate, TARGET_RATE))
+                (
+                    channels,
+                    StreamResampler::new(channels, self.src_rate, TARGET_RATE),
+                )
             });
             out.extend(r.push(buf.samples()));
             return Ok(Some(out));
@@ -258,7 +261,8 @@ pub(crate) fn write_wav_i16(path: &Path, rate: u32, channels: u16, interleaved: 
     f.write_all(&1u16.to_le_bytes()).unwrap(); // PCM
     f.write_all(&channels.to_le_bytes()).unwrap();
     f.write_all(&rate.to_le_bytes()).unwrap();
-    f.write_all(&(rate * channels as u32 * 2).to_le_bytes()).unwrap();
+    f.write_all(&(rate * channels as u32 * 2).to_le_bytes())
+        .unwrap();
     f.write_all(&(channels * 2).to_le_bytes()).unwrap();
     f.write_all(&16u16.to_le_bytes()).unwrap();
     f.write_all(b"data").unwrap();

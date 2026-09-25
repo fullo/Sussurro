@@ -109,7 +109,10 @@ impl ConsentStore {
         let token = new_token(g.0);
         g.1.retain(|_, (_, at)| now.saturating_duration_since(*at) < CONSENT_TTL);
         while g.1.len() >= MAX_PENDING {
-            let oldest = g.1.iter().min_by_key(|(_, (_, at))| *at).map(|(k, _)| k.clone());
+            let oldest =
+                g.1.iter()
+                    .min_by_key(|(_, (_, at))| *at)
+                    .map(|(k, _)| k.clone());
             match oldest {
                 Some(k) => g.1.remove(&k),
                 None => break,
@@ -125,7 +128,12 @@ impl ConsentStore {
         self.consume_at(token, target, Instant::now())
     }
 
-    pub(crate) fn consume_at(&self, token: &str, target: &RunTarget, now: Instant) -> Result<ConsentGrant> {
+    pub(crate) fn consume_at(
+        &self,
+        token: &str,
+        target: &RunTarget,
+        now: Instant,
+    ) -> Result<ConsentGrant> {
         let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let Some((issued_for, at)) = g.1.remove(token) else {
             bail!("this confirmation is not valid (already used or never given) — confirm the run again");
@@ -171,7 +179,11 @@ fn new_token(counter: u64) -> String {
 
 /// The consent a run needs: none for a local profile; for an external one a
 /// grant issued for exactly this run.
-pub fn authorize(profile: &LlmProfile, target: &RunTarget, grant: Option<&ConsentGrant>) -> Result<()> {
+pub fn authorize(
+    profile: &LlmProfile,
+    target: &RunTarget,
+    grant: Option<&ConsentGrant>,
+) -> Result<()> {
     if !profile.external {
         return Ok(());
     }
@@ -196,7 +208,14 @@ mod tests {
     use crate::settings::CleanupApi;
 
     fn work() -> LlmProfile {
-        LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com/v1", "k", "gpt-4o-mini")
+        LlmProfile::new(
+            "work",
+            "Work",
+            CleanupApi::Openai,
+            "https://api.example.com/v1",
+            "k",
+            "gpt-4o-mini",
+        )
     }
 
     fn target(item: &str) -> RunTarget {
@@ -230,11 +249,15 @@ mod tests {
         let store = ConsentStore::default();
         let t0 = Instant::now();
         let t = store.issue_at(target("a"), t0);
-        let err = store.consume_at(&t, &target("a"), t0 + CONSENT_TTL).unwrap_err();
+        let err = store
+            .consume_at(&t, &target("a"), t0 + CONSENT_TTL)
+            .unwrap_err();
         assert!(format!("{err}").contains("expired"), "{err}");
         // Just inside the window it works.
         let t = store.issue_at(target("a"), t0);
-        assert!(store.consume_at(&t, &target("a"), t0 + CONSENT_TTL - Duration::from_secs(1)).is_ok());
+        assert!(store
+            .consume_at(&t, &target("a"), t0 + CONSENT_TTL - Duration::from_secs(1))
+            .is_ok());
         // Expired tokens are dropped when new ones are issued.
         store.issue_at(target("b"), t0);
         store.issue_at(target("c"), t0 + CONSENT_TTL * 2);
@@ -295,8 +318,14 @@ mod tests {
     fn questions_are_bound_to_their_text() {
         let q1 = crate::recipes::answer::question_recipe("Who sends the file?").unwrap();
         let q2 = crate::recipes::answer::question_recipe("When is the deadline?").unwrap();
-        assert_ne!(RunTarget::new("a", &q1, &work()), RunTarget::new("a", &q2, &work()));
-        assert_eq!(RunTarget::new("a", &q1, &work()), RunTarget::new("a", &q1.clone(), &work()));
+        assert_ne!(
+            RunTarget::new("a", &q1, &work()),
+            RunTarget::new("a", &q2, &work())
+        );
+        assert_eq!(
+            RunTarget::new("a", &q1, &work()),
+            RunTarget::new("a", &q1.clone(), &work())
+        );
     }
 
     #[test]
@@ -307,7 +336,10 @@ mod tests {
             store.issue(target("a"));
         }
         assert_eq!(store.pending(), MAX_PENDING);
-        assert!(store.consume(&first, &target("a")).is_err(), "the oldest was dropped");
+        assert!(
+            store.consume(&first, &target("a")).is_err(),
+            "the oldest was dropped"
+        );
     }
 
     #[test]
@@ -319,7 +351,10 @@ mod tests {
         let t = RunTarget::new("a", recipe, &work());
         let err = authorize(&work(), &t, None).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("api.example.com") && msg.contains("nothing was sent"), "{msg}");
+        assert!(
+            msg.contains("api.example.com") && msg.contains("nothing was sent"),
+            "{msg}"
+        );
 
         let store = ConsentStore::default();
         let grant = store.consume(&store.issue(t.clone()), &t).unwrap();

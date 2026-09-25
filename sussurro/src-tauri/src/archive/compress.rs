@@ -84,7 +84,8 @@ pub fn items_with_wav(archive: &Path) -> Vec<(String, u64)> {
 /// also checks the session journal before calling in).
 fn ensure_not_recording(dir: &Path, id: &str) -> Result<()> {
     let path = store::transcript_path(dir);
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     if let Ok((m, _)) = super::frontmatter::parse(&text) {
         if m.session_state() == Some(super::types::SessionState::Recording) {
             bail!("'{id}' is still being recorded — compress its audio when the session ends");
@@ -457,7 +458,8 @@ mod tests {
         assert_eq!(items_with_wav(&archive), vec![(id.clone(), wav_total)]);
 
         let mut seen = 0u64;
-        let done = compress_item(&archive, &id, &AtomicBool::new(false), &mut |b| seen += b).unwrap();
+        let done =
+            compress_item(&archive, &id, &AtomicBool::new(false), &mut |b| seen += b).unwrap();
         assert_eq!(done.files, 2);
         assert!(!done.cancelled);
         assert_eq!(done.bytes_before, wav_total);
@@ -483,7 +485,10 @@ mod tests {
         }
         // Frontmatter and the item's files follow; no temporary file left.
         let item = read_item(&archive, &id).unwrap();
-        assert_eq!(listed(&item.meta), vec!["audio-mic.opus", "audio-remote.opus"]);
+        assert_eq!(
+            listed(&item.meta),
+            vec!["audio-mic.opus", "audio-remote.opus"]
+        );
         let names: Vec<&str> = item.audio.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["audio-mic.opus", "audio-remote.opus"]);
         assert!(!tmp_path(&dir, "audio-mic.opus").exists());
@@ -512,7 +517,10 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("audio.wav")).unwrap(), before);
         assert!(!dir.join("audio.opus").exists());
         assert!(!tmp_path(&dir, "audio.opus").exists());
-        assert_eq!(listed(&read_item(&archive, &id).unwrap().meta), vec!["audio.wav"]);
+        assert_eq!(
+            listed(&read_item(&archive, &id).unwrap().meta),
+            vec!["audio.wav"]
+        );
     }
 
     #[test]

@@ -22,29 +22,67 @@ export interface TranscriptLineData {
   sttError?: string;
   /** Who said it, when the document has speakers (#130). */
   speaker?: TranscriptSpeaker;
+  /** Overlapping speech in the line (#244): the other speakers heard at
+   *  the same time (empty when the app could not tell who). The line
+   *  keeps its own speaker. */
+  alsoSpeaking?: TranscriptSpeaker[];
+}
+
+/** A stretch of overlapping speech in a segment (#244). */
+export interface OverlapSpanData {
+  start_ms: number;
+  end_ms: number;
+  speaker_id?: string;
 }
 
 /** Segment-shaped data → lines: blank segments are dropped, except the ones
  *  STT failed on, which stay as "[not transcribed]" rows. With `speakers`,
- *  each line carries its listed speaker (chip). */
+ *  each line carries its listed speaker (chip) and, when it has overlapping
+ *  speech (#244), the other listed speakers heard in it. */
 export function toLines(
-  segments: { id: number; start_ms: number; text: string; edited?: boolean; stt_error?: string; speaker_id?: string }[],
+  segments: {
+    id: number;
+    start_ms: number;
+    text: string;
+    edited?: boolean;
+    stt_error?: string;
+    speaker_id?: string;
+    overlap?: OverlapSpanData[];
+  }[],
   speakers?: TranscriptSpeaker[],
 ): TranscriptLineData[] {
   const byId = new Map((speakers ?? []).map((s) => [s.id, s]));
+  const chip = (sp: TranscriptSpeaker): TranscriptSpeaker => ({ id: sp.id, label: sp.label, color: sp.color });
   return segments
     .filter((s) => s.text.trim() || s.stt_error)
     .map((s) => {
       const sp = s.speaker_id ? byId.get(s.speaker_id) : undefined;
+      let also: TranscriptSpeaker[] | undefined;
+      if (speakers && s.overlap?.length) {
+        also = [];
+        for (const o of s.overlap) {
+          const other = o.speaker_id && o.speaker_id !== s.speaker_id ? byId.get(o.speaker_id) : undefined;
+          if (other && !also.some((a) => a.id === other.id)) also.push(chip(other));
+        }
+      }
       return {
         id: s.id,
         start_ms: s.start_ms,
         text: s.text,
         ...(s.edited ? { edited: true } : {}),
         ...(s.stt_error && !s.text.trim() ? { sttError: s.stt_error } : {}),
-        ...(sp ? { speaker: { id: sp.id, label: sp.label, color: sp.color } } : {}),
+        ...(sp ? { speaker: chip(sp) } : {}),
+        ...(also ? { alsoSpeaking: also } : {}),
       };
     });
+}
+
+/** The words next to a line's chip when it has overlapping speech (#244). */
+export function alsoSpeakingText(also: TranscriptSpeaker[]): string {
+  if (also.length === 0) return "overlapping speech";
+  const names = also.map((a) => a.label);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `+ ${list} also speaking`;
 }
 
 /** Line-move target that opens a new "Voice N" (the backend's NEW_VOICE). */
@@ -144,6 +182,14 @@ export function TranscriptLine({ line, editable, onEdit, onDelete, speakers, onM
       ) : (
         <div className="tx-body">
           {line.speaker && <SpeakerChip speaker={line.speaker} />}
+          {line.alsoSpeaking && (
+            <span
+              className="tx-also"
+              title="Two people speak at once in part of this line. The line stays with its speaker."
+            >
+              {alsoSpeakingText(line.alsoSpeaking)}
+            </span>
+          )}
           {line.sttError !== undefined ? (
             <p className="tx-text tx-failed" title={`Speech-to-text failed here: ${line.sttError}`}>
               [not transcribed]

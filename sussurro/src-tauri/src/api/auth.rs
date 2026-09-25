@@ -54,12 +54,7 @@ pub fn is_extension_origin(origin: &str) -> bool {
         .strip_prefix("chrome-extension://")
         .or_else(|| origin.strip_prefix("moz-extension://"));
     match rest {
-        Some(id) => {
-            !id.is_empty()
-                && id
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-')
-        }
+        Some(id) => !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
         None => false,
     }
 }
@@ -83,7 +78,9 @@ impl Denied {
 
     pub fn message(self) -> &'static str {
         match self {
-            Denied::Unauthorized => "missing or wrong extension token — pair the extension in Sussurro's settings",
+            Denied::Unauthorized => {
+                "missing or wrong extension token — pair the extension in Sussurro's settings"
+            }
             Denied::Forbidden => "origin not allowed",
         }
     }
@@ -116,7 +113,11 @@ pub fn check_http(
 
 /// A `/live` WebSocket upgrade: an extension origin is required, then the
 /// `?token=`.
-pub fn check_ws(expected: &str, query_token: Option<&str>, origin: Option<&str>) -> Result<(), Denied> {
+pub fn check_ws(
+    expected: &str,
+    query_token: Option<&str>,
+    origin: Option<&str>,
+) -> Result<(), Denied> {
     if !origin.is_some_and(is_extension_origin) {
         return Err(Denied::Forbidden);
     }
@@ -140,7 +141,10 @@ pub fn preflight_headers(origin: Option<&str>) -> Option<Vec<(&'static str, Stri
     if h.is_empty() {
         return None;
     }
-    h.push(("Access-Control-Allow-Methods", "GET, POST, OPTIONS".to_string()));
+    h.push((
+        "Access-Control-Allow-Methods",
+        "GET, POST, OPTIONS".to_string(),
+    ));
     h.push((
         "Access-Control-Allow-Headers",
         "Authorization, Content-Type".to_string(),
@@ -219,8 +223,14 @@ mod tests {
             Err(Denied::Unauthorized)
         );
         // Not paired yet: even an empty bearer never matches.
-        assert_eq!(check_http("", Some("Bearer "), None), Err(Denied::Unauthorized));
-        assert_eq!(check_http(" ", Some("Bearer x"), None), Err(Denied::Unauthorized));
+        assert_eq!(
+            check_http("", Some("Bearer "), None),
+            Err(Denied::Unauthorized)
+        );
+        assert_eq!(
+            check_http(" ", Some("Bearer x"), None),
+            Err(Denied::Unauthorized)
+        );
     }
 
     #[test]
@@ -232,8 +242,14 @@ mod tests {
             Err(Denied::Forbidden)
         );
         assert_eq!(check_ws(T, None, Some(FIREFOX)), Err(Denied::Unauthorized));
-        assert_eq!(check_ws(T, Some("x"), Some(FIREFOX)), Err(Denied::Unauthorized));
-        assert_eq!(check_ws("", Some(""), Some(FIREFOX)), Err(Denied::Unauthorized));
+        assert_eq!(
+            check_ws(T, Some("x"), Some(FIREFOX)),
+            Err(Denied::Unauthorized)
+        );
+        assert_eq!(
+            check_ws("", Some(""), Some(FIREFOX)),
+            Err(Denied::Unauthorized)
+        );
         assert_eq!(Denied::Unauthorized.status(), 401);
         assert_eq!(Denied::Forbidden.status(), 403);
     }

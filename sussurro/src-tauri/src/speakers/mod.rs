@@ -21,6 +21,9 @@
 //!   read-aloud enrolment and labelling single-channel recordings
 //! - [`suggestions`]: "Voice N sounds like Anna" for an open document and
 //!   the per-document *Not Anna* answers (0.11, #242)
+//! - [`overlap`]: overlapping speech inside a line and its second speaker
+//!   (0.11, #244, pure); [`segmentation`]: the pyannote segmentation-3.0
+//!   model that finds it, through `ort`, pinned like WeSpeaker
 
 pub mod cluster;
 pub mod doc;
@@ -28,8 +31,10 @@ pub mod fbank;
 pub mod map;
 pub mod model;
 pub mod names;
+pub mod overlap;
 pub mod own_voice;
 pub mod profiles;
+pub mod segmentation;
 pub mod suggestions;
 pub mod tracker;
 pub mod voices;

@@ -68,7 +68,11 @@ pub fn read_log_at(dir: &Path) -> Vec<ExternalSend> {
     std::fs::read_to_string(log_path(dir))
         .ok()
         .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s).ok())
-        .map(|v| v.into_iter().filter_map(|e| serde_json::from_value(e).ok()).collect())
+        .map(|v| {
+            v.into_iter()
+                .filter_map(|e| serde_json::from_value(e).ok())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -89,8 +93,11 @@ pub fn record(archive: &Path, id: &str, entry: &ExternalSend) -> Result<()> {
     }
     std::fs::create_dir_all(dir.join(META_DIR))
         .with_context(|| format!("creating {}", dir.join(META_DIR).display()))?;
-    write_atomic(&log_path(&dir), serde_json::to_string_pretty(&log)?.as_bytes())
-        .context("recording the external send")
+    write_atomic(
+        &log_path(&dir),
+        serde_json::to_string_pretty(&log)?.as_bytes(),
+    )
+    .context("recording the external send")
 }
 
 /// Every host the item in folder `dir` was sent to, from its log and its
@@ -101,7 +108,13 @@ pub fn sent_hosts_at(dir: &Path) -> Vec<String> {
         .into_iter()
         .map(|e| e.host.trim().to_lowercase())
         .chain(external_hosts_at(dir))
-        .map(|h| if h.is_empty() { UNKNOWN_HOST.to_string() } else { h })
+        .map(|h| {
+            if h.is_empty() {
+                UNKNOWN_HOST.to_string()
+            } else {
+                h
+            }
+        })
         .collect();
     hosts.into_iter().collect()
 }
@@ -119,7 +132,11 @@ mod tests {
     use crate::archive::types::{ItemMeta, SegmentsFile};
 
     fn item(archive: &Path) -> String {
-        let meta = ItemMeta { title: "Idee".into(), date: "2026-09-24T10:00:00+02:00".into(), ..Default::default() };
+        let meta = ItemMeta {
+            title: "Idee".into(),
+            date: "2026-09-24T10:00:00+02:00".into(),
+            ..Default::default()
+        };
         create_item(archive, &meta, &SegmentsFile::default()).unwrap()
     }
 
@@ -130,7 +147,11 @@ mod tests {
             profile: "Work".into(),
             model: "gpt-4o-mini".into(),
             kind,
-            recipe: if kind == SendKind::Recipe { "summary".into() } else { String::new() },
+            recipe: if kind == SendKind::Recipe {
+                "summary".into()
+            } else {
+                String::new()
+            },
         }
     }
 
@@ -155,9 +176,11 @@ mod tests {
         assert_eq!(log.len(), 2);
         assert_eq!(log[0].recipe, "summary");
         assert_eq!(log[1].kind, SendKind::Question);
-        let raw = std::fs::read_to_string(archive.join(&id).join(".sussurro/external-log.json")).unwrap();
+        let raw =
+            std::fs::read_to_string(archive.join(&id).join(".sussurro/external-log.json")).unwrap();
         // Exactly these keys: no text, no question.
-        let v: Vec<serde_json::Map<String, serde_json::Value>> = serde_json::from_str(&raw).unwrap();
+        let v: Vec<serde_json::Map<String, serde_json::Value>> =
+            serde_json::from_str(&raw).unwrap();
         // Sorted: serde_json keeps insertion order when a dependency enables
         // its `preserve_order` feature (as happens on Linux CI).
         let keys: Vec<Vec<&str>> = v
@@ -168,7 +191,10 @@ mod tests {
                 k
             })
             .collect();
-        assert_eq!(keys[0], ["date", "host", "kind", "model", "profile", "recipe"]);
+        assert_eq!(
+            keys[0],
+            ["date", "host", "kind", "model", "profile", "recipe"]
+        );
         assert_eq!(keys[1], ["date", "host", "kind", "model", "profile"]);
         assert_eq!(v[1]["kind"], "question");
     }
@@ -181,7 +207,11 @@ mod tests {
         let path = archive.join(&id).join(".sussurro/external-log.json");
         // A hand-edited file with a broken entry keeps the good ones.
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, r#"[{"host":"a.example"}, 42, {"host":"b.example","kind":"cleanup"}]"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"[{"host":"a.example"}, 42, {"host":"b.example","kind":"cleanup"}]"#,
+        )
+        .unwrap();
         let log = read_log(&archive, &id).unwrap();
         assert_eq!(log.len(), 2);
         assert_eq!(log[1].kind, SendKind::Cleanup);
@@ -190,7 +220,10 @@ mod tests {
         }
         let log = read_log(&archive, &id).unwrap();
         assert_eq!(log.len(), MAX_ENTRIES);
-        assert!(log.iter().all(|e| e.host == "c.example"), "the oldest entries go first");
+        assert!(
+            log.iter().all(|e| e.host == "c.example"),
+            "the oldest entries go first"
+        );
         // Garbage: nothing, not an error.
         std::fs::write(&path, "not json").unwrap();
         assert!(read_log(&archive, &id).unwrap().is_empty());
@@ -211,11 +244,21 @@ mod tests {
         };
         write_companion(&archive, &id, "summary.md", &ext, "x").unwrap();
         // A local companion adds nothing.
-        let local = CompanionMeta { recipe: "decisions".into(), ..Default::default() };
+        let local = CompanionMeta {
+            recipe: "decisions".into(),
+            ..Default::default()
+        };
         write_companion(&archive, &id, "decisions.md", &local, "x").unwrap();
-        assert_eq!(sent_hosts(&archive, &id).unwrap(), ["api.example.com", "llm.other.example"]);
+        assert_eq!(
+            sent_hosts(&archive, &id).unwrap(),
+            ["api.example.com", "llm.other.example"]
+        );
         // A document marked external by another tool, with no host.
-        std::fs::write(archive.join(&id).join("imported.md"), "---\nexternal: true\n---\nx").unwrap();
+        std::fs::write(
+            archive.join(&id).join("imported.md"),
+            "---\nexternal: true\n---\nx",
+        )
+        .unwrap();
         assert_eq!(
             sent_hosts(&archive, &id).unwrap(),
             ["an unknown host", "api.example.com", "llm.other.example"]
@@ -229,25 +272,44 @@ mod tests {
         let id = item(&archive);
         let other = create_item(
             &archive,
-            &ItemMeta { title: "Local only".into(), date: "2026-09-23T10:00:00+02:00".into(), ..Default::default() },
+            &ItemMeta {
+                title: "Local only".into(),
+                date: "2026-09-23T10:00:00+02:00".into(),
+                ..Default::default()
+            },
             &SegmentsFile::default(),
         )
         .unwrap();
         record(&archive, &id, &send("api.example.com", SendKind::Question)).unwrap();
         let hosts = |v: &[crate::archive::ItemSummary], id: &str| {
-            v.iter().find(|s| s.id == id).unwrap().external_hosts.clone()
+            v.iter()
+                .find(|s| s.id == id)
+                .unwrap()
+                .external_hosts
+                .clone()
         };
         let listed = crate::archive::list_items(&archive);
         assert_eq!(hosts(&listed, &id), ["api.example.com"]);
         assert!(hosts(&listed, &other).is_empty());
         let db = tmp.path().join("index.sqlite");
-        let found = crate::archive::with_index(&archive, &db, |idx| idx.search("", &Default::default())).unwrap();
+        let found =
+            crate::archive::with_index(&archive, &db, |idx| idx.search("", &Default::default()))
+                .unwrap();
         assert_eq!(hosts(&found, &id), ["api.example.com"]);
         assert!(hosts(&found, &other).is_empty());
-        assert_eq!(crate::archive::read_item(&archive, &id).unwrap().external_hosts, ["api.example.com"]);
+        assert_eq!(
+            crate::archive::read_item(&archive, &id)
+                .unwrap()
+                .external_hosts,
+            ["api.example.com"]
+        );
         // Serialized for the UI.
         let json = serde_json::to_value(&listed).unwrap();
-        assert!(json.as_array().unwrap().iter().any(|s| s["external_hosts"] == serde_json::json!(["api.example.com"])));
+        assert!(json
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["external_hosts"] == serde_json::json!(["api.example.com"])));
     }
 
     #[test]
@@ -255,7 +317,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("Sussurro");
         let id = item(&archive);
-        let ext = CompanionMeta { recipe: "summary".into(), external: true, host: "x.example".into(), ..Default::default() };
+        let ext = CompanionMeta {
+            recipe: "summary".into(),
+            external: true,
+            host: "x.example".into(),
+            ..Default::default()
+        };
         write_companion(&archive, &id, "summary.md", &ext, "x").unwrap();
         assert_eq!(sent_hosts(&archive, &id).unwrap(), ["x.example"]);
     }
