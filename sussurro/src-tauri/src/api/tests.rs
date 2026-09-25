@@ -12,7 +12,7 @@ use crate::state::AppPaths;
 use crate::stt::TimedTranscript;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::Message;
@@ -63,10 +63,14 @@ fn only_the_extension_routes_are_meeting_routes() {
     ] {
         assert!(r.is_meeting());
     }
-    // The token-less routes stay outside the token/Origin checks.
-    for r in [Route::Clean, Route::Transcribe, Route::History, Route::NotFound] {
+    // The token-less routes stay outside the token checks, behind their
+    // own switch (#215).
+    for r in [Route::Clean, Route::Transcribe, Route::History] {
         assert!(!r.is_meeting());
+        assert!(r.is_scripting());
     }
+    assert!(!Route::NotFound.is_meeting() && !Route::NotFound.is_scripting());
+    assert!(!Route::AppVersion.is_scripting());
 }
 
 #[test]
@@ -109,6 +113,11 @@ struct Inner {
     next_id: AtomicU64,
     meeting_running: AtomicBool,
     opened: Mutex<Vec<String>>,
+    /// `/clean` and `/transcribe` calls that reached the host.
+    calls: AtomicUsize,
+    /// `/transcribe?ext=slow` runs until this is set (#215 concurrency).
+    release_slow: AtomicBool,
+    slow_running: AtomicUsize,
 }
 
 #[derive(Clone)]
@@ -134,9 +143,19 @@ impl Host for TestHost {
         self.0.config.lock().unwrap().clone()
     }
     fn clean(&self, text: &str) -> serde_json::Value {
+        self.0.calls.fetch_add(1, Ordering::SeqCst);
         serde_json::json!({"cleaned": text.trim()})
     }
     fn transcribe(&self, bytes: Vec<u8>, ext: &str) -> (u16, serde_json::Value) {
+        self.0.calls.fetch_add(1, Ordering::SeqCst);
+        if ext == "slow" {
+            self.0.slow_running.fetch_add(1, Ordering::SeqCst);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while !self.0.release_slow.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            self.0.slow_running.fetch_sub(1, Ordering::SeqCst);
+        }
         (200, serde_json::json!({"bytes": bytes.len(), "ext": ext}))
     }
     fn history(&self, query: &str, n: usize) -> serde_json::Value {
@@ -209,6 +228,7 @@ fn start_server() -> Running {
     let host = TestHost(Arc::new(Inner {
         config: Mutex::new(ApiConfig {
             extension_token: TOKEN.into(),
+            scripting: true,
             ..Default::default()
         }),
         settings: Mutex::new(settings),
@@ -217,6 +237,9 @@ fn start_server() -> Running {
         next_id: AtomicU64::new(1),
         meeting_running: AtomicBool::new(false),
         opened: Mutex::new(Vec::new()),
+        calls: AtomicUsize::new(0),
+        release_slow: AtomicBool::new(false),
+        slow_running: AtomicUsize::new(0),
     }));
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let port = server.server_addr().to_ip().unwrap().port();
@@ -247,18 +270,54 @@ impl Reply {
     }
 }
 
-/// A raw HTTP/1.1 request (exact control over the headers).
+/// A raw HTTP/1.1 request (exact control over the headers). `Host` is
+/// `127.0.0.1:<port>` unless `headers` name one.
 fn http(port: u16, method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> Reply {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n");
+    let mut req = format!("{method} {path} HTTP/1.1\r\nConnection: close\r\n");
+    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("Host")) {
+        req.push_str(&format!("Host: 127.0.0.1:{port}\r\n"));
+    }
     for (k, v) in headers {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
     req.push_str(&format!("Content-Length: {}\r\n\r\n{body}", body.len()));
     s.write_all(req.as_bytes()).unwrap();
-    let mut raw = String::new();
-    s.read_to_string(&mut raw).unwrap();
-    let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((&raw, ""));
+    read_reply(&mut s)
+}
+
+/// One response: the head, then `Content-Length` bytes of body (never
+/// waits for the server to close — a refused upload may keep it open).
+fn read_reply(s: &mut TcpStream) -> Reply {
+    s.set_read_timeout(Some(std::time::Duration::from_secs(20))).unwrap();
+    let mut raw = Vec::new();
+    let mut buf = [0u8; 4096];
+    let head_end = loop {
+        if let Some(i) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+            break i;
+        }
+        let n = s.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break raw.len();
+        }
+        raw.extend_from_slice(&buf[..n]);
+    };
+    let head = String::from_utf8_lossy(&raw[..head_end]).into_owned();
+    let length: usize = head
+        .lines()
+        .filter_map(|l| l.split_once(':'))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case("Content-Length"))
+        .and_then(|(_, v)| v.trim().parse().ok())
+        .unwrap_or(0);
+    let mut body = raw.get(head_end + 4..).unwrap_or_default().to_vec();
+    while body.len() < length {
+        let n = s.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&buf[..n]);
+    }
+    let body = String::from_utf8_lossy(&body).into_owned();
     let mut lines = head.lines();
     let status = lines
         .next()
@@ -269,11 +328,7 @@ fn http(port: u16, method: &str, path: &str, headers: &[(&str, &str)], body: &st
         .filter_map(|l| l.split_once(':'))
         .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
         .collect();
-    Reply {
-        status,
-        headers,
-        body: body.to_string(),
-    }
+    Reply { status, headers, body }
 }
 
 fn bearer() -> String {
@@ -744,6 +799,15 @@ fn live_takes_the_token_as_its_first_message() {
     // Without a token the origin rules still apply before the upgrade.
     assert_eq!(ws_connect_bare(r.port, None).err(), Some(403));
     assert_eq!(ws_connect_bare(r.port, Some("https://meet.google.com")).err(), Some(403));
+    // …and so does the #215 guard: a rebinding `Host` is refused first.
+    let mut req = format!("ws://127.0.0.1:{}/live", r.port).into_client_request().unwrap();
+    req.headers_mut().insert("Origin", EXT.parse().unwrap());
+    req.headers_mut()
+        .insert("Host", format!("rebind.attacker:{}", r.port).parse().unwrap());
+    match tungstenite::connect(req) {
+        Err(tungstenite::Error::Http(resp)) => assert_eq!(resp.status().as_u16(), 403),
+        other => panic!("expected a refusal, got {:?}", other.map(|_| ())),
+    }
     // Nothing is sent before the auth; the right token gets `ready`.
     let mut ws = ws_connect_bare(r.port, Some(EXT)).expect("upgrade");
     ws.send(auth_message(TOKEN)).unwrap();
@@ -775,4 +839,229 @@ fn an_unpaired_app_refuses_live_without_a_token_too() {
     let r = start_server();
     r.host.0.config.lock().unwrap().extension_token = String::new();
     assert_eq!(ws_connect_bare(r.port, Some(EXT)).err(), Some(401));
+}
+
+// ---- #215: Host / Origin / body caps / worker pool / item filter ----------
+
+/// DNS rebinding: a page at `rebind.attacker:<port>` re-resolved to
+/// 127.0.0.1 sends its own name as `Host` — refused on every route, before
+/// the route runs, token or not.
+#[test]
+fn a_foreign_host_is_refused_on_every_route() {
+    let r = start_server();
+    let auth = bearer();
+    let rebind = format!("rebind.attacker:{}", r.port);
+    let other_port = format!("127.0.0.1:{}", r.port.wrapping_add(1));
+    for host in [rebind.as_str(), other_port.as_str(), "127.0.0.1", "[::1]"] {
+        for (method, path) in [
+            ("GET", "/history?n=100000"),
+            ("POST", "/clean"),
+            ("POST", "/transcribe?ext=wav"),
+            ("GET", "/app/version"),
+            ("GET", "/items/2026/09/x/export"),
+            ("POST", "/items/2026/09/x/open"),
+            ("OPTIONS", "/app/version"),
+            ("GET", "/nope"),
+        ] {
+            let reply = http(r.port, method, path, &[("Host", host), ("Authorization", &auth)], "text");
+            assert_eq!(reply.status, 403, "{host} {method} {path}");
+            assert_eq!(reply.json()["error"], "host not allowed");
+            assert!(reply.header("Access-Control-Allow-Origin").is_none());
+        }
+    }
+    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0, "no route ran");
+    // Both loopback names on the right port work.
+    for host in [format!("127.0.0.1:{}", r.port), format!("localhost:{}", r.port)] {
+        assert_eq!(http(r.port, "GET", "/history", &[("Host", &host)], "").status, 200);
+    }
+    // The WebSocket too, even with the token and an extension origin.
+    let mut req = format!("ws://127.0.0.1:{}/live?token={TOKEN}", r.port)
+        .into_client_request()
+        .unwrap();
+    req.headers_mut().insert("Origin", EXT.parse().unwrap());
+    req.headers_mut().insert("Host", rebind.parse().unwrap());
+    match tungstenite::connect(req) {
+        Err(tungstenite::Error::Http(resp)) => assert_eq!(resp.status().as_u16(), 403),
+        other => panic!("expected a refusal, got {:?}", other.map(|_| ())),
+    }
+}
+
+/// A web page's cross-site "simple" POST (or any fetch) carries its
+/// `Origin`: refused on the token-less routes too, so it can't write
+/// history or spend the cleanup LLM. Scripts send no `Origin`.
+#[test]
+fn a_web_origin_is_refused_on_the_token_less_routes() {
+    let r = start_server();
+    let own = format!("http://127.0.0.1:{}", r.port);
+    for origin in ["https://evil.example", "null", own.as_str()] {
+        for (method, path) in [("POST", "/clean"), ("POST", "/transcribe?ext=wav"), ("GET", "/history")] {
+            let reply = http(
+                r.port,
+                method,
+                path,
+                &[("Origin", origin), ("Content-Type", "text/plain")],
+                "RIFF text",
+            );
+            assert_eq!(reply.status, 403, "{origin} {method} {path}");
+            assert_eq!(reply.json()["error"], "origin not allowed");
+            assert!(reply.header("Access-Control-Allow-Origin").is_none());
+        }
+    }
+    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0, "nothing was cleaned or transcribed");
+    // No origin (curl) or an extension's: allowed.
+    assert_eq!(http(r.port, "POST", "/clean", &[], "ciao").status, 200);
+    assert_eq!(http(r.port, "POST", "/clean", &[("Origin", EXT)], "ciao").status, 200);
+}
+
+/// `Settings.api_scripting` off (a new install): the token-less routes are
+/// refused with an explanation; the extension's routes still work. Read
+/// per request, so switching applies at once.
+#[test]
+fn the_scripting_routes_answer_only_when_switched_on() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().scripting = false;
+    for (method, path) in [("POST", "/clean"), ("POST", "/transcribe?ext=wav"), ("GET", "/history")] {
+        let reply = http(r.port, method, path, &[], "RIFF");
+        assert_eq!(reply.status, 403, "{method} {path}");
+        assert!(reply.json()["error"].as_str().unwrap().contains("Scripting routes"));
+    }
+    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0);
+    let auth = bearer();
+    assert_eq!(http(r.port, "GET", "/app/version", &[("Authorization", &auth)], "").status, 200);
+    r.host.0.config.lock().unwrap().scripting = true;
+    assert_eq!(http(r.port, "POST", "/clean", &[], "ciao").status, 200);
+}
+
+/// Bodies over the cap: a declared length is refused before a byte is read
+/// (with or without `Expect: 100-continue` — the client is never told to
+/// send), and a chunked body is cut one byte past the cap.
+#[test]
+fn bodies_over_the_cap_are_refused_without_reading_them() {
+    let r = start_server();
+    let port = r.port;
+    for expect in ["", "Expect: 100-continue\r\n"] {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let big = guard::TRANSCRIBE_MAX_BYTES + 1;
+        write!(
+            s,
+            "POST /transcribe?ext=wav HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{expect}Content-Length: {big}\r\n\r\n"
+        )
+        .unwrap();
+        // Nothing of the body was sent: the answer comes anyway.
+        let reply = read_reply(&mut s);
+        assert_eq!(reply.status, 413, "{expect:?}");
+        assert!(reply.json()["error"].as_str().unwrap().contains("200 MiB"));
+    }
+    // An absurd length is answered at once; the handler never allocates it.
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        s,
+        "POST /clean HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 18446744073709551615\r\n\r\n"
+    )
+    .unwrap();
+    assert_eq!(read_reply(&mut s).status, 413);
+    drop(s);
+
+    // Chunked: no declared length; 1 MiB + 64 KiB of text to /clean.
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        s,
+        "POST /clean HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nTransfer-Encoding: chunked\r\n\r\n"
+    )
+    .unwrap();
+    let mut writer = s.try_clone().unwrap();
+    let sender = std::thread::spawn(move || {
+        let chunk = vec![b'a'; 64 * 1024];
+        for _ in 0..17 {
+            if write!(writer, "{:x}\r\n", chunk.len()).is_err()
+                || writer.write_all(&chunk).is_err()
+                || writer.write_all(b"\r\n").is_err()
+            {
+                return;
+            }
+        }
+        let _ = writer.write_all(b"0\r\n\r\n");
+    });
+    let reply = read_reply(&mut s);
+    assert_eq!(reply.status, 413);
+    assert!(reply.json()["error"].as_str().unwrap().contains("1 MiB"));
+    let _ = s.shutdown(std::net::Shutdown::Both);
+    drop(s);
+    let _ = sender.join();
+    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0, "no host call for a refused body");
+
+    // Right at the cap, it goes through.
+    let text = "a".repeat(guard::CLEAN_MAX_BYTES);
+    assert_eq!(http(port, "POST", "/clean", &[], &text).status, 200);
+}
+
+/// A slow `/transcribe` runs on its own worker: the extension's
+/// `/app/version` and `/history` answer meanwhile; with every slow slot
+/// taken, one more `/clean` gets 503 instead of waiting.
+#[test]
+fn a_slow_transcribe_does_not_block_the_other_routes() {
+    let r = start_server();
+    let port = r.port;
+    let slow: Vec<_> = (0..SLOW_SLOTS)
+        .map(|_| std::thread::spawn(move || http(port, "POST", "/transcribe?ext=slow", &[], "RIFF").status))
+        .collect();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while r.host.0.slow_running.load(Ordering::SeqCst) < SLOW_SLOTS {
+        assert!(std::time::Instant::now() < deadline, "the slow requests never started");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let auth = bearer();
+    let t0 = std::time::Instant::now();
+    let v = http(port, "GET", "/app/version", &[("Authorization", &auth), ("Origin", EXT)], "");
+    assert_eq!(v.status, 200);
+    assert_eq!(http(port, "GET", "/history", &[], "").status, 200);
+    assert!(t0.elapsed() < std::time::Duration::from_secs(2), "{:?}", t0.elapsed());
+    let busy = http(port, "POST", "/clean", &[], "ciao");
+    assert_eq!(busy.status, 503);
+    assert_eq!(busy.header("Retry-After"), Some("5"));
+    // The WebSocket upgrade too.
+    let ws = ws_connect(port, TOKEN, Some(EXT));
+    assert!(ws.is_ok());
+    drop(ws);
+    r.host.0.release_slow.store(true, Ordering::SeqCst);
+    for t in slow {
+        assert_eq!(t.join().unwrap(), 200);
+    }
+    // The slots are free again.
+    assert_eq!(http(port, "POST", "/clean", &[], "ciao").status, 200);
+}
+
+/// `/items/*/open|export` reach only what the extension recorded; another
+/// item is refused with a code the extension explains.
+#[test]
+fn the_item_routes_reach_only_extension_items() {
+    let r = start_server();
+    let archive = &r.host.0.archive;
+    let meta = |source: &str| archive::ItemMeta {
+        item_type: ItemType::Note,
+        title: "Private note".into(),
+        date: "2026-09-24T10:00:00+02:00".into(),
+        source: source.into(),
+        ..Default::default()
+    };
+    let segs = archive::SegmentsFile::default();
+    let note = archive::create_item(archive, &meta("mic"), &segs).unwrap();
+    let meeting = archive::create_item(archive, &meta("browser:meet.google.com"), &segs).unwrap();
+    let auth = bearer();
+    let h = [("Authorization", auth.as_str()), ("Origin", EXT)];
+    let export = http(r.port, "GET", &format!("/items/{note}/export?format=md"), &h, "");
+    assert_eq!(export.status, 403);
+    assert_eq!(export.json()["code"], export::NOT_EXTENSION_ITEM);
+    assert!(!export.body.contains("Private note"));
+    assert_eq!(export.header("Access-Control-Allow-Origin"), Some(EXT), "readable by the extension");
+    let open = http(r.port, "POST", &format!("/items/{note}/open"), &h, "");
+    assert_eq!(open.status, 403);
+    assert_eq!(open.json()["code"], export::NOT_EXTENSION_ITEM);
+    assert!(r.host.0.opened.lock().unwrap().is_empty());
+    // The extension's own item still works.
+    assert_eq!(
+        http(r.port, "GET", &format!("/items/{meeting}/export?format=md"), &h, "").status,
+        200
+    );
+    assert_eq!(http(r.port, "POST", &format!("/items/{meeting}/open"), &h, "").status, 200);
 }

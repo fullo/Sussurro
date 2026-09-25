@@ -150,6 +150,9 @@ export interface Settings {
   history_retention_days: number;
   api_enabled: boolean;
   api_port: number;
+  /** The token-less scripting routes (`/clean`, `/transcribe`, `/history`)
+   *  answer (#215). Off on a new install; applies at once. */
+  api_scripting: boolean;
   /** Dictate-to-file: append dictations to this file instead of pasting. */
   output_file: string;
   /** Archive folder; "" = the default `<Documents>/Sussurro`. */

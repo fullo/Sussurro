@@ -140,7 +140,8 @@ project decisions here, not in per-machine memory.**
   read, so the deadline is checked when that message arrives; web-page
   origins are refused even with the token; CORS only for
   `chrome-extension://` / `moz-extension://`. `/clean`, `/transcribe`,
-  `/history` stay token-less and CORS-less. The token changes only via
+  `/history` stay token-less and CORS-less, behind their own switch (see
+  the #215 hardening below). The token changes only via
   `extension_token_get`/`_regenerate` (`set_settings` keeps the current
   one). WebSocket = `tiny_http` upgrade + `tungstenite` on one blocking
   thread: replies are flushed after each client message (audio streams
@@ -159,6 +160,29 @@ project decisions here, not in per-machine memory.**
   (oldest half ages out; the end-of-run pass leaves older lines alone).
   The events file stays open while recording and is closed at the end of
   the audio (Windows can't rename a folder with an open file).
+- **Local API hardening (#215)** (`api/guard.rs`, security notes at
+  `api::spawn`): on **every** route, first `Host` must be
+  `127.0.0.1:<port>`/`localhost:<port>` (DNS rebinding), then a request
+  with an `Origin` must come from a browser extension (cross-site POSTs to
+  the token-less routes). The token-less scripting routes answer only with
+  `Settings.api_scripting` (read per request, applies at once): **off on a
+  new install** — pairing turns `api_enabled` on, not these — and a
+  settings file without the key takes `api_enabled`'s value (saved once),
+  so existing scripts keep working. Bodies: `Content-Length` checked
+  against the cap (`/clean` 1 MiB, `/transcribe` 200 MiB) **before
+  `as_reader()`** (which sends `100 Continue`), then `take(cap + 1)` into a
+  buffer that never reserves past the cap. Serving: 4 workers pulling from
+  the tiny_http server, `/clean` + `/transcribe` share 2 slots (503 +
+  `Retry-After` when full), handlers under `catch_unwind`; `/live` moves to
+  its own thread after the upgrade. tiny_http 0.12 drains an unread
+  declared body when a request drops (into a buffer of the remaining
+  size), so refusals of such requests are answered on a short-lived thread
+  (≤ 16); an absurd `Content-Length` from a local process can still fail
+  that allocation (accepted: local processes can end the app anyway;
+  browsers send the real length). `/items/{id}/open|export` reach only
+  `source: browser:` items (403, `code: not_extension_item`, explained by
+  the extension). `settings.json` is written atomically with mode 0600 on
+  Unix (`settings::write_private_atomic`).
 - **System audio + mic (0.10 step 1, #139)** (`sources/system.rs`):
   *New → System audio + mic* (it records other people: the #136 notice
   asks first). The mic and **any second input
