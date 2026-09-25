@@ -1,67 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Card, Tip } from "../components/ui";
 import { LANGUAGES } from "../lib/constants";
 import type { CardProps } from "./DictationCard";
-import { importDictionary, importSnippets } from "./listImport";
+import { DictionaryManager } from "./DictionaryManager";
+import { SnippetManager } from "./SnippetManager";
 
 export function PersonalizationCard({ ctl }: CardProps) {
   const { settings, setSettings, save, setBusy } = ctl;
-  /** Raw text of the Personal Dictionary field. The parsed list round-trips
-   *  losslessly only when every line is non-empty — deriving the displayed
-   *  text from split/trim/join swallowed typed newlines (issue #88) — so the
-   *  textarea keeps its own raw text and resyncs from settings when the
-   *  dictionary changes elsewhere (learned words, portable config import).
-   */
-  const [dictText, setDictText] = useState("");
   /** People hold other people's emails (#132): opt-in per export, off by default. */
   const [includePeople, setIncludePeople] = useState(false);
-  const dictRef = useRef<HTMLTextAreaElement>(null);
-  const dictionaryKey = settings.dictionary.join("\n");
-
-  useEffect(() => {
-    // Resync the field from settings only when it is not focused, so
-    // external updates show up without fighting the user's cursor.
-    if (document.activeElement !== dictRef.current) setDictText(dictionaryKey);
-  }, [dictionaryKey]);
-
-  const handleImportDictionary = () => importDictionary(ctl);
-  const handleImportSnippets = () => importSnippets(ctl);
 
   return (
     <Card title={<>Personalization <span className="via">dictionary · styles · snippets</span></>}>
-      <div className="field field-col">
-        <div className="field-label">
-          <span>Personal dictionary <Tip text="Names, brands and jargon the models tend to misspell (e.g. Sussurro, Tauri). One per line. They are fed to Whisper as recognition hints and to the LLM as preferred spellings." /></span>
-          <small>names & jargon, one per line — biases both Whisper and the LLM</small>
-        </div>
-        <textarea
-          ref={dictRef}
-          rows={3}
-          value={dictText}
-          aria-label="Personal dictionary"
-          onChange={(e) => {
-            setDictText(e.target.value);
-            setSettings({
-              ...settings,
-              dictionary: e.target.value.split("\n").map((w) => w.trim()).filter(Boolean),
-            });
-          }}
-          onBlur={() => save(settings)}
-          spellCheck={false}
-          placeholder="Sussurro&#10;Tauri"
-        />
-        <div className="list-actions">
-          <button
-            className="btn-ghost"
-            onClick={handleImportDictionary}
-            title="Add words from a .txt file (one per line) — existing words are kept"
-          >
-            Import .txt
-          </button>
-        </div>
-      </div>
+      <DictionaryManager ctl={ctl} />
 
       <div className="field field-col">
         <div className="field-label">
@@ -130,64 +83,7 @@ export function PersonalizationCard({ ctl }: CardProps) {
         </button>
       </div>
 
-      <div className="field field-col">
-        <div className="field-label">
-          <span>Snippets <Tip text="Example: cue 'firma email' → pastes your full signature. Matching ignores case and punctuation, and skips the AI cleanup entirely." /></span>
-          <small>say a cue exactly — Sussurro pastes the full text instead of transcribing</small>
-        </div>
-        {settings.snippets.map((s, i) => (
-        <div className="snippet-row" key={i}>
-          <input
-            placeholder="cue (what you say)"
-            value={s.cue}
-            onChange={(e) => {
-              const snippets = settings.snippets.slice();
-              snippets[i] = { ...s, cue: e.target.value };
-              setSettings({ ...settings, snippets });
-            }}
-            onBlur={() => save(settings)}
-            spellCheck={false}
-          />
-          <textarea
-            placeholder="text to paste"
-            rows={2}
-            value={s.text}
-            onChange={(e) => {
-              const snippets = settings.snippets.slice();
-              snippets[i] = { ...s, text: e.target.value };
-              setSettings({ ...settings, snippets });
-            }}
-            onBlur={() => save(settings)}
-            spellCheck={false}
-          />
-          <button
-            className="btn-ghost"
-            onClick={() =>
-              save({ ...settings, snippets: settings.snippets.filter((_, j) => j !== i) })
-            }
-          >
-            Remove
-          </button>
-        </div>
-      ))}
-        <button
-          className="btn-ghost"
-          onClick={() =>
-            setSettings({ ...settings, snippets: [...settings.snippets, { cue: "", text: "" }] })
-          }
-        >
-          + Add snippet
-        </button>
-        <div className="list-actions">
-          <button
-            className="btn-ghost"
-            onClick={handleImportSnippets}
-            title='Add snippets from a .csv file (one "cue,text" per line; quote text with commas or line breaks) — existing snippets are kept'
-          >
-            Import .csv
-          </button>
-        </div>
-      </div>
+      <SnippetManager ctl={ctl} />
 
       <div className="field">
         <div className="field-label">

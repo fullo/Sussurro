@@ -85,6 +85,30 @@ const settings: Settings = {
   meeting_notice_seen: params.get("notice") === "seen",
 };
 
+// `?dict=N`: a dictionary of N entries (with a few duplicates) and N/10
+// snippets (one repeated cue), for the Dictionary & snippets manager (#99).
+{
+  const n = Number(params.get("dict") ?? 0);
+  if (n > 0) {
+    const terms = ["Kubernetes", "PostgreSQL", "Città di Castello", "DarumaHQ", "whisper.cpp", "Tauri", "OKR", "Sprint review"];
+    settings.dictionary = [
+      ...settings.dictionary,
+      ...Array.from({ length: n }, (_, i) => `${terms[i % terms.length]} ${Math.floor(i / terms.length) || ""}`.trim()),
+      "tauri",
+      "sussurro",
+    ];
+    settings.snippets = [
+      ...settings.snippets,
+      ...Array.from({ length: Math.max(2, Math.round(n / 10)) }, (_, i) => ({
+        cue: `risposta ${i + 1}`,
+        text: `Grazie per il messaggio, ti rispondo entro ${i + 1} giorni.\nUn saluto, Luca`,
+      })),
+      { cue: "Firma email!", text: "Luca M." },
+      { cue: "", text: "testo senza cue" },
+    ];
+  }
+}
+
 /** A fake pairing token (#126): 64 hex characters, like the backend's. */
 function fakeToken(): string {
   return Array.from({ length: 64 }, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("");
@@ -1474,6 +1498,11 @@ function handle(cmd: string, a: Args): unknown {
     case "recipe_reveal_document":
       console.info("[mock] reveal document", a.id, a.file);
       return null;
+    case "save_list_export":
+      // The real command opens the save dialog in Rust and returns the file
+      // name written (null on cancel); the preview logs the text instead.
+      console.info(`[dev] export ${String(a.kind)} (${String(a.contents).length} chars):\n${String(a.contents).slice(0, 400)}`);
+      return a.kind === "snippets" ? "sussurro-snippets.csv" : "sussurro-dictionary.txt";
     case "pick_import_file":
       // The real command opens the picker in Rust and returns {name, contents}
       // (null on cancel); the preview skips the dialog and returns a sample.
