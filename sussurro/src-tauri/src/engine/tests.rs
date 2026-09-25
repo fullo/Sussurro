@@ -2150,10 +2150,9 @@ fn a_run_with_the_overlap_model_marks_overlapped_lines_and_a_second_voice() {
     j.meta.item_type = ItemType::Meeting;
     let (load, _) = fake_loader(5);
     j.speakers = Some(
-        Tracker::new(SpeakerOptions::clustering(&[Channel::File]), load)
-            .with_overlap(Some(Box::new(|| {
-                Ok(Box::new(LoudWindow) as Box<dyn OverlapModel>)
-            }))),
+        Tracker::new(SpeakerOptions::clustering(&[Channel::File]), load).with_overlap(Some(
+            Box::new(|| Ok(Box::new(LoudWindow) as Box<dyn OverlapModel>)),
+        )),
     );
     let sink = Arc::new(VecSink::default());
     let mut stt = FakeStt {

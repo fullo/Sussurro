@@ -218,13 +218,10 @@ pub fn is_overlapped(s: &Segment) -> bool {
 
 /// Time between a span and a line (0 when they meet).
 fn gap(span: &OverlapSpan, s: &Segment) -> u64 {
-    if s.end_ms <= span.start_ms {
-        span.start_ms - s.end_ms
-    } else if s.start_ms >= span.end_ms {
-        s.start_ms - span.end_ms
-    } else {
-        0
-    }
+    // Before the span, after it, or overlapping it (both 0).
+    span.start_ms
+        .saturating_sub(s.end_ms)
+        .max(s.start_ms.saturating_sub(span.end_ms))
 }
 
 /// Give every overlap span its second speaker: the nearest line of the
