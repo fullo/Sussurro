@@ -53,6 +53,7 @@
   </header>
 
   <div class="prose">
+    <div class="callout"><span class="k">Updated for 0.10</span><p>Since 0.10 the backend, server, model and API key are fields of an <strong>LLM profile</strong> (Recipes → LLM profiles; API “OpenAI-compatible”), and Settings → Cleanup picks the profile. API keys are kept in the OS credential store. A server that is not on this machine is external and needs your opt-in for cleanup. See <a href="recipes-and-llm-profiles.html">LLM profiles and the privacy gate</a>.</p></div>
     <p>Sussurro cleans up your dictation with a local LLM. Until 0.6.0 that model had to be served by <a href="centralized-ollama.html">Ollama</a>, through Ollama's own API. Now there's a second option: the <strong>OpenAI-compatible</strong> API — the de-facto standard <code>/v1/chat/completions</code> that most local runtimes expose. Point Sussurro at any of them and it drives cleanup exactly the same way.</p>
 
     <h2>What is DS4?</h2>

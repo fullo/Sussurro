@@ -53,6 +53,7 @@
   </header>
 
   <div class="prose">
+    <div class="callout"><span class="k">Updated for 0.10</span><p>Since 0.10 engines and models are chosen on the <strong>Models</strong> screen, and there is a third, optional engine: <strong>Qwen3-ASR 1.7B</strong> (about 2.5 GB), run by Sussurro's bundled <code>llama-server</code>. It detects the language itself and takes no dictionary prompt. On our benchmark Whisper large-v3-turbo stays more accurate on Italian (1.8% vs 2.5% word errors), while Qwen3-ASR does better on English (3.0% vs 4.5%), so it is never the default.</p></div>
     <p>Speech-to-text (STT) is the step that turns your voice into raw text, before any AI cleanup. Sussurro lets you pick the engine in <strong>Settings → Engine</strong>, and the right choice depends mostly on one thing: <strong>do you have a usable GPU?</strong></p>
 
     <h2>Whisper (whisper.cpp)</h2>

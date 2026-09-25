@@ -53,6 +53,7 @@
   </header>
 
   <div class="prose">
+    <div class="callout"><span class="k">Updated for 0.10</span><p>Since 0.10 the server address and model go into an <strong>LLM profile</strong> (Recipes → LLM profiles), and Settings → Cleanup picks which profile cleans. A server on another machine counts as <strong>external</strong>: cleanup keeps the raw text until you allow that host in Settings → Cleanup, and recipes ask before each run. You can untick <em>External</em> on the profile for a box on your own network. See <a href="recipes-and-llm-profiles.html">LLM profiles and the privacy gate</a>.</p></div>
     <p>Every Sussurro install can run its own local Ollama, but you don't <em>have</em> to. Because the cleanup step is just an HTTP call, you can host Ollama on one machine — a desktop with a GPU, a home server, a spare Mac — and point all your other devices at it. One place to install the model, one place to update it, one place doing the heavy lifting.</p>
 
     <h2>Why centralize</h2>
