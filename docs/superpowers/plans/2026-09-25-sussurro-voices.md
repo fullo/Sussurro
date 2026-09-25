@@ -66,7 +66,11 @@ assume.
   on a new document is shown as a suggestion ("Voice 2 sounds like Anna —
   link?"), never applied without a click. *Recommendation: yes, with a
   minimum of 60 s of confirmed speech from at least 2 documents before a
-  profile makes suggestions (to confirm in spike V0-1).* Alternative: auto-
+  profile makes suggestions (to confirm in spike V0-1).* *Spike V0-1
+  (#235, 4.1): 30 s from 2 documents measured almost as good as 60 s
+  (0.4–2 points less recall across conditions, same wrong-suggestion
+  rate), so the minimum could drop to 30 s; 60 s stays until the
+  maintainer changes it.* Alternative: auto-
   apply above a high threshold. Rejected for 0.11: a wrong name in a
   transcript is worse than no name.
 - **P13 — Voice profiles live in app data, not in the archive.**
@@ -83,7 +87,11 @@ assume.
   lets room meetings and system-audio recordings label the user's lines
   "You" even on a single channel. *Recommendation: yes, optional, offered
   in the speaker panel of a room meeting.* It is also the reference for
-  cloning the user's own voice in 0.13.
+  cloning the user's own voice in 0.13. *Spike V0-1 (#235, 4.1): 30 s is
+  enough (10 s already scores almost the same). Label the best-matching
+  voice of the document, not single lines: at the voice level "You" was
+  right in 100 % of AMI far-field trials. Line by line, about 7 % of the
+  user's lines are missed at 2 % false "You".*
 - **P15 — Archive HTTP API: read-only in 0.11, writes later.** *Decided by the maintainer (2026-09-25): recommendation accepted.* Scripts can list, search, read and export items
   and list people (names only by default) through scoped tokens; creating
   items from text or audio and editing metadata come in a later release
@@ -154,15 +162,22 @@ assume.
 
 ### Engineering decisions (recommended, validated in Phase V0)
 
-- **E13 — Voice profiles are centroids over WeSpeaker embeddings.** Same
-  model as "Voice N" (E8, ResNet34-LM, 256-dim), so no new download. A
-  profile keeps up to 8 centroids (one per recording condition: headset
-  mic, room mic, remote channel), each the mean of ≥ 10 s of confirmed
-  lines, plus the count and the documents they came from (ids only).
-  Matching is cosine similarity of a document voice's centroid to each
-  profile centroid, with a threshold and a margin over the runner-up tuned
-  in spike V0-1 on Italian and English. Rebuildable from the archive at any
-  time (P13).
+- **E13 — Voice profiles are centroids over WeSpeaker embeddings.**
+  *Settled by spike V0-1 (#235, results in 4.1).* Same model as "Voice N"
+  (E8, ResNet34-LM, 256-dim), so no new download. A profile keeps **one
+  centroid**: the duration-weighted mean of all confirmed lines, whatever
+  the recording condition. The profile also keeps the seconds per
+  condition (close mic: headset or remote channel; room mic) and the
+  documents the lines came from (ids only). Per-condition centroids were
+  measured and dropped: they never raised recall and, scored as the best
+  of several centroids, they raised wrong suggestions on room audio.
+  Matching is cosine similarity of a document voice's centroid (the mean
+  of its lines, as for "Voice N") to each profile. A suggestion needs
+  **cosine ≥ 0.65 and a margin ≥ 0.05 over the runner-up**. When the
+  voice comes from a room mic **and** the profile has room-mic lines, the
+  threshold is **0.75**. Room-to-room pairs share the room's echo, which
+  lifts the scores of different people. Rebuildable from the archive at
+  any time (P13).
 - **E14 — Archive API = new routes, new tokens, same guard.** Routes under
   `/archive/…` behind `Settings.api_archive` (off by default), each needing
   an archive token: 32 random bytes shown once, stored as SHA-256, with a
@@ -305,6 +320,127 @@ threshold and the margin shows a chip in the speaker panel: *Sounds like
 Anna · Link · Not Anna*. *Not Anna* is remembered for that document only.
 Accepting links through the existing path, so participants and emails
 follow as today.
+
+**Spike V0-1 results (#235, 2026-09-25).** Method: the app's pipeline,
+re-implemented outside the repo. Kaldi fbank (`kaldi-native-fbank`,
+identical to `fbank.rs` on the repo's test vector), CMN, WeSpeaker
+ResNet34-LM (SHA-256 as pinned), windows of ≤ 3 s per line, lines of
+≤ 10 s. A profile is `T` seconds of lines from `k` documents. A test voice
+is one speaker's lines in a document not used for enrolment: up to 60 s,
+at least 10 s. Galleries of 20 profiles, 30 random draws. Unknown voices
+come from speakers without a profile (about 3–9 per known voice). A
+*wrong suggestion* is a suggested name that is not the speaker's.
+
+| Corpus (licence) | Speakers (eligible*) | Documents | Conditions |
+|---|---|---|---|
+| VoxPopuli **Italian**, test + validation (CC0) | 102 (41) | plenary days, 8.3 h | clean; Opus 16 kb/s; simulated room (RT60 0.6 s, 15 dB SNR, one room per day) |
+| VoxPopuli English, test + validation (CC0) | 339 (41) | plenary days | clean |
+| AMI, 43 meetings of 11 series (CC BY 4.0; speaker turns from pyannote's AMI setup, Apache-2.0) | 48 (36) | meetings | headset; real far-field (Array1-01); headset → Opus 16 kb/s ("remote") |
+
+\* eligible = ≥ 4 documents with ≥ 10 s of speech each, and ≥ 120 s in
+the 3 largest; the same speakers are used in every configuration. No
+audio was kept after embedding; nothing was added to the repo.
+
+*Same condition, cosine ≥ 0.65, margin ≥ 0.05* (recall = known voices
+named correctly):
+
+| Enrolment | Italian recall / wrong | English recall / wrong | AMI headset recall / wrong |
+|---|---|---|---|
+| 10 s, 1 doc | 97.8 % / 0.3 % | 98.1 % / 0.1 % | 99.5 % / 0 % |
+| 30 s, 2 docs | 99.7 % / 0.7 % | 99.7 % / 0.3 % | 100 % / 0 % |
+| 60 s, 2 docs (P12) | 99.8 % / 0.7 % | 99.4 % / 0.3 % | 100 % / 0 % |
+| 120 s, 3 docs | 99.7 % / 1.4 % | 100 % / 0 % | 100 % / 0 % |
+
+The margin barely matters: in these data the runner-up is rarely within
+0.05 of the best match. It is kept as a cheap guard for larger People
+lists. The gallery size (5, 10, 20, 40 profiles) changed nothing
+measurable. 0.65 is the lowest threshold at which none of the 108
+configurations measured (enrolment amounts, test-voice lengths, galleries,
+conditions; room-to-room aside, see below) exceeds 2 % wrong suggestions:
+the worst is 2.0 % (Italian, 120 s from a single document), all others
+≤ 1.5 %. Thresholds tuned per corpus alone were 0.62–0.64 (VoxPopuli) and
+0.55–0.58 (AMI).
+
+*Across conditions* (profile from close-mic lines, voice from another
+condition, 0.65 / 0.05, wrong suggestions ≤ 0.2 % in every row):
+
+| Profile → voice | Test voice ≤ 10 s | ≤ 20 s | ≤ 60 s |
+|---|---|---|---|
+| Italian, 10 s / 1 doc → simulated room | 72 % | 80 % | 88 % |
+| Italian, 30 s / 2 docs → simulated room | 83 % | 90 % | 94 % |
+| Italian, 60 s / 2 docs → simulated room | 84 % | 91 % | 94 % |
+| Italian, 120 s / 3 docs → simulated room | 88 % | 94 % | 96 % |
+| AMI, 30 s / 2 docs → real far-field | 87 % | 95 % | 99.5 % |
+| AMI, 60 s / 2 docs → real far-field | 89 % | 96 % | 99.5 % |
+
+Clean → Opus 16 kb/s costs under 1 point (Italian 99.2 %). Adding room
+lines to the profile lifts room recall (Italian 94.7 % → 98.7 %, AMI
+99.5 % → 100 %). But room-to-room matching on the simulated rooms then
+needs the 0.75 threshold (at 0.65: 5.9 % wrong with one pooled centroid,
+12.7 % with per-condition centroids; at 0.75: 0.1 % wrong, 94 % recall).
+Real AMI rooms stayed at 0 % wrong even at 0.65. Hence E13: one pooled
+centroid, 0.75 for room-to-room.
+
+*Minimum confirmed speech.* Going from 10 s / 1 document to 30 s / 2
+documents is what matters (cross-condition recall +5 to +11 points).
+60 s / 2 documents adds 0.4–2 points over 30 s / 2, and 120 s / 3
+documents 2–4 more on Italian. Shorter document voices mostly lower recall, not
+precision, so voices keep the existing 10 s minimum
+(`MIN_VOICE_SPEECH_MS`).
+
+*Own voice (P14).* "You" = `s` seconds of the user's speech from one
+document. Tested on the lines of another document recorded by one room mic
+(AMI far-field: 3 other people in the room; Italian: simulated room,
+3 other speakers).
+
+| Enrolment | Per line: EER / recall at 2 % false "You" | Per voice: EER / best voice is "You" |
+|---|---|---|
+| AMI headset 10 s → far-field | 4.4 % / 92.4 % | 0.2 % / 100 % |
+| AMI headset 30 s → far-field | 4.0 % / 93.7 % | 0.1 % / 100 % |
+| AMI headset 60 s → far-field | 4.1 % / 93.3 % | 0 % / 100 % |
+| AMI far-field 30 s → far-field | 4.0 % / 93.5 % | 0 % / 100 % |
+| Italian clean 30 s → simulated room | 1.8 % / 98.3 % | 0.7 % / 99.8 % |
+
+So 30 s of enrolment is enough, and more does not help. "You" should be
+decided on the document's voices after clustering: the best-scoring voice
+is "You" if its cosine is ≥ 0.45 (the 2 % false-"You" point was 0.40 on
+AMI and 0.44 on Italian). Single lines are not reliable enough to relabel
+one by one. Caveat: AMI enrolment is spontaneous speech, not a read
+paragraph, and the Italian room is simulated. A check on the maintainer's
+own voice (read paragraph → laptop mic in a room) is still worth doing
+before 0.11.
+
+*"Voice N" thresholds (#107) on Italian.* Synthetic documents made of the
+speakers of one real document (a plenary day or an AMI meeting). Their
+lines were cut into alternating turns of 1–3 lines, then run through the
+ported online tracker (window assignment, majority per line) and the
+offline agglomerative clustering, both followed by `fold_small`. The
+figure is the speech-time error after the best mapping of voices to
+speakers; *voices* is found minus true.
+
+| Threshold | Online: Italian (3 conditions) | Online: English VoxPopuli | Online: AMI (3 conditions) | Offline: Italian | Offline: English VoxPopuli | Offline: AMI |
+|---|---|---|---|---|---|---|
+| 0.275 (online today) | 14.9 % | 5.9 % | 5.4 % | 20.1 % | 7.8 % | 4.8 % |
+| 0.30 (re-detect today) | 11.2 % | 4.3 % | 3.5 % | 16.4 % | 4.7 % | 3.7 % |
+| 0.35 | 6.3 % | 1.5 % | 2.3 % | 8.4 % | 1.6 % | 2.5 % |
+| 0.375 | 4.7 % | 0.7 % | 2.1 % | 6.2 % | 1.0 % | 2.1 % |
+| 0.40 | 3.1 % | 0.3 % | 2.2 % | 4.5 % | 0.6 % | 2.1 % |
+
+At today's values Italian documents **lose voices**: two speakers merge
+(−0.8 to −1.2 voices per document on the simulated room). Language and
+corpus both play a part. On the same corpus (VoxPopuli), Italian
+different-speaker pairs score higher than English ones (mean cosine 0.16
+vs 0.11, 99th percentile 0.48 vs 0.40), so the error at the current
+thresholds is about 2.5× the English one. Read parliamentary speech also
+favours higher thresholds than meetings. On AMI far-field, raising the
+thresholds adds voices: +0.28 per meeting at 0.275, +0.51 at 0.35, +0.67
+at 0.40 after the fold. **Proposed: `ONLINE_THRESHOLD` 0.275 → 0.35,
+`REDETECT_THRESHOLD` 0.30 → 0.375.** This more than halves the Italian
+error and lowers the AMI error too, at the cost of an occasional extra
+voice on far-field meetings; the user can merge it. The change is one constant each,
+in a code PR with this table in the doc comment. A check on a real Italian
+meeting recording is still wanted before it ships: the synthetic documents
+have no crosstalk, overlaps or room noise between turns.
 
 **Privacy rules** (GDPR art. 9, section 4.7).
 - Off until the user turns it on per person; a first-use sheet explains
@@ -725,10 +861,10 @@ Throwaway code in the session scratchpad; results written into this file.
 No private recordings of other people: CC0/CC-BY corpora, and the
 maintainer's own voice only if he provides it.
 
-- [ ] **Voice profiles across documents**: identification on Italian and
+- [x] **Voice profiles across documents**: identification on Italian and
       English multi-session speakers (VoxPopuli, CC0; AMI): threshold,
       margin, minimum confirmed speech, per-condition centroids; re-check
-      the #107 thresholds on Italian. (#235)
+      the #107 thresholds on Italian. (#235; results in 4.1)
 - [ ] **TTS bake-off**: Pocket TTS, Qwen3-TTS 1.7B-Base, Chatterbox v3,
       Kokoro as baseline; one no-Python runtime per engine (`ort` or
       `llama-tts` b11146); speed, memory, licences; samples for the
@@ -830,7 +966,7 @@ Track A depends on the maintainer's accounts and the stores' review times.
 |---|---|
 | A wrong name suggested for a voice | Suggest-only (P12), margin over the runner-up, minimum confirmed speech, *Not X* per document |
 | Voiceprints leak through a synced archive | Profiles in app data only (P13); `segments.json` embeddings are anonymous per-document vectors, and *Forget all voices* can also strip them from items on request |
-| Thresholds tuned on English fail on Italian | Spike V0-1 measures both before any threshold ships; thresholds are constants with the spike's numbers in the doc comment |
+| Thresholds tuned on English fail on Italian | Spike V0-1 measured both (4.1): identification holds on Italian at the same threshold; the "Voice N" clustering thresholds merge Italian speakers and should rise (0.275 → 0.35, 0.30 → 0.375); thresholds are constants with the spike's numbers in the doc comment |
 | Overlap model slows long documents | Offline only ("Re-detect"), never live; cost measured in V0-3 |
 | Opus decode missing in the WebView | V0-4: the scheme always serves decoded WAV, so no WebView ever sees Opus; WAV save setting stays |
 | A TTS licence turns out to be non-commercial | Licence of code **and** weights checked in V0-2; only permissive or CC-BY weights; `licenses.json` lists downloaded models |
