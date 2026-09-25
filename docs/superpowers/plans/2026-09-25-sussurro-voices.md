@@ -18,7 +18,7 @@ Plan drafted; milestones and issues created (section 7). Nothing merged.
 |---|---|---|
 | Phase V0 — Voices spikes | #274 | all six spikes agent-ready (#235–#240) |
 | 0.11 — Known voices | #275 | waits on P12–P16 and the spikes; archive-API tokens (#249) and calendar files (#252) agent-ready |
-| 0.12 — Read aloud | #276 | waits on P17, P18, P21 and the TTS and marking spikes; text preparation (#254) agent-ready |
+| 0.12 — Read aloud | #276 | P18 decided (Pocket TTS, file generation); engine (#255), read aloud (#256) and #264 agent-ready; marking waits on the watermark spike (#240) |
 | 0.13 — Your voice, with consent | #277 | waits on P19, P20 and the legal review (#261) |
 | Track A — Accounts and stores | #278 | maintainer accounts (P22, P23); privacy policy page (#267) agent-ready |
 
@@ -110,8 +110,15 @@ assume.
   audio is generated. A two-voice "podcast" recipe is a stretch goal.
   *Recommendation: yes; podcast in 0.12 only if the single-voice path is
   done early.*
-- **P18 — Default TTS engine.** *Postponed by the maintainer (2026-09-25) until the listening test of
-  spike V0-2 (#236).* The bake-off compares Kyutai **Pocket TTS**
+- **P18 — Default TTS engine.** *Decided by the maintainer (2026-09-25),
+  after the blind listening test of spike V0-2 (#236): Pocket TTS — the
+  Italian 24-layer model (mean 4.40/5, first of four) and the English
+  model — generating files only, not real-time playback. The English test
+  is repeated after text preparation (#254), since Pocket English lost
+  points on numbers and news copy (3.00 vs Chatterbox 4.50 and Qwen3-TTS
+  4.00); if it still falls short, Qwen3-TTS is the English option on GPU
+  Macs. Qwen3-TTS stays the cloning engine for 0.13. Optional and
+  experimental per P24.* The bake-off compares Kyutai **Pocket TTS**
   (MIT code, CC-BY-4.0 weights, native Italian 24-layer model since April
   2026, 100M parameters, streaming, no phonemizer), **Qwen3-TTS 1.7B-Base**
   (Apache-2.0 code and weights, Italian among its 10 languages, but no
@@ -873,10 +880,10 @@ maintainer's own voice only if he provides it.
       English multi-session speakers (VoxPopuli, CC0; AMI): threshold,
       margin, minimum confirmed speech, per-condition centroids; re-check
       the #107 thresholds on Italian. (#235; results in 4.1)
-- [ ] **TTS bake-off**: Pocket TTS, Qwen3-TTS 1.7B-Base, Chatterbox v3,
+- [x] **TTS bake-off**: Pocket TTS, Qwen3-TTS 1.7B-Base, Chatterbox v3,
       Kokoro as baseline; one no-Python runtime per engine (`ort` or
       `llama-tts` b11146); speed, memory, licences; samples for the
-      maintainer's blind listening test (P18). (#236)
+      maintainer's blind listening test (P18, decided). (#236)
 - [ ] **Overlap detection**: pyannote segmentation-3.0 through `ort` on AMI
       overlaps; cost; pinned SHA-256. (#237)
 - [x] **Opus**: crate, build on three OSes, crash safety, WebView playback
