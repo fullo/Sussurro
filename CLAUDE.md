@@ -87,7 +87,17 @@ project decisions here, not in per-machine memory.**
   and swept at startup. Video platforms: `yt-dlp` found on PATH or the
   Homebrew/winget/scoop/pip folders (E10, not bundled), argument vector
   only, `bestaudio[ext=m4a]/bestaudio`, `--ignore-config --no-playlist`;
-  opus-only videos are refused (no ffmpeg bundled).
+  opus-only videos are refused (no ffmpeg bundled). **yt-dlp hardening
+  (#216)**: it runs **only for `PLATFORM_HOSTS`** (a web page elsewhere is
+  refused, never handed to the generic extractor), with `--use-extractors
+  default,-generic` (a yt-dlp < 2022.08 that rejects the option is retried
+  without it), `--downloader native`, proxy env vars removed, and
+  `--proxy` pointing at an in-process loopback HTTP proxy
+  (`sources/url/proxy.rs`: CONNECT + absolute-form http, std only) that
+  runs `resolve_checked` on every host yt-dlp asks for and connects only to
+  the checked addresses. The direct client uses `.no_proxy()` (a system
+  proxy would bypass the pinning). Residual: yt-dlp still reaches whatever
+  *public* hosts a platform extractor names.
 - **Privacy gate for external LLM profiles (0.8, #122)**: enforced in the
   backend, never only in the UI. Recipes/questions on an external profile
   need a one-time consent token (`prepare_external_run`, bound to item +
@@ -361,8 +371,18 @@ project decisions here, not in per-machine memory.**
   Windows install). Crash of Sussurro: Windows kill-on-close job object,
   Linux `PR_SET_PDEATHSIG` (spawned from one long-lived thread — the signal
   follows the spawning *thread*), macOS nothing (documented). Spawned
-  without a shell on a random port, `--host 127.0.0.1`, `-ngl 99 -c 4096
-  -np 1 --cache-ram 0 --no-webui` (#109's settings). Requests ≤ 30 s: longer
+  without a shell, `-ngl 99 -c 4096 -np 1 --cache-ram 0 --no-webui`
+  (#109's settings) `--no-slots`. **Who can reach it (#216,
+  `stt/remote/endpoint.rs`)**: macOS/Linux `--host <dir>/llama.sock`, a
+  Unix socket in a fresh 0700 per-run folder under `<app data>/sidecar/`
+  (the temp dir if the path exceeds 100 bytes; removed on stop, dead runs
+  swept) — never a TCP port there; Windows `--host 127.0.0.1` on a random
+  port and, after `/health`, the listener's owning PID
+  (`GetExtendedTcpTable`, windows-sys IpHelper) must be the child's. Every
+  spawn gets a random key in `LLAMA_API_KEY` (env, not `--api-key`: argv
+  is world-readable), sent as a bearer token; inherited `LLAMA_*` vars are
+  dropped. `/health` stays public, so the key does not authenticate the
+  server — the socket/owner check does. Requests ≤ 30 s: longer
   hotkey dictations are cut with `stt::pauses` (#194) into ≤ 28 s pieces.
   Output: text after the last `<asr_text>`, `<|…|>` tokens removed,
   language name → ISO code. The app never strips macOS quarantine (manual
@@ -381,7 +401,9 @@ project decisions here, not in per-machine memory.**
   model anyway (same RAM ~1.9 GB footprint for both, same start-up), and
   would add grandchildren PDEATHSIG doesn't cover plus one lifecycle for
   two idle rules — measurements in the module docs. Same `Sidecar` code
-  (`SidecarRole::Chat`): loopback, no shell, crash restart + one retry,
+  (`SidecarRole::Chat`): private socket / owner-checked port + per-spawn
+  key (#216; `with_server` hands out a `SidecarAccess`), no shell, crash
+  restart + one retry,
   `kill_all`/exit guard; idle stop after 15 min on the setup idle thread;
   a dictation on this profile pre-starts it. Builds with the sidecar add
   the profile at startup and in `set_settings` but **never select it**;

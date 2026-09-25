@@ -1,7 +1,7 @@
 //! The "Local (bundled)" LLM profile (Track E, #118): cleanup and recipes
 //! with no Ollama or other server installed. Sussurro's own `llama-server`
 //! sidecar (#116, the one Qwen3-ASR runs in) serves a small instruct model
-//! on a random loopback port, OpenAI-compatible; the profile is local by
+//! on this machine only, OpenAI-compatible; the profile is local by
 //! construction and never external.
 //!
 //! **Model** — Qwen3 1.7B Q8_0 from `ggml-org/Qwen3-1.7B-GGUF`
@@ -41,9 +41,10 @@
 //!
 //! **Lifecycle** — [`BundledLlm`], the same [`Sidecar`] as Qwen3-ASR
 //! (reachable only by Sussurro: a private Unix socket or an owner-checked
-//! loopback port, a per-spawn API key, no `/slots` — #216; no shell, lib folder as cwd and on the library path,
-//! health check, crash restart with backoff, [`crate::stt::remote::kill_all`]
-//! and the exit guard on every way out): started on the first chat request
+//! loopback port, a per-spawn API key, no `/slots` — #216; no shell, lib
+//! folder as cwd and on the library path, health check, crash restart with
+//! backoff, [`crate::stt::remote::kill_all`] and the exit guard on every
+//! way out): started on the first chat request
 //! (or pre-warmed when a dictation starts with this profile), a crash
 //! during a request is restarted and the request retried once, a live but
 //! failing server is left alone, and it stops after [`IDLE_STOP`] without

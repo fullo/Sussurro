@@ -235,7 +235,16 @@ Ollama on this machine. An LLM profile whose server is not on this machine
 mark *external* by hand) is **external**: text sent to it leaves your
 computer. Sussurro never falls back from a local profile to an external one.
 The built-in *Local (bundled)* profile is always local: Sussurro's own
-`llama-server` on a loopback port, which it can't be pointed away from.
+`llama-server`, which it can't be pointed away from. That server (and the
+Qwen3-ASR one) is reachable only by Sussurro: a Unix socket in a private
+folder on macOS and Linux, a loopback port checked to belong to it on
+Windows, and a random key per start that every request must carry.
+
+**Links** (New → Link) never reach this computer or your local network
+unless you tick *Allow local network addresses* for that run — checked on
+every address a host resolves to and every redirect. yt-dlp is used only for
+known video sites (YouTube, Vimeo, SoundCloud…), without its generic "any
+page" extractor, and every connection it makes goes through the same check.
 
 - **Recipes and Ask questions** on an external profile show a confirmation
   **every time**: which document, roughly how much text (characters and
