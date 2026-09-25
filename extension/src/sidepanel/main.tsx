@@ -4,7 +4,8 @@
    capture for the active tab with a level meter per channel (#128), then
    the live lines with speaker chips, the transcript's backlog, and "Open
    in Sussurro", "Copy as text", "Create .srt" (#129). Before the first
-   Start, the recording notice (#136); while recording, a reminder line. */
+   Start, the recording notice (#136); while recording, a reminder line.
+   Next to Start, the meeting's language (#288, shared/language.ts). */
 import { StrictMode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import browser from "webextension-polyfill";
@@ -30,6 +31,17 @@ import { exportFilename, exportItem, openItem } from "../shared/items";
 import { panelView, viaText } from "./status";
 import { partLines } from "./lines";
 import { actionsView, copyToClipboard, downloadText, isRecording, type ItemAction } from "./actions";
+import {
+  chooseLanguage,
+  fetchLanguages,
+  languageLabel,
+  languageOptions,
+  languageSelectView,
+  rememberLanguage,
+  rememberedLanguage,
+  type AppLanguages,
+} from "../shared/language";
+import type { Platform } from "../shared/platform";
 import "../shared/page.css";
 
 function PairingNote() {
@@ -309,6 +321,59 @@ function RecordingNotice({ onAnswer }: { onAnswer: (proceed: boolean, dontShowAg
   );
 }
 
+/** The app's languages for a meeting (#288): `undefined` while loading,
+ *  `null` when the app doesn't list them (older app, not reachable). */
+function useLanguages(pairing: Pairing, tabId: number): AppLanguages | null | undefined {
+  const [list, setList] = useState<AppLanguages | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    void fetchLanguages(pairing).then((l) => alive && setList(l));
+    return () => {
+      alive = false;
+    };
+  }, [pairing, tabId]);
+  return list;
+}
+
+/** The selector's value: the platform's remembered choice, else the app's
+ *  dictation language (see `chooseLanguage`); changing it remembers it for
+ *  the platform. `null` while unknown or without a list. */
+function useMeetingLanguage(list: AppLanguages | null | undefined, platform: Platform | null, known: boolean): [string | null, (code: string) => void] {
+  const [language, setLanguage] = useState<string | null>(null);
+  useEffect(() => {
+    if (!list || !known) {
+      setLanguage(null);
+      return;
+    }
+    let alive = true;
+    void rememberedLanguage(platform).then((r) => alive && setLanguage(chooseLanguage(r, list)));
+    return () => {
+      alive = false;
+    };
+  }, [list, platform, known]);
+  const choose = (code: string) => {
+    setLanguage(code);
+    // Best effort: if it can't be stored, the next time asks the app again.
+    void rememberLanguage(platform, code).catch(() => {});
+  };
+  return [language, choose];
+}
+
+function LanguageSelect({ list, value, enabled, onChange }: { list: AppLanguages; value: string; enabled: boolean; onChange: (code: string) => void }) {
+  return (
+    <label className="lang-select" title={enabled ? "The language spoken in this meeting" : "Fixed for this recording"}>
+      <span>Language</span>
+      <select data-testid="language" value={value} disabled={!enabled} onChange={(e) => onChange(e.target.value)}>
+        {languageOptions(list).map((l) => (
+          <option key={l.code} value={l.code}>
+            {l.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function Capture({ tabId, pairing }: { tabId: number; pairing: Pairing }) {
   const [state, setState] = useState<PanelState | null>(null);
   const [needsGrant, setNeedsGrant] = useState(false);
@@ -343,7 +408,12 @@ function Capture({ tabId, pairing }: { tabId: number; pairing: Pairing }) {
     };
   }, [tabId, refresh]);
 
-  const send = (type: "panel:start" | "panel:stop") => void browser.runtime.sendMessage({ type, tabId } satisfies PanelRequest);
+  const languages = useLanguages(pairing, tabId);
+  const [language, pickLanguage] = useMeetingLanguage(languages, state?.platform ?? null, state !== null);
+  const send = (type: "panel:start" | "panel:stop") => {
+    const msg: PanelRequest = type === "panel:start" && language ? { type, tabId, language } : { type, tabId };
+    void browser.runtime.sendMessage(msg);
+  };
   const grant = () => {
     void browser.permissions.request({ origins: [...MEETING_MATCHES] }).then((ok) => {
       setNeedsGrant(!ok);
@@ -359,6 +429,10 @@ function Capture({ tabId, pairing }: { tabId: number; pairing: Pairing }) {
   const tabAudio = __BROWSER__ === "chrome" ? state?.tabCapture : "off";
   const capturing = !!state && ["arming", "connecting", "live", "reconnecting"].includes(state.phase);
   const backlog = t && (capturing || state?.phase === "stopping") ? backlogView(t) : null;
+  const langView = languageSelectView(languages, view.canStart);
+  // While recording, the meeting's own language (a panel opened mid-way
+  // may not have chosen it).
+  const recLanguage = capturing ? (state?.language ?? null) : null;
   const start = () => (startStep(noticeNeeded) === "ask" ? setAsking(true) : send("panel:start"));
   const answer = (proceed: boolean, dontShowAgain: boolean) => {
     setAsking(false);
@@ -379,10 +453,18 @@ function Capture({ tabId, pairing }: { tabId: number; pairing: Pairing }) {
       <p className={`page-note tone-${view.tone}`} role="status" data-testid="status" data-phase={state?.phase ?? ""} data-transport={state?.transport ?? ""}>
         {view.line}
       </p>
+      {recLanguage && (
+        <p className="rec-language" data-testid="rec-language" data-language={recLanguage}>
+          Language: {languageLabel(recLanguage, languages)}
+        </p>
+      )}
       {asking && view.canStart ? (
         <RecordingNotice onAnswer={answer} />
       ) : (
         <div className="capture-controls">
+          {langView.visible && languages && (
+            <LanguageSelect list={languages} value={recLanguage ?? language ?? "auto"} enabled={langView.enabled && language !== null} onChange={pickLanguage} />
+          )}
           {view.canStop ? (
             <button type="button" className="btn" data-testid="stop" onClick={() => send("panel:stop")}>
               Stop
