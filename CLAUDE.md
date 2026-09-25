@@ -370,6 +370,29 @@ project decisions here, not in per-machine memory.**
   server: with a **shared `CARGO_TARGET_DIR` another worktree's build can
   replace that binary mid-run** — verify in a private target dir if they
   fail with "0 passed; N filtered out".
+- **Local (bundled) LLM profile (Track E, #118)** (`llm/bundled.rs`): a
+  built-in profile (`bundled: true`, id `bundled` reserved) served by the
+  same pinned `llama-server` with **Qwen3 1.7B Q8_0** from
+  `ggml-org/Qwen3-1.7B-GGUF` (Apache-2.0, 2.17 GB; HF-tree SHA-256 **and** a
+  pinned digest, fail-closed), `--reasoning off`, `-c 8192` (= the
+  profile's `context_tokens`), `--alias qwen3-1.7b`. Q8 over Q4_K_M: Q4
+  kept more Italian fillers/repeats on our samples. **Two processes, not
+  one shared server**: the pinned build's router mode spawns one child per
+  model anyway (same RAM ~1.9 GB footprint for both, same start-up), and
+  would add grandchildren PDEATHSIG doesn't cover plus one lifecycle for
+  two idle rules — measurements in the module docs. Same `Sidecar` code
+  (`SidecarRole::Chat`): loopback, no shell, crash restart + one retry,
+  `kill_all`/exit guard; idle stop after 15 min on the setup idle thread;
+  a dictation on this profile pre-starts it. Builds with the sidecar add
+  the profile at startup and in `set_settings` but **never select it**;
+  only `bundled_llm_use` (the user's *Use the bundled model* click, offered
+  when the cleanup server is unreachable — in the onboarding's cleanup step
+  once every local-server probe came back empty (`bundledSetupState`),
+  Settings → Cleanup and the setup banner) does. `normalize` pins its fields
+  (never external), keeps one, and moves a user profile off the reserved id
+  without moving cleanup. No download at cleanup time: a missing file =
+  raw text + a Download prompt. Live check: `live_bundled_llm_*`
+  (`#[ignore]`, env vars in the test).
 - **Parakeet long input (#194)** (`stt/pauses.rs`): transcribe-rs 0.3.11's
   Parakeet greedy decoder can emit only blanks after a sentence end + pause
   (the decoder state blocks; the encoder output is fine), dropping every

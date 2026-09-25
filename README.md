@@ -51,7 +51,10 @@ Download the installer for your OS from the
    ollama pull llama3.2:3b
    ```
    Sussurro still works without it — you just get the raw transcript (set
-   Cleanup to "None", or let the automatic fallback handle it).
+   Cleanup to "None", or let the automatic fallback handle it). **No Ollama?**
+   When no cleanup server answers, Settings offers *Use the bundled model*:
+   Sussurro downloads Qwen3 1.7B (~2.2 GB, Apache-2.0) once and runs it
+   itself in its bundled `llama-server`, on this machine — nothing to install.
 2. **A Whisper model** — pick one in Settings and click *Download*
    (Base English 148 MB → Large v3 Turbo 574 MB). Or switch to the Parakeet
    engine for a single CPU-optimized model.
@@ -128,7 +131,13 @@ the wordmark is hollow when idle and painted red while recording.
   the system default if unplugged); a live input-level bar helps you test it.
 - **Tray** — left-click to show/hide; closing the window hides to tray.
 - **Setup banner** — lists anything missing (Ollama not running, model not
-  downloaded) with a one-click fix.
+  downloaded) with a one-click fix, including *Use the bundled model* when no
+  cleanup server is reachable.
+- **Local (bundled) LLM profile** — a built-in profile served by Sussurro's own
+  `llama-server` with Qwen3 1.7B: pick it for cleanup or for a recipe run,
+  no setup needed. It is never external, never selected for you, starts on
+  first use and stops after 15 idle minutes. Ollama and any other server
+  stay available as profiles.
 - **Copy diagnostics** — a footer button copies version + OS + configuration
   for bug reports (configuration only — never dictated text or dictionary).
 
@@ -225,6 +234,8 @@ Ollama on this machine. An LLM profile whose server is not on this machine
 (anything but `localhost`, a loopback address or a `.local` host — or one you
 mark *external* by hand) is **external**: text sent to it leaves your
 computer. Sussurro never falls back from a local profile to an external one.
+The built-in *Local (bundled)* profile is always local: Sussurro's own
+`llama-server` on a loopback port, which it can't be pointed away from.
 
 - **Recipes and Ask questions** on an external profile show a confirmation
   **every time**: which document, roughly how much text (characters and
@@ -381,8 +392,9 @@ The installers include one prebuilt program that Sussurro does not compile:
 [llama.cpp](https://github.com/ggml-org/llama.cpp) release (MIT; currently
 `b11146` — Metal on macOS, Vulkan on Windows, CPU on Linux) with its shared
 libraries in `llama-server-libs/`. It runs the optional extra speech
-engines (Qwen3-ASR) as a separate local process, only when you choose such an
-engine; its models download on first use. The release and the SHA-256 of
+engines (Qwen3-ASR) and the optional *Local (bundled)* LLM profile (Qwen3
+1.7B), each as its own local process bound to `127.0.0.1`, only when you
+choose them; their models download when you pick them. The release and the SHA-256 of
 every upstream archive are committed in
 [`sussurro/src-tauri/sidecar/llama-server.lock.json`](sussurro/src-tauri/sidecar/llama-server.lock.json),
 and the build refuses any file that doesn't match. The Windows build also

@@ -1,8 +1,8 @@
 /* First-run onboarding (#115): pure helpers for the guided setup and the
    "What's new" screen (shell/Onboarding.tsx). */
 
-import { commitProfile, uniqueName } from "./llmProfiles";
-import type { LlmApi, LlmProfile, Permissions, PermState, Settings } from "./types";
+import { commitProfile, isBundled, uniqueName } from "./llmProfiles";
+import type { BundledLlmStatus, LlmApi, LlmProfile, Permissions, PermState, Settings } from "./types";
 
 /** What the window opens with: the full setup on a fresh install, one
  *  "What's new" screen for a user upgrading from 0.6.x, nothing once done. */
@@ -156,6 +156,29 @@ export function withCleanupServer(s: Settings, server: LocalServer, models: stri
   return { ...settings, cleanup_profile: profile.id };
 }
 
+/* ---------- The bundled model (#118) ---------- */
+
+/** What the cleanup step shows for Sussurro's own bundled model:
+ *  - "in_use": cleanup is already on the "Local (bundled)" profile;
+ *  - "offer": no local server was found (every probe finished, none
+ *    running) and this build ships the llama-server sidecar — offer
+ *    "Use the bundled model";
+ *  - null: nothing (still looking, a server was found, or no sidecar).
+ *  Only ever an offer: the user's click selects it. */
+export function bundledSetupState(
+  probes: ProbeState[],
+  status: Pick<BundledLlmStatus, "available"> | null,
+  current: LlmProfile | null,
+): "in_use" | "offer" | null {
+  if (isBundled(current)) return "in_use";
+  if (!status?.available) return null;
+  if (probes.length === 0 || probes.some((p) => p !== "absent")) return null;
+  return "offer";
+}
+
+/** A probe's outcome, as `bundledSetupState` needs it. */
+export type ProbeState = "checking" | "found" | "absent";
+
 /* ---------- What's new (upgrade from 0.6.x) ---------- */
 
 export const WHATS_NEW: { title: string; text: string }[] = [
@@ -170,6 +193,10 @@ export const WHATS_NEW: { title: string; text: string }[] = [
   {
     title: "Recipes and LLM profiles",
     text: "Turn a transcript into a summary, action items or meeting minutes, or ask it a question. Your cleanup server is now an LLM profile, under Recipes.",
+  },
+  {
+    title: "Cleanup without Ollama",
+    text: "A built-in “Local (bundled)” LLM profile runs a small model inside Sussurro, on this computer: nothing to install. Your cleanup profile stays as it is; pick the bundled one in Settings → Cleanup if you want it.",
   },
   {
     title: "Meetings",

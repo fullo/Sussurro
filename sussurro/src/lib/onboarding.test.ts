@@ -3,6 +3,7 @@ import {
   LOCAL_SERVERS,
   SETUP_STEPS,
   WHATS_NEW,
+  bundledSetupState,
   isMac,
   onboardingMode,
   permissionRows,
@@ -148,6 +149,28 @@ describe("cleanup servers", () => {
     const next = withCleanupServer(settings([local, other]), lmStudio, ["m"]);
     expect(next.llm_profiles[2].name).toBe("LM Studio 2");
     expect(new Set(next.llm_profiles.map((p) => p.id)).size).toBe(3);
+  });
+});
+
+describe("bundledSetupState (#118)", () => {
+  const bundled = { ...local, id: "bundled", name: "Local (bundled)", api: "openai" as const, base_url: "http://127.0.0.1", model: "qwen3-1.7b", bundled: true };
+  const on = { available: true };
+
+  it("offers the bundled model only once every probe came back empty", () => {
+    expect(bundledSetupState(["absent", "absent", "absent"], on, local)).toBe("offer");
+    expect(bundledSetupState(["absent", "checking", "absent"], on, local)).toBeNull();
+    expect(bundledSetupState(["found", "absent", "absent"], on, local)).toBeNull();
+    expect(bundledSetupState([], on, local)).toBeNull();
+  });
+
+  it("needs the sidecar in this build", () => {
+    expect(bundledSetupState(["absent", "absent"], { available: false }, local)).toBeNull();
+    expect(bundledSetupState(["absent", "absent"], null, local)).toBeNull();
+  });
+
+  it("shows it in use when cleanup is already on it, servers or not", () => {
+    expect(bundledSetupState(["found", "absent"], on, bundled)).toBe("in_use");
+    expect(bundledSetupState(["checking"], null, bundled)).toBe("in_use");
   });
 });
 

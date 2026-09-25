@@ -2,7 +2,8 @@ import { AdvancedGroup, Card } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { EngineField, ModelField, ModelsFolderField } from "../settings/SpeechCard";
 import { QWEN3_ASR_NOTE } from "../lib/engines";
-import { cleanupProfile, profileHost } from "../lib/llmProfiles";
+import { bundledNote, cleanupProfile, formatGb, isBundled, profileHost } from "../lib/llmProfiles";
+import { BundledProblem, UseBundledButton } from "../settings/BundledLlm";
 import { cleanupGate } from "../lib/privacy";
 import { cleanupLabel } from "./labels";
 import type { SectionId } from "./SettingsScreen";
@@ -18,9 +19,10 @@ export function ModelsScreen({
   onOpenSettings: (s: SectionId) => void;
   onOpenRecipes: () => void;
 }) {
-  const { settings, save, installedWhisper, modelReady, sidecarAvailable } = ctl;
+  const { settings, save, installedWhisper, modelReady, sidecarAvailable, bundledLlm } = ctl;
   const qwenInUse = settings.engine === "qwen3_asr";
   const profile = cleanupProfile(settings);
+  const bundledInUse = isBundled(profile);
   return (
     <div className="sh-screen">
       <header className="sh-topbar">
@@ -75,12 +77,41 @@ export function ModelsScreen({
           )}
         </Card>
 
+        <Card title={<>Local (bundled) <span className="via">LLM for cleanup and recipes</span></>}>
+          <p className="card-hint">{bundledNote(bundledLlm)}</p>
+          {bundledLlm && !bundledLlm.available ? (
+            <p className="card-hint" role="status">
+              Not available in this build: it has no bundled llama-server. Use Ollama or another server as an LLM profile.
+            </p>
+          ) : (
+            <div className="row-gap">
+              <span className="sh-muted" role="status">
+                {!bundledLlm
+                  ? "Checking…"
+                  : !bundledLlm.downloaded
+                    ? `${bundledLlm.model}: not downloaded yet.`
+                    : bundledInUse
+                      ? `${bundledLlm.model}: cleans your dictations.`
+                      : `${bundledLlm.model}: downloaded.`}
+              </span>
+              {bundledLlm && !bundledLlm.downloaded && !bundledInUse && (
+                <button type="button" className="btn-ghost sh-btn" disabled={ctl.bundledBusy} onClick={() => ctl.downloadBundledModel()}>
+                  {ctl.bundledBusy && <span className="btn-spinner" aria-hidden="true" />}
+                  Download ({formatGb(bundledLlm.download_bytes)})
+                </button>
+              )}
+              {!bundledInUse && <UseBundledButton ctl={ctl} label="Use for cleanup" />}
+            </div>
+          )}
+          <BundledProblem ctl={ctl} />
+        </Card>
+
         <Card title={<>Cleanup <span className="via">LLM profile</span></>}>
           <p className="card-hint">
             Currently: <strong>{cleanupLabel(settings)}</strong>
             {profile && (
               <>
-                {" "}on the <strong>{profile.name}</strong> profile ({profile.api === "ollama" ? "Ollama" : "OpenAI-compatible"}
+                {" "}on the <strong>{profile.name}</strong> profile ({bundledInUse ? "Sussurro's bundled llama.cpp server" : profile.api === "ollama" ? "Ollama" : "OpenAI-compatible"}
                 {profile.external ? `, external: ${profileHost(profile)}` : ", on this machine"})
               </>
             )}

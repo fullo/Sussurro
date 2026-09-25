@@ -118,6 +118,11 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool) {
                 crate::audio::beep::record_start();
             }
             set_status(app, "recording");
+            // The bundled LLM (#118) loads its model while the user speaks,
+            // so the cleanup at the end doesn't wait for it.
+            if settings.cleanup_active() && settings.cleanup_llm().bundled {
+                crate::llm::bundled::prewarm();
+            }
             if settings.live_preview {
                 let app = app.clone();
                 std::thread::spawn(move || preview_loop(&app));

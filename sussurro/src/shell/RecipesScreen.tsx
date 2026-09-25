@@ -6,6 +6,7 @@ import {
   API_LABELS,
   cleanupProfile,
   commitProfile,
+  isBundled,
   keyStorageBadge,
   keyStorageWarning,
   newProfile,
@@ -16,6 +17,7 @@ import {
   withBaseUrl,
 } from "../lib/llmProfiles";
 import type { CredentialStoreStatus, LlmApi, LlmProfile } from "../lib/types";
+import { BundledProfilePanel } from "../settings/BundledLlm";
 import { RecipesCard } from "./RecipesCard";
 
 /** Recipes (proposal A rail): the recipes — named prompts that write a
@@ -65,6 +67,9 @@ export function RecipesScreen({ ctl }: { ctl: Ctl }) {
                   <span className="prof-name">{p.name}</span>
                   <span className="prof-sub">{profileSummary(p)}</span>
                   {p.id === cleanupId && <span className="tb note">Cleanup</span>}
+                  {isBundled(p) && (
+                    <span className="tb note" title="Built into Sussurro: nothing to install or configure">Built in</span>
+                  )}
                   {keyStorageBadge(p) && (
                     <span className="ext" title="Open the profile for details">{keyStorageBadge(p)}</span>
                   )}
@@ -77,7 +82,8 @@ export function RecipesScreen({ ctl }: { ctl: Ctl }) {
               </li>
             ))}
           </ul>
-          {editing && (
+          {editing && isBundled(editing) && <BundledProfilePanel ctl={ctl} onDone={() => setEditing(null)} />}
+          {editing && !isBundled(editing) && (
             <ProfileEditor
               key={editing.id || "new"}
               ctl={ctl}

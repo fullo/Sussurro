@@ -195,6 +195,34 @@ fn server_args_bind_loopback_only_and_keep_paths_whole() {
 }
 
 #[test]
+fn chat_server_args_bind_loopback_only_with_the_alias_and_no_reasoning() {
+    let model = Path::new("/models dir/Qwen3 1.7B; echo.gguf");
+    let args = chat_server_args(model, "qwen3-1.7b", 8192, 40_001);
+    let pos = |a: &str| args.iter().position(|x| x == a).unwrap();
+    assert_eq!(args[pos("-m") + 1], model.as_os_str(), "one argument, literal");
+    assert_eq!(args[pos("--alias") + 1], "qwen3-1.7b");
+    assert_eq!(args[pos("--host") + 1], "127.0.0.1");
+    assert_eq!(args[pos("--port") + 1], "40001");
+    assert_eq!(args[pos("-c") + 1], "8192");
+    assert_eq!(args[pos("-np") + 1], "1");
+    assert_eq!(args[pos("--reasoning") + 1], "off");
+    assert!(args.iter().any(|a| a == "--no-webui"));
+    assert!(!args.iter().any(|a| a == "--mmproj" || a == "0.0.0.0"));
+
+    // The config picks the arguments by role.
+    let chat = SidecarConfig::chat("/b".into(), "/l".into(), model.into(), 8192, "qwen3-1.7b");
+    assert_eq!(chat.server_args(40_001), args);
+    assert_eq!(chat.label(), "bundled LLM");
+    let asr = SidecarConfig::new("/b".into(), "/l".into(), "/m.gguf".into(), "/p.gguf".into());
+    assert_eq!(asr.role, SidecarRole::Asr);
+    assert_eq!(asr.label(), "Qwen3-ASR");
+    assert_eq!(
+        asr.server_args(1),
+        server_args(Path::new("/m.gguf"), Path::new("/p.gguf"), 1)
+    );
+}
+
+#[test]
 fn command_runs_the_binary_directly_from_the_lib_dir() {
     let mut cfg = SidecarConfig::new(
         "/app/sussurro-llama-server".into(),
@@ -275,14 +303,32 @@ fn backoff_doubles_and_caps() {
 /// started with the `prefix_args` below, so libtest runs only
 /// [`fake_sidecar_server`], which finds `--port` among its arguments and
 /// serves. The fake's behaviour is written in the "model" file.
-fn fake_config(dir: &Path, mode: &str) -> SidecarConfig {
+pub(crate) fn fake_config(dir: &Path, mode: &str) -> SidecarConfig {
     let libs = dir.join("libs");
     std::fs::create_dir_all(&libs).unwrap();
     let model = dir.join("model.gguf");
     std::fs::write(&model, mode).unwrap();
     let mmproj = dir.join("mmproj.gguf");
     std::fs::write(&mmproj, "").unwrap();
-    let mut cfg = SidecarConfig::new(std::env::current_exe().unwrap(), libs, model, mmproj);
+    as_fake(SidecarConfig::new(std::env::current_exe().unwrap(), libs, model, mmproj), dir)
+}
+
+/// [`fake_config`] for a chat-model sidecar (#118): the fake answers
+/// `/v1/chat/completions` and `/v1/models` too. `mode` as in
+/// [`fake_sidecar_server`]; the model file is `name`, so two chat sidecars
+/// can share a folder.
+pub(crate) fn fake_chat_config(dir: &Path, name: &str, mode: &str) -> SidecarConfig {
+    let libs = dir.join("libs");
+    std::fs::create_dir_all(&libs).unwrap();
+    let model = dir.join(name);
+    std::fs::write(&model, mode).unwrap();
+    as_fake(
+        SidecarConfig::chat(std::env::current_exe().unwrap(), libs, model, 2048, "fake-chat"),
+        dir,
+    )
+}
+
+fn as_fake(mut cfg: SidecarConfig, dir: &Path) -> SidecarConfig {
     cfg.prefix_args = [
         "--exact",
         "stt::remote::tests::fake_sidecar_server",
@@ -299,8 +345,9 @@ fn fake_config(dir: &Path, mode: &str) -> SidecarConfig {
     cfg
 }
 
-/// The lifecycle tests share the process-wide registry (`kill_all`).
-fn serial() -> MutexGuard<'static, ()> {
+/// The lifecycle tests share the process-wide registry (`kill_all`) —
+/// also the bundled LLM's (`crate::llm::bundled`).
+pub(crate) fn serial() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
     lock(&LOCK)
 }
@@ -386,6 +433,39 @@ fn fake_sidecar_server() {
                     200,
                 ));
             }
+            // The chat model of the bundled LLM profile (#118).
+            (tiny_http::Method::Get, "/v1/models") => {
+                let alias = arg_after(&args, "--alias").unwrap_or_default();
+                let _ = req.respond(json(serde_json::json!({"data": [{"id": alias}]}), 200));
+            }
+            (tiny_http::Method::Post, "/v1/chat/completions") => {
+                let mut body = String::new();
+                let _ = req.as_reader().read_to_string(&mut body);
+                let crash = mode == "crash_always"
+                    || (mode == "crash_once"
+                        && !crash_marker.exists()
+                        && std::fs::write(&crash_marker, "x").is_ok());
+                if crash {
+                    std::process::exit(1);
+                }
+                if mode == "slow" {
+                    std::thread::sleep(Duration::from_secs(3));
+                }
+                let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                let last = v["messages"]
+                    .as_array()
+                    .and_then(|m| m.last())
+                    .and_then(|m| m["content"].as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let _ = req.respond(json(
+                    serde_json::json!({
+                        "model": v["model"],
+                        "choices": [{"message": {"role": "assistant", "content": last}}],
+                    }),
+                    200,
+                ));
+            }
             _ => {
                 let _ = req.respond(tiny_http::Response::empty(404));
             }
@@ -405,7 +485,7 @@ fn get_env(port: u16) -> serde_json::Value {
         .unwrap()
 }
 
-fn wait_dead(pid: u32) -> bool {
+pub(crate) fn wait_dead(pid: u32) -> bool {
     let until = Instant::now() + Duration::from_secs(5);
     while Instant::now() < until {
         if !process_alive(pid) {

@@ -11,6 +11,7 @@ import {
   SETUP_STEPS,
   STEP_TITLES,
   WHATS_NEW,
+  bundledSetupState,
   isMac,
   permissionRows,
   probeProfile,
@@ -23,6 +24,7 @@ import {
   type OnboardingMode,
   type SetupStep,
 } from "../lib/onboarding";
+import { UseBundledButton } from "../settings/BundledLlm";
 import { CleanupLevelControl } from "../settings/CleanupCard";
 import { EngineField, ModelField } from "../settings/SpeechCard";
 
@@ -491,6 +493,13 @@ function CleanupStep({ ctl }: { ctl: Ctl }) {
     );
   };
   const anyFound = Object.values(probes).some((p) => p.state === "found");
+  // #118: no server found and this build ships llama-server — offer the
+  // bundled model (only on the user's click).
+  const bundled = bundledSetupState(
+    LOCAL_SERVERS.map((s) => (probes[s.name] ?? { state: "checking" }).state),
+    ctl.bundledLlm,
+    current,
+  );
   return (
     <>
       <p className="onb-lead">
@@ -498,6 +507,34 @@ function CleanupStep({ ctl }: { ctl: Ctl }) {
         exactly what you said.
       </p>
       <ul className="onb-checks">{LOCAL_SERVERS.map(row)}</ul>
+      {bundled && (
+        <ul className="onb-checks" aria-label="Bundled model">
+          <li>
+            <StatusIcon ok={bundled === "in_use"} />
+            <div className="onb-check-text">
+              <b>Local (bundled)</b>
+              <span className="sh-muted">
+                {bundled === "in_use"
+                  ? ctl.bundledLlm?.downloaded === false
+                    ? "Selected, but its model is not downloaded yet."
+                    : "Sussurro runs a small model itself, on this computer."
+                  : "No server found: Sussurro can run a small model itself, on this computer — nothing to install."}
+              </span>
+            </div>
+            {bundled === "in_use" ? (
+              ctl.bundledLlm?.downloaded === false ? (
+                <button type="button" className="btn-ghost sh-btn" disabled={ctl.bundledBusy} onClick={() => ctl.downloadBundledModel()}>
+                  {ctl.bundledBusy ? "Downloading…" : "Download"}
+                </button>
+              ) : (
+                <span className="onb-ok">In use</span>
+              )
+            ) : (
+              <UseBundledButton ctl={ctl} />
+            )}
+          </li>
+        </ul>
+      )}
       <div className="list-actions start">
         <button type="button" className="btn-ghost sh-btn" onClick={() => setRound((r) => r + 1)}>
           Check again
@@ -507,7 +544,7 @@ function CleanupStep({ ctl }: { ctl: Ctl }) {
       <div className="field">
         <div className="field-label">
           <span>Cleanup level</span>
-          <small>{anyFound ? "Light is a good start" : "None until a server is running"}</small>
+          <small>{anyFound || bundled === "in_use" ? "Light is a good start" : "None until a server is running"}</small>
         </div>
         <CleanupLevelControl ctl={ctl} />
       </div>

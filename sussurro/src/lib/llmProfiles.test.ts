@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  BUNDLED_ID,
+  bundledNote,
+  bundledProblem,
   cleanupProfile,
   cleanupServerChanged,
   commitProfile,
+  formatGb,
   inferExternal,
+  isBundled,
+  offerBundled,
   keyStorageBadge,
   keyStorageWarning,
   mergeKeyStorage,
@@ -19,7 +25,7 @@ import {
   withApi,
   withBaseUrl,
 } from "./llmProfiles";
-import type { CredentialStoreStatus, LlmProfile, Settings } from "./types";
+import type { BundledLlmStatus, CredentialStoreStatus, LlmProfile, OllamaStatus, Settings } from "./types";
 
 const local: LlmProfile = {
   id: "local",
@@ -217,5 +223,72 @@ describe("API keys in the credential store (#159)", () => {
     expect(mergeKeyStorage(retyped, saved)).toBe(retyped);
     // Nothing to change: same object.
     expect(mergeKeyStorage(merged, saved)).toBe(merged);
+  });
+});
+
+describe("the bundled profile (#118)", () => {
+  const bundled: LlmProfile = {
+    id: BUNDLED_ID,
+    name: "Local (bundled)",
+    api: "openai",
+    base_url: "http://127.0.0.1",
+    api_key: "",
+    model: "qwen3-1.7b",
+    external: false,
+    context_tokens: 8192,
+    bundled: true,
+  };
+  const status = (over: Partial<BundledLlmStatus> = {}): BundledLlmStatus => ({
+    available: true,
+    downloaded: false,
+    running: false,
+    model: "Qwen3 1.7B",
+    download_bytes: 2_165_039_200,
+    ...over,
+  });
+  const down: OllamaStatus = { installed: false, running: false, has_model: false };
+  const up: OllamaStatus = { installed: true, running: true, has_model: true };
+
+  it("is recognised by its flag only", () => {
+    expect(isBundled(bundled)).toBe(true);
+    expect(isBundled({ ...local, id: BUNDLED_ID })).toBe(false);
+    expect(isBundled(null)).toBe(false);
+  });
+
+  it("reads as built in and local", () => {
+    expect(profileSummary(bundled)).toBe("Built into Sussurro · qwen3-1.7b · no setup needed");
+    expect(inferExternal(bundled.base_url)).toBe(false);
+    expect(formatGb(2_165_039_200)).toBe("2.2 GB");
+    expect(bundledNote(status())).toContain("No setup needed");
+    expect(bundledNote(status())).toContain("2.2 GB");
+  });
+
+  it("can't be deleted, and its id is never given to a new profile", () => {
+    const s = settings({ llm_profiles: [local, bundled] });
+    expect(removeProfile(s, BUNDLED_ID)).toBeNull();
+    // Deleting the other one leaves the built-in.
+    expect(removeProfile(s, "local")?.llm_profiles).toEqual([bundled]);
+    expect(newProfileId([local], "Bundled")).toBe("bundled-2");
+    expect(commitProfile(settings(), { ...newProfile([]), name: "Bundled", model: "m" }).profile.id).toBe("bundled-2");
+  });
+
+  it("is offered only when the cleanup server is unreachable and the build has it", () => {
+    const s = settings({ llm_profiles: [local, bundled] });
+    expect(offerBundled(s, status(), down)).toBe(true);
+    expect(offerBundled(s, status(), up)).toBe(false);
+    expect(offerBundled(s, status({ available: false }), down)).toBe(false);
+    expect(offerBundled(s, null, down)).toBe(false);
+    expect(offerBundled(s, status(), null)).toBe(false);
+    // Already on it: nothing to offer (the download problem shows instead).
+    expect(offerBundled({ ...s, cleanup_profile: BUNDLED_ID }, status(), down)).toBe(false);
+  });
+
+  it("explains why it can't run yet", () => {
+    const on = settings({ llm_profiles: [local, bundled], cleanup_profile: BUNDLED_ID });
+    expect(bundledProblem(on, status())).toContain("not downloaded");
+    expect(bundledProblem(on, status({ available: false }))).toContain("no bundled llama-server");
+    expect(bundledProblem(on, status({ downloaded: true }))).toBeNull();
+    expect(bundledProblem(settings(), status())).toBeNull();
+    expect(bundledProblem(on, null)).toBeNull();
   });
 });

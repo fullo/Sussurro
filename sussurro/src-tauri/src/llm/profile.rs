@@ -60,6 +60,17 @@ pub struct LlmProfile {
     /// profiles.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cleanup_opt_in: String,
+    /// The built-in "Local (bundled)" profile (#118): Sussurro's own
+    /// `llama-server` sidecar with a small instruct model. Its other fields
+    /// are fixed by [`crate::llm::bundled::profile`] (`Settings::normalize`
+    /// puts them back), its server address is the sidecar's loopback port
+    /// of the moment, and it is never external.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub bundled: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Where a profile's API key lives (#159).
@@ -141,6 +152,7 @@ impl LlmProfile {
             external: infer_external(base_url),
             context_tokens: 0,
             cleanup_opt_in: String::new(),
+            bundled: false,
         }
     }
 

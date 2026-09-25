@@ -4,7 +4,20 @@
    edits well-formed in the first place. */
 
 import { isLocalEndpoint, parseEndpoint } from "./endpoint";
-import type { CredentialStoreStatus, LlmApi, LlmProfile, Settings } from "./types";
+import type { BundledLlmStatus, CredentialStoreStatus, LlmApi, LlmProfile, OllamaStatus, Settings } from "./types";
+
+/** Id of the built-in "Local (bundled)" profile (llm::bundled::PROFILE_ID, #118). */
+export const BUNDLED_ID = "bundled";
+
+/** The built-in profile served by Sussurro's own llama-server (#118). */
+export function isBundled(p: LlmProfile | null | undefined): boolean {
+  return !!p?.bundled;
+}
+
+/** Download size for notes: "2.2 GB". */
+export function formatGb(bytes: number): string {
+  return `${(bytes / 1e9).toFixed(1)} GB`;
+}
 
 /** Suggested server per API: Ollama's port, llama.cpp-server's default. */
 export const DEFAULT_URLS: Record<LlmApi, string> = {
@@ -67,7 +80,8 @@ function slug(name: string): string {
 
 /** An id derived from `name`, unique among `existing`. */
 export function newProfileId(existing: LlmProfile[], name: string): string {
-  const ids = new Set(existing.map((p) => p.id));
+  // The built-in profile's id is reserved even where it isn't listed.
+  const ids = new Set([...existing.map((p) => p.id), BUNDLED_ID]);
   const base = slug(name) || "profile";
   if (!ids.has(base)) return base;
   for (let n = 2; ; n++) {
@@ -135,9 +149,11 @@ export function commitProfile(s: Settings, p: LlmProfile): { settings: Settings;
   return { settings: { ...s, llm_profiles: [...s.llm_profiles, added] }, profile: added };
 }
 
-/** Delete a profile. The last one can't go (null). Deleting the cleanup
- *  profile moves cleanup to the first remaining one. */
+/** Delete a profile. The last one and the built-in bundled one can't go
+ *  (null). Deleting the cleanup profile moves cleanup to the first
+ *  remaining one. */
 export function removeProfile(s: Settings, id: string): Settings | null {
+  if (isBundled(s.llm_profiles.find((p) => p.id === id))) return null;
   const rest = s.llm_profiles.filter((p) => p.id !== id);
   if (rest.length === 0 || rest.length === s.llm_profiles.length) return null;
   const cleanup_profile = s.cleanup_profile === id ? rest[0].id : s.cleanup_profile;
@@ -170,8 +186,42 @@ export function profileHost(p: LlmProfile): string {
 
 /** "Ollama · llama3.2:3b" / "api.example.com · gpt-4o-mini" */
 export function profileSummary(p: LlmProfile): string {
+  if (isBundled(p)) return `Built into Sussurro · ${p.model} · no setup needed`;
   const where = p.external ? profileHost(p) : p.api === "ollama" ? "Ollama" : "OpenAI-compatible";
   return p.model ? `${where} · ${p.model}` : where;
+}
+
+/* ---------- The bundled model (#118) ---------- */
+
+/** Offer "Use the bundled model": the build can run it, cleanup is not on
+ *  it already, and the cleanup profile's server can't be reached. Only an
+ *  offer — switching is always the user's click. */
+export function offerBundled(
+  s: ProfileSettings,
+  status: BundledLlmStatus | null,
+  server: OllamaStatus | null,
+): boolean {
+  if (!status?.available || !server) return false;
+  if (isBundled(cleanupProfile(s))) return false;
+  return !server.running;
+}
+
+/** Cleanup is on the bundled profile but its model isn't there yet (or
+ *  this build can't run it): what to tell the user, else null. */
+export function bundledProblem(s: ProfileSettings, status: BundledLlmStatus | null): string | null {
+  if (!status || !isBundled(cleanupProfile(s))) return null;
+  if (!status.available)
+    return "This build has no bundled llama-server, so the “Local (bundled)” profile can't run here: pick another profile.";
+  if (!status.downloaded)
+    return `The bundled model (${status.model}) is not downloaded yet: cleanup keeps the raw text until it is.`;
+  return null;
+}
+
+/** The note next to the bundled profile. */
+export function bundledNote(status: BundledLlmStatus | null): string {
+  const size = status ? ` (downloads ${formatGb(status.download_bytes)} once)` : "";
+  const model = status?.model ?? "a small model";
+  return `No setup needed: ${model} runs on this machine inside Sussurro${size}, through the same bundled llama.cpp server as Qwen3-ASR. Nothing leaves this machine.`;
 }
 
 /** Whether `model` is among the server's models, Ollama-style

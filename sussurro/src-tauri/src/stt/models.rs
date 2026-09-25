@@ -170,6 +170,36 @@ pub fn ensure_vad_model(models_dir: &Path) -> Result<PathBuf> {
 /// Download `file` from the HuggingFace `repo` into `models_dir` if missing,
 /// verified against the SHA-256 the repo publishes (fail closed). Blocking.
 fn ensure_hf_file(models_dir: &Path, repo: &str, file: &str) -> Result<PathBuf> {
+    ensure_hf_file_verified(models_dir, repo, file, None)
+}
+
+/// [`ensure_hf_file`] for a file whose SHA-256 Sussurro pins (the bundled
+/// LLM, #118): the download must match the digest the HuggingFace repo
+/// publishes *and* `pinned`, so a file replaced upstream fails closed until
+/// the app pins the new one. A file already on disk is kept as is, like
+/// every other model. Blocking.
+pub fn ensure_hf_file_pinned(
+    models_dir: &Path,
+    repo: &str,
+    file: &str,
+    pinned: &str,
+) -> Result<PathBuf> {
+    ensure_hf_file_verified(models_dir, repo, file, Some(pinned))
+}
+
+/// Whether a download whose digest is `actual` may be kept: it matches
+/// the repo's `published` one and, when set, the `pinned` one. Pure.
+pub fn digest_accepted(actual: &str, published: &str, pinned: Option<&str>) -> bool {
+    actual.eq_ignore_ascii_case(published)
+        && pinned.is_none_or(|p| actual.eq_ignore_ascii_case(p))
+}
+
+fn ensure_hf_file_verified(
+    models_dir: &Path,
+    repo: &str,
+    file: &str,
+    pinned: Option<&str>,
+) -> Result<PathBuf> {
     // settings.json is user-editable — validate before any filesystem work.
     let path = resolve_model_path(models_dir, file)?;
     if path.exists() {
@@ -195,8 +225,14 @@ fn ensure_hf_file(models_dir: &Path, repo: &str, file: &str) -> Result<PathBuf> 
     let expected = fetch_expected_sha256(&client, repo, file)
         .with_context(|| format!("verifying {file} against huggingface.co"))?;
     let actual = sha256_hex(&tmp)?;
-    if !actual.eq_ignore_ascii_case(&expected) {
+    if !digest_accepted(&actual, &expected, pinned) {
         let _ = std::fs::remove_file(&tmp);
+        let expected = match pinned {
+            Some(p) if !p.eq_ignore_ascii_case(&expected) => {
+                format!("{p}, but huggingface.co now publishes {expected}")
+            }
+            _ => expected,
+        };
         anyhow::bail!(
             "{file} SHA-256 mismatch (expected {expected}, got {actual}) — download deleted, retry"
         );
@@ -478,5 +514,46 @@ mod tests {
         assert!(sha256_from_hf_tree(HF_TREE_JSON, ".gitattributes").is_err());
         // Garbage API response.
         assert!(sha256_from_hf_tree("{not json", "ggml-base.bin").is_err());
+    }
+
+    #[test]
+    fn a_pinned_digest_must_match_the_published_one_too() {
+        let (a, b) = ("ab12", "cd34");
+        assert!(digest_accepted(a, a, None));
+        assert!(digest_accepted(a, "AB12", Some("Ab12")), "case-insensitive");
+        assert!(!digest_accepted(a, b, None), "not what the repo publishes");
+        assert!(!digest_accepted(a, a, Some(b)), "the repo changed the file");
+        assert!(!digest_accepted(b, a, Some(a)), "corrupted download");
+    }
+
+    #[test]
+    fn the_bundled_llm_pin_is_the_published_digest() {
+        // The digest the HF tree API published for the pinned file (#118),
+        // recorded when it was chosen: `ggml-org/Qwen3-1.7B-GGUF`, revision
+        // daeb8e2d.
+        let tree = r#"[
+          {"type":"file","size":1282439264,"path":"Qwen3-1.7B-Q4_K_M.gguf",
+           "lfs":{"oid":"d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5","size":1282439264}},
+          {"type":"file","size":2165039200,"path":"Qwen3-1.7B-Q8_0.gguf",
+           "lfs":{"oid":"9860780f3a1fab1f8f909a1b549ea3e62c22d19ab1a492b3a1026b38c5bd3ec3","size":2165039200}}
+        ]"#;
+        use crate::llm::bundled::{MODEL_BYTES, MODEL_FILE, MODEL_SHA256, REPO};
+        assert_eq!(REPO, "ggml-org/Qwen3-1.7B-GGUF");
+        assert_eq!(sha256_from_hf_tree(tree, MODEL_FILE).unwrap(), MODEL_SHA256);
+        assert_eq!(MODEL_BYTES, 2_165_039_200);
+        assert!(validate_model_name(MODEL_FILE).is_ok());
+    }
+
+    #[test]
+    fn ensure_bundled_llm_returns_an_existing_file_without_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = crate::llm::bundled::MODEL_FILE;
+        assert!(!crate::llm::bundled::model_exists(dir.path()));
+        std::fs::write(dir.path().join(file), b"gguf").unwrap();
+        assert!(crate::llm::bundled::model_exists(dir.path()));
+        assert_eq!(
+            crate::llm::bundled::ensure_model(dir.path()).unwrap().canonicalize().unwrap(),
+            dir.path().join(file).canonicalize().unwrap()
+        );
     }
 }
