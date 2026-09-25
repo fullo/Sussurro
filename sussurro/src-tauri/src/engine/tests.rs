@@ -868,6 +868,67 @@ fn build_segment_applies_voice_commands_before_cleanup() {
     );
 }
 
+/// Records the language each segment was cleaned with (#218).
+#[derive(Default)]
+struct DetectedCleaner(Mutex<Vec<Option<String>>>);
+
+impl Cleaner for DetectedCleaner {
+    fn clean(&self, _: Option<&str>, raw: &str) -> String {
+        self.clean_detected(None, raw, None)
+    }
+    fn clean_detected(&self, _: Option<&str>, raw: &str, detected: Option<&str>) -> String {
+        self.0.lock().unwrap().push(detected.map(str::to_string));
+        raw.to_string()
+    }
+}
+
+#[test]
+fn build_segment_gives_the_cleaner_the_detected_language() {
+    let audio = SegmentAudio {
+        start: 0,
+        samples: vec![0.0; 16_000],
+        channel: Channel::Mic,
+    };
+    let cleaner = DetectedCleaner::default();
+    for language in [Some("it"), Some(" "), None] {
+        let t = TimedTranscript {
+            text: "ehm il documento è pronto".into(),
+            language: language.map(str::to_string),
+            ..Default::default()
+        };
+        build_segment(0, Channel::Mic, &audio, t, None, false, &cleaner).unwrap();
+    }
+    // A blank language counts as not reported.
+    assert_eq!(*cleaner.0.lock().unwrap(), [Some("it".to_string()), None, None]);
+    // A cleaner without `clean_detected` still gets every segment.
+    let plain = FakeCleaner::default();
+    let t = TimedTranscript {
+        text: "ciao".into(),
+        language: Some("it".into()),
+        ..Default::default()
+    };
+    let s = build_segment(0, Channel::Mic, &audio, t, None, false, &plain).unwrap();
+    assert_eq!(s.text, "CIAO");
+}
+
+#[test]
+fn the_external_log_cleaner_forwards_the_detected_language_only_when_allowed() {
+    let inner = DetectedCleaner::default();
+    let make = |allowed: bool| ExternalLogCleaner {
+        inner: &inner,
+        archive: PathBuf::new(),
+        item_id: "x".into(),
+        entry: external_entry(),
+        logged: std::sync::Mutex::new(Some(allowed)),
+    };
+    assert_eq!(make(true).clean_detected(None, "ehm ciao", Some("it")), "ehm ciao");
+    assert_eq!(make(true).clean(None, "hello"), "hello");
+    assert_eq!(*inner.0.lock().unwrap(), [Some("it".to_string()), None]);
+    // Not recorded: nothing reaches the LLM, the raw text stays.
+    assert_eq!(make(false).clean_detected(None, "ehm ciao", Some("it")), "ehm ciao");
+    assert_eq!(inner.0.lock().unwrap().len(), 2);
+}
+
 #[test]
 fn non_speech_annotations_are_recognized() {
     for s in [

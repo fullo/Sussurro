@@ -300,6 +300,25 @@ where
     fn clean(&self, previous: Option<&str>, raw: &str) -> String {
         (self.clean)(&self.settings, previous, raw)
     }
+
+    /// A run on "auto" cleans with the language the STT detected for the
+    /// segment, so the prompt names that language's fillers (#218); a run
+    /// with a set language keeps it. Only the cleanup sees the detected
+    /// language — the run's settings are not changed.
+    fn clean_detected(&self, previous: Option<&str>, raw: &str, detected: Option<&str>) -> String {
+        let auto = {
+            let lang = self.settings.language.trim();
+            lang.is_empty() || lang.eq_ignore_ascii_case("auto")
+        };
+        match detected.map(str::trim).filter(|l| auto && !l.is_empty()) {
+            Some(lang) => {
+                let mut settings = self.settings.clone();
+                settings.language = lang.to_string();
+                (self.clean)(&settings, previous, raw)
+            }
+            None => self.clean(previous, raw),
+        }
+    }
 }
 
 /// Resolve what a run takes from the settings, once at its start: the run
@@ -1382,6 +1401,43 @@ mod tests {
         // The frontmatter records the run's language.
         let meta = start_meta(&s, ItemType::Note, "t".into(), "mic".into(), "d".into());
         assert_eq!(meta.language, "en");
+    }
+
+    /// #218: a run on "auto" cleans each segment with the language the STT
+    /// detected; a run with a set language keeps its own. The run's
+    /// settings are never changed.
+    #[test]
+    fn run_cleaner_uses_the_detected_language_only_on_auto() {
+        use crate::engine::Cleaner;
+        let seen = Mutex::new(Vec::<String>::new());
+        let clean = |s: &Settings, _: Option<&str>, raw: &str| {
+            seen.lock().unwrap().push(s.language.clone());
+            raw.to_string()
+        };
+        for (run_language, detected, expected) in [
+            ("auto", Some("it"), "it"),
+            ("", Some("en"), "en"),
+            ("AUTO", Some(" fr "), "fr"),
+            ("auto", None, "auto"),
+            ("auto", Some("  "), "auto"),
+            ("en", Some("it"), "en"),
+        ] {
+            let global = Settings {
+                language: run_language.into(),
+                ..Default::default()
+            };
+            let (settings, _stt, cleaner) =
+                run_parts(&global, &RunOptions::default(), |_: &[f32], _: &str| (), clean);
+            assert_eq!(cleaner.clean_detected(None, "x", detected), "x");
+            assert_eq!(seen.lock().unwrap().pop().unwrap(), expected, "{run_language:?} {detected:?}");
+            assert_eq!(cleaner.settings, settings, "the run's settings stay as they were");
+        }
+        // The plain `clean` uses the run's settings as they are.
+        let global = Settings { language: "auto".into(), ..Default::default() };
+        let (_, _stt, cleaner) =
+            run_parts(&global, &RunOptions::default(), |_: &[f32], _: &str| (), clean);
+        cleaner.clean(None, "x");
+        assert_eq!(seen.lock().unwrap().pop().unwrap(), "auto");
     }
 
     /// #158: the delete / line-edit commands refuse an item a running
