@@ -162,19 +162,28 @@ assume.
   voice profiles and saved audio are never served; emails only with the
   `people` scope. The extension token keeps its own routes (E6); the
   token-less `/clean`, `/transcribe`, `/history` are unchanged.
-- **E15 — Opus through libopus, Ogg through a pure-Rust muxer.** Encoder:
-  the `opus` crate 0.4 (MIT/Apache-2.0) over `opusic-sys` (BSD-3, bundles
-  libopus 1.6.1, built with CMake), or the pure-Rust `opus-rs` (BSD-3, a
-  young 0.1.x port of libopus 1.6) if it passes interop tests, which
-  removes the CMake step. Container: the `ogg` crate (BSD-3, pure Rust).
-  VOIP mode, 16 kHz mono, 24 kb/s (~11 MB per hour instead of ~115 MB).
-  Transcription keeps running on the PCM during capture; Opus is only what
-  gets stored. Decoding for replay and *Identify voices*: symphonia has no
-  Opus decoder (issue open since 2020), so the same libopus binding or
-  `opus-rs` decodes. **Playback:** WebKit plays Ogg Opus only from Safari
-  18.4, i.e. macOS 15.4, while the app supports macOS 11; so the
-  `sussurro-audio:` scheme decodes Opus and serves WAV bytes when the
-  WebView cannot play it (or always, which is simpler; spike V0-4 decides).
+- **E15 — Opus through libopus, Ogg through a pure-Rust muxer.** *Settled
+  by spike V0-4 (#238, results in 4.4).* Encoder and decoder: the `opus`
+  crate 0.4 (MIT/Apache-2.0) over `opusic-sys` 0.7 (BSD-3, bundles libopus
+  1.6.1, linked statically, built with CMake, which the app already needs
+  for whisper.cpp). Container: the `ogg` crate 0.9 (BSD-3, pure Rust).
+  VOIP mode, 16 kHz mono, 20 ms packets, VBR, complexity 10, **24 kb/s**
+  (10.7 MB per hour instead of 115 MB). One Ogg page per second, flushed to
+  the OS at each page. Transcription keeps running on the PCM during
+  capture; Opus is only what gets stored. `opus-rs` is rejected for now:
+  its VBR mode ignores the target bitrate (about 87 kb/s whatever is
+  asked), and its decoder output is 13 samples (0.8 ms) behind libopus.
+  symphonia 0.6.1 still has no Opus decoder (checked: it demuxes the Ogg
+  file, then refuses the codec), so libopus decodes for replay and
+  *Identify voices*. **Playback:** the `sussurro-audio:` scheme **always**
+  serves Opus items as a decoded 16-bit WAV, by byte range, through the
+  Ogg page index. macOS before 15.4 cannot play Ogg Opus, and macOS 11
+  (Safari 16 at most) cannot play Opus in any container. On macOS 15.4+
+  WebKit plays Ogg Opus but only estimates its duration (+2–3 % on speech,
+  up to +19 % on silence), and `ended` fires late by the same amount.
+  Serving WAV everywhere gives one code path, exact durations, the same
+  `audio/wav` content type and CSP as today, and no need for GStreamer's
+  Opus plugin on Linux.
 - **E16 — TTS runtime.** Order of preference, settled by spike V0-2:
   (a) an ONNX export through the existing `ort`, in-process (Pocket TTS and
   Chatterbox have community exports; must be SHA-256 pinned and
@@ -340,29 +349,92 @@ with a note). Live runs are unchanged.
 
 ### 4.4 Opus saved audio (0.11)
 
-| Option | Licence | Build | Verdict |
+| Option | Licence | Build | Verdict (spike V0-4, #238) |
 |---|---|---|---|
-| `opus` 0.4 + `opusic-sys` (libopus 1.6.1 bundled) | MIT/Apache-2.0 + BSD-3 | CMake on every runner | **Default choice** |
-| `audiopus` / `audiopus_sys` | ISC + BSD-3 | CMake, libopus 1.3 | Older libopus |
-| `opus-rs` (pure-Rust port of 1.6) | BSD-3 | none | Candidate if interop tests pass |
-| `ogg` 0.9 | BSD-3 | none | Ogg muxer and demuxer |
-| WebM/Matroska | – | – | Not needed for audio-only files |
+| `opus` 0.4 + `opusic-sys` 0.7.5 (libopus 1.6.1 bundled) | MIT/Apache-2.0 + BSD-3 (libopus: BSD-3 with royalty-free patent licences) | CMake, static; no runtime dependency (macOS binary links only libSystem) | **Chosen**, encoder and decoder |
+| `audiopus` / `audiopus_sys` | ISC + BSD-3 | CMake, libopus 1.3 | Older libopus, not needed |
+| `opus-rs` 0.1.34 (pure-Rust port of 1.6) | BSD-3 | none | Rejected for now: VBR ignores the bitrate (~87 kb/s); CBR works; decoder 13 samples late |
+| `ogg` 0.9.2 | BSD-3 | none | **Chosen**, muxer and demuxer |
+| symphonia 0.6.1 | MPL-2.0 | – | No Opus decoder (confirmed) |
+| WebM/Matroska | – | – | Not needed: WebM Opus would only add Safari 17.4–18.3, not macOS 11; the scheme serves WAV instead |
 
 Layout (P16): `audio.opus` or `audio-<channel>.opus`, with the same
-per-channel design and t = 0 padding as the WAV files of #141. Ogg pages
-are flushed every few seconds, so an interrupted file plays up to the last
-page (the #153 recovery learns the Ogg case). WAV stays selectable, and the
-file-name pattern accepts both. *Compress audio* converts existing WAV
-items and moves the originals to the OS trash only after the Opus file
-decodes to the same duration.
+per-channel design and t = 0 padding as the WAV files of #141. WAV stays
+selectable, and the file-name pattern accepts both. *Compress audio*
+converts existing WAV items and moves the originals to the OS trash only
+after the Opus file decodes to the same duration.
 
-Playback needs care on macOS: WebKit added Ogg Opus in Safari 18.4
-(macOS 15.4). On older macOS the scheme serves decoded PCM as WAV: either
-the range request is mapped to the Opus stream through granule positions,
-or a decoded temporary copy is cached per item while the tab is open
-(spike V0-4 picks one). Windows (WebView2) and Linux (WebKitGTK with
-GStreamer) are expected to play Ogg Opus natively; the same spike confirms
-it.
+**Writer.** 20 ms packets. The granule position counts 48 kHz samples,
+pre-skip included. Pre-skip is the encoder lookahead × 3 (104 × 3 = 312 at
+16 kHz). At the end, zeros flush the lookahead, and the last page's granule
+is `pre_skip + samples × 3` (end trimming), so decoders return exactly the
+recorded length. A page is closed every 50 packets (1 s) and the buffered
+writer is flushed then. A crash loses at most the last second: in the spike
+a writer killed with SIGKILL lost 0.1–0.8 s with 1 s pages and 4–4.9 s with
+5 s pages. The extra page headers cost 0.7 % of the file compared with
+5 s pages. An `fsync` every ~10 s covers power loss (not measured). A
+truncated file has no end-of-stream page. The spike decoder and Chromium
+play it up to the last complete page, and a cut at any of 300 offsets gave
+no hard error. The #153 recovery only needs to accept a file without EOS;
+it may drop the trailing partial page.
+
+**Reading and seeking.** A page index is built from the headers alone:
+(byte offset, end granule), 3,600 entries and about 1 ms for one hour.
+Seeking starts decoding after the last page that ends before
+`target − pre-roll`. Measured against a linear decode: with an 80 ms
+pre-roll the worst case over 200 seeks was 29.6 dB; with **200 ms** it was
+49 dB. A reader that continues from where it stopped is bit-identical to
+the linear decode.
+
+**Playback: the scheme always serves WAV.** For an `.opus` item the
+`sussurro-audio:` scheme answers range requests on a virtual
+`audio/wav` file (44-byte header plus 16-bit PCM). The byte range maps to a
+sample range, the page index finds where to start (200 ms pre-roll), and
+libopus decodes. The decoder and read position are cached per open file,
+so sequential requests from the `<audio>` element are bit-exact and cheap
+(40–60 ms per 1 MiB chunk, i.e. 33 s of audio). Random 64 KiB reads took a
+median 1.5 ms (max about 60 ms) on one hour. Reasons, from the playback
+matrix below:
+
+| WebView | Ogg Opus | WebM Opus | Notes |
+|---|---|---|---|
+| WKWebView, macOS 11–15.3 | no | no on macOS 11; yes with Safari 17.4+ (macOS 12+) | caniuse; not tested here |
+| WKWebView, macOS 15.4+ (tested on macOS 27) | plays, seeks, range requests | plays | Ogg duration is an estimate: 612.3 s for 600 s; `currentTime` runs on past the real end to the estimate, so `ended` comes about 24 s late in a 10-minute file |
+| WebView2 (tested as Chromium 152) | exact duration (granule), seeks, `ended` on time; truncated file 35.0 s | plays; unknown-length WebM has no duration | – |
+| WebKitGTK | GStreamer `oggdemux` + `opusdec` (plugins-base) | – | not tested; AppImage relies on the host's GStreamer as for WAV today |
+| any, served as WAV by the scheme | – | – | exact duration, sample-accurate seeks; WKWebView and Chromium tested |
+
+For files over 1 MiB, the current scheme answers a request without a
+`Range` header with a `206` holding only the first MiB. WebKit sends a
+`Range` header for WAV and Ogg, but it fetched WebM without one and
+stopped at 1 MiB. Serving WAV avoids the case; the scheme should still
+answer `200` with the whole body (or refuse) when there is no `Range`
+header.
+
+**Size and quality (24 kb/s recommended).** One hour of speech, 16 kHz
+mono, libopus VOIP, VBR, complexity 10, measured on this Mac (Apple
+Silicon). Encoding costs about 32 s of CPU per hour (≈ 110× real time,
+about 1 % of a core while recording); complexity 5 halves that at the same
+size. Decoding takes 1.5 s per hour.
+
+| Bitrate | MB per hour | Whisper WER EN / IT | Transcript changed vs PCM, EN / IT | WeSpeaker cos(PCM, Opus), mean / min | Same-speaker score (PCM 0.865) |
+|---|---|---|---|---|---|
+| PCM (WAV) | 115.2 | 1.56 % / 12.6 % | – | 1 | 0.865 |
+| 12 kb/s | – | 2.40 % / 14.5 % | 1.2 % / 6.6 % | 0.911 / 0.762 | 0.805 |
+| 16 kb/s | 7.2 | 1.80 % / 14.4 % | 0.8 % / 5.5 % | 0.946 / 0.847 | 0.831 |
+| **24 kb/s** | **10.7** | **1.44 % / 14.3 %** | **0.2 % / 4.2 %** | **0.975 / 0.935** | **0.851** |
+| 32 kb/s | 14.2 | 1.56 % / 14.2 % | 0.5 % / 3.2 % | 0.985 / 0.932 | 0.858 |
+
+Corpus: 73 clips, 1,866 words. English: LibriSpeech dev-clean (CC-BY-4.0,
+FLAC), 41 clips from 8 speakers. Italian: Multilingual LibriSpeech test
+(CC-BY-4.0), 32 clips from 8 speakers. The Italian sources are already
+Opus-coded, so the Italian column is a double encode and pessimistic. STT:
+whisper large-v3-turbo q5_0. Embeddings: the app's own fbank + WeSpeaker
+ResNet34-LM. Speaker identification was 73/73 correct at every bitrate in
+both directions (profiles from PCM tested on Opus, and the reverse); the
+best other speaker stays at about 0.29. 24 kb/s is where the curve
+flattens: 16 kb/s is acceptable for speech but costs embedding margin.
+12 kb/s is not recommended.
 
 ### 4.5 Text-to-speech (0.12)
 
@@ -652,8 +724,12 @@ maintainer's own voice only if he provides it.
       maintainer's blind listening test (P18). (#236)
 - [ ] **Overlap detection**: pyannote segmentation-3.0 through `ort` on AMI
       overlaps; cost; pinned SHA-256. (#237)
-- [ ] **Opus**: crate, build on three OSes, crash safety, WebView playback
+- [x] **Opus**: crate, build on three OSes, crash safety, WebView playback
       matrix (macOS < 15.4 needs a decode path), decode for re-reading. (#238)
+      Results in 4.4 and E15: libopus through `opus`/`opusic-sys`, 24 kb/s,
+      1 s pages, the scheme always serves WAV. The Windows MSVC and Linux
+      builds and the WebView2/WebKitGTK cells are checked by #247's CI and
+      the 0.11 test matrix.
 - [ ] **Teams web / Zoom web names**: desk study with the #105 method and a
       live-check checklist for #184. (#239)
 - [ ] **Marking**: AudioSeal through `ort`, detection after Opus 24 kb/s,
@@ -745,7 +821,7 @@ Track A depends on the maintainer's accounts and the stores' review times.
 | Voiceprints leak through a synced archive | Profiles in app data only (P13); `segments.json` embeddings are anonymous per-document vectors, and *Forget all voices* can also strip them from items on request |
 | Thresholds tuned on English fail on Italian | Spike V0-1 measures both before any threshold ships; thresholds are constants with the spike's numbers in the doc comment |
 | Overlap model slows long documents | Offline only ("Re-detect"), never live; cost measured in V0-3 |
-| Opus decode missing in the WebView | V0-4 matrix before the default flips; WAV fallback setting |
+| Opus decode missing in the WebView | V0-4: the scheme always serves decoded WAV, so no WebView ever sees Opus; WAV save setting stays |
 | A TTS licence turns out to be non-commercial | Licence of code **and** weights checked in V0-2; only permissive or CC-BY weights; `licenses.json` lists downloaded models |
 | GPL-3.0 phonemizer in-process ties the future commercial licence | Phonemizer in a separate process or a permissive one (E16) |
 | Italian TTS quality too low | Bake-off on an Italian corpus with the maintainer listening (V0-2); English-only engines rejected as default |
@@ -768,8 +844,9 @@ Track A depends on the maintainer's accounts and the stores' review times.
   the file and suggestions stop; archive API: every route with no token, a
   wrong token, a `read` token on a `write` route, a browser `Origin`, a
   foreign `Host`; Opus: a 60-minute recording on each OS plays in the
-  *Audio* tab, seeks, and *Identify voices* re-reads it; a crash mid-run
-  leaves a playable file; overlap: AMI clip with known overlaps, lines
+  *Audio* tab with its exact duration, seeks, and *Identify voices*
+  re-reads it; a crash mid-run leaves a playable file that loses at most
+  the last second; overlap: AMI clip with known overlaps, lines
   flagged; Teams web and Zoom web names on real calls (with #184).
 - **0.12**: every voice on the Italian and English text corpus (numbers,
   dates, abbreviations, tables); a 30-minute document on CPU-only Linux and
@@ -802,6 +879,7 @@ privacy policy page for the stores (Track A).
 | Date | Decision |
 |---|---|
 | 2026-09-25 | Maintainer starts the future track of #146; this plan drafted with P12–P23 as proposals |
+| 2026-09-25 | Spike V0-4 (#238): libopus via `opus` 0.4 / `opusic-sys` 0.7, `ogg` 0.9, 24 kb/s VOIP, 1 s pages; `opus-rs` rejected for now; the `sussurro-audio:` scheme always serves Opus items as decoded WAV |
 
 ---
 
@@ -834,7 +912,8 @@ Checked 2026-09-25. Approaches only; no code copied.
 - https://huggingface.co/pyannote/segmentation-3.0 · https://huggingface.co/onnx-community/pyannote-segmentation-3.0 · https://huggingface.co/pyannote/speaker-diarization-community-1 · https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1 · https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/ · https://huggingface.co/nvidia/Nemotron-3-Diarization · https://lib.rs/crates/parakeet-rs · https://huggingface.co/BUT-FIT/diarizen-wavlm-large-s80-md
 
 **Opus**
-- https://lib.rs/crates/opusic-sys · https://github.com/restsend/opus-rs · https://crates.io/crates/ogg · https://github.com/pdeljanov/Symphonia/issues/8 · https://webkit.org/blog/16574/webkit-features-in-safari-18-4/ · https://caniuse.com/opus
+- https://lib.rs/crates/opusic-sys · https://github.com/restsend/opus-rs · https://crates.io/crates/ogg · https://github.com/pdeljanov/Symphonia/issues/8 · https://webkit.org/blog/16574/webkit-features-in-safari-18-4/ · https://caniuse.com/opus · https://caniuse.com/webm · https://www.rfc-editor.org/rfc/rfc7845 (Ogg Opus: pre-skip, granule, end trimming, 80 ms pre-roll)
+- Spike corpora: https://huggingface.co/datasets/openslr/librispeech_asr · https://huggingface.co/datasets/facebook/multilingual_librispeech (both CC-BY-4.0) · model https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM
 
 **Teams and Zoom names**
 - https://github.com/Vexa-ai/vexa/tree/main/core/meetings/modules/teams-capture · https://github.com/Vexa-ai/vexa/tree/main/core/meetings/modules/zoom-capture · https://github.com/Vexa-ai/vexa/issues/191 · https://www.recall.ai/blog/how-to-build-a-microsoft-teams-bot · https://www.recall.ai/blog/how-to-build-a-zoom-bot
