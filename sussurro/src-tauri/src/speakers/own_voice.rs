@@ -528,7 +528,10 @@ mod tests {
         // 10 s of speech, plus at most the hangover on each edge.
         assert!((10_000..=10_400).contains(&ms), "{ms}");
         assert!(voiced(&[]).is_empty());
-        assert!(voiced(&vec![0.001; 16_000]).is_empty(), "noise under the floor");
+        assert!(
+            voiced(&vec![0.001; 16_000]).is_empty(),
+            "noise under the floor"
+        );
     }
 
     #[test]
@@ -545,7 +548,13 @@ mod tests {
     #[test]
     fn enrolment_builds_one_centroid_from_windows_of_at_most_3_s() {
         let mut emb = Fixed(0);
-        let p = enrol(&mut emb, &tone(TARGET_ENROL_MS, 0.3), None, "2026-09-25T10:00:00Z").unwrap();
+        let p = enrol(
+            &mut emb,
+            &tone(TARGET_ENROL_MS, 0.3),
+            None,
+            "2026-09-25T10:00:00Z",
+        )
+        .unwrap();
         assert_eq!(p.speech_ms, TARGET_ENROL_MS);
         assert_eq!(emb.0, 10);
         assert!(p.usable());
@@ -561,7 +570,13 @@ mod tests {
             label_as_you: false,
             ..enrol(&mut emb, &tone(30_000, 0.3), None, "t").unwrap()
         };
-        let p = enrol(&mut emb, &tone(MAX_ENROL_MS + 30_000, 0.3), Some(&prev), "t").unwrap();
+        let p = enrol(
+            &mut emb,
+            &tone(MAX_ENROL_MS + 30_000, 0.3),
+            Some(&prev),
+            "t",
+        )
+        .unwrap();
         assert_eq!(p.speech_ms, MAX_ENROL_MS);
         assert!(!p.label_as_you, "re-enrolling keeps the user's choice");
     }
@@ -640,7 +655,9 @@ mod tests {
         assert!(!label_you(&mut f, "system", &you()));
         // System audio without a separate mic: single channel.
         let mut f = room(0.9);
-        f.segments.iter_mut().for_each(|s| s.channel = Channel::System);
+        f.segments
+            .iter_mut()
+            .for_each(|s| s.channel = Channel::System);
         assert!(single_channel(&f, "system"));
         assert!(label_you(&mut f, "system", &you()));
     }
@@ -679,7 +696,10 @@ mod tests {
         let v2 = sp(&f, "voice:2");
         assert_eq!((v2.label.as_str(), v2.own_voice), ("Voice 2", Some(false)));
         assert_eq!(v2.color, voice_color(2));
-        assert!(!label_you(&mut f, "mic", &you()), "never again in this document");
+        assert!(
+            !label_you(&mut f, "mic", &you()),
+            "never again in this document"
+        );
 
         // Renaming it keeps the name; linking it to someone gives "Voice N" back
         // before the person's name.
@@ -725,7 +745,10 @@ mod tests {
         let (_tmp, s) = store();
         assert!(!s.status().enrolled);
         assert!(s.labelling_voice().is_none());
-        assert!(s.set_label_as_you(false).is_err(), "nothing to turn off yet");
+        assert!(
+            s.set_label_as_you(false).is_err(),
+            "nothing to turn off yet"
+        );
 
         let st = s.enrol(&mut Fixed(0), &tone(30_000, 0.3)).unwrap();
         assert!(st.enrolled && st.label_as_you);
