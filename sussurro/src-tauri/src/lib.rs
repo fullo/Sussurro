@@ -63,8 +63,9 @@ pub fn run() {
                 })
                 .build(),
         )
-        // Saved audio for the Audio tab's player (#142): range-served WAVs of
-        // archive items only (see archive::playback for the confinement).
+        // Saved audio for the Audio tab's player (#142): range-served WAVs
+        // (Opus decoded to WAV, #248) of archive items only (see
+        // archive::playback for the confinement).
         .register_asynchronous_uri_scheme_protocol(
             archive::playback::SCHEME,
             |ctx, request, responder| {
@@ -253,6 +254,9 @@ pub fn run() {
             commands::archive_identify_voices,
             commands::archive_delete,
             commands::archive_delete_audio,
+            commands::archive_compress_audio,
+            commands::archive_compress_cancel,
+            commands::archive_uncompressed_audio,
             commands::archive_reveal,
             commands::archive_rebuild_index,
             commands::people_list,

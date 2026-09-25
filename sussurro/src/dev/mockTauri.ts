@@ -89,7 +89,8 @@ const settings: Settings = {
   subtitles: "on_request",
   extension_token: "",
   save_audio: false,
-  saved_audio_format: "wav",
+  // #248 (P16): Opus on a new install.
+  saved_audio_format: "opus",
   // #136: `?notice=seen` skips the recording notice.
   meeting_notice_seen: params.get("notice") === "seen",
 };
@@ -171,6 +172,9 @@ const runAudioNames = (channels?: string[]): string[] => {
 /** Whether a run saves its audio: New's choice, else the per-app default. */
 const runSavesAudio = (a: Args): boolean => (a.saveAudio as boolean | undefined) ?? !!settings.save_audio;
 
+/** The running Compress audio job's cancel flag (#248), one at a time. */
+let compressCancel: { stop: boolean } | null = null;
+
 const VOICE_COLORS = ["#0f766e", "#7e22ce", "#1f6feb", "#c2410c", "#be185d", "#4d7c0f", "#0369a1", "#9a3412"];
 const voice = (n: number): DocSpeaker => ({ id: `voice:${n}`, label: `Voice ${n}`, color: VOICE_COLORS[(n - 1) % VOICE_COLORS.length] });
 
@@ -190,18 +194,21 @@ function labelVoices(s: Stored) {
 /** Mirrors engine::identify::availability (#134). */
 function voiceSource(s: Stored) {
   const file = s.meta.source.startsWith("file:") ? s.meta.source.slice(5) : "";
-  const no = (reason: string) => ({ available: false, reason, file_name: file });
+  const no = (reason: string) => ({ available: false, reason, file_name: file, saved_audio: false });
   if (s.meta.type === "note") return no("Notes are your own voice: they have no speakers.");
   if (s.meta.type === "meeting") return no("Meetings get their voices while they are recorded.");
   if (s.recording) return no("Available when the recording ends.");
   if (s.edited_externally) return no("The transcript was edited outside Sussurro.");
   if (s.voiceOf) return no("This transcription already has voice data: use Re-detect speakers.");
+  // Without the original file, the audio saved with the item (#248).
+  const saved = ["audio.wav", "audio-file.wav", "audio.opus", "audio-file.opus"].find((n) => (s.audio ?? []).some((f) => f.name === n));
+  if (saved && (s.sourceFile !== "available" || !file)) return { available: true, reason: "", file_name: saved, saved_audio: true };
   if (s.meta.source.startsWith("url:"))
     return no("Voices are found in the audio, and a link's download is deleted once it is transcribed (downloading it again is not supported yet). Transcribe the link again with Identify voices on.");
   if (!file) return no("The original audio of this transcription is not available.");
   switch (s.sourceFile) {
     case "available":
-      return { available: true, reason: "", file_name: file };
+      return { available: true, reason: "", file_name: file, saved_audio: false };
     case "missing":
       return no(`The original file “${file}” is no longer where it was transcribed from. Transcribe it again with Identify voices on.`);
     case "changed":
@@ -1619,6 +1626,63 @@ function handle(cmd: string, a: Args): unknown {
       delete s.audio;
       return toItem(s);
     }
+    case "archive_uncompressed_audio": {
+      // Mirrors archive::compress::items_with_wav (#248).
+      const withWav = items.filter((s) => (s.audio ?? []).some((f) => f.name.endsWith(".wav")));
+      const bytes = withWav.reduce((n, s) => n + (s.audio ?? []).filter((f) => f.name.endsWith(".wav")).reduce((m, f) => m + f.bytes, 0), 0);
+      return { items: withWav.length, bytes };
+    }
+    case "archive_compress_audio": {
+      // Compress audio (#248): WAV → Opus per item, progress events, cancel.
+      if (compressCancel) throw "audio is already being compressed — wait for it to finish or cancel it";
+      const targets = (a.id ? items.filter((s) => s.id === a.id) : items).filter((s) =>
+        (s.audio ?? []).some((f) => f.name.endsWith(".wav")),
+      );
+      if (a.id && !find(String(a.id))) throw `no archive item '${a.id}'`;
+      const wavBytes = (s: Stored) => (s.audio ?? []).filter((f) => f.name.endsWith(".wav")).reduce((m, f) => m + f.bytes, 0);
+      const total = targets.reduce((n, s) => n + wavBytes(s), 0);
+      const cancel = { stop: false };
+      compressCancel = cancel;
+      const summary = { items: 0, files: 0, bytes_before: 0, bytes_after: 0, cancelled: false, failed: [] as { id: string; error: string }[] };
+      return (async () => {
+        let done = 0;
+        try {
+          for (const [i, s] of targets.entries()) {
+            if (s.recording) {
+              summary.failed.push({ id: s.id, error: `'${s.id}' is still being recorded — compress its audio when the session ends` });
+              continue;
+            }
+            const size = wavBytes(s);
+            for (let step = 1; step <= 5; step++) {
+              if (cancel.stop) break;
+              await new Promise((r) => setTimeout(r, 300));
+              ev("audio-compress-progress", { item_id: s.id, done_bytes: done + (size * step) / 5, total_bytes: total, items_done: i, items_total: targets.length });
+            }
+            if (cancel.stop) {
+              summary.cancelled = true;
+              break;
+            }
+            done += size;
+            const files = (s.audio ?? []).filter((f) => f.name.endsWith(".wav"));
+            s.audio = (s.audio ?? []).map((f) =>
+              f.name.endsWith(".wav") ? { name: f.name.replace(/\.wav$/, ".opus"), bytes: Math.round((f.bytes - 44) / 32_000) * 3_000 + 4_000 } : f,
+            );
+            summary.items += 1;
+            summary.files += files.length;
+            summary.bytes_before += size;
+            summary.bytes_after += files.reduce((m, f) => m + Math.round((f.bytes - 44) / 32_000) * 3_000 + 4_000, 0);
+          }
+        } finally {
+          compressCancel = null;
+        }
+        if (a.id && summary.failed.length) throw summary.failed[0].error;
+        return summary;
+      })();
+    }
+    case "archive_compress_cancel":
+      if (!compressCancel) return false;
+      compressCancel.stop = true;
+      return true;
     case "archive_reveal":
       console.info("[mock] reveal", a.id ?? ARCHIVE);
       return null;

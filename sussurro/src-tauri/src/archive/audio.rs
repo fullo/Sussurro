@@ -82,12 +82,11 @@ pub const MAX_SAMPLES: u64 = MAX_DATA_BYTES / 2;
 #[serde(rename_all = "lowercase")]
 pub enum AudioFormat {
     /// Mono 16-bit PCM, 16 kHz (about 115 MB per hour).
-    ///
-    /// The default until the app plays Opus everywhere (#248): P16 makes
-    /// Opus the default then, and only this attribute moves.
-    #[default]
     Wav,
-    /// Ogg Opus, mono, 24 kb/s (about 11 MB per hour).
+    /// Ogg Opus, mono, 24 kb/s (about 11 MB per hour): the default for new
+    /// installs since the app plays it everywhere (#248, P16). A settings
+    /// file from before the setting keeps WAV ([`crate::settings`]).
+    #[default]
     Opus,
 }
 
@@ -139,7 +138,9 @@ pub fn is_audio_file_name(name: &str) -> bool {
             .is_some_and(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_lowercase()))
 }
 
-fn header(data_bytes: u32) -> [u8; HEADER_LEN as usize] {
+/// The canonical 44-byte header of a mono 16-bit 16 kHz WAV holding
+/// `data_bytes` of samples.
+pub(crate) fn header(data_bytes: u32) -> [u8; HEADER_LEN as usize] {
     let mut h = [0u8; HEADER_LEN as usize];
     h[0..4].copy_from_slice(b"RIFF");
     h[4..8].copy_from_slice(&(36u32.wrapping_add(data_bytes)).to_le_bytes());
@@ -156,6 +157,19 @@ fn header(data_bytes: u32) -> [u8; HEADER_LEN as usize] {
     h
 }
 
+/// Whether `h` is the canonical header [`WavWriter`] writes (mono 16-bit
+/// 16 kHz PCM, `data` right after `fmt `), whatever its sizes say.
+pub(crate) fn is_our_header(h: &[u8; HEADER_LEN as usize]) -> bool {
+    &h[0..4] == b"RIFF"
+        && &h[8..16] == b"WAVEfmt "
+        && h[16..20] == 16u32.to_le_bytes()
+        && h[20..22] == 1u16.to_le_bytes()
+        && h[22..24] == 1u16.to_le_bytes()
+        && h[24..28] == RATE.to_le_bytes()
+        && h[34..36] == 16u16.to_le_bytes()
+        && &h[36..40] == b"data"
+}
+
 /// Write the two size fields of a canonical header in place.
 fn patch_sizes(file: &mut File, data_bytes: u64) -> std::io::Result<()> {
     let data = u32::try_from(data_bytes).unwrap_or(u32::MAX);
@@ -167,7 +181,7 @@ fn patch_sizes(file: &mut File, data_bytes: u64) -> std::io::Result<()> {
 }
 
 /// f32 in [-1, 1] → 16-bit PCM (clamped).
-fn to_i16(s: f32) -> i16 {
+pub(crate) fn to_i16(s: f32) -> i16 {
     (s.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
 }
 
@@ -397,15 +411,7 @@ pub fn repair(path: &Path) -> Result<u64> {
     }
     let mut h = [0u8; HEADER_LEN as usize];
     file.read_exact(&mut h)?;
-    let ours = &h[0..4] == b"RIFF"
-        && &h[8..16] == b"WAVEfmt "
-        && h[16..20] == 16u32.to_le_bytes()
-        && h[20..22] == 1u16.to_le_bytes()
-        && h[22..24] == 1u16.to_le_bytes()
-        && h[24..28] == RATE.to_le_bytes()
-        && h[34..36] == 16u16.to_le_bytes()
-        && &h[36..40] == b"data";
-    if !ours {
+    if !is_our_header(&h) {
         bail!("{} is not a WAV written by Sussurro", path.display());
     }
     let data = ((len - HEADER_LEN) & !1).min(MAX_DATA_BYTES);
@@ -905,7 +911,8 @@ mod tests {
 
     #[test]
     fn format_setting_serializes_in_lowercase() {
-        assert_eq!(AudioFormat::default(), AudioFormat::Wav);
+        // P16 (#248): Opus for new installs.
+        assert_eq!(AudioFormat::default(), AudioFormat::Opus);
         assert_eq!(serde_json::to_value(AudioFormat::Opus).unwrap(), "opus");
         let f: AudioFormat = serde_json::from_str("\"wav\"").unwrap();
         assert_eq!(f, AudioFormat::Wav);

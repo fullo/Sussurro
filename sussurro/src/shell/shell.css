@@ -700,6 +700,10 @@ button.pchip-name:hover { text-decoration: underline; }
   color: var(--c-dark);
 }
 .audio-bar .push { margin-left: auto; }
+/* Compress audio (#248): the item's progress in the audio bar. */
+.compress-run { display: inline-flex; align-items: center; gap: 6px; }
+.compress-run .progress { width: 120px; }
+.field .row-gap .progress { width: 160px; }
 .audio-badge {
   display: inline-flex;
   align-items: center;

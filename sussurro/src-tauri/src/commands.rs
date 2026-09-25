@@ -1790,9 +1790,171 @@ pub async fn archive_delete_audio(state: State<'_, AppState>, id: String) -> Res
     .await
 }
 
+/// Progress of *Compress audio* (#248), event `audio-compress-progress`:
+/// WAV bytes processed out of the job's total, and items done.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CompressProgress {
+    /// The item being compressed.
+    pub item_id: String,
+    pub done_bytes: u64,
+    pub total_bytes: u64,
+    pub items_done: usize,
+    pub items_total: usize,
+}
+
+/// An item *Compress all* could not convert (its WAV files stay).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CompressFailure {
+    pub id: String,
+    pub error: String,
+}
+
+/// What a *Compress audio* job did.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct CompressSummary {
+    /// Items with at least one file converted.
+    pub items: usize,
+    pub files: usize,
+    pub bytes_before: u64,
+    pub bytes_after: u64,
+    pub cancelled: bool,
+    pub failed: Vec<CompressFailure>,
+}
+
+/// Saved WAV audio in the archive, for Settings → Archive (#248).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UncompressedAudio {
+    pub items: usize,
+    pub bytes: u64,
+}
+
+/// How much saved audio in the archive is still WAV (*Compress all*).
+#[tauri::command]
+pub async fn archive_uncompressed_audio(
+    state: State<'_, AppState>,
+) -> Result<UncompressedAudio, String> {
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || {
+        let items = archive::compress::items_with_wav(&dir);
+        Ok(UncompressedAudio {
+            items: items.len(),
+            bytes: items.iter().map(|(_, b)| b).sum(),
+        })
+    })
+    .await
+}
+
+/// *Compress audio* (#248, P16): the saved WAV files of item `id` — or,
+/// without an id, of every item — become Ogg Opus, each verified before
+/// its WAV goes to the OS trash ([`archive::compress`]). Emits
+/// `audio-compress-progress`; [`archive_compress_cancel`] stops it
+/// between blocks. Items a session is writing are skipped (reported as
+/// failed). One job at a time. For one item, a failure is the error.
+#[tauri::command]
+pub async fn archive_compress_audio(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: Option<String>,
+) -> Result<CompressSummary, String> {
+    use tauri::Emitter;
+    let (dir, db) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
+    let job = archive::compress::Job::begin().map_err(|e| format!("{e:#}"))?;
+    let single = id.is_some();
+    let summary = blocking(move || {
+        let targets: Vec<(String, u64)> = match id {
+            Some(id) => {
+                let item = archive::paths::item_dir(&dir, &id)?;
+                vec![(id, archive::compress::wav_bytes(&item))]
+            }
+            None => archive::compress::items_with_wav(&dir),
+        };
+        let total_bytes: u64 = targets.iter().map(|(_, b)| b).sum();
+        let items_total = targets.len();
+        let mut summary = CompressSummary::default();
+        let mut before_item = 0u64;
+        for (i, (item_id, bytes)) in targets.iter().enumerate() {
+            if job.cancel_flag().load(std::sync::atomic::Ordering::Relaxed) {
+                summary.cancelled = true;
+                break;
+            }
+            let emit = |done_bytes: u64| {
+                let _ = app.emit(
+                    "audio-compress-progress",
+                    CompressProgress {
+                        item_id: item_id.clone(),
+                        done_bytes,
+                        total_bytes,
+                        items_done: i,
+                        items_total,
+                    },
+                );
+            };
+            emit(before_item);
+            let (mut done, mut shown) = (0u64, 0u64);
+            let result = crate::engine::session::ensure_not_live(&journal, &dir, item_id)
+                .and_then(|_| {
+                    archive::compress::compress_item(&dir, item_id, job.cancel_flag(), &mut |b| {
+                        done += b;
+                        // A few updates per item, not one per block.
+                        if done - shown >= 4 * 1024 * 1024 {
+                            shown = done;
+                            emit(before_item + done.min(*bytes));
+                        }
+                    })
+                });
+            before_item += bytes;
+            match result {
+                Ok(c) => {
+                    if c.files > 0 {
+                        summary.items += 1;
+                        summary.files += c.files;
+                        summary.bytes_before += c.bytes_before;
+                        summary.bytes_after += c.bytes_after;
+                        reindex(&dir, &db, |idx| idx.index_item(item_id));
+                    }
+                    if c.cancelled {
+                        summary.cancelled = true;
+                        break;
+                    }
+                }
+                Err(e) => summary.failed.push(CompressFailure {
+                    id: item_id.clone(),
+                    error: format!("{e:#}"),
+                }),
+            }
+        }
+        let _ = app.emit(
+            "audio-compress-progress",
+            CompressProgress {
+                item_id: String::new(),
+                done_bytes: before_item.min(total_bytes),
+                total_bytes,
+                items_done: items_total,
+                items_total,
+            },
+        );
+        drop(job);
+        Ok(summary)
+    })
+    .await?;
+    match summary.failed.first() {
+        Some(f) if single => Err(f.error.clone()),
+        _ => Ok(summary),
+    }
+}
+
+/// Stop the running *Compress audio* job (the file in progress stays
+/// WAV). False when none runs.
+#[tauri::command]
+pub fn archive_compress_cancel() -> bool {
+    archive::compress::cancel()
+}
+
 /// One request of the saved-audio scheme (#142, [`archive::playback`]):
-/// the Audio tab's `<audio>` element streams an item's WAV through it, with
-/// range support. Only the main window may use it.
+/// the Audio tab's `<audio>` element streams an item's audio through it as
+/// a WAV (Opus files decoded, #248), with range support. Only the main
+/// window may use it.
 pub fn serve_audio(
     app: &AppHandle,
     webview: &str,

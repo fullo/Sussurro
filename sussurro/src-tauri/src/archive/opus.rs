@@ -471,6 +471,483 @@ pub fn repair(path: &Path) -> Result<u64> {
     Ok(last.granule.saturating_sub(pre_skip) / GRANULE_PER_SAMPLE)
 }
 
+// ---- reading and seeking (#248) --------------------------------------------
+
+/// Decoding restarts this many samples before a seek target: 200 ms, where
+/// spike V0-4 measured 49 dB against a linear decode (80 ms gave 29.6 dB).
+pub const PRE_ROLL: u64 = RATE as u64 / 5;
+/// A seek at most this far ahead decodes forward instead of restarting:
+/// cheaper than a restart (which decodes the pre-roll plus up to a page)
+/// and bit-exact with a linear decode.
+const FORWARD_SLACK: u64 = 2 * RATE as u64;
+/// Decoder output room: the longest Opus packet (120 ms) at 48 kHz, more
+/// than enough at 16 kHz.
+const MAX_DECODED: usize = 5_760;
+
+/// One page of the stream's audio, as the index keeps it.
+#[derive(Debug, Clone, Copy)]
+struct IndexedPage {
+    offset: u64,
+    len: u64,
+    /// Samples decoded from the start of the stream (16 kHz, pre-skip
+    /// included) once this page's packets are; `None` when no packet ends
+    /// on the page.
+    end: Option<u64>,
+    /// Its first packet began on the page before.
+    continued: bool,
+}
+
+/// A page header read during the index scan (body not read, not checked).
+struct RawHeader {
+    flags: u8,
+    granule: u64,
+    serial: u32,
+    lacing: Vec<u8>,
+}
+
+impl RawHeader {
+    fn body_len(&self) -> u64 {
+        self.lacing.iter().map(|&l| l as u64).sum()
+    }
+
+    fn len(&self) -> u64 {
+        (PAGE_HEADER + self.lacing.len()) as u64 + self.body_len()
+    }
+}
+
+/// The next page header, or `None` at the end of the file or on anything
+/// that is not a page.
+fn read_raw_header<R: Read>(r: &mut R) -> Option<RawHeader> {
+    let mut h = [0u8; PAGE_HEADER];
+    r.read_exact(&mut h).ok()?;
+    if &h[0..4] != b"OggS" || h[4] != 0 {
+        return None;
+    }
+    let mut lacing = vec![0u8; h[26] as usize];
+    r.read_exact(&mut lacing).ok()?;
+    Some(RawHeader {
+        flags: h[5],
+        granule: u64::from_le_bytes(h[6..14].try_into().ok()?),
+        serial: u32::from_le_bytes(h[14..18].try_into().ok()?),
+        lacing,
+    })
+}
+
+/// The packets of a page body by its lacing: `(bytes, ends on this page)`.
+fn split_packets<'a>(lacing: &[u8], body: &'a [u8]) -> Vec<(&'a [u8], bool)> {
+    let mut out = Vec::new();
+    let (mut from, mut at) = (0usize, 0usize);
+    for &l in lacing {
+        at += l as usize;
+        if l < 255 {
+            out.push((&body[from..at.min(body.len())], true));
+            from = at;
+        }
+    }
+    if from < at {
+        out.push((&body[from..at.min(body.len())], false));
+    }
+    out
+}
+
+/// The `OpusHead` of any mono or stereo Ogg Opus stream (channel mapping
+/// family 0, RFC 7845 §5.1): its pre-skip (48 kHz samples) and output gain
+/// (Q7.8 dB). Stereo streams are decoded to mono by libopus.
+fn parse_head_any(packet: &[u8]) -> Option<(u64, i16)> {
+    (packet.len() >= 19
+        && &packet[0..8] == b"OpusHead"
+        && packet[8] & 0xF0 == 0
+        && matches!(packet[9], 1 | 2)
+        && packet[18] == 0)
+        .then(|| {
+            (
+                u16::from_le_bytes([packet[10], packet[11]]) as u64,
+                i16::from_le_bytes([packet[16], packet[17]]),
+            )
+        })
+}
+
+/// Reads an Ogg Opus file as 16 kHz mono samples, with seeking — what the
+/// `sussurro-audio:` scheme serves as a WAV (#248, E15) and what re-reads
+/// saved audio (Identify voices).
+///
+/// **Positions** are sample indices of the trimmed stream: pre-skip
+/// dropped, end trimmed to the last granule, so sample `i` is sample `i` of
+/// what was recorded and [`Self::total_samples`] is its exact length.
+///
+/// **Index**: opening scans the page headers only (offset, end granule;
+/// about 1 ms and 3,600 entries for an hour). A seek decodes from the page
+/// that ends at least [`PRE_ROLL`] before the target, with the decoder
+/// reset; reading on from where the reader stopped (or seeking up to
+/// 2 s ahead) goes on decoding, bit-exact with a linear decode.
+///
+/// **Damage**: a page with a bad checksum is skipped (the decoder resets)
+/// and audio that can't be decoded reads as silence, so a reader always
+/// returns exactly `total_samples` samples; [`Self::filled`] says how many
+/// were silence put in.
+///
+/// The file is opened only while pages are being read and can be closed
+/// between reads ([`Self::close`]): a reader kept in a cache never holds
+/// the file open (Windows can't move a folder with an open file).
+pub struct OpusReader {
+    path: PathBuf,
+    file: Option<File>,
+    serial: u32,
+    pages: Vec<IndexedPage>,
+    /// Pre-skip, in 16 kHz samples.
+    pre: u64,
+    total: u64,
+    dec: opus::Decoder,
+    /// The next page to read, as an index into `pages`.
+    next_page: usize,
+    packets: std::collections::VecDeque<Vec<u8>>,
+    /// A packet that goes on in the next page.
+    partial: Option<Vec<u8>>,
+    /// Stream position (from the first decoded sample, pre-skip included)
+    /// of the decoder's next output sample.
+    k: u64,
+    /// Trimmed position of the next sample [`Self::read`] returns.
+    t: u64,
+    /// Decoded samples not returned yet: `buf[buf_at..]` start at `t`.
+    buf: Vec<f32>,
+    buf_at: usize,
+    scratch: Vec<f32>,
+    filled: u64,
+}
+
+impl OpusReader {
+    /// Open `path` and index its pages. Fails for anything but a mono or
+    /// stereo Ogg Opus stream with whole headers.
+    pub fn open(path: &Path) -> Result<Self> {
+        let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+        let file_len = file.metadata()?.len();
+        let not_opus = || anyhow::anyhow!("{} is not an Ogg Opus file", path.display());
+        let mut r = BufReader::with_capacity(64 * 1024, file);
+        // The identification header: a page of its own.
+        let first = read_raw_header(&mut r).ok_or_else(not_opus)?;
+        if first.flags & FLAG_BOS == 0 || first.lacing.last().is_none_or(|&l| l == 255) {
+            return Err(not_opus());
+        }
+        let mut head = vec![0u8; first.body_len() as usize];
+        r.read_exact(&mut head).map_err(|_| not_opus())?;
+        let (pre_skip, gain) = parse_head_any(&head).ok_or_else(not_opus)?;
+        let serial = first.serial;
+        let mut offset = first.len();
+        // The comment header, over one or more pages: it ends on the first
+        // page with a lacing value under 255, and audio starts on a new page.
+        loop {
+            let h = read_raw_header(&mut r)
+                .filter(|h| offset + h.len() <= file_len)
+                .with_context(|| format!("{} ends inside its headers", path.display()))?;
+            r.seek_relative(h.body_len() as i64)?;
+            offset += h.len();
+            if h.serial == serial && h.lacing.iter().any(|&l| l < 255) {
+                break;
+            }
+        }
+        // Audio pages: headers only, except the first page's packets (the
+        // stream may start after granule 0, RFC 7845 §4.5).
+        let mut raw: Vec<(IndexedPage, u64)> = Vec::new();
+        let mut start48 = 0u64;
+        while let Some(h) = read_raw_header(&mut r) {
+            let len = h.len();
+            if offset + len > file_len {
+                break; // a torn last page
+            }
+            if h.serial != serial {
+                r.seek_relative(h.body_len() as i64)?;
+                offset += len;
+                continue;
+            }
+            if raw.is_empty() {
+                let mut body = vec![0u8; h.body_len() as usize];
+                r.read_exact(&mut body)?;
+                if h.granule != u64::MAX {
+                    let samples: u64 = split_packets(&h.lacing, &body)
+                        .iter()
+                        .filter(|(_, whole)| *whole)
+                        .filter_map(|(p, _)| opus::packet::get_nb_samples(p, 48_000).ok())
+                        .map(|n| n as u64)
+                        .sum();
+                    start48 = h.granule.saturating_sub(samples);
+                }
+            } else {
+                r.seek_relative(h.body_len() as i64)?;
+            }
+            raw.push((
+                IndexedPage {
+                    offset,
+                    len,
+                    end: None,
+                    continued: h.flags & 0x01 != 0,
+                },
+                h.granule,
+            ));
+            offset += len;
+            if h.flags & FLAG_EOS != 0 {
+                break;
+            }
+        }
+        let pages: Vec<IndexedPage> = raw
+            .into_iter()
+            .map(|(p, granule)| IndexedPage {
+                end: (granule != u64::MAX)
+                    .then(|| granule.saturating_sub(start48) / GRANULE_PER_SAMPLE),
+                ..p
+            })
+            .collect();
+        let pre = pre_skip / GRANULE_PER_SAMPLE;
+        let total = pages
+            .iter()
+            .rev()
+            .find_map(|p| p.end)
+            .unwrap_or(0)
+            .saturating_sub(pre);
+        let mut dec = opus::Decoder::new(RATE, opus::Channels::Mono)
+            .context("starting the Opus decoder")?;
+        if gain != 0 {
+            dec.set_gain(gain as i32)?;
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            file: None,
+            serial,
+            pages,
+            pre,
+            total,
+            dec,
+            next_page: 0,
+            packets: Default::default(),
+            partial: None,
+            k: 0,
+            t: 0,
+            buf: Vec::new(),
+            buf_at: 0,
+            scratch: vec![0f32; MAX_DECODED],
+            filled: 0,
+        })
+    }
+
+    /// Length of the stream in 16 kHz samples (trimmed: what was recorded).
+    pub fn total_samples(&self) -> u64 {
+        self.total
+    }
+
+    /// Position of the next sample [`Self::read`] returns.
+    pub fn position(&self) -> u64 {
+        self.t
+    }
+
+    /// Samples read as silence because they could not be decoded.
+    pub fn filled(&self) -> u64 {
+        self.filled
+    }
+
+    /// Close the file until the next read needs it.
+    pub fn close(&mut self) {
+        self.file = None;
+    }
+
+    /// Move to sample `t` (clamped to the end). See the type docs for when
+    /// this restarts the decoder.
+    pub fn seek(&mut self, t: u64) -> Result<()> {
+        let t = t.min(self.total);
+        if t >= self.t && t - self.t <= FORWARD_SLACK {
+            // Forward: through what is decoded, then by decoding on (the
+            // samples before `t` are dropped as they come).
+            let ahead = (t - self.t) as usize;
+            let buffered = self.buf.len() - self.buf_at;
+            if ahead <= buffered {
+                self.buf_at += ahead;
+            } else {
+                self.buf.clear();
+                self.buf_at = 0;
+            }
+            self.t = t;
+            return Ok(());
+        }
+        let from = (t + self.pre).saturating_sub(PRE_ROLL);
+        // The last page that ends before the pre-roll starts and is
+        // followed by a page starting on a whole packet.
+        let restart = (0..self.pages.len()).rev().find(|&i| {
+            self.pages[i].end.is_some_and(|e| e <= from)
+                && self.pages.get(i + 1).is_some_and(|n| !n.continued)
+        });
+        (self.next_page, self.k) = match restart {
+            Some(i) => (i + 1, self.pages[i].end.unwrap_or(0)),
+            None => (0, 0),
+        };
+        self.dec.reset_state()?;
+        self.packets.clear();
+        self.partial = None;
+        self.buf.clear();
+        self.buf_at = 0;
+        self.t = t;
+        Ok(())
+    }
+
+    /// Append up to `max` samples from the current position to `out`;
+    /// returns how many (0 at the end).
+    pub fn read(&mut self, out: &mut Vec<f32>, max: usize) -> Result<usize> {
+        let want = (max as u64).min(self.total - self.t) as usize;
+        let mut n = 0;
+        while n < want {
+            if self.buf_at < self.buf.len() {
+                let take = (want - n).min(self.buf.len() - self.buf_at);
+                out.extend_from_slice(&self.buf[self.buf_at..self.buf_at + take]);
+                self.buf_at += take;
+                self.t += take as u64;
+                n += take;
+            } else if !self.decode_next()? {
+                // The stream ended early: silence up to its announced end.
+                let rest = want - n;
+                out.resize(out.len() + rest, 0.0);
+                self.t += rest as u64;
+                self.filled += rest as u64;
+                n = want;
+            }
+        }
+        Ok(n)
+    }
+
+    /// Decode packets until some output falls at or after `t`; false when
+    /// the stream has no more packets.
+    fn decode_next(&mut self) -> Result<bool> {
+        let tk = self.t + self.pre;
+        loop {
+            let Some(packet) = self.next_packet()? else {
+                return Ok(false);
+            };
+            let got = match self.dec.decode_float(&packet, &mut self.scratch, false) {
+                Ok(n) => n,
+                Err(_) => {
+                    // A damaged packet: its length in silence, decoder reset.
+                    self.dec.reset_state()?;
+                    let n = opus::packet::get_nb_samples(&packet, RATE).unwrap_or(0);
+                    self.scratch[..n.min(MAX_DECODED)].fill(0.0);
+                    n.min(MAX_DECODED)
+                }
+            };
+            let start = self.k;
+            self.k += got as u64;
+            if self.k <= tk {
+                continue;
+            }
+            self.buf.clear();
+            self.buf_at = 0;
+            if start > tk {
+                // A gap (a skipped page) before this packet: silence.
+                let gap = (start - tk) as usize;
+                self.buf.resize(gap, 0.0);
+                self.filled += gap as u64;
+                self.buf.extend_from_slice(&self.scratch[..got]);
+            } else {
+                self.buf
+                    .extend_from_slice(&self.scratch[(tk - start) as usize..got]);
+            }
+            return Ok(true);
+        }
+    }
+
+    /// The next whole packet of the stream, reading pages as needed.
+    fn next_packet(&mut self) -> Result<Option<Vec<u8>>> {
+        loop {
+            if let Some(p) = self.packets.pop_front() {
+                return Ok(Some(p));
+            }
+            let Some(&page) = self.pages.get(self.next_page) else {
+                return Ok(None);
+            };
+            self.next_page += 1;
+            let Some((lacing, body)) = self.read_page(page)? else {
+                // A damaged page: its packets are lost; the next page
+                // starts where it ended.
+                self.partial = None;
+                if let Some(end) = page.end.filter(|&e| e > self.k) {
+                    self.k = end;
+                }
+                self.dec.reset_state()?;
+                continue;
+            };
+            let mut partial = self.partial.take();
+            for (i, (bytes, whole)) in split_packets(&lacing, &body).into_iter().enumerate() {
+                let mut packet = if i == 0 && page.continued {
+                    match partial.take() {
+                        Some(mut p) => {
+                            p.extend_from_slice(bytes);
+                            p
+                        }
+                        // The packet's start was not read (a seek, a lost
+                        // page): drop the rest of it.
+                        None => continue,
+                    }
+                } else {
+                    bytes.to_vec()
+                };
+                if whole {
+                    self.packets.push_back(std::mem::take(&mut packet));
+                } else {
+                    self.partial = Some(packet);
+                }
+            }
+        }
+    }
+
+    /// A whole page of ours, checksum verified: `(lacing, body)`; `None`
+    /// when it is damaged.
+    fn read_page(&mut self, page: IndexedPage) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        if self.file.is_none() {
+            self.file = Some(
+                File::open(&self.path)
+                    .with_context(|| format!("opening {}", self.path.display()))?,
+            );
+        }
+        let file = self.file.as_mut().expect("opened above");
+        let mut bytes = vec![0u8; page.len as usize];
+        file.seek(SeekFrom::Start(page.offset))?;
+        if file.read_exact(&mut bytes).is_err() {
+            return Ok(None); // the file shrank
+        }
+        let segments = bytes[26] as usize;
+        if &bytes[0..4] != b"OggS"
+            || bytes[14..18] != self.serial.to_le_bytes()
+            || PAGE_HEADER + segments > bytes.len()
+        {
+            return Ok(None);
+        }
+        let stored = u32::from_le_bytes(bytes[22..26].try_into()?);
+        bytes[22..26].fill(0);
+        if ogg_crc(&bytes) != stored {
+            return Ok(None);
+        }
+        let body = bytes.split_off(PAGE_HEADER + segments);
+        let lacing = bytes.split_off(PAGE_HEADER);
+        Ok(Some((lacing, body)))
+    }
+}
+
+/// Decode `path` through to the end and check that every sample decoded:
+/// the length in samples of a sound Ogg Opus file (the check before a WAV
+/// is replaced by its Opus copy, #248).
+pub fn verify(path: &Path) -> Result<u64> {
+    let mut r = OpusReader::open(path)?;
+    let mut buf = Vec::with_capacity(RATE as usize);
+    loop {
+        buf.clear();
+        if r.read(&mut buf, RATE as usize)? == 0 {
+            break;
+        }
+    }
+    if r.filled() > 0 {
+        bail!(
+            "{}: {} samples could not be decoded",
+            path.display(),
+            r.filled()
+        );
+    }
+    Ok(r.total_samples())
+}
+
 /// Decode a whole file with libopus (tests; playback is #248): 16 kHz mono
 /// samples with the pre-skip dropped and the end trimmed to the last
 /// granule — what any conforming player returns — and whether the stream
@@ -747,5 +1224,164 @@ mod tests {
             assert!(repair(&path).is_err());
             assert_eq!(std::fs::read(&path).unwrap(), junk);
         }
+    }
+
+    // ---- reader (#248) ----
+
+    /// A finished file of `seconds` of the test voice with a silent gap.
+    pub(crate) fn written(dir: &Path, name: &str, samples: usize) -> PathBuf {
+        let path = dir.join(name);
+        let mut w = OpusWriter::create_capped(&path, u64::MAX).unwrap();
+        w.write(&voice(samples, 0)).unwrap();
+        w.finish().unwrap();
+        path
+    }
+
+    fn read_all(r: &mut OpusReader, chunk: usize) -> Vec<f32> {
+        let mut out = Vec::new();
+        while r.read(&mut out, chunk).unwrap() > 0 {}
+        out
+    }
+
+    /// Signal-to-noise ratio of `got` against `want`, in dB.
+    fn snr(want: &[f32], got: &[f32]) -> f64 {
+        let s: f64 = want.iter().map(|&x| (x as f64).powi(2)).sum();
+        let n: f64 = want
+            .iter()
+            .zip(got)
+            .map(|(&a, &b)| (a as f64 - b as f64).powi(2))
+            .sum();
+        10.0 * (s / n.max(1e-20)).log10()
+    }
+
+    #[test]
+    fn reader_matches_a_full_decode_exactly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = written(dir.path(), "audio.opus", 7 * RATE as usize + 1_234);
+        let (full, _) = decode_file(&path).unwrap();
+        let mut r = OpusReader::open(&path).unwrap();
+        assert_eq!(r.total_samples(), full.len() as u64);
+        assert_eq!(r.total_samples(), 7 * RATE as u64 + 1_234);
+        // Uneven reads, as the scheme's byte ranges make them.
+        for chunk in [1usize, 7, 1_000, 16_001] {
+            let mut r = OpusReader::open(&path).unwrap();
+            assert_eq!(read_all(&mut r, chunk), full, "chunk {chunk}");
+            assert_eq!(r.filled(), 0);
+            assert_eq!(r.position(), full.len() as u64);
+        }
+        assert_eq!(verify(&path).unwrap(), full.len() as u64);
+        // Reading continues across a close (the scheme's cache closes the
+        // file between requests).
+        let mut out = Vec::new();
+        r.read(&mut out, 40_000).unwrap();
+        r.close();
+        while r.read(&mut out, 9_999).unwrap() > 0 {
+            r.close();
+        }
+        assert_eq!(out, full);
+    }
+
+    #[test]
+    fn seeks_land_on_the_exact_sample() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = written(dir.path(), "audio-mic.opus", 12 * RATE as usize + 77);
+        let (full, _) = decode_file(&path).unwrap();
+        let total = full.len() as u64;
+        let mut r = OpusReader::open(&path).unwrap();
+        let mut worst = f64::INFINITY;
+        // Backwards, far ahead, near the start, on and near page edges.
+        for t in [
+            9 * RATE as u64 + 5,
+            1_000,
+            RATE as u64 - 1,
+            4 * RATE as u64,
+            11 * RATE as u64 + 3_000,
+            2 * RATE as u64 + 17,
+            0,
+            total - 100,
+        ] {
+            r.seek(t).unwrap();
+            assert_eq!(r.position(), t);
+            let mut got = Vec::new();
+            let n = r.read(&mut got, 8_000).unwrap();
+            assert_eq!(n as u64, 8_000.min(total - t), "at {t}");
+            let want = &full[t as usize..t as usize + n];
+            if t < PRE_ROLL {
+                // Restarted from the first page: exactly a linear decode.
+                assert_eq!(got, want, "at {t}");
+            } else {
+                worst = worst.min(snr(want, &got));
+            }
+        }
+        // The spike measured 49 dB on speech; on this synthetic sweep libopus
+        // builds differ a little per platform (34.9 dB on Linux x86-64). A
+        // wrong position would be near 0 dB.
+        assert!(worst > 30.0, "worst seek {worst:.1} dB");
+        // A short seek ahead decodes on: still bit-exact.
+        let mut r = OpusReader::open(&path).unwrap();
+        let mut got = Vec::new();
+        r.read(&mut got, 5_000).unwrap();
+        r.seek(5_000 + 20_000).unwrap();
+        got.clear();
+        r.read(&mut got, 3_000).unwrap();
+        assert_eq!(got, &full[25_000..28_000]);
+        // At and past the end: nothing more.
+        r.seek(total + 50).unwrap();
+        assert_eq!(r.position(), total);
+        assert_eq!(r.read(&mut got, 10).unwrap(), 0);
+    }
+
+    #[test]
+    fn reader_handles_crashed_damaged_and_foreign_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // A crashed file (no end-of-stream page) reads up to its last page.
+        let crashed = dir.path().join("audio-remote.opus");
+        let mut w = OpusWriter::create_capped(&crashed, u64::MAX).unwrap();
+        w.write(&voice(3 * RATE as usize + 500, 0)).unwrap();
+        std::mem::forget(w);
+        let (partial, complete) = decode_file(&crashed).unwrap();
+        assert!(!complete);
+        let mut r = OpusReader::open(&crashed).unwrap();
+        assert_eq!(read_all(&mut r, 4_096), partial);
+
+        // A damaged page in the middle: the length holds, the page reads
+        // as silence, and verify refuses the file.
+        let path = written(dir.path(), "audio.opus", 6 * RATE as usize);
+        let (full, _) = decode_file(&path).unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        let pages: Vec<usize> = bytes
+            .windows(4)
+            .enumerate()
+            .filter(|(_, w)| *w == b"OggS")
+            .map(|(i, _)| i)
+            .collect();
+        let hit = pages[4] + 300; // inside the third audio page's body
+        bytes[hit] ^= 0x5a;
+        std::fs::write(&path, &bytes).unwrap();
+        let mut r = OpusReader::open(&path).unwrap();
+        let got = read_all(&mut r, 3_333);
+        assert_eq!(got.len(), full.len());
+        assert!(r.filled() >= RATE as u64 / 2, "{}", r.filled());
+        assert!(verify(&path).is_err());
+        // Pages after the damaged one decode again (decoder reset).
+        let tail = 5 * RATE as usize..6 * RATE as usize - 400;
+        assert!(snr(&full[tail.clone()], &got[tail]) > 20.0);
+
+        // Not Ogg Opus.
+        let wav = dir.path().join("audio.wav");
+        std::fs::write(&wav, crate::archive::audio::wav_bytes(&[0.1; 100])).unwrap();
+        assert!(OpusReader::open(&wav).is_err());
+        let cut = dir.path().join("audio-x.opus");
+        std::fs::write(&cut, &bytes[..30]).unwrap();
+        assert!(OpusReader::open(&cut).is_err());
+        // An empty stream.
+        let empty = dir.path().join("audio-e.opus");
+        OpusWriter::create_capped(&empty, u64::MAX)
+            .unwrap()
+            .finish()
+            .unwrap();
+        let mut r = OpusReader::open(&empty).unwrap();
+        assert_eq!(r.total_samples(), 0);
+        assert_eq!(read_all(&mut r, 100), Vec::<f32>::new());
     }
 }

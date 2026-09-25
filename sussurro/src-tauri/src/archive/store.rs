@@ -562,7 +562,7 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
 /// marker is kept, so a UI sending back a stale copy can neither resurrect
 /// `recording` on a finished item nor clear it on a live one. The list of
 /// saved audio files (`audio:`, #141) is app-owned the same way: only the
-/// engine and "Delete audio" change it.
+/// engine, "Delete audio" and "Compress audio" (#248) change it.
 ///
 /// Participants are written normalized ([`normalize_participants`]). Notes
 /// never get participants (P10): an update that would add or change them on

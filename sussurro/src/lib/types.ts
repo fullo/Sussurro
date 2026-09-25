@@ -176,8 +176,9 @@ export interface Settings {
    *  saved only on request. Absent in settings from before 0.10. */
   save_audio?: boolean;
   /** "Saved audio format" (#247, P16): the format of the audio runs save
-   *  from now on; items saved earlier keep theirs. Absent in settings from
-   *  before 0.11 (= the backend default, WAV until #248). */
+   *  from now on; items saved earlier keep theirs. Opus on a new install;
+   *  the backend pins WAV for a settings file from before 0.11 (#248), so
+   *  it is always sent. */
   saved_audio_format?: SavedAudioFormat;
   /** The notice before the first recording of other people (#136) was
    *  acknowledged with "Don't show this again". Absent or false (a fresh or
@@ -187,6 +188,34 @@ export interface Settings {
 
 /** Saved audio file format (#247): 16-bit WAV or Ogg Opus at 24 kb/s. */
 export type SavedAudioFormat = "wav" | "opus";
+
+/** Progress of *Compress audio* (#248), event `audio-compress-progress`. */
+export interface CompressProgress {
+  /** The item being compressed ("" once the job ends). */
+  item_id: string;
+  done_bytes: number;
+  total_bytes: number;
+  items_done: number;
+  items_total: number;
+}
+
+/** What a *Compress audio* job did (`archive_compress_audio`). */
+export interface CompressSummary {
+  /** Items with at least one file converted. */
+  items: number;
+  files: number;
+  bytes_before: number;
+  bytes_after: number;
+  cancelled: boolean;
+  /** Items left as WAV, and why. */
+  failed: { id: string; error: string }[];
+}
+
+/** Saved audio still in WAV (`archive_uncompressed_audio`). */
+export interface UncompressedAudio {
+  items: number;
+  bytes: number;
+}
 
 export type SubtitlesMode = "on_request" | "always";
 
@@ -368,8 +397,12 @@ export interface VoiceSource {
   available: boolean;
   /** Why not, for the speaker panel (empty when available). */
   reason: string;
-  /** The original file's name (empty when unknown). */
+  /** The original file's name (empty when unknown), or the saved audio
+   *  file's when `saved_audio`. */
   file_name: string;
+  /** The voices come from the audio saved with the item (#248): the
+   *  original file isn't available. Absent from older backends. */
+  saved_audio?: boolean;
 }
 
 /** One line on the Voice map (#144, `archive_voice_map`). */
