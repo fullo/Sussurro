@@ -505,12 +505,15 @@ mod tests {
         let st = f.store.enable(&f.archive, &anna).unwrap();
         assert!(st.enabled && !st.ready, "one document only");
         assert_eq!((st.min_speech_ms, st.min_documents), (60_000, 2));
-        assert!(f.store.ready_profiles(&[anna.clone()]).is_empty());
+        assert!(f
+            .store
+            .ready_profiles(std::slice::from_ref(&anna))
+            .is_empty());
         let d2 = meeting(&f.archive, 2, 10_000);
         link(&f.archive, &d2, "voice:1", &anna);
         f.store.document_changed(&f.archive, &d2).unwrap();
         assert!(f.store.status(&anna).unwrap().ready);
-        assert_eq!(f.store.ready_profiles(&[anna.clone()]).len(), 1);
+        assert_eq!(f.store.ready_profiles(std::slice::from_ref(&anna)).len(), 1);
         // Someone no longer in People takes no part.
         assert!(f.store.ready_profiles(&["p-other".into()]).is_empty());
     }

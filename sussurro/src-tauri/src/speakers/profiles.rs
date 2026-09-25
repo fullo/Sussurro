@@ -710,14 +710,14 @@ pub(crate) mod tests {
         let close_only = profile("p-anna", axis(0), 0);
         let v = towards(&axis(0), &axis(2), 0.70);
         // Room voice, profile with room lines: 0.70 < 0.75.
-        assert!(suggest(&[with_room.clone()], &v, Condition::Room).is_none());
+        assert!(suggest(std::slice::from_ref(&with_room), &v, Condition::Room).is_none());
         // Room voice, close-only profile: 0.65 applies.
-        assert!(suggest(&[close_only.clone()], &v, Condition::Room).is_some());
+        assert!(suggest(std::slice::from_ref(&close_only), &v, Condition::Room).is_some());
         // Close voice, profile with room lines: 0.65 applies.
-        assert!(suggest(&[with_room.clone()], &v, Condition::Close).is_some());
+        assert!(suggest(std::slice::from_ref(&with_room), &v, Condition::Close).is_some());
         // Room to room above 0.75.
         let strong = towards(&axis(0), &axis(2), 0.76);
-        assert!(suggest(&[with_room.clone()], &strong, Condition::Room).is_some());
+        assert!(suggest(std::slice::from_ref(&with_room), &strong, Condition::Room).is_some());
         assert_eq!(threshold_for(&with_room, Condition::Room), ROOM_THRESHOLD);
         assert_eq!(
             threshold_for(&close_only, Condition::Room),
@@ -774,7 +774,7 @@ pub(crate) mod tests {
         assert_eq!(v.speech_ms, 16_000);
         assert!(document_voice(&f, "mic", "voice:9").is_none());
         let anna = profile("p-anna", axis(0), 0);
-        let s = suggest_for_speaker(&[anna.clone()], &f, "mic", "voice:1").unwrap();
+        let s = suggest_for_speaker(std::slice::from_ref(&anna), &f, "mic", "voice:1").unwrap();
         assert_eq!(s.person_id, "p-anna");
         assert!(suggest_for_speaker(&[anna], &f, "mic", "voice:2").is_none());
     }

@@ -1578,6 +1578,8 @@ async fn edit_segment_command(
     let (dir, db) = archive_paths(state)?;
     let journal = crate::engine::session::journal_path(state);
     let always = subtitles_always(state);
+    // A deleted line leaves the voice profiles it was part of (#241).
+    let voices = matches!(edit, archive::SegmentEdit::Delete).then(|| voice_store(state));
     blocking(move || {
         // A live item can't be line-edited (#158): the store refuses the
         // `recording` marker, this a session that still owns the item.
@@ -1585,6 +1587,9 @@ async fn edit_segment_command(
         let item = archive::edit_segment(&dir, &id, segment_id, edit)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         refresh_subtitles_if(always, &dir, &id);
+        if let Some(store) = voices {
+            update_voices_later(store, dir, id);
+        }
         Ok(item.without_embeddings())
     })
     .await
@@ -1709,12 +1714,14 @@ pub async fn archive_identify_voices(
         crate::state::resolve_models_dir(&state.paths, &settings)
     };
     let always = subtitles_always(&state);
+    let voices = voice_store(&state);
     blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         let load = crate::engine::session::embedder_loader(models_dir);
         let (item, _) = crate::engine::identify::identify_voices(&dir, &store, &id, load)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         refresh_subtitles_if(always, &dir, &id);
+        update_voices_later(voices, dir, id);
         Ok(item.without_embeddings())
     })
     .await
@@ -1728,12 +1735,15 @@ async fn edit_speakers_command(
     let (dir, db) = archive_paths(state)?;
     let journal = crate::engine::session::journal_path(state);
     let always = subtitles_always(state);
+    let voices = voice_store(state);
     blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         let item = archive::edit_speakers(&dir, &id, edit)?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         // Speaker names and moves change the subtitles too.
         refresh_subtitles_if(always, &dir, &id);
+        // Links and moves change the voice profiles built from them (#241).
+        update_voices_later(voices, dir, id);
         Ok(item.without_embeddings())
     })
     .await
@@ -1747,6 +1757,7 @@ pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<()
     let (dir, db) = archive_paths(&state)?;
     let journal = crate::engine::session::journal_path(&state);
     let sources = crate::engine::session::source_files_path(&state);
+    let voices = voice_store(&state);
     blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         archive::delete_item(&dir, &id)?;
@@ -1755,6 +1766,8 @@ pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<()
         if let Err(e) = crate::engine::source_files::forget(&sources, &dir, &id) {
             eprintln!("archive: original file of {id} not forgotten ({e:#})");
         }
+        // Its lines leave the voice profiles they were part of (#241).
+        update_voices_later(voices, dir, id);
         Ok(())
     })
     .await
@@ -1956,7 +1969,14 @@ pub async fn people_update(state: State<'_, AppState>, person: Person) -> Result
 #[tauri::command]
 pub async fn people_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let (dir, _) = archive_paths(&state)?;
-    blocking(move || people::modify(&dir, |ps| people::delete_person(ps, &id))).await
+    let voices = voice_store(&state);
+    blocking(move || {
+        people::modify(&dir, |ps| people::delete_person(ps, &id))?;
+        // Deleting a person forgets their voice (P13, #241).
+        forget_voice_of(&voices, &id);
+        Ok(())
+    })
+    .await
 }
 
 /// Merge duplicates `from` into `into`; returns the merged person.
@@ -1967,7 +1987,116 @@ pub async fn people_merge(
     from: Vec<String>,
 ) -> Result<Person, String> {
     let (dir, _) = archive_paths(&state)?;
-    blocking(move || people::modify(&dir, |ps| people::merge_people(ps, &into, &from))).await
+    let voices = voice_store(&state);
+    blocking(move || {
+        let merged = people::modify(&dir, |ps| people::merge_people(ps, &into, &from))?;
+        // The merged-away people are gone: so are their voices (P13, #241).
+        // Their documents stay linked to their old ids, so they don't feed
+        // `into`'s profile until linked again.
+        for id in from.iter().filter(|f| **f != into) {
+            forget_voice_of(&voices, id);
+        }
+        Ok(merged)
+    })
+    .await
+}
+
+// ---- Voice profiles (0.11, #241; P12, P13, E13) ----
+//
+// Opt-in per person (*Recognise this voice*), built only from lines the
+// user linked to that person, stored in `<app data>/voices/` — never in the
+// archive. The UI only ever gets `VoiceStatus` (no vectors); nothing here
+// logs a vector or a name.
+
+use crate::speakers::voices::{VoiceStatus, VoiceStore, VOICES_DIR};
+
+/// The voice profile store in the app data dir.
+fn voice_store(state: &AppState) -> VoiceStore {
+    VoiceStore::at(state.paths.history_file.with_file_name(VOICES_DIR))
+}
+
+/// After a document's speakers or lines changed: update the voice profiles
+/// it touches, off the caller's path (the store serializes updates). The
+/// change is already saved: a failure is only logged.
+fn update_voices_later(store: VoiceStore, archive: PathBuf, id: String) {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = store.document_changed(&archive, &id) {
+            eprintln!("voices: profiles not updated after a change to {id} ({e:#})");
+        }
+    });
+}
+
+fn forget_voice_of(store: &VoiceStore, person_id: &str) {
+    if let Err(e) = store.forget(person_id) {
+        eprintln!("voices: a voice profile was not deleted ({e:#})");
+    }
+}
+
+/// People: the voice profile status of every person with *Recognise this
+/// voice* on (seconds of confirmed speech, documents, ready or not).
+#[tauri::command]
+pub async fn voices_status(state: State<'_, AppState>) -> Result<Vec<VoiceStatus>, String> {
+    let store = voice_store(&state);
+    blocking(move || Ok(store.statuses())).await
+}
+
+/// People: the voice profile status of one person (off when none).
+#[tauri::command]
+pub async fn voice_status(
+    state: State<'_, AppState>,
+    person_id: String,
+) -> Result<VoiceStatus, String> {
+    let store = voice_store(&state);
+    blocking(move || store.status(&person_id)).await
+}
+
+/// People: turn *Recognise this voice* on (the profile is built from every
+/// line linked to the person in the archive) or off (the profile is
+/// deleted). The person must be in People to turn it on.
+#[tauri::command]
+pub async fn voice_set_enabled(
+    state: State<'_, AppState>,
+    person_id: String,
+    enabled: bool,
+) -> Result<VoiceStatus, String> {
+    let (dir, _) = archive_paths(&state)?;
+    let store = voice_store(&state);
+    blocking(move || {
+        if !enabled {
+            store.forget(&person_id)?;
+            return store.status(&person_id);
+        }
+        if !people::list_people(&dir)?.iter().any(|p| p.id == person_id) {
+            anyhow::bail!("that person is no longer in People");
+        }
+        store.enable(&dir, &person_id)
+    })
+    .await
+}
+
+/// Rebuild every voice profile from the archive (a new machine, a moved
+/// archive, links made on another computer). Returns the new statuses.
+#[tauri::command]
+pub async fn voices_rebuild(state: State<'_, AppState>) -> Result<Vec<VoiceStatus>, String> {
+    let (dir, _) = archive_paths(&state)?;
+    let store = voice_store(&state);
+    blocking(move || store.rebuild_all(&dir)).await
+}
+
+/// *Forget this voice*: delete one person's profile (recognition off).
+/// Returns whether there was one.
+#[tauri::command]
+pub async fn voice_forget(state: State<'_, AppState>, person_id: String) -> Result<bool, String> {
+    let store = voice_store(&state);
+    blocking(move || store.forget(&person_id)).await
+}
+
+/// *Forget all voices* (Settings → Privacy): delete every voice profile.
+/// Returns how many there were.
+#[tauri::command]
+pub async fn voices_forget_all(state: State<'_, AppState>) -> Result<usize, String> {
+    let store = voice_store(&state);
+    blocking(move || store.forget_all()).await
 }
 
 // ---- Recipes (0.8, #120): prompts that write companion documents ----
