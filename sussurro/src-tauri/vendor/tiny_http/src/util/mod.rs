@@ -1,3 +1,5 @@
+pub use self::chunked_reader::ChunkedReader;
+pub use self::close_flag::{CloseFlag, Closable};
 pub use self::custom_stream::CustomStream;
 pub use self::equal_reader::EqualReader;
 pub use self::fused_reader::FusedReader;
@@ -9,6 +11,9 @@ pub use self::task_pool::TaskPool;
 
 use std::str::FromStr;
 
+// Sussurro (#223): bounded chunked bodies, closing on an unread body.
+mod chunked_reader;
+mod close_flag;
 mod custom_stream;
 mod equal_reader;
 mod fused_reader;

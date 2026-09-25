@@ -103,9 +103,10 @@ use std::io::ErrorKind as IoErrorKind;
 use std::io::Result as IoResult;
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -143,6 +144,46 @@ pub struct Server {
 
     // result of TcpListener::local_addr()
     listening_addr: ListenAddr,
+
+    // Sussurro (#223): read by the accept thread for every new connection.
+    limits: Arc<Mutex<Limits>>,
+}
+
+/// Sussurro (#223): limits applied to every connection (upstream had none).
+///
+/// Also fixed, not configurable: the request line + headers are at most
+/// `client::MAX_HEAD_BYTES` (64 KiB) in at most `client::MAX_HEADERS` (100)
+/// lines (else `431` and the connection closes), chunked framing lines at
+/// most 4 KiB, and a request body dropped before its end closes the
+/// connection instead of being read (`util::close_flag`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// Connections open at once; a connection over it is closed as soon as
+    /// it is accepted. Each one holds a thread while it is open.
+    pub max_connections: usize,
+    /// Read and write timeout of the socket while it speaks HTTP: an idle
+    /// keep-alive connection, a head or body that stops arriving, or a
+    /// response the client stops reading fail after this long. Lifted when
+    /// a request upgrades the connection (`Connection: upgrade`).
+    pub io_timeout: Option<Duration>,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            max_connections: 128,
+            io_timeout: Some(Duration::from_secs(30)),
+        }
+    }
+}
+
+/// Sussurro (#223): counts an open connection until dropped.
+struct OpenConnection(Arc<AtomicUsize>);
+
+impl Drop for OpenConnection {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Relaxed);
+    }
 }
 
 enum Message {
@@ -288,15 +329,28 @@ impl Server {
 
         let inside_close_trigger = close_trigger.clone();
         let inside_messages = messages.clone();
+        let limits = Arc::new(Mutex::new(Limits::default()));
+        let inside_limits = limits.clone();
         thread::spawn(move || {
             // a tasks pool is used to dispatch the connections into threads
             let tasks_pool = util::TaskPool::new();
+            let open = Arc::new(AtomicUsize::new(0));
 
             log::debug!("Running accept thread");
             while !inside_close_trigger.load(Relaxed) {
                 let new_client = match server.accept() {
                     Ok((sock, _)) => {
                         use util::RefinedTcpStream;
+                        // Sussurro (#223): bounded connections, socket timeouts.
+                        let limits = *inside_limits.lock().unwrap_or_else(|e| e.into_inner());
+                        if open.load(Relaxed) >= limits.max_connections {
+                            drop(sock);
+                            continue;
+                        }
+                        if sock.set_timeouts(limits.io_timeout).is_err() {
+                            continue;
+                        }
+                        let socket = sock.try_clone().ok();
                         let (read_closable, write_closable) = match ssl {
                             None => RefinedTcpStream::new(sock),
                             #[cfg(any(feature = "ssl-openssl", feature = "ssl-rustls"))]
@@ -314,7 +368,7 @@ impl Server {
                             Some(ref _ssl) => unreachable!(),
                         };
 
-                        Ok(ClientConnection::new(write_closable, read_closable))
+                        Ok(ClientConnection::new(write_closable, read_closable, socket))
                     }
                     Err(e) => Err(e),
                 };
@@ -323,7 +377,10 @@ impl Server {
                     Ok(client) => {
                         let messages = inside_messages.clone();
                         let mut client = Some(client);
+                        open.fetch_add(1, Relaxed);
+                        let mut counted = Some(OpenConnection(open.clone()));
                         tasks_pool.spawn(Box::new(move || {
+                            let _counted = counted.take();
                             if let Some(client) = client.take() {
                                 // Synchronization is needed for HTTPS requests to avoid a deadlock
                                 if client.secure() {
@@ -356,7 +413,19 @@ impl Server {
             messages,
             close: close_trigger,
             listening_addr: local_addr,
+            limits,
         })
+    }
+
+    /// Sussurro (#223): change the [`Limits`] for the connections accepted
+    /// from now on.
+    pub fn set_limits(&self, limits: Limits) {
+        *self.limits.lock().unwrap_or_else(|e| e.into_inner()) = limits;
+    }
+
+    /// Sussurro (#223): the [`Limits`] in force.
+    pub fn limits(&self) -> Limits {
+        *self.limits.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Returns an iterator for all the incoming requests.

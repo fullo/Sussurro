@@ -7,9 +7,8 @@ use std::str::FromStr;
 
 use std::sync::mpsc::Sender;
 
-use crate::util::{EqualReader, FusedReader};
+use crate::util::{ChunkedReader, CloseFlag, EqualReader, FusedReader};
 use crate::{HTTPVersion, Header, Method, Response, StatusCode};
-use chunked_transfer::Decoder;
 
 /// Represents an HTTP request made by a client.
 ///
@@ -125,6 +124,9 @@ impl From<IoError> for RequestCreationError {
 /// It is the responsibility of the `Request` to read only the data of the request and not further.
 ///
 /// The `Write` object will be used by the `Request` to write the response.
+///
+/// Sussurro (#223): `close` is the connection's flag, set by the body reader
+/// when the body is dropped before its end (see `util::close_flag`).
 #[allow(clippy::too_many_arguments)]
 pub fn new_request<R, W>(
     secure: bool,
@@ -135,6 +137,7 @@ pub fn new_request<R, W>(
     remote_addr: Option<SocketAddr>,
     mut source_data: R,
     writer: W,
+    close: CloseFlag,
 ) -> Result<Request, RequestCreationError>
 where
     R: Read + Send + 'static,
@@ -212,13 +215,15 @@ where
 
             Box::new(Cursor::new(buffer)) as Box<dyn Read + Send + 'static>
         } else {
-            let (data_reader, _) = EqualReader::new(source_data, content_length); // TODO:
+            let data_reader = EqualReader::new(source_data, content_length, close);
             Box::new(FusedReader::new(data_reader)) as Box<dyn Read + Send + 'static>
         }
     } else if transfer_encoding.is_some() {
         // if a transfer-encoding was specified, then "chunked" is ALWAYS applied
         // over the message (RFC2616 #3.6)
-        Box::new(FusedReader::new(Decoder::new(source_data))) as Box<dyn Read + Send + 'static>
+        // Sussurro (#223): bounded framing lines (was chunked_transfer::Decoder).
+        Box::new(FusedReader::new(ChunkedReader::new(source_data, close)))
+            as Box<dyn Read + Send + 'static>
     } else {
         // if we have neither a Content-Length nor a Transfer-Encoding,
         // assuming that we have no data

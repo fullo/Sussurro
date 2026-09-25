@@ -95,6 +95,21 @@ impl Connection {
         }
     }
 
+    /// Sussurro (#223): read and write timeouts (`None`: wait forever).
+    pub(crate) fn set_timeouts(&self, timeout: Option<std::time::Duration>) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(s) => {
+                s.set_read_timeout(timeout)?;
+                s.set_write_timeout(timeout)
+            }
+            #[cfg(unix)]
+            Self::Unix(s) => {
+                s.set_read_timeout(timeout)?;
+                s.set_write_timeout(timeout)
+            }
+        }
+    }
+
     pub(crate) fn try_clone(&self) -> std::io::Result<Self> {
         match self {
             Self::Tcp(s) => s.try_clone().map(Self::from),

@@ -1,36 +1,41 @@
 use std::io::Read;
 use std::io::Result as IoResult;
-use std::sync::mpsc::channel;
-use std::sync::mpsc::{Receiver, Sender};
+use std::io::{Error as IoError, ErrorKind};
+
+use super::CloseFlag;
 
 /// A `Reader` that reads exactly the number of bytes from a sub-reader.
 ///
-/// If the limit is reached, it returns EOF. If the limit is not reached
-/// when the destructor is called, the remaining bytes will be read and
-/// thrown away.
+/// If the limit is reached, it returns EOF.
+///
+/// Sussurro (#223): upstream read the rest of an unfinished body on drop,
+/// into a `vec![0; remaining]` — the size the client *declared*, so an
+/// absurd `Content-Length` aborted the process (`memory allocation of …
+/// failed`) or panicked (`capacity overflow`), and a silent client held the
+/// dropping thread forever. Now a body dropped before its end only sets the
+/// connection's [`CloseFlag`]: nothing is read or allocated, and the
+/// connection is closed instead of being kept in step. A connection that
+/// ends before the declared length is an `UnexpectedEof` error, not a
+/// silently short body.
 pub struct EqualReader<R>
 where
     R: Read,
 {
     reader: R,
     size: usize,
-    last_read_signal: Sender<IoResult<()>>,
+    close: CloseFlag,
 }
 
 impl<R> EqualReader<R>
 where
     R: Read,
 {
-    pub fn new(reader: R, size: usize) -> (EqualReader<R>, Receiver<IoResult<()>>) {
-        let (tx, rx) = channel();
-
-        let r = EqualReader {
+    pub fn new(reader: R, size: usize, close: CloseFlag) -> EqualReader<R> {
+        EqualReader {
             reader,
             size,
-            last_read_signal: tx,
-        };
-
-        (r, rx)
+            close,
+        }
     }
 }
 
@@ -48,8 +53,15 @@ where
         } else {
             &mut buf[..self.size]
         };
+        if buf.is_empty() {
+            return Ok(0);
+        }
 
         match self.reader.read(buf) {
+            Ok(0) => Err(IoError::new(
+                ErrorKind::UnexpectedEof,
+                "the connection ended before the declared Content-Length",
+            )),
             Ok(len) => {
                 self.size -= len;
                 Ok(len)
@@ -64,30 +76,15 @@ where
     R: Read,
 {
     fn drop(&mut self) {
-        let mut remaining_to_read = self.size;
-
-        while remaining_to_read > 0 {
-            let mut buf = vec![0; remaining_to_read];
-
-            match self.reader.read(&mut buf) {
-                Err(e) => {
-                    self.last_read_signal.send(Err(e)).ok();
-                    break;
-                }
-                Ok(0) => {
-                    self.last_read_signal.send(Ok(())).ok();
-                    break;
-                }
-                Ok(other) => {
-                    remaining_to_read -= other;
-                }
-            }
+        if self.size > 0 {
+            self.close.set();
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::CloseFlag;
     use super::EqualReader;
     use std::io::Read;
 
@@ -96,9 +93,10 @@ mod tests {
         use std::io::Cursor;
 
         let mut org_reader = Cursor::new("hello world".to_string().into_bytes());
+        let close = CloseFlag::default();
 
         {
-            let (mut equal_reader, _) = EqualReader::new(org_reader.by_ref(), 5);
+            let mut equal_reader = EqualReader::new(org_reader.by_ref(), 5, close.clone());
 
             let mut string = String::new();
             equal_reader.read_to_string(&mut string).unwrap();
@@ -108,24 +106,45 @@ mod tests {
         let mut string = String::new();
         org_reader.read_to_string(&mut string).unwrap();
         assert_eq!(string, " world");
+        assert!(!close.is_set(), "read to its end: the connection stays open");
     }
 
     #[test]
-    fn test_not_enough() {
+    fn a_body_dropped_unread_closes_the_connection_without_reading() {
         use std::io::Cursor;
 
         let mut org_reader = Cursor::new("hello world".to_string().into_bytes());
+        let close = CloseFlag::default();
 
         {
-            let (mut equal_reader, _) = EqualReader::new(org_reader.by_ref(), 5);
+            let mut equal_reader = EqualReader::new(org_reader.by_ref(), 5, close.clone());
 
             let mut vec = [0];
             equal_reader.read_exact(&mut vec).unwrap();
             assert_eq!(vec[0], b'h');
         }
 
+        assert!(close.is_set());
         let mut string = String::new();
         org_reader.read_to_string(&mut string).unwrap();
-        assert_eq!(string, " world");
+        assert_eq!(string, "ello world", "nothing was drained");
+    }
+
+    #[test]
+    fn an_absurd_declared_length_allocates_nothing_on_drop() {
+        let close = CloseFlag::default();
+        drop(EqualReader::new(std::io::empty(), usize::MAX, close.clone()));
+        drop(EqualReader::new(std::io::empty(), isize::MAX as usize, close.clone()));
+        assert!(close.is_set());
+    }
+
+    #[test]
+    fn a_short_body_is_an_error() {
+        let close = CloseFlag::default();
+        let mut r = EqualReader::new(&b"abc"[..], 10, close);
+        let mut s = Vec::new();
+        let err = r.read_to_end(&mut s).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(s, b"abc");
     }
 }
