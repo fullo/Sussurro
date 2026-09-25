@@ -141,6 +141,17 @@ assume.
   *Recommendation: yes; AMO first (the account and signing already exist),
   then Chrome, then Edge.*
 
+- **P24 — Text-to-speech is an experimental, optional module.** *Decided
+  by the maintainer (2026-09-25).* Read aloud (0.12) and voice cloning
+  (0.13) are off by default and live under Settings → Experimental; the
+  rest of the app never depends on them. **No TTS or cloning model is ever
+  downloaded without an explicit request by the user**: not at install,
+  not in onboarding, not on first use of another feature, not in the
+  background. Enabling the module shows each model's size and licence and
+  downloads only after the user confirms; turning it off offers to delete
+  the models. The UI labels every TTS feature "Experimental". Builds keep
+  the code (no separate artefact) but ship no TTS weights.
+
 ### Engineering decisions (recommended, validated in Phase V0)
 
 - **E13 — Voice profiles are centroids over WeSpeaker embeddings.** Same
