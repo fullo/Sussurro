@@ -17,6 +17,7 @@ import { PersonalizationCard } from "../settings/PersonalizationCard";
 import { ScriptingCard } from "../settings/ScriptingCard";
 import { SetupBanner } from "../settings/SetupBanner";
 import { SpeechOptionsCard } from "../settings/SpeechCard";
+import { VoicesCard } from "../settings/VoicesCard";
 import { sttLabel } from "./labels";
 
 export type SectionId =
@@ -28,6 +29,7 @@ export type SectionId =
   | "history"
   | "archive"
   | "calendar"
+  | "privacy"
   | "extension"
   | "scripting"
   | "diagnostics"
@@ -42,6 +44,7 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "history", label: "Dictation history" },
   { id: "archive", label: "Archive" },
   { id: "calendar", label: "Calendar" },
+  { id: "privacy", label: "Privacy" },
   { id: "extension", label: "Browser extension" },
   { id: "scripting", label: "Scripting" },
   { id: "diagnostics", label: "Diagnostics" },
@@ -49,14 +52,15 @@ const SECTIONS: { id: SectionId; label: string }[] = [
 ];
 
 /** Settings: one section at a time — dictation, speech, cleanup, dictionary,
- *  behavior, history, archive, calendar, browser extension, scripting, diagnostics
- *  and About. */
+ *  behavior, history, archive, calendar, privacy (voices), browser extension,
+ *  scripting, diagnostics and About. */
 export function SettingsScreen({
   ctl,
   section,
   onSection,
   onOpenModels,
   onOpenRecipes,
+  onOpenPeople,
   onAbout,
   onRunSetup,
 }: {
@@ -65,6 +69,8 @@ export function SettingsScreen({
   onSection: (s: SectionId) => void;
   onOpenModels: () => void;
   onOpenRecipes: () => void;
+  /** Privacy → Voices links to People (#242). */
+  onOpenPeople?: () => void;
   onAbout: () => void;
   /** Reopen the first-run setup (#115). */
   onRunSetup: () => void;
@@ -126,6 +132,7 @@ export function SettingsScreen({
           {section === "history" && <HistoryCard ctl={ctl} />}
           {section === "archive" && <ArchiveCard ctl={ctl} />}
           {section === "calendar" && <CalendarCard ctl={ctl} />}
+          {section === "privacy" && <VoicesCard ctl={ctl} onOpenPeople={onOpenPeople} />}
           {section === "extension" && <ExtensionCard ctl={ctl} />}
           {section === "scripting" && <ScriptingCard ctl={ctl} />}
           {section === "diagnostics" && <DiagnosticsCard ctl={ctl} />}
