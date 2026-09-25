@@ -871,7 +871,10 @@ legal review) carry `needs maintainer`. Milestones and epics:
   plays Ogg Opus only from macOS 15.4, so older macOS needs a decode path),
   archive HTTP API with scoped hashed tokens (every browser Origin refused),
   calendar attendees from ICS.
-- **0.12 — Read aloud**: local TTS (default candidate Kyutai Pocket TTS,
+- **0.12 — Read aloud** (**experimental, optional module — P24**: off by
+  default under Settings → Experimental; TTS/cloning models are downloaded
+  ONLY on the user's explicit request, never at install, onboarding or in
+  the background): local TTS (default candidate Kyutai Pocket TTS,
   MIT + CC-BY-4.0, native Italian; decided by a bake-off + listening test),
   every generated file marked (watermark + metadata: AI Act art. 50 applies
   from 2 Aug 2026).
