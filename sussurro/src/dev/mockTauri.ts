@@ -7,7 +7,13 @@
    upgrade screen), ?perms=ask (microphone not asked yet, Accessibility
    denied — the setup's permission step), ?empty=1 (empty archive),
    ?ytdlp=0 (yt-dlp not installed, for the Link tab), ?keychain=0 (no OS
-   credential store: the profile editor's clear-text key warning). */
+   credential store: the profile editor's clear-text key warning), ?gpu=0
+   (a CPU-only Whisper build: the live preview note in Behavior),
+   ?overlay=1 (render the dictation overlay instead of the workspace and
+   play a scripted live preview — revisions, a long dictation, then the
+   final pass; ?overlay=long stays on the long text while recording),
+   ?dict=5000 (a dictionary and snippet list that large, for the
+   Dictionary & snippets manager). */
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { version as pkgVersion } from "../../package.json";
@@ -1159,6 +1165,8 @@ function handle(cmd: string, a: Args): unknown {
         : { microphone: "granted", accessibility: params.get("perms") === "ask" ? "denied" : "granted" };
     case "mic_level":
       return 0.02 + Math.random() * 0.05;
+    case "whisper_gpu":
+      return params.get("gpu") !== "0";
     case "start_mic_test":
       // The first mic access is what asks the OS (#115, ?perms=ask).
       micAsked = true;
@@ -1537,8 +1545,38 @@ function mockAudioUrl(path: string): string {
   return url;
 }
 
+/** `?overlay=1`: the partials a dictation would emit, ~1.2 s apart —
+ *  Whisper revising its last words, then a dictation long enough to trim. */
+const OVERLAY_PARTIALS = [
+  "Allora",
+  "Allora, domani mattina",
+  "Allora, domani mattina alle nove ci",
+  "Allora, domani mattina alle nove c'è la riunione con",
+  "Allora, domani mattina alle nove c'è la riunione con il team di prodotto per",
+  "Allora, domani mattina alle nove c'è la riunione con il team di prodotto per parlare del lancio della versione 0.10, poi",
+  "Allora, domani mattina alle nove c'è la riunione con il team di prodotto per parlare del lancio della versione 0.10, poi nel pomeriggio devo scrivere le note di rilascio e controllare",
+  "Allora, domani mattina alle nove c'è la riunione con il team di prodotto per parlare del lancio della versione 0.10, poi nel pomeriggio devo scrivere le note di rilascio e controllare che l'estensione funzioni su Firefox e su Chrome prima di",
+];
+
+function playOverlayDemo(stayRecording: boolean) {
+  let i = 0;
+  setTimeout(() => ev("pipeline-status", "recording"), 200);
+  const id = setInterval(() => {
+    if (i < OVERLAY_PARTIALS.length) {
+      ev("partial-transcript", OVERLAY_PARTIALS[i++]);
+    } else if (!stayRecording) {
+      clearInterval(id);
+      ev("pipeline-status", "processing");
+    } else {
+      clearInterval(id);
+    }
+  }, 1200);
+}
+
 export function installMockTauri(): void {
-  mockWindows("main");
+  const overlay = params.get("overlay");
+  mockWindows(overlay ? "overlay" : "main");
+  if (overlay) setTimeout(() => playOverlayDemo(overlay === "long"), 0);
   mockIPC((cmd, args) => handle(cmd, (args ?? {}) as Args), { shouldMockEvents: true });
   (window as unknown as { __TAURI_INTERNALS__: { convertFileSrc: (p: string, protocol?: string) => string } }).__TAURI_INTERNALS__.convertFileSrc = (
     p: string,

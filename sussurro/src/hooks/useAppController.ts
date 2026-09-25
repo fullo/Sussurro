@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { cleanupProfile, cleanupServerChanged, formatGb, mergeKeyStorage, modelListed, patchCleanupProfile } from "../lib/llmProfiles";
+import { levelToPercent } from "../lib/overlayText";
 import type {
   BundledLlmStatus,
   HistoryEntry,
@@ -202,9 +203,7 @@ export function useAppController() {
   };
 
   // RMS → dB, mapped so -60 dB (silence) = 0% and 0 dB (clipping) = 100%.
-  const vuPct = micLevel > 0
-    ? Math.max(0, Math.min(100, ((20 * Math.log10(micLevel) + 60) / 60) * 100))
-    : 0;
+  const vuPct = levelToPercent(micLevel);
 
   const downloadModel = async () => {
     setDownloadingModel(true);
