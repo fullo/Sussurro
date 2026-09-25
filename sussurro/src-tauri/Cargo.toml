@@ -37,6 +37,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1.0.103"
 chrono = "0.4.45"
+# Calendar attendees (#252): TZID time zones of ICS files (IANA database,
+# MIT OR Apache-2.0; the data is public domain).
+chrono-tz = "0.10"
 cpal = "0.16"
 enigo = "0.6.1"
 arboard = "3.6.1"

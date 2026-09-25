@@ -1,6 +1,7 @@
 pub mod api;
 pub mod archive;
 pub mod audio;
+pub mod calendar;
 pub mod cleanup;
 pub mod commands;
 pub mod config_io;
