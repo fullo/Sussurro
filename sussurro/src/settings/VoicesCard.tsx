@@ -2,15 +2,39 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Card, Switch, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
-import type { VoiceStatus } from "../lib/types";
+import type { OwnVoiceStatus, VoiceStatus } from "../lib/types";
 import { VOICE_STORED, VOICE_TELL, VOICE_WHERE, forgetAllPrompt } from "../lib/voiceRecognition";
+import { OwnVoiceCard } from "./OwnVoiceCard";
 
-/** Settings → Privacy → Voices (#242, P12/P13): suggestions on/off,
- *  *Forget all voices* with a confirmation, and what the law says in
- *  plain words. Per-person recognition lives in People. */
-export function VoicesCard({ ctl, onOpenPeople }: { ctl: Ctl; onOpenPeople?: () => void }) {
+/** Settings → Voices: your own voice, "You" (#243), then known voices and
+ *  their privacy controls (#242). *Forget all voices* also deletes your
+ *  own voice, so the "Your voice" card is read again afterwards. */
+export function VoicesSection({ ctl, onOpenPeople }: { ctl: Ctl; onOpenPeople?: () => void }) {
+  const [epoch, setEpoch] = useState(0);
+  return (
+    <>
+      <OwnVoiceCard key={epoch} ctl={ctl} />
+      <VoicesCard ctl={ctl} onOpenPeople={onOpenPeople} onForgotAll={() => setEpoch((e) => e + 1)} />
+    </>
+  );
+}
+
+/** Known voices (#242, P12/P13): suggestions on/off, *Forget all voices*
+ *  with a confirmation, and what the law says in plain words. Per-person
+ *  recognition lives in People. */
+export function VoicesCard({
+  ctl,
+  onOpenPeople,
+  onForgotAll,
+}: {
+  ctl: Ctl;
+  onOpenPeople?: () => void;
+  /** Every voice profile, your own included, was just deleted. */
+  onForgotAll?: () => void;
+}) {
   const { settings, save } = ctl;
   const [profiles, setProfiles] = useState<VoiceStatus[] | null>(null);
+  const [ownVoice, setOwnVoice] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -18,11 +42,20 @@ export function VoicesCard({ ctl, onOpenPeople }: { ctl: Ctl; onOpenPeople?: () 
     invoke<VoiceStatus[]>("voices_status")
       .then(setProfiles)
       .catch(() => setProfiles(null));
+    invoke<OwnVoiceStatus>("own_voice_status")
+      .then((s) => setOwnVoice(s.enrolled))
+      .catch(() => setOwnVoice(false));
   }, []);
   useEffect(load, [load]);
 
   const n = profiles?.length ?? 0;
   const ready = profiles?.filter((p) => p.ready).length ?? 0;
+
+  const askForgetAll = () => {
+    // Your own voice may have been recorded since this card loaded.
+    load();
+    setConfirm(true);
+  };
 
   const forgetAll = async () => {
     setBusy(true);
@@ -31,6 +64,7 @@ export function VoicesCard({ ctl, onOpenPeople }: { ctl: Ctl; onOpenPeople?: () 
       ctl.flash(gone ? `${gone} voice profile${gone === 1 ? "" : "s"} deleted.` : "Nothing to forget.", 3000);
       setConfirm(false);
       load();
+      onForgotAll?.();
     } catch (e) {
       ctl.setBusy(String(e));
     } finally {
@@ -39,7 +73,7 @@ export function VoicesCard({ ctl, onOpenPeople }: { ctl: Ctl; onOpenPeople?: () 
   };
 
   return (
-    <Card title="Voices">
+    <Card title="Known voices">
       <p className="card-hint">
         {VOICE_STORED} {VOICE_WHERE}
       </p>
@@ -59,7 +93,7 @@ export function VoicesCard({ ctl, onOpenPeople }: { ctl: Ctl; onOpenPeople?: () 
       </div>
       <div className="field">
         <div className="field-label">
-          <span>Voice profiles on this computer</span>
+          <span>People's voice profiles on this computer</span>
           <small>
             {profiles === null
               ? "can't be read"
@@ -76,7 +110,7 @@ export function VoicesCard({ ctl, onOpenPeople }: { ctl: Ctl; onOpenPeople?: () 
       </div>
       {confirm ? (
         <div className="row-gap prof-actions" role="alertdialog" aria-label="Confirm forget all voices">
-          <span>{forgetAllPrompt(n)}</span>
+          <span>{forgetAllPrompt(n, ownVoice)}</span>
           <button type="button" className="btn-danger sh-btn push" disabled={busy} onClick={forgetAll}>
             Forget all voices
           </button>
@@ -88,9 +122,9 @@ export function VoicesCard({ ctl, onOpenPeople }: { ctl: Ctl; onOpenPeople?: () 
         <div className="field">
           <div className="field-label">
             <span>Forget all voices</span>
-            <small>deletes every voice profile and every “Not this person” answer at once</small>
+            <small>deletes every voice profile — people's and your own — and every “Not this person” answer at once</small>
           </div>
-          <button type="button" className="btn-ghost" disabled={busy} onClick={() => setConfirm(true)}>
+          <button type="button" className="btn-ghost" disabled={busy} onClick={askForgetAll}>
             Forget all voices…
           </button>
         </div>

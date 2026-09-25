@@ -61,7 +61,8 @@ export function shownSuggestions(
   const out = new Map<string, Person>();
   for (const s of suggestions) {
     const speaker = speakers.find((sp) => sp.id === s.speaker_id);
-    if (!speaker || speaker.person_id) continue;
+    // A voice labelled "You" from your own voice (#243) is yours.
+    if (!speaker || speaker.person_id || speaker.own_voice === true) continue;
     const person = people.find((p) => p.id === s.person_id);
     if (!person || dismissed.has(dismissKey(s.speaker_id, s.person_id))) continue;
     if (!out.has(s.speaker_id)) out.set(s.speaker_id, person);

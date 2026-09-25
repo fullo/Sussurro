@@ -63,8 +63,8 @@ export function AudioTab({ item, speakers, seek }: { item: Item; speakers?: Tran
           </p>
           <p className="sh-muted">
             To replay a recording — or one speaker at a time — tick <b>Save audio</b> in <b>New</b> before you start,
-            or turn it on for every new item in <b>Settings → Archive</b>. The audio is saved as a WAV in the item's
-            folder, about 115 MB per hour.
+            or turn it on for every new item in <b>Settings → Archive</b>. The audio is saved in the item's folder, as
+            Opus (about 11 MB per hour) or WAV (about 115 MB), per the Saved audio format there.
           </p>
         </div>
       </div>

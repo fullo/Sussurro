@@ -16,6 +16,7 @@ import {
 } from "../lib/speakers";
 import type { DocSpeaker, Item, Person, VoiceSource } from "../lib/types";
 import { voiceMapShown } from "../lib/voiceMap";
+import { OwnVoiceOffer } from "./OwnVoiceOffer";
 import { VoiceMapCard } from "./VoiceMapCard";
 import { useVoiceSuggestions } from "../hooks/useVoiceSuggestions";
 import { VoiceSuggestionChip } from "./VoiceSuggestionChip";
@@ -58,6 +59,8 @@ export function SpeakerPanel({
   // "Identify voices" (#134): can the original file give the voices back?
   const [source, setSource] = useState<VoiceSource | null>(null);
   const wantsSource = isTranscription && !item.embedded_segments && !item.recording;
+  // Saved audio can stand in for the original file (#248): ask again when it changes.
+  const audioNames = (item.audio ?? []).map((f) => f.name).join(",");
   useEffect(() => {
     setSource(null);
     if (!wantsSource) return;
@@ -68,7 +71,7 @@ export function SpeakerPanel({
     return () => {
       alive = false;
     };
-  }, [id, wantsSource, item.edited_externally, item.meta.source]);
+  }, [id, wantsSource, item.edited_externally, item.meta.source, audioNames]);
   const offer = identifyOffer(item, source);
   // Known voices (#242): "Voice 2 sounds like Anna — Link · Not Anna".
   const voiceSugg = useVoiceSuggestions(item, people, ctl.settings);
@@ -221,6 +224,7 @@ export function SpeakerPanel({
       {shares.length > 0 && voiceMapShown(item) && (
         <VoiceMapCard item={item} selectedId={pickedLine} onPick={onPickLine} />
       )}
+      {shares.length > 0 && <OwnVoiceOffer ctl={ctl} item={item} onItem={onItem} />}
       {editable && item.embedded_segments ? (
         confirmRedetect ? (
           <div className="spk-confirm" role="group" aria-label="Confirm re-detect">
@@ -248,7 +252,8 @@ export function SpeakerPanel({
       {offer === "identify" && editable && (
         <div className="spk-identify">
           <p className="ctx-note">
-            Tell the voices apart as Voice 1, Voice 2… from the original file
+            Tell the voices apart as Voice 1, Voice 2… from{" "}
+            {source?.saved_audio ? "the audio saved with this item" : "the original file"}
             {source?.file_name ? ` “${source.file_name}”` : ""}. The speaker model is downloaded on first use; a long
             file takes a while. Nothing leaves this computer.
           </p>

@@ -46,10 +46,11 @@ pub const VOICES_DIR: &str = "voices";
 /// Longest person id usable as a file name.
 const MAX_ID_LEN: usize = 64;
 
-/// Serializes every read-modify-write of the profiles in this process.
+/// Serializes every read-modify-write of the profiles in this process
+/// (the own-voice profile of #243 included).
 static VOICES_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn lock() -> std::sync::MutexGuard<'static, ()> {
     VOICES_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 

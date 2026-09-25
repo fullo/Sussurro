@@ -700,6 +700,10 @@ button.pchip-name:hover { text-decoration: underline; }
   color: var(--c-dark);
 }
 .audio-bar .push { margin-left: auto; }
+/* Compress audio (#248): the item's progress in the audio bar. */
+.compress-run { display: inline-flex; align-items: center; gap: 6px; }
+.compress-run .progress { width: 120px; }
+.field .row-gap .progress { width: 160px; }
 .audio-badge {
   display: inline-flex;
   align-items: center;
@@ -1116,3 +1120,20 @@ button.pchip-name:hover { text-decoration: underline; }
 .lm-editor-field input, .lm-editor-field textarea { font-weight: 400; font-size: 13px; color: var(--c-text); }
 .lm-editor-actions { display: flex; align-items: center; gap: 12px; }
 .lm-editor-actions .sh-muted { margin-left: auto; font-size: 12px; }
+
+/* ---------- Your own voice, "You" (#243) ---------- */
+.ov-modal { gap: 0.75rem; overflow-y: auto; }
+.ov-modal h2 { margin: 0; }
+.ov-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.ov-paragraph {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  border-left: 3px solid var(--c-dark);
+  background: var(--c-surface-alt);
+  border-radius: 4px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.ov-lang { margin: 0; font-size: 12.5px; }
+.ov-progress { display: flex; flex-direction: column; gap: 6px; }
+.spk-own-voice { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; }

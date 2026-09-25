@@ -25,7 +25,8 @@ import { version as pkgVersion } from "../../package.json";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
 import { DATE_BUCKETS, localToday, type DateBucket, type Facets, type FacetValue } from "../lib/facets";
-import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Participant, Person, Recipe, Segment, Settings, VoiceStatus } from "../lib/types";
+import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Participant, Person, Recipe, Segment, Settings, VoiceStatus, OwnVoiceStatus } from "../lib/types";
+import { singleChannel } from "../lib/ownVoice";
 import type { CalendarAttendee, CalendarLinkStatus, CalendarMatch, PlannedAttendee } from "../lib/calendar";
 import { nameFromEmail } from "../lib/participants";
 
@@ -89,7 +90,8 @@ const settings: Settings = {
   subtitles: "on_request",
   extension_token: "",
   save_audio: false,
-  saved_audio_format: "wav",
+  // #248 (P16): Opus on a new install.
+  saved_audio_format: "opus",
   // #136: `?notice=seen` skips the recording notice.
   meeting_notice_seen: params.get("notice") === "seen",
   // #242: `?voicesugg=off` starts with voice suggestions turned off.
@@ -173,6 +175,9 @@ const runAudioNames = (channels?: string[]): string[] => {
 /** Whether a run saves its audio: New's choice, else the per-app default. */
 const runSavesAudio = (a: Args): boolean => (a.saveAudio as boolean | undefined) ?? !!settings.save_audio;
 
+/** The running Compress audio job's cancel flag (#248), one at a time. */
+let compressCancel: { stop: boolean } | null = null;
+
 const VOICE_COLORS = ["#0f766e", "#7e22ce", "#1f6feb", "#c2410c", "#be185d", "#4d7c0f", "#0369a1", "#9a3412"];
 const voice = (n: number): DocSpeaker => ({ id: `voice:${n}`, label: `Voice ${n}`, color: VOICE_COLORS[(n - 1) % VOICE_COLORS.length] });
 
@@ -192,18 +197,21 @@ function labelVoices(s: Stored) {
 /** Mirrors engine::identify::availability (#134). */
 function voiceSource(s: Stored) {
   const file = s.meta.source.startsWith("file:") ? s.meta.source.slice(5) : "";
-  const no = (reason: string) => ({ available: false, reason, file_name: file });
+  const no = (reason: string) => ({ available: false, reason, file_name: file, saved_audio: false });
   if (s.meta.type === "note") return no("Notes are your own voice: they have no speakers.");
   if (s.meta.type === "meeting") return no("Meetings get their voices while they are recorded.");
   if (s.recording) return no("Available when the recording ends.");
   if (s.edited_externally) return no("The transcript was edited outside Sussurro.");
   if (s.voiceOf) return no("This transcription already has voice data: use Re-detect speakers.");
+  // Without the original file, the audio saved with the item (#248).
+  const saved = ["audio.wav", "audio-file.wav", "audio.opus", "audio-file.opus"].find((n) => (s.audio ?? []).some((f) => f.name === n));
+  if (saved && (s.sourceFile !== "available" || !file)) return { available: true, reason: "", file_name: saved, saved_audio: true };
   if (s.meta.source.startsWith("url:"))
     return no("Voices are found in the audio, and a link's download is deleted once it is transcribed (downloading it again is not supported yet). Transcribe the link again with Identify voices on.");
   if (!file) return no("The original audio of this transcription is not available.");
   switch (s.sourceFile) {
     case "available":
-      return { available: true, reason: "", file_name: file };
+      return { available: true, reason: "", file_name: file, saved_audio: false };
     case "missing":
       return no(`The original file “${file}” is no longer where it was transcribed from. Transcribe it again with Identify voices on.`);
     case "changed":
@@ -394,6 +402,23 @@ function mockVoice(personId: string, speechMs: number, documents: number): Voice
 
 /** "Not X" answers per item (#242): `speaker|person` keys. */
 const voiceDismissals = new Map<string, Set<string>>();
+
+/* ---------- Your own voice, "You" (#243) ---------- */
+// Mirrors speakers::own_voice: faked numbers only (?you=1 starts enrolled).
+const OWN_MIN_MS = 20_000;
+const OWN_TARGET_MS = 30_000;
+const OWN_MAX_MS = 90_000;
+let ownVoice: OwnVoiceStatus = {
+  enrolled: params.get("you") === "1",
+  speech_ms: params.get("you") === "1" ? 29_000 : 0,
+  label_as_you: params.get("you") === "1",
+  updated: params.get("you") === "1" ? "2026-09-25T10:00:00Z" : "",
+  min_speech_ms: OWN_MIN_MS,
+  target_ms: OWN_TARGET_MS,
+  max_ms: OWN_MAX_MS,
+};
+/** When the enrolment recording started (`null` = not recording). */
+let ownEnrolStart: number | null = null;
 
 function voiceOff(personId: string): VoiceStatus {
   return { ...mockVoice(personId, 0, 0), enabled: false, ready: false, updated: "" };
@@ -1498,10 +1523,71 @@ function handle(cmd: string, a: Args): unknown {
     case "voice_forget":
       return voices.delete(String(a.personId));
     case "voices_forget_all": {
-      const n = voices.size;
+      // "You" is in the same folder: forgetting all voices forgets it too.
+      const n = voices.size + (ownVoice.enrolled ? 1 : 0);
       voices.clear();
       voiceDismissals.clear();
+      ownVoice = { ...ownVoice, enrolled: false, speech_ms: 0, label_as_you: false, updated: "" };
       return n;
+    }
+    case "own_voice_status":
+      return { ...ownVoice };
+    case "own_voice_enrol_start":
+      ownEnrolStart = Date.now();
+      return null;
+    case "own_voice_enrol_progress":
+      return ownEnrolStart === null
+        ? { recording: false, elapsed_ms: 0, level: 0, failed: false }
+        : { recording: true, elapsed_ms: Date.now() - ownEnrolStart, level: 0.02 + Math.random() * 0.08, failed: false };
+    case "own_voice_enrol_cancel":
+      ownEnrolStart = null;
+      return null;
+    case "own_voice_enrol_finish": {
+      if (ownEnrolStart === null) throw "no recording of your voice is running";
+      const elapsed = Math.min(Date.now() - ownEnrolStart, OWN_MAX_MS);
+      ownEnrolStart = null;
+      // Faked: 95 % of the reading counts as speech.
+      const speech = Math.round(elapsed * 0.95);
+      return new Promise((resolve, reject) =>
+        setTimeout(() => {
+          if (speech < OWN_MIN_MS) {
+            reject(
+              `Only ${Math.floor(speech / 1000)} s of speech was heard — read the whole paragraph aloud (at least 20 s of speech are needed).`,
+            );
+            return;
+          }
+          ownVoice = {
+            ...ownVoice,
+            enrolled: true,
+            speech_ms: speech,
+            label_as_you: ownVoice.enrolled ? ownVoice.label_as_you : true,
+            updated: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+          };
+          resolve({ ...ownVoice });
+        }, 800),
+      );
+    }
+    case "own_voice_set_label":
+      if (!ownVoice.enrolled) throw "record your voice first";
+      ownVoice = { ...ownVoice, label_as_you: !!a.enabled };
+      return { ...ownVoice };
+    case "own_voice_forget": {
+      const had = ownVoice.enrolled;
+      ownVoice = { ...ownVoice, enrolled: false, speech_ms: 0, label_as_you: false, updated: "" };
+      return had;
+    }
+    case "own_voice_find": {
+      // Faked: the first voice without a label of the user's is "you".
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      if (!ownVoice.enrolled) throw "record your voice first";
+      if (!singleChannel(toItem(s))) throw 'in this recording your voice is on its own channel: it is "You" already';
+      if (!s.voiceOf) throw "this document has no voice data to look for your voice in";
+      const sp = (s.speakers ?? []).find(
+        (x) => x.own_voice === true || (x.own_voice !== false && !x.person_id && /^voice:\d+$/.test(x.id) && x.label === x.id.replace("voice:", "Voice ")),
+      );
+      if (sp) Object.assign(sp, { own_voice: true, label: "You", color: "#1a1a1a" });
+      return { item: toItem(s), found: !!sp };
     }
     case "voice_suggestions": {
       // Mirrors speakers::suggestions (#242), faked: the n-th unlinked
@@ -1517,7 +1603,7 @@ function handle(cmd: string, a: Args): unknown {
       return (s.speakers ?? []).flatMap((sp) => {
         const n = /^voice:([1-9]\d*)$/.exec(sp.id);
         const v = n ? ready[Number(n[1]) - 1] : undefined;
-        if (sp.person_id || !v || no.has(`${sp.id}|${v.person_id}`)) return [];
+        if (sp.person_id || sp.own_voice || !v || no.has(`${sp.id}|${v.person_id}`)) return [];
         return [{ speaker_id: sp.id, person_id: v.person_id }];
       });
     }
@@ -1566,12 +1652,18 @@ function handle(cmd: string, a: Args): unknown {
         const label = String(a.label).trim().replace(/\s+/g, " ");
         sp.label = label || sp.id.replace("voice:", "Voice ");
         delete sp.label_before_link;
+        // An automatic "You" the user renamed is never "You" again (#243).
+        if (sp.own_voice === true) Object.assign(sp, { own_voice: false, color: voice(Number(sp.id.split(":")[1]) || 1).color });
       } else if (cmd === "archive_link_speaker") {
         // Mirrors speakers::doc::link_speaker (#130), simplified.
         const sp = speakers.find((x) => x.id === a.speakerId);
         if (!sp) throw `no speaker '${a.speakerId}' in this document`;
         const person = people.find((x) => x.id === a.personId);
         if (!person) throw "that person is no longer in People";
+        if (sp.own_voice === true) {
+          const n = Number(sp.id.split(":")[1]) || 1;
+          Object.assign(sp, { own_voice: false, label: `Voice ${n}`, color: voice(n).color });
+        }
         const old = sp.label;
         const generic = /^voice \d+$|^you$/i.test(old.trim());
         sp.person_id = person.id;
@@ -1651,6 +1743,63 @@ function handle(cmd: string, a: Args): unknown {
       delete s.audio;
       return toItem(s);
     }
+    case "archive_uncompressed_audio": {
+      // Mirrors archive::compress::items_with_wav (#248).
+      const withWav = items.filter((s) => (s.audio ?? []).some((f) => f.name.endsWith(".wav")));
+      const bytes = withWav.reduce((n, s) => n + (s.audio ?? []).filter((f) => f.name.endsWith(".wav")).reduce((m, f) => m + f.bytes, 0), 0);
+      return { items: withWav.length, bytes };
+    }
+    case "archive_compress_audio": {
+      // Compress audio (#248): WAV → Opus per item, progress events, cancel.
+      if (compressCancel) throw "audio is already being compressed — wait for it to finish or cancel it";
+      const targets = (a.id ? items.filter((s) => s.id === a.id) : items).filter((s) =>
+        (s.audio ?? []).some((f) => f.name.endsWith(".wav")),
+      );
+      if (a.id && !find(String(a.id))) throw `no archive item '${a.id}'`;
+      const wavBytes = (s: Stored) => (s.audio ?? []).filter((f) => f.name.endsWith(".wav")).reduce((m, f) => m + f.bytes, 0);
+      const total = targets.reduce((n, s) => n + wavBytes(s), 0);
+      const cancel = { stop: false };
+      compressCancel = cancel;
+      const summary = { items: 0, files: 0, bytes_before: 0, bytes_after: 0, cancelled: false, failed: [] as { id: string; error: string }[] };
+      return (async () => {
+        let done = 0;
+        try {
+          for (const [i, s] of targets.entries()) {
+            if (s.recording) {
+              summary.failed.push({ id: s.id, error: `'${s.id}' is still being recorded — compress its audio when the session ends` });
+              continue;
+            }
+            const size = wavBytes(s);
+            for (let step = 1; step <= 5; step++) {
+              if (cancel.stop) break;
+              await new Promise((r) => setTimeout(r, 300));
+              ev("audio-compress-progress", { item_id: s.id, done_bytes: done + (size * step) / 5, total_bytes: total, items_done: i, items_total: targets.length });
+            }
+            if (cancel.stop) {
+              summary.cancelled = true;
+              break;
+            }
+            done += size;
+            const files = (s.audio ?? []).filter((f) => f.name.endsWith(".wav"));
+            s.audio = (s.audio ?? []).map((f) =>
+              f.name.endsWith(".wav") ? { name: f.name.replace(/\.wav$/, ".opus"), bytes: Math.round((f.bytes - 44) / 32_000) * 3_000 + 4_000 } : f,
+            );
+            summary.items += 1;
+            summary.files += files.length;
+            summary.bytes_before += size;
+            summary.bytes_after += files.reduce((m, f) => m + Math.round((f.bytes - 44) / 32_000) * 3_000 + 4_000, 0);
+          }
+        } finally {
+          compressCancel = null;
+        }
+        if (a.id && summary.failed.length) throw summary.failed[0].error;
+        return summary;
+      })();
+    }
+    case "archive_compress_cancel":
+      if (!compressCancel) return false;
+      compressCancel.stop = true;
+      return true;
     case "archive_reveal":
       console.info("[mock] reveal", a.id ?? ARCHIVE);
       return null;

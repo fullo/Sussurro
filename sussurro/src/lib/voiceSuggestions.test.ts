@@ -88,6 +88,12 @@ describe("shownSuggestions", () => {
     expect([...shown.keys()]).toEqual(["voice:2"]);
   });
 
+  it("never on a voice labelled You from your own voice", () => {
+    const you = { ...sp("voice:1"), label: "You", own_voice: true };
+    const shown = shownSuggestions([you, sp("voice:2")], [sugg("voice:1", "p-anna"), sugg("voice:2", "p-bruno")], people);
+    expect([...shown.keys()]).toEqual(["voice:2"]);
+  });
+
   it("keeps the first suggestion when a voice appears twice", () => {
     const shown = shownSuggestions(speakers, [sugg("voice:1", "p-anna"), sugg("voice:1", "p-bruno")], people);
     expect(shown.get("voice:1")?.id).toBe("p-anna");

@@ -572,6 +572,7 @@ where
                 o.names = req.names.clone();
             }
             crate::speakers::Tracker::new(o, speaker_model(models_dir.clone()))
+                .with_own_voice(own_voice_for_runs(paths))
         });
         Ok(Job {
             session_id: req.id,
@@ -674,6 +675,16 @@ pub(crate) fn speaker_options(
     } else {
         crate::speakers::SpeakerOptions::clustering(&[channel])
     })
+}
+
+/// The user's enrolled voice for labelling "You" (#243): `None` when not
+/// enrolled or *Label my voice as You* is off.
+pub(crate) fn own_voice_for_runs(paths: &AppPaths) -> Option<Vec<f32>> {
+    crate::speakers::own_voice::OwnVoiceStore::at(app_data_file(
+        paths,
+        crate::speakers::voices::VOICES_DIR,
+    ))
+    .labelling_voice()
 }
 
 /// Loads the speaker model when a run first needs it: downloaded into the

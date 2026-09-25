@@ -17,6 +17,8 @@
 //!   confirmed lines and suggestion matching (pure)
 //! - [`voices`]: the profile files in `<app data>/voices/` — never in the
 //!   archive (P13)
+//! - [`own_voice`]: the user's own voice, "You" (0.11, #243, P14):
+//!   read-aloud enrolment and labelling single-channel recordings
 //! - [`suggestions`]: "Voice N sounds like Anna" for an open document and
 //!   the per-document *Not Anna* answers (0.11, #242)
 
@@ -26,6 +28,7 @@ pub mod fbank;
 pub mod map;
 pub mod model;
 pub mod names;
+pub mod own_voice;
 pub mod profiles;
 pub mod suggestions;
 pub mod tracker;

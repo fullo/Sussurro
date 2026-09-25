@@ -67,7 +67,10 @@ describe("statusesById / forgetAllPrompt", () => {
 
   it("says how many profiles go", () => {
     expect(forgetAllPrompt(0)).toMatch(/no voice profiles/);
-    expect(forgetAllPrompt(1)).toMatch(/^Delete the voice profile/);
-    expect(forgetAllPrompt(3)).toMatch(/^Delete all 3 voice profiles/);
+    expect(forgetAllPrompt(1)).toMatch(/^Delete 1 person's voice profile from/);
+    expect(forgetAllPrompt(3)).toMatch(/^Delete 3 people's voice profiles from/);
+    // Your own voice (#243) goes with the rest.
+    expect(forgetAllPrompt(0, true)).toMatch(/^Delete your own voice from/);
+    expect(forgetAllPrompt(2, true)).toMatch(/^Delete 2 people's voice profiles and your own voice/);
   });
 });

@@ -4,8 +4,9 @@
 //!
 //! - A suggestion is only ever shown: linking takes the user's click on
 //!   the existing Link path (participants and emails follow as today).
-//! - Only unlinked acoustic voices (`voice:N`) are matched — "You" and
-//!   Meet names have their own sources — and only against ready profiles
+//! - Only unlinked acoustic voices (`voice:N`) are matched — "You" (the
+//!   mic channel, or a voice labelled from your own voice, #243) and Meet
+//!   names have their own sources — and only against ready profiles
 //!   of people still in People ([`VoiceStore::ready_profiles`]), by the
 //!   rules of [`super::profiles::suggest`]: when the best match was
 //!   dismissed for that voice, nothing is suggested (never the runner-up).
@@ -67,7 +68,11 @@ pub fn suggestions_for(
     }
     file.speakers
         .iter()
-        .filter(|sp| sp.person_id.is_none() && voice_number(&sp.id).is_some())
+        .filter(|sp| {
+            // A voice labelled "You" from your own voice (#243) is yours,
+            // not someone in People.
+            sp.person_id.is_none() && sp.own_voice != Some(true) && voice_number(&sp.id).is_some()
+        })
         .filter_map(|sp| {
             let s = suggest_for_speaker(profiles, file, source, &sp.id)?;
             let no = dismissed
@@ -353,6 +358,23 @@ mod tests {
         link(&f.archive, &new, "voice:1", &bruno); // even a "wrong" link stays
         let got = item_suggestions(&f.archive, &f.store, &f.dismissals, &new).unwrap();
         assert_eq!(got, vec![pair("voice:2", &bruno)]);
+    }
+
+    #[test]
+    fn a_voice_labelled_you_from_your_own_voice_gets_no_suggestion() {
+        let f = fixture();
+        let (anna, bruno) = enrolled(&f);
+        let new = meeting(&f.archive, 3);
+        let mut item = crate::archive::read_item(&f.archive, &new).unwrap();
+        let profiles = f.store.ready_profiles(&[anna.clone(), bruno.clone()]);
+        // #243 labelled voice:1 "You"; a voice renamed away from it
+        // (`Some(false)`) is an ordinary voice again.
+        item.segments.speakers[0].own_voice = Some(true);
+        let got = suggestions_for(&profiles, &item.segments, &item.meta.source, &[]);
+        assert_eq!(got, vec![pair("voice:2", &bruno)]);
+        item.segments.speakers[0].own_voice = Some(false);
+        let got = suggestions_for(&profiles, &item.segments, &item.meta.source, &[]);
+        assert_eq!(got, vec![pair("voice:1", &anna), pair("voice:2", &bruno)]);
     }
 
     #[test]

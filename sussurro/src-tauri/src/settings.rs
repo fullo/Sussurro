@@ -224,8 +224,10 @@ pub struct Settings {
     /// without a New screen (a browser meeting from the extension).
     pub save_audio: bool,
     /// *Saved audio format* (#247, P16): WAV or Ogg Opus for the audio a run
-    /// saves from now on; items saved earlier keep their files. A settings
-    /// file without the key takes the default ([`AudioFormat::default`]).
+    /// saves from now on; items saved earlier keep their files. Opus on a
+    /// new install ([`AudioFormat::default`], #248); a settings file from
+    /// before the setting existed keeps WAV, what that user's runs saved
+    /// until then (written once by [`Settings::load_migrating`]).
     ///
     /// [`AudioFormat::default`]: crate::archive::audio::AudioFormat
     pub saved_audio_format: crate::archive::audio::AudioFormat,
@@ -234,7 +236,7 @@ pub struct Settings {
     /// fresh or cleared settings file) shows it again, and so does
     /// Settings → Browser extension → "Show the notice again".
     pub meeting_notice_seen: bool,
-    /// *Suggest names from known voices* (Settings → Privacy, #242, P12):
+    /// *Suggest names from known voices* (Settings → Voices, #242, P12):
     /// the speaker panel suggests a person for an unlinked "Voice N" whose
     /// voice matches a ready voice profile. On by default — profiles exist
     /// only for people the user turned *Recognise this voice* on for; off
@@ -317,6 +319,13 @@ impl Settings {
         let mut migrated = settings.normalize();
         if json.is_object() && json.get("api_scripting").is_none() {
             settings.api_scripting = settings.api_enabled;
+            migrated = true;
+        }
+        // #248: Opus is the default for new installs only; an existing user
+        // keeps the WAV their runs saved so far (saved once, so the choice
+        // then shows in Settings as theirs).
+        if json.is_object() && json.get("saved_audio_format").is_none() {
+            settings.saved_audio_format = crate::archive::audio::AudioFormat::Wav;
             migrated = true;
         }
         (settings, migrated)
@@ -792,6 +801,11 @@ mod tests {
         let path = dir.path().join("settings.json");
         std::fs::write(&path, legacy).unwrap();
         let loaded = Settings::load(&path);
+        // A file from before the setting keeps WAV for saved audio (#248).
+        let s = Settings {
+            saved_audio_format: crate::archive::audio::AudioFormat::Wav,
+            ..s
+        };
         assert_eq!(loaded, s, "load() must not fall back to defaults");
         loaded.save(&path).unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
@@ -861,14 +875,33 @@ mod tests {
         assert!(on.save_audio);
     }
 
-    /// #247: the saved audio format is a setting; a settings file written
-    /// before it existed takes the default, and the choice round-trips.
+    /// #247: the saved audio format is a setting and the choice
+    /// round-trips. #248 (P16): Opus on a new install; a settings file from
+    /// before the setting keeps WAV, and that is saved once.
     #[test]
     fn saved_audio_format_setting() {
         use crate::archive::audio::AudioFormat;
-        let old: Settings = serde_json::from_str(r#"{"save_audio":true}"#).unwrap();
-        assert_eq!(old.saved_audio_format, AudioFormat::default());
-        assert_eq!(Settings::default().saved_audio_format, AudioFormat::default());
+        assert_eq!(AudioFormat::default(), AudioFormat::Opus);
+        assert_eq!(Settings::default().saved_audio_format, AudioFormat::Opus);
+        let dir = tempfile::tempdir().unwrap();
+        // No settings file: a new install.
+        let (fresh, migrated) = Settings::load_migrating(&dir.path().join("none.json"));
+        assert_eq!(fresh.saved_audio_format, AudioFormat::Opus);
+        assert!(!migrated);
+        // An existing user's file without the key keeps WAV, saved once.
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"save_audio":true,"api_scripting":false}"#).unwrap();
+        let (old, migrated) = Settings::load_migrating(&path);
+        assert_eq!(old.saved_audio_format, AudioFormat::Wav);
+        assert!(migrated);
+        // A choice already made stays.
+        for (json, want) in [
+            (r#"{"saved_audio_format":"opus"}"#, AudioFormat::Opus),
+            (r#"{"saved_audio_format":"wav"}"#, AudioFormat::Wav),
+        ] {
+            std::fs::write(&path, json).unwrap();
+            assert_eq!(Settings::load_migrating(&path).0.saved_audio_format, want);
+        }
         let opus: Settings = serde_json::from_str(r#"{"saved_audio_format":"opus"}"#).unwrap();
         assert_eq!(opus.saved_audio_format, AudioFormat::Opus);
         let json = serde_json::to_value(&opus).unwrap();

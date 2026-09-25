@@ -1,5 +1,5 @@
 /* *Recognise this voice* (People, #242, plan P12/P13) and Settings →
-   Privacy → Voices: pure helpers for the per-person toggle, its status
+   Voices: pure helpers for the per-person toggle, its status
    line and the explanation of what is stored. The backend owns the
    profiles (`voice_status`, `voice_set_enabled`, `voice_forget`,
    `voices_forget_all`); the UI only ever sees `VoiceStatus`. */
@@ -48,7 +48,7 @@ export function statusesById(list: VoiceStatus[]): Record<string, VoiceStatus> {
   return Object.fromEntries(list.map((s) => [s.person_id, s]));
 }
 
-/** The first-use sheet and Settings → Privacy share this wording (P13). */
+/** The first-use sheet and Settings → Voices share this wording (P13). */
 export const VOICE_STORED =
   "A voice profile is a summary of how this person sounds (a list of numbers, not a recording), built only from the lines you linked to them in meetings and transcriptions.";
 export const VOICE_WHERE =
@@ -56,12 +56,17 @@ export const VOICE_WHERE =
 export const VOICE_USE =
   "Sussurro uses it only to suggest “Voice 2 sounds like …” in the speaker panel. Nothing is linked until you click Link.";
 export const VOICE_DELETE =
-  "Turn it off, click Forget this voice, delete the person, or use Settings → Privacy → Forget all voices: the profile is deleted at once, not moved to the trash.";
+  "Turn it off, click Forget this voice, delete the person, or use Settings → Voices → Forget all voices: the profile is deleted at once, not moved to the trash.";
 export const VOICE_TELL =
   "A voice profile that identifies someone is biometric data under the GDPR (art. 9): tell the person and ask for their consent before turning this on, unless you use it only for yourself.";
 
-/** Confirmation text of *Forget all voices*. */
-export function forgetAllPrompt(count: number): string {
-  if (count === 0) return "There are no voice profiles. Forget any “Not this person” answers too?";
-  return `Delete ${count === 1 ? "the voice profile" : `all ${count} voice profiles`} on this computer? Recognition turns off for everyone; your links in the archive stay, so you can turn it on again later.`;
+/** Confirmation text of *Forget all voices*: `count` people's profiles,
+ *  and whether your own voice ("You", #243) is recorded — it goes too. */
+export function forgetAllPrompt(count: number, ownVoice = false): string {
+  const parts = [
+    count === 1 ? "1 person's voice profile" : count > 1 ? `${count} people's voice profiles` : "",
+    ownVoice ? "your own voice" : "",
+  ].filter(Boolean);
+  if (!parts.length) return "There are no voice profiles. Forget any “Not this person” answers too?";
+  return `Delete ${parts.join(" and ")} from this computer? Recognition turns off for everyone; your links in the archive stay, so you can turn it on again later.`;
 }

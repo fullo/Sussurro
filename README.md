@@ -371,7 +371,7 @@ art. 9), so this works only under these rules:
   suggestion for that voice in that document and is remembered (in
   `voice_dismissals.json` in the app's data folder, ids only). Suggestions
   also appear for items you open later from the Library. Settings →
-  Privacy → *Suggest names from known voices* turns them all off without
+  Voices → *Suggest names from known voices* turns them all off without
   deleting any profile.
 - **You can see where each profile stands**: People → a person shows the
   seconds of confirmed speech, the documents they come from and whether
@@ -385,9 +385,27 @@ art. 9), so this works only under these rules:
   API. On another computer you turn recognition on again and the profile
   is rebuilt from the archive's links; nothing is re-recorded.
 - **Forget it at any time**: *Forget this voice* (or turning recognition
-  off) on the person, *Forget all voices* in Settings → Privacy. Deleting a
+  off) on the person, *Forget all voices* in Settings → Voices. Deleting a
   person forgets their voice. Forgetting deletes the file; it doesn't go to
-  the trash. *Forget all voices* also clears every *Not X* answer.
+  the trash. *Forget all voices* also clears every *Not X* answer and your own voice.
+
+**Your own voice ("You").** Optionally, Settings → Voices (or *Record your
+voice* in the speaker panel of a room recording) asks you to read a short
+paragraph aloud, about 30 seconds, from the microphone you pick. Sussurro
+keeps one averaged voiceprint of it — never the recording — in the same
+folder (`voices/you.own-voice.json`, readable only by you on macOS and
+Linux; never in the archive, an export or the local API), and you are never
+added to People. With *Label my voice as You* on (on after recording, can be
+turned off), recordings made with one microphone — a meeting in the room,
+system audio without a separate mic, a transcription with *Identify voices*
+— label the voice that sounds most like yours "You", decided on the whole
+voice, not line by line. It never overrides a name you gave a speaker; rename
+a "You" that isn't you and it won't come back in that document. In browser
+meetings and *System audio + mic* your microphone is already "You".
+*Forget my voice* (or *Forget all voices*) deletes the file; documents keep
+the "You" labels they already have. The same voiceprint is what a future
+version will check your own voice against before cloning it (0.13, not in
+this version).
 
 Tell people before you let Sussurro learn their voice. Keeping voiceprints
 of friends and family for your own private use is generally a different
@@ -410,7 +428,7 @@ account:
 | Dictation history and usage stats | `history.jsonl`, `stats.json` in the app's data folder |
 | Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
 | Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
-| Voice profiles of people with *Recognise this voice* on (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
+| Voice profiles of people with *Recognise this voice* on, and your own voice if you recorded it (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
 | *Not X* answers to voice suggestions (0.11) | `voice_dismissals.json` in the app's data folder (ids only; readable only by you on macOS and Linux) |
 
 *Delete…* and *Delete audio…* move files to the OS trash (forgetting a voice

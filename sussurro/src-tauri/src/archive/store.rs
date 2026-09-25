@@ -562,7 +562,7 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
 /// marker is kept, so a UI sending back a stale copy can neither resurrect
 /// `recording` on a finished item nor clear it on a live one. The list of
 /// saved audio files (`audio:`, #141) is app-owned the same way: only the
-/// engine and "Delete audio" change it.
+/// engine, "Delete audio" and "Compress audio" (#248) change it.
 ///
 /// Participants are written normalized ([`normalize_participants`]). Notes
 /// never get participants (P10): an update that would add or change them on
@@ -818,6 +818,41 @@ fn edit_speakers_with(
         }
         Ok(())
     })
+}
+
+/// "Re-detect speakers" ([`SpeakerEdit::Redetect`]), then the user's
+/// enrolled voice labels its best match "You" (#243,
+/// [`crate::speakers::own_voice::label_you`]). Same rules as
+/// [`edit_speakers`].
+pub fn redetect_with_own_voice(archive: &Path, id: &str, you: &[f32]) -> Result<Item> {
+    modify_segments_with(archive, id, &|_| {}, |meta, segments| {
+        crate::speakers::doc::redetect(segments)?;
+        crate::speakers::own_voice::label_you(segments, &meta.source, you);
+        Ok(())
+    })
+}
+
+/// *Find my voice* on one document (#243): its best match of the user's
+/// enrolled voice becomes "You" ([`crate::speakers::own_voice::label_you`]).
+/// Returns the item and whether a voice is "You" now. Refused where "You"
+/// can't be told by voice (a two-channel recording, where the mic is "You"
+/// already) and on documents without voice data. Same rules as
+/// [`edit_speakers`].
+pub fn label_own_voice(archive: &Path, id: &str, you: &[f32]) -> Result<(Item, bool)> {
+    use crate::speakers::own_voice;
+    let mut found = false;
+    let item = modify_segments_with(archive, id, &|_| {}, |meta, segments| {
+        if !own_voice::single_channel(segments, &meta.source) {
+            bail!("in this recording your voice is on its own channel: it is \"You\" already");
+        }
+        if !segments.segments.iter().any(|s| s.embedding.is_some()) {
+            bail!("this document has no voice data to look for your voice in");
+        }
+        own_voice::label_you(segments, &meta.source, you);
+        found = segments.speakers.iter().any(|s| s.own_voice == Some(true));
+        Ok(())
+    })?;
+    Ok((item, found))
 }
 
 /// [`modify_segments_with`] for the app's editors outside this module

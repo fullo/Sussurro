@@ -816,6 +816,12 @@ struct ArchiveToken { id: String, name: String, sha256: String,
 //   speech: [speech.opus]          0.12
 //   synthetic: { engine, voice, marked: [metadata, watermark] }   0.12
 
+// <app data>/voices/you.own-voice.json  (0600; #243, P14) — the user's own voice
+struct OwnVoiceProfile { version: u32, model: String, centroid: Vec<f32>,
+                         speech_ms: u64, label_as_you: bool, updated: String }
+// segments.json speakers: DocSpeaker.own_voice: Option<bool>
+//   true = labelled "You" by the match; false = the user took it off
+
 // <app data>/voices/cloned/<voice id>/  (0.13)
 struct ClonedVoice { id: String, owner: VoiceOwner /* You | Person(id) */,
                      engine: String, reference: String /* file name */,
@@ -894,7 +900,7 @@ maintainer's own voice only if he provides it.
       rebuild, forget (P12, P13, E13). (#241)
 - [ ] **Suggestions**: speaker panel chip, People toggle, first-use sheet,
       *Forget all voices*. (#242)
-- [ ] **"You" enrolment** (P14). (#243)
+- [ ] **"You" enrolment** (P14): read-aloud enrolment, best voice ≥ 0.45 labelled "You" in single-channel documents. (#243)
 - [ ] **Overlap-aware Re-detect** (E19). (#244)
 - [ ] **Teams web names** (E20). (#245)
 - [ ] **Zoom web names** (E20). (#246)

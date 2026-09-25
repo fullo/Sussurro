@@ -2,12 +2,14 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Ctl } from "../hooks/useAppController";
 import { audioChannel, audioLabel } from "../lib/audio";
+import { CompressItemButton } from "./CompressAudio";
 import { formatBytes } from "../lib/format";
 import type { Item } from "../lib/types";
 
-/** The item's saved audio (#141): which files, how big, and "Delete audio,
- *  keep transcript" (to the OS trash, like the rest of the archive). Shown
- *  only when the item folder holds audio. */
+/** The item's saved audio (#141): which files, how big, "Compress audio"
+ *  (WAV to Opus, #248) and "Delete audio, keep transcript" (to the OS
+ *  trash, like the rest of the archive). Shown only when the item folder
+ *  holds audio. */
 export function AudioBar({ ctl, item, onItem }: { ctl: Ctl; item: Item; onItem: (item: Item) => void }) {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -40,9 +42,11 @@ export function AudioBar({ ctl, item, onItem }: { ctl: Ctl; item: Item; onItem: 
           · item {formatBytes(item.folder_bytes)} on disk
         </span>
       ) : null}
+      <span className="push" />
+      <CompressItemButton ctl={ctl} item={item} onItem={onItem} />
       <button
         type="button"
-        className="btn-ghost sh-btn push"
+        className="btn-ghost sh-btn"
         disabled={busy || !!item.recording}
         onClick={() => setConfirm(true)}
       >

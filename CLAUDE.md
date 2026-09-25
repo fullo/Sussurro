@@ -453,11 +453,29 @@ project decisions here, not in per-machine memory.**
   lookahead × 3 and end trimming on the last granule (decoded length and
   positions exact). Startup recovery (`repair_any`) cuts a crashed `.opus`
   after its last whole page and sets EOS (empty stream if the headers were
-  cut); foreign files untouched. **Default stays WAV until #248** (Opus
-  playback by decode-to-WAV in the scheme) — then flip `#[default]` on
-  `AudioFormat`; until then the scheme serves `.opus` as `audio/ogg`
-  (WebView2, macOS 15.4+). Windows MSVC link is checked on every PR by the
-  `opus-windows` job (`cargo test -p opus`).
+  cut); foreign files untouched. Windows MSVC link is checked on every PR
+  by the `opus-windows` job (`cargo test -p opus`).
+- **Opus playback, decode and Compress audio (0.11, #248, P16/E15)**:
+  `AudioFormat`'s default is **Opus for new installs**; a settings file
+  without `saved_audio_format` (an existing user) is pinned to WAV and saved
+  once (`Settings::load_migrating`). **The WebView never sees Ogg Opus**:
+  the `sussurro-audio:` scheme serves an `.opus` file as a *virtual* 16-bit
+  WAV (exact decoded length) through `opus::OpusReader` — page index from
+  the headers, seeks restart 200 ms early with the decoder reset,
+  consecutive reads bit-exact; readers cached per file (4 entries, file
+  closed between requests — Windows can't move a folder with an open file,
+  keyed by size + mtime). A request **without `Range`** gets the whole
+  resource (200) up to `MAX_WHOLE` = 128 MiB, else 413 — never a 206 (the
+  old 1 MiB cut, WAV too); Tauri's scheme API takes whole bodies only, so no
+  streaming. `FileStream` decodes Ogg Opus via the same reader (symphonia has
+  no Opus decoder), and *Identify voices* falls back to the item's saved
+  file-channel audio (`audio.<ext>`/`audio-file.<ext>`, WAV first) when the
+  original is gone — links included (`VoiceSource.saved_audio`). *Compress
+  audio* (`archive/compress.rs`; audio bar per item, Settings → Archive →
+  Compress all): encode to `.sussurro/compress-*.part`, decode it through
+  (exact length, no undecodable sample), then under the archive lock (not
+  recording, WAV unchanged) rename in place and WAV → OS trash (trash failure
+  removes the copy); one job at a time, cancel between 64 KiB blocks.
 - **Speaker-aware recipes and Ask (0.10, #143)** (`recipes/`): built-ins
   *Meeting minutes* and *Who said what* are `speakers_only` — offered and
   run only on meetings/transcriptions whose transcript names its speakers
@@ -638,11 +656,12 @@ project decisions here, not in per-machine memory.**
   exports, diagnostics or logs (`Debug` prints sizes). Commands:
   `voices_status`, `voice_status`, `voice_set_enabled`, `voices_rebuild`,
   `voice_forget`, `voices_forget_all`. Overlap lines (#244) are to be
-  excluded once segments carry the flag. "You" is #243.
+  excluded once segments carry the flag.
 - **Voice suggestions (0.11, #242, P12)** (`speakers/suggestions.rs`,
   `src/lib/voiceSuggestions.ts`, `shell/VoiceSuggestionChip.tsx`):
   `voice_suggestions(id)` returns `{speaker_id, person_id}` only (no score)
-  for unlinked **`voice:N`** speakers (never "You" or `meet:` names) of a
+  for unlinked **`voice:N`** speakers (never "You" — the mic channel or a
+  voice with `own_voice: true` from #243 — nor `meet:` names) of a
   non-recording item, from ready profiles of people still in People; a
   dismissed best match gives **no** suggestion (never the runner-up). The
   panel chip *Sounds like X · Link · Not X*: Link = the normal
@@ -654,9 +673,31 @@ project decisions here, not in per-machine memory.**
   `Settings.voice_suggestions` (default on) hides all suggestions and keeps
   the profiles. People → person: *Recognise this voice* (turning on shows a
   first-use sheet — what, where, delete, tell the person), status line,
-  *Forget this voice*; Settings → **Privacy** → Voices: the switch, *Forget
-  all voices* with confirmation, GDPR note. Not built: stripping per-line
-  embeddings from items on request (optional in the issue).
+  *Forget this voice*. **Settings → Voices is one section** holding #243's
+  *Your voice* card and the *Known voices* card (the switch, *Forget all
+  voices* with confirmation — it deletes your own voice too, and the *Your
+  voice* card is reloaded — and the GDPR note). Not built: stripping
+  per-line embeddings from items on request (optional in the issue).
+- **Own voice "You" (0.11, #243, P14)** (`speakers/own_voice.rs`,
+  `shell/OwnVoiceDialog.tsx`, Settings → Voices): optional read-aloud
+  enrolment (IT/EN paragraph, ~30 s, own `Recorder` on the picked mic; the
+  audio is never saved): quiet frames dropped, ≤ 3 s windows embedded, one
+  centroid; needs ≥ 20 s of speech, uses ≤ 90 s. File
+  `<app data>/voices/you.own-voice.json` (0600, same lock and folder as
+  #241; the dot keeps it out of person-id scans; *Forget all voices*
+  deletes it too). Never a People entry. **Labelling** only in
+  single-channel documents (not `browser:`, no `you` line, no mic line in a
+  `system` item): the best-matching "Voice N" with cosine ≥ **0.45** (spike
+  #235, voice level, never per line) becomes label "You" + `YOU_COLOR`,
+  marked `DocSpeaker.own_voice = true` (lines keep their `voice:N` id). Runs
+  at the end of a run (tracker), after Identify voices and Re-detect, when
+  *Label my voice as You* is on (default on after enrolment, kept on
+  re-enrol); `own_voice_find` on request. Never over a user label: a voice
+  renamed/linked is skipped (no fallback to the runner-up); renaming or
+  linking an automatic "You" sets `own_voice = false` = never automatic
+  again in that document; a "You" that stops being the best match goes
+  back to "Voice N". The centroid is also the 0.13 own-voice cloning
+  reference (not built).
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at

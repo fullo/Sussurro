@@ -176,14 +176,15 @@ export interface Settings {
    *  saved only on request. Absent in settings from before 0.10. */
   save_audio?: boolean;
   /** "Saved audio format" (#247, P16): the format of the audio runs save
-   *  from now on; items saved earlier keep theirs. Absent in settings from
-   *  before 0.11 (= the backend default, WAV until #248). */
+   *  from now on; items saved earlier keep theirs. Opus on a new install;
+   *  the backend pins WAV for a settings file from before 0.11 (#248), so
+   *  it is always sent. */
   saved_audio_format?: SavedAudioFormat;
   /** The notice before the first recording of other people (#136) was
    *  acknowledged with "Don't show this again". Absent or false (a fresh or
    *  cleared settings file) = show it. */
   meeting_notice_seen?: boolean;
-  /** *Suggest names from known voices* (Settings → Privacy, #242): the
+  /** *Suggest names from known voices* (Settings → Voices, #242): the
    *  speaker panel suggests a person for an unlinked "Voice N". Absent
    *  before 0.11 = on (the backend default). */
   voice_suggestions?: boolean;
@@ -191,6 +192,34 @@ export interface Settings {
 
 /** Saved audio file format (#247): 16-bit WAV or Ogg Opus at 24 kb/s. */
 export type SavedAudioFormat = "wav" | "opus";
+
+/** Progress of *Compress audio* (#248), event `audio-compress-progress`. */
+export interface CompressProgress {
+  /** The item being compressed ("" once the job ends). */
+  item_id: string;
+  done_bytes: number;
+  total_bytes: number;
+  items_done: number;
+  items_total: number;
+}
+
+/** What a *Compress audio* job did (`archive_compress_audio`). */
+export interface CompressSummary {
+  /** Items with at least one file converted. */
+  items: number;
+  files: number;
+  bytes_before: number;
+  bytes_after: number;
+  cancelled: boolean;
+  /** Items left as WAV, and why. */
+  failed: { id: string; error: string }[];
+}
+
+/** Saved audio still in WAV (`archive_uncompressed_audio`). */
+export interface UncompressedAudio {
+  items: number;
+  bytes: number;
+}
 
 export type SubtitlesMode = "on_request" | "always";
 
@@ -289,6 +318,33 @@ export interface VoiceSuggestion {
   person_id: string;
 }
 
+/** The user's own voice, "You" (#243): no vector ever reaches the UI.
+ *  `label_as_you` = *Label my voice as You* (on after enrolment). */
+export interface OwnVoiceStatus {
+  enrolled: boolean;
+  speech_ms: number;
+  label_as_you: boolean;
+  /** RFC 3339 time of the enrolment; "" when not enrolled. */
+  updated: string;
+  min_speech_ms: number;
+  target_ms: number;
+  max_ms: number;
+}
+
+/** The enrolment recording, polled while the paragraph is read (#243). */
+export interface EnrolProgress {
+  recording: boolean;
+  elapsed_ms: number;
+  level: number;
+  failed: boolean;
+}
+
+/** `own_voice_find`: the item, and whether a voice is "You" now (#243). */
+export interface OwnVoiceFound {
+  item: Item;
+  found: boolean;
+}
+
 /** Frontmatter of transcript.md. Unknown keys (Obsidian aliases…) ride along
  *  flattened and must be sent back untouched on update. */
 export interface ItemMeta {
@@ -337,6 +393,10 @@ export interface DocSpeaker {
   person_id?: string;
   /** Label before a link replaced it; unlinking gives it back. */
   label_before_link?: string;
+  /** #243: true = labelled "You" automatically (it matched the user's
+   *  enrolled voice); false = the user took that label off, so it is never
+   *  labelled "You" automatically again in this document. */
+  own_voice?: boolean;
 }
 
 export interface SegmentsFile {
@@ -380,8 +440,12 @@ export interface VoiceSource {
   available: boolean;
   /** Why not, for the speaker panel (empty when available). */
   reason: string;
-  /** The original file's name (empty when unknown). */
+  /** The original file's name (empty when unknown), or the saved audio
+   *  file's when `saved_audio`. */
   file_name: string;
+  /** The voices come from the audio saved with the item (#248): the
+   *  original file isn't available. Absent from older backends. */
+  saved_audio?: boolean;
 }
 
 /** One line on the Voice map (#144, `archive_voice_map`). */
