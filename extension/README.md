@@ -119,8 +119,27 @@ MAIN world (hook, AudioWorklet) ─MessagePort─▶ ISOLATED world ─runtime p
 - The Firefox manifest sets its own `content_security_policy`: Firefox's
   MV3 default includes `upgrade-insecure-requests`, which breaks
   `ws://127.0.0.1` (spike #104).
-- Scope: the top frame only (no `all_frames`); if a platform runs its call
-  in an iframe, that shows up in the manual checks (#184).
+- **Supported hosts** (`src/shared/platform.ts`, both manifests; a unit
+  test keeps the manifests, `MEETING_MATCHES` and `detectPlatform` in
+  step):
+
+  | Platform | Match pattern | Frames |
+  |---|---|---|
+  | Google Meet | `https://meet.google.com/*` | top frame |
+  | Microsoft Teams | `https://teams.microsoft.com/*`, `https://teams.live.com/*`, `https://teams.cloud.microsoft/*` (organisational tenants from 2026-09-30, #287) | top frame |
+  | Zoom web client | `https://*.zoom.us/wc/*` | every frame whose own URL matches (`all_frames`) |
+
+- **Frames** (#287): Zoom runs the meeting in a same-origin iframe under
+  `/wc/`, so its two entries set `all_frames` (no `match_about_blank` /
+  `match_origin_as_fallback`: a frame must itself be a `/wc/` page). Each
+  frame's ISOLATED script opens its own port on Start and reports what its
+  hook sees; the background arms **one frame per tab**
+  (`src/background/frames.ts`: a frame with a peer connection at once,
+  else the best one after 500 ms; only a frame with a stronger sign
+  replaces it) and drops every other frame's audio and events, so a top
+  frame that also opens the mic is never captured twice. Only the top frame
+  answers `page:info`, so the panel shows the tab. Meet and Teams stay
+  top-frame only.
 
 ## Side panel (#129)
 
@@ -354,7 +373,14 @@ stored. On a fake Meet page (`e2e/meet.html`, served at
 `https://meet.google.com/` by a Playwright route, so the shipped
 content-script patterns match it) it checks the Meet name observer, in
 every configuration: CSRC `speaker_active`/`speaker_idle`, bound names,
-participants without the user, healthy observer.
+participants without the user, healthy observer. Two more routed pages
+(#287) check capture with the shipped patterns: `e2e/loopback.html` (a
+loopback call) at `https://teams.cloud.microsoft/`, and `e2e/zoom.html` at
+`https://app.zoom.us/wc/e2e/join`, whose call runs in a same-origin
+`/wc/e2e/meeting` iframe while the top frame holds a mic preview — the
+hook in both frames, one session with the tab's platform, URL and title,
+both channels carrying the iframe's call (not the preview), and audio
+length matching the clock (captured once).
 
 Configurations: `chromium` (binary messaging, Meet-like `replaceTrack`),
 `chromium-json` (the manifest key removed: base64, as on Chrome < 148) and
