@@ -57,6 +57,17 @@ describe("item routes", () => {
     expect(describeFailure(404, { error: "unknown endpoint" })).toMatch(/update the app/);
     expect(describeFailure(404, { error: "no item 2026/09/x" })).toMatch(/deleted or moved/);
     expect(describeFailure(500, null)).toBe("Sussurro answered with HTTP 500.");
+    // #215: an item the extension didn't record is refused with a code.
+    expect(describeFailure(403, { error: "only meetings recorded…", code: "not_extension_item" })).toMatch(
+      /only the meetings it recorded.*Sussurro app/,
+    );
+    expect(describeFailure(403, { error: "origin not allowed" })).toBe("Sussurro refused this extension.");
+    const notOurs = fakeFetch(
+      () => new Response('{"error":"only meetings recorded by the browser extension…","code":"not_extension_item"}', { status: 403 }),
+    );
+    const refusedExport = await exportItem(PAIRING, ID, "txt", notOurs.f);
+    expect(refusedExport.ok).toBe(false);
+    if (!refusedExport.ok) expect(refusedExport.error).toMatch(/only the meetings it recorded/);
     for (const s of [401, 403, 404, 500]) expect(describeFailure(s, { error: TOKEN })).not.toContain(TOKEN);
   });
 });
