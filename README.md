@@ -352,6 +352,39 @@ from Settings → Browser extension or the extension's options), and a
 transcribed on this computer and is not sent anywhere; a saved `.wav` is
 kept only if you ask for it.
 
+### Voice recognition (known voices)
+
+From 0.11 Sussurro can learn the voice of a person in People, so that in a
+later meeting "Voice 2" can come with a suggestion: *sounds like Anna —
+link?* A voiceprint that identifies a person is **biometric data** (GDPR
+art. 9), so this works only under these rules:
+
+- **Off until you turn it on, person by person** (*Recognise this voice*).
+  It learns only from lines you linked to that person yourself: a speaker
+  you linked to them in the speaker panel. A line you moved to someone else
+  stops counting.
+- **Suggestions only.** A match needs enough confirmed speech (at least
+  60 seconds from at least 2 documents) and a clear lead over everyone
+  else; nothing is ever linked without your click.
+- **Stays on this computer.** The profile is one averaged voiceprint per
+  person in the app's data folder (`voices/<person id>.json`, readable only
+  by you on macOS and Linux) — never in the archive, so it doesn't travel
+  with a synced or shared archive, never in a config export, never in
+  diagnostics or logs, and never shown in the app or served by the local
+  API. On another computer you turn recognition on again and the profile
+  is rebuilt from the archive's links; nothing is re-recorded.
+- **Forget it at any time**: *Forget this voice* (or turning recognition
+  off) on the person, *Forget all voices* in Settings → Privacy. Deleting a
+  person forgets their voice. Forgetting deletes the file; it doesn't go to
+  the trash.
+
+Tell people before you let Sussurro learn their voice. Keeping voiceprints
+of friends and family for your own private use is generally a different
+matter from an organisation recognising its staff or clients, where data
+protection law usually applies in full (a lawful basis, typically explicit
+consent, and a record of it). Sussurro can't tell which case you are in;
+check the rules that apply to you.
+
 ### Where your data lives
 
 Everything stays on this computer, as ordinary files under your user
@@ -366,8 +399,10 @@ account:
 | Dictation history and usage stats | `history.jsonl`, `stats.json` in the app's data folder |
 | Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
 | Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
+| Voice profiles of people with *Recognise this voice* on (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
 
-*Delete…* and *Delete audio…* move files to the OS trash. The
+*Delete…* and *Delete audio…* move files to the OS trash (forgetting a voice
+deletes its profile outright). The
 app's config and data folders follow each OS's convention (for example
 `~/Library/Application Support/com.sussurro.app` on macOS). The
 [data guide](docs/blog/where-data-lives.html) has more.
