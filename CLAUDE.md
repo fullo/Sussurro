@@ -185,15 +185,26 @@ project decisions here, not in per-machine memory.**
   buffer that never reserves past the cap. Serving: 4 workers pulling from
   the tiny_http server, `/clean` + `/transcribe` share 2 slots (503 +
   `Retry-After` when full), handlers under `catch_unwind`; `/live` moves to
-  its own thread after the upgrade. tiny_http 0.12 drains an unread
-  declared body when a request drops (into a buffer of the remaining
-  size), so refusals of such requests are answered on a short-lived thread
-  (≤ 16); an absurd `Content-Length` from a local process can still fail
-  that allocation (accepted: local processes can end the app anyway;
-  browsers send the real length). `/items/{id}/open|export` reach only
+  its own thread after the upgrade; a body must arrive within 120 s
+  (`BODY_DEADLINE`, else 408). `/items/{id}/open|export` reach only
   `source: browser:` items (403, `code: not_extension_item`, explained by
   the extension). `settings.json` is written atomically with mode 0600 on
   Unix (`settings::write_private_atomic`).
+- **tiny_http is vendored and patched (#223)**
+  (`sussurro/src-tauri/vendor/tiny_http`, used via `[patch.crates-io]`;
+  every change marked `Sussurro (#223)`; upstream 0.12.0 is unmaintained
+  since 2022). Upstream read an unfinished body into `vec![0; remaining]`
+  when a request dropped, so `Content-Length: 9223372036854775807` on any
+  route **aborted the app** (reproduced); it also buffered header lines
+  and chunk-size lines with no limit and took any number of headers and
+  connections. Patched: an unread body closes the connection (nothing read
+  or allocated), head ≤ 64 KiB / ≤ 100 headers (431), chunked framing
+  lines ≤ 4 KiB, ambiguous `Content-Length`/`Transfer-Encoding` → 400,
+  ≤ 128 connections, 30 s socket timeouts lifted on the `/live` upgrade
+  (`tiny_http::Limits`). Residual (accepted): a local process can hold all
+  128 connections and deny the API, not crash it. Don't replace the
+  vendored crate with the crates.io one; moving to hyper would be a
+  separate decision.
 - **System audio + mic (0.10 step 1, #139)** (`sources/system.rs`):
   *New → System audio + mic* (it records other people: the #136 notice
   asks first). The mic and **any second input

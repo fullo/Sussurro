@@ -397,7 +397,9 @@ Web pages can't use them: every route accepts only `Host: 127.0.0.1:<port>`
 or `localhost:<port>` (so a site that points its own name at your machine —
 DNS rebinding — is refused), and any request carrying a browser `Origin`
 other than a browser extension's is refused. Bodies are capped (1 MiB for
-`/clean`, 200 MiB for `/transcribe`, `413` beyond); at most two
+`/clean`, 200 MiB for `/transcribe`, `413` beyond) and must arrive within
+two minutes (`408`); request headers are limited to 64 KiB (`431`), and a
+refused upload closes the connection instead of being read; at most two
 `/clean`/`/transcribe` requests run at once (`503` with `Retry-After`
 otherwise), so a long transcription never stalls the extension.
 
