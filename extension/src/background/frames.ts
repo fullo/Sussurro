@@ -8,15 +8,19 @@
  * captured twice. Meet and Teams run the scripts in the top frame only:
  * one frame, picked at once when it shows a call.
  *
- * The pick uses the frames' unarmed snapshots (what the MAIN-world hook
- * observed): peer connections first, then received audio, then a mic. A
- * frame that shows a call is kept once picked; a frame that shows nothing
- * yet (Start pressed before joining) gives way to one that does — it has
- * captured nothing but silence, so nothing is lost or doubled. */
+ * The pick uses the frames' snapshots (what the MAIN-world hook observed),
+ * in tiers: a peer connection (the call itself), else some audio (a mic or
+ * a received track), else nothing. A frame with a peer connection is
+ * picked at once; otherwise the frames get FRAME_SETTLE_MS to report and
+ * the best one is taken. Later, only a frame of a higher tier replaces the
+ * capture frame (Start pressed before joining, or a frame that reported
+ * late): the frame given up never had the call, so no call audio is lost
+ * or doubled. Tiers only rise (the peer-connection count is "since load"),
+ * so the pick can't flip back and forth. */
 import type { CaptureSnapshot } from "../shared/messages";
 
-/** How long after Start to wait for frames to report, when none shows a
- *  call yet, before arming the best of what is there. */
+/** How long after Start to wait for frames to report when none shows a
+ *  peer connection yet, before arming the best of what is there. */
 export const FRAME_SETTLE_MS = 500;
 
 /** How much a frame looks like the call: 0 = no sign at all. The snapshot
@@ -29,6 +33,12 @@ export function callScore(s: CaptureSnapshot | null | undefined): number {
   if (remote?.via === "peer-connection" || (typeof remote?.tracks === "number" && remote.tracks > 0)) n += 2;
   if ((typeof mic?.via === "string" && mic.via !== "none") || (typeof mic?.tracks === "number" && mic.tracks > 0)) n += 1;
   return n;
+}
+
+/** 2 = a peer connection, 1 = some audio, 0 = nothing. */
+export function callTier(s: CaptureSnapshot | null | undefined): 0 | 1 | 2 {
+  const n = callScore(s);
+  return n >= 4 ? 2 : n > 0 ? 1 : 0;
 }
 
 export interface FrameView {
@@ -52,14 +62,12 @@ export type FramePick =
 export function pickCaptureFrame(frames: readonly FrameView[], current: number | null, sinceStartMs: number): FramePick {
   if (!frames.length) return { none: true };
   const score = new Map(frames.map((f) => [f.frameId, callScore(f.capture)]));
+  const tier = new Map(frames.map((f) => [f.frameId, callTier(f.capture)]));
   // The best frame: highest score, then the top frame, then the oldest id.
-  const best = [...frames].sort((a, b) => score.get(b.frameId)! - score.get(a.frameId)! || a.frameId - b.frameId)[0];
-  const bestScore = score.get(best.frameId)!;
-  if (current !== null && score.has(current)) {
-    // Keep a frame that shows a call, or when no other frame does better.
-    if (score.get(current)! > 0 || bestScore === 0) return { frame: current };
-    return { frame: best.frameId };
+  const best = [...frames].sort((a, b) => score.get(b.frameId)! - score.get(a.frameId)! || a.frameId - b.frameId)[0].frameId;
+  if (current !== null && tier.has(current)) {
+    return tier.get(best)! > tier.get(current)! ? { frame: best } : { frame: current };
   }
-  if (bestScore > 0 || sinceStartMs >= FRAME_SETTLE_MS) return { frame: best.frameId };
+  if (tier.get(best) === 2 || sinceStartMs >= FRAME_SETTLE_MS) return { frame: best };
   return { wait: FRAME_SETTLE_MS - Math.max(0, sinceStartMs) };
 }

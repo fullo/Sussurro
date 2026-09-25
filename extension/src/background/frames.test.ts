@@ -68,9 +68,22 @@ describe("pickCaptureFrame", () => {
     expect(pickCaptureFrame([f(9, call()), f(4, call())], null, 0)).toEqual({ frame: 4 });
   });
 
-  it("keeps a capture frame that shows a call, even if another frame looks busier", () => {
-    expect(pickCaptureFrame([f(0, preview()), f(7, call())], 0, 60_000)).toEqual({ frame: 0 });
+  it("keeps a capture frame with a peer connection, even if another frame looks busier", () => {
     expect(pickCaptureFrame([f(0, snap({ pcs: 1 })), f(7, call())], 0, 60_000)).toEqual({ frame: 0 });
+    expect(pickCaptureFrame([f(0, call()), f(7, call())], 7, 60_000)).toEqual({ frame: 7 });
+  });
+
+  it("a mic preview is not the call: it waits for the other frames, and a peer connection replaces it", () => {
+    // The top frame reports first (Firefox's order in the harness).
+    expect(pickCaptureFrame([f(0, preview())], null, 50)).toEqual({ wait: FRAME_SETTLE_MS - 50 });
+    expect(pickCaptureFrame([f(0, preview()), f(7, call())], null, 80)).toEqual({ frame: 7 });
+    // The iframe reported only after the wait: it replaces the preview.
+    expect(pickCaptureFrame([f(0, preview()), f(7, call())], 0, 60_000)).toEqual({ frame: 7 });
+  });
+
+  it("some audio replaces nothing at all", () => {
+    expect(pickCaptureFrame([f(0, blank()), f(7, preview())], 0, 60_000)).toEqual({ frame: 7 });
+    expect(pickCaptureFrame([f(0, preview()), f(7, preview())], 7, 60_000)).toEqual({ frame: 7 });
   });
 
   it("moves off a capture frame that shows nothing when another frame shows the call", () => {
