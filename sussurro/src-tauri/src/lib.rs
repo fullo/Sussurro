@@ -22,6 +22,7 @@ pub mod speakers;
 pub mod state;
 pub mod stats;
 pub mod stt;
+pub mod tts;
 pub mod voice_commands;
 pub mod tray;
 #[cfg(all(target_os = "linux", feature = "wayland-portal"))]
