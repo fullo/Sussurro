@@ -25,6 +25,8 @@ function sourceLabel(source: string): string {
   if (source === "mic") return "microphone";
   if (source === "system") return "system audio + microphone";
   if (source.startsWith("file:")) return `file ${source.slice(5)}`;
+  // A note from the archive API (#251): the token's name says which script.
+  if (source.startsWith("api:")) return `script “${source.slice(4)}” (archive API)`;
   return source;
 }
 
