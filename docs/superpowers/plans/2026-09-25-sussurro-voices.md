@@ -293,9 +293,11 @@ assume.
      tags and any C2PA manifest, and says which layer answered and whether
      the payload is Sussurro's (Code measures 2.1 and 2.3: free, local,
      nothing uploaded). "Made by Sussurro" = at least half the frames
-     marked **and** at most 2 of the 16 payload bits wrong; marked with
-     another payload = "AudioSeal watermark from another tool"; nothing
-     found is never reported as "human".
+     marked **and** at most 2 of the 16 payload bits wrong. The frame score
+     alone is not enough (pure tones reach it, 4.7), so a high score with
+     the wrong payload is reported as "inconclusive", never as another
+     tool's mark; nothing found is never reported as "human". The signed
+     detection result the Code offers on request (2.1.2) can come later.
   Rejected: Sony SilentCipher (weights licence unclear), Resemble Perth
   (weights licence not stated). WavMark (MIT) stays the fallback but was
   not needed. The C2PA soft-binding list has an AudioSeal entry
@@ -835,6 +837,45 @@ cloning weights are gated behind use terms that must be read first.
   missing piece; Resemble's live check was beaten by playing a recording.
   E18 combines these: live, nonce, transcript match, voice match, replay
   heuristic.
+
+**Marking measured (spike V0-6, #240, 2026-09-26).** AudioSeal 16-bit via
+our ONNX export on ONNX Runtime 1.24.2, "M16" marking (E17) on 22 ten-second
+clips of the bake-off's Pocket TTS output (Italian 24- and 6-layer, English;
+24 kHz), detector at 16 kHz. "Found" = at least half the frames marked;
+"+ payload" also needs at most 2 of the 16 bits wrong. Opus through libopus
+at the app's settings (VOIP, VBR, complexity 10, 20 ms), MP3 through LAME.
+Watermark level: median 27.9 dB below the speech.
+
+| Processing after marking | Found | Found + payload |
+|---|---|---|
+| none (16-bit WAV, 24 kHz) | 22/22 | 22/22 |
+| **Opus 24 kb/s, 16 kHz (the app's writer)** | **22/22** | **22/22** |
+| Opus 16 / 12 kb/s, 16 kHz | 22/22 | 22/22 |
+| Opus 24 kb/s at 24 kHz | 22/22 | 22/22 |
+| MP3 64 kb/s / 32 kb/s | 22/22 | 22/22 / 18/22 |
+| resampled to 8 kHz and back | 22/22 | 22/22 |
+| Opus 24 kb/s, then MP3 64 kb/s | 22/22 | 22/22 |
+| other speech mixed in at 10 dB SNR | 17/22 | 17/22 |
+| reverb (RT60 0.4 s) | 21/22 | 0/22 |
+| white noise at 20 dB / 10 dB SNR | 5/22 / 0/22 | 5/22 / 0/22 |
+| speed ×1.05 (pitch and tempo) | 0/22 | 0/22 |
+| 1 s excerpt / Opus + 3 s / Opus + 1 s | 11/22 / 15/22 / 5/22 | 1/22 / 3/22 / 1/22 |
+
+Nine clips of the other bake-off engines (Chatterbox, Qwen3-TTS) behaved
+the same. **False positives**: on unmarked speech (the same Pocket clips
+unmarked and 26 human LibriSpeech/MLS clips, each clean and after Opus,
+MP3, 8 kHz, noise, reverb and a 1 s cut, 272 checks) no clip reached half
+the frames (highest 0.29). A pure 440 Hz tone and a chord did, up to 0.89:
+**the frame score alone is not safe on tonal audio (music)**. The payload
+check removes them all: no unmarked check (320) came within 2 bits of the
+payload (the closest had 4 wrong). Running the generator directly at
+24 kHz ("M24", detector at 24 kHz) did as well on the codecs (22/22) and a
+little better on white noise at 20 dB (7/22), with no tone false positives.
+But only the 16 kHz scheme is readable by the stock AudioSeal detector as
+others use it, so M16 stays. Not tested: the analogue hole (played and
+re-recorded), pitch shift alone, adversarial removal (the models are
+public, so a determined attacker can strip or forge the mark; the signed
+metadata is what binds the file to Sussurro).
 
 ### 4.8 Teams web and Zoom web names (0.11)
 
