@@ -22,5 +22,9 @@ declare const chrome:
       runtime: {
         sendMessage(message: unknown): Promise<unknown>;
       };
+      /** `storage.local.setAccessLevel` (Chrome ≥ 140 for `local`, #217). */
+      storage?: {
+        local?: import("./shared/secureStore").RestrictableArea;
+      };
     }
   | undefined;

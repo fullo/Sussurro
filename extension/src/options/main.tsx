@@ -1,6 +1,6 @@
 /* Options page: pairing with the Sussurro app (#127, E6). Paste the pairing
    code from Sussurro → Settings → Browser extension (or type port and token),
-   save it to storage.local, and "Test connection" (GET /app/version with the
+   save it (pairing.ts: the extension's IndexedDB, #217), and "Test connection" (GET /app/version with the
    token). Once saved, the token is only ever shown masked. Also brings
    back the recording notice (#136) and lists the third-party licences
    (About, #138). */

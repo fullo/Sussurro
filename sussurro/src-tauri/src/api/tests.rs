@@ -765,6 +765,82 @@ fn a_dropped_connection_still_keeps_the_meeting() {
     }
 }
 
+/// Connect to `/live` with no token in the URL (#217: first-message auth).
+fn ws_connect_bare(port: u16, origin: Option<&str>) -> Result<Ws, u16> {
+    let mut req = format!("ws://127.0.0.1:{port}/live").into_client_request().unwrap();
+    if let Some(o) = origin {
+        req.headers_mut().insert("Origin", o.parse().unwrap());
+    }
+    match tungstenite::connect(req) {
+        Ok((ws, _)) => Ok(ws),
+        Err(tungstenite::Error::Http(resp)) => Err(resp.status().as_u16()),
+        Err(e) => panic!("unexpected WebSocket error: {e}"),
+    }
+}
+
+fn auth_message(token: &str) -> Message {
+    Message::text(format!(r#"{{"type":"auth","token":"{token}"}}"#))
+}
+
+/// The first status after a failed first-message auth, then the close.
+fn refused(ws: &mut Ws) -> String {
+    let m = read_json(ws).expect("an error status");
+    assert_eq!(m["state"], "error", "{m}");
+    assert!(read_json(ws).is_none(), "closed after the error");
+    m["message"].as_str().unwrap_or_default().to_string()
+}
+
+#[test]
+fn live_takes_the_token_as_its_first_message() {
+    let r = start_server();
+    // The handshake says so.
+    let v = http(r.port, "GET", "/app/version", &[("Authorization", &bearer()), ("Origin", EXT)], "");
+    assert_eq!(v.json()["live_auth"], "message");
+    // Without a token the origin rules still apply before the upgrade.
+    assert_eq!(ws_connect_bare(r.port, None).err(), Some(403));
+    assert_eq!(ws_connect_bare(r.port, Some("https://meet.google.com")).err(), Some(403));
+    // …and so does the #215 guard: a rebinding `Host` is refused first.
+    let mut req = format!("ws://127.0.0.1:{}/live", r.port).into_client_request().unwrap();
+    req.headers_mut().insert("Origin", EXT.parse().unwrap());
+    req.headers_mut()
+        .insert("Host", format!("rebind.attacker:{}", r.port).parse().unwrap());
+    match tungstenite::connect(req) {
+        Err(tungstenite::Error::Http(resp)) => assert_eq!(resp.status().as_u16(), 403),
+        other => panic!("expected a refusal, got {:?}", other.map(|_| ())),
+    }
+    // Nothing is sent before the auth; the right token gets `ready`.
+    let mut ws = ws_connect_bare(r.port, Some(EXT)).expect("upgrade");
+    ws.send(auth_message(TOKEN)).unwrap();
+    let ready = read_json(&mut ws).unwrap();
+    assert_eq!((ready["type"].as_str(), ready["state"].as_str()), (Some("status"), Some("ready")));
+    ws.send(Message::text(r#"{"type":"ping"}"#)).unwrap();
+    assert_eq!(read_json(&mut ws).unwrap()["state"], "ready");
+    drop(ws);
+    // A wrong token, or anything else first, is refused and closed.
+    let mut ws = ws_connect_bare(r.port, Some(EXT)).expect("upgrade");
+    ws.send(auth_message("0000")).unwrap();
+    assert_eq!(refused(&mut ws), "wrong extension token");
+    let mut ws = ws_connect_bare(r.port, Some(EXT)).expect("upgrade");
+    ws.send(Message::text(
+        r#"{"type":"start","url":"https://meet.google.com/a","rate":16000,"channels":1}"#,
+    ))
+    .unwrap();
+    assert_eq!(refused(&mut ws), "authentication required");
+    assert!(archive::list_items(&r.host.0.archive).is_empty(), "no meeting started");
+    // Too late, even with the right token.
+    let mut ws = ws_connect_bare(r.port, Some(EXT)).expect("upgrade");
+    std::thread::sleep(live::AUTH_TIMEOUT + std::time::Duration::from_millis(200));
+    ws.send(auth_message(TOKEN)).unwrap();
+    assert_eq!(refused(&mut ws), "authentication timed out");
+}
+
+#[test]
+fn an_unpaired_app_refuses_live_without_a_token_too() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().extension_token = String::new();
+    assert_eq!(ws_connect_bare(r.port, Some(EXT)).err(), Some(401));
+}
+
 // ---- #215: Host / Origin / body caps / worker pool / item filter ----------
 
 /// DNS rebinding: a page at `rebind.attacker:<port>` re-resolved to

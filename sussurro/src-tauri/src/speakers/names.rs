@@ -30,13 +30,29 @@
 //! beats the runner-up by `margin_pct`. A winner whose name is unknown, a
 //! close call (overlapping speakers) or no signal at all leave the line to
 //! the voice clustering ("Voice N"): a wrong name is worse than none.
+//!
+//! **Bounds (#217).** The events come from a web page, so the timeline is
+//! bounded: at most [`MAX_SPEAKER_KEYS`] distinct speakers (later new ones
+//! are ignored), [`MAX_TIMELINE_PARTICIPANTS`] participants, and
+//! [`MAX_INTERVALS`] intervals — past that the oldest finished half ages
+//! out and [`NameTimeline::forgotten_before`] says up to when the timeline
+//! is incomplete (the end-of-run pass leaves those lines as they are).
 
 use crate::archive::meeting::{MeetingEvent, NameSource};
 use crate::archive::people::{link_new_participants, name_key, Person};
 use crate::archive::types::{normalize_participants, Participant};
 use crate::archive::ItemMeta;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+
+/// Distinct speakers (ids and bare names) a timeline follows; a page
+/// inventing new ids past this is ignored for new ones.
+pub const MAX_SPEAKER_KEYS: usize = 1_000;
+/// Participants kept (the protocol's own cap on one list).
+pub const MAX_TIMELINE_PARTICIPANTS: usize = 500;
+/// Intervals kept before the oldest finished half ages out (a busy
+/// three-hour call has a few thousand).
+pub const MAX_INTERVALS: usize = 20_000;
 
 /// How remote lines are matched to the page's speaker timeline. The lags
 /// are first guesses: the real indicator lag is measured on live calls
@@ -118,6 +134,12 @@ pub struct NameTimeline {
     carried: HashMap<String, String>,
     /// Participants in order of first appearance.
     participants: Vec<String>,
+    /// `name_key`s of `participants`.
+    participant_keys: HashSet<String>,
+    /// Every speaker key seen (bounded by [`MAX_SPEAKER_KEYS`]).
+    keys: HashSet<Key>,
+    /// Intervals ending before this (ms, lag-compensated) aged out.
+    forgotten_before: Option<i64>,
 }
 
 impl NameTimeline {
@@ -161,9 +183,54 @@ impl NameTimeline {
     }
 
     fn add_participant(&mut self, name: &str) {
+        if self.participants.len() >= MAX_TIMELINE_PARTICIPANTS {
+            return;
+        }
         let k = name_key(name);
-        if !k.is_empty() && !self.participants.iter().any(|p| name_key(p) == k) {
+        if !k.is_empty() && self.participant_keys.insert(k) {
             self.participants.push(name.to_string());
+        }
+    }
+
+    /// Whether events for `key` are taken: a known speaker, or a new one
+    /// while there is room.
+    fn admit(&mut self, key: &Key) -> bool {
+        if self.keys.contains(key) {
+            return true;
+        }
+        if self.keys.len() >= MAX_SPEAKER_KEYS {
+            return false;
+        }
+        self.keys.insert(key.clone());
+        true
+    }
+
+    /// The timeline has no information on lines that end before this (ms),
+    /// because older intervals aged out; `None` while complete.
+    pub fn forgotten_before(&self) -> Option<u64> {
+        self.forgotten_before.map(|t| t.max(0) as u64)
+    }
+
+    /// Past [`MAX_INTERVALS`]: drop the older half of the finished
+    /// intervals (by end), keep every open one.
+    fn age_out(&mut self) {
+        if self.intervals.len() <= MAX_INTERVALS {
+            return;
+        }
+        let mut ends: Vec<i64> = self.intervals.iter().filter_map(|iv| iv.end).collect();
+        if ends.is_empty() {
+            return;
+        }
+        let k = ends.len() / 2;
+        let (_, &mut horizon, _) = ends.select_nth_unstable(k);
+        self.intervals.retain(|iv| iv.end.is_none_or(|e| e > horizon));
+        self.forgotten_before = Some(self.forgotten_before.map_or(horizon, |f| f.max(horizon)));
+        for (i, iv) in self.intervals.iter().enumerate() {
+            if iv.end.is_none() {
+                if let Some(slot) = self.open.get_mut(&iv.key) {
+                    slot.0 = i;
+                }
+            }
         }
     }
 
@@ -180,6 +247,9 @@ impl NameTimeline {
                 let Some(key) = Self::key(id, name) else {
                     return;
                 };
+                if !self.admit(&key) {
+                    return;
+                }
                 if let (Some(id), Some(n)) = (id, name) {
                     self.carried.insert(id.clone(), n.clone());
                 }
@@ -204,6 +274,7 @@ impl NameTimeline {
                         end: None,
                     });
                     self.open.insert(key, (self.intervals.len() - 1, *source));
+                    self.age_out();
                 }
             }
             MeetingEvent::SpeakerIdle { t_ms, name, id, .. } => {
@@ -214,7 +285,9 @@ impl NameTimeline {
                 }
             }
             MeetingEvent::SpeakerName { id, name, .. } => {
-                self.bound.insert(id.clone(), name.clone());
+                if self.admit(&Key::Id(id.clone())) {
+                    self.bound.insert(id.clone(), name.clone());
+                }
             }
             MeetingEvent::Participants { names, .. } => {
                 for n in names {
@@ -302,6 +375,7 @@ impl NameTimeline {
     pub fn participants(&self) -> Vec<String> {
         let mut t = Self {
             participants: self.participants.clone(),
+            participant_keys: self.participant_keys.clone(),
             ..Default::default()
         };
         let mut ids: Vec<&String> = self.bound.keys().chain(self.carried.keys()).collect();
@@ -358,6 +432,10 @@ impl SharedNames {
 
     pub fn is_empty(&self) -> bool {
         self.lock().is_empty()
+    }
+
+    pub fn forgotten_before(&self) -> Option<u64> {
+        self.lock().forgotten_before()
     }
 }
 
@@ -612,6 +690,59 @@ mod tests {
         assert_eq!(t.participants(), ["Anna", "Bo", "Carla", "Dino", "Eva"]);
         assert!(!t.is_empty());
         assert!(NameTimeline::default().is_empty());
+    }
+
+    #[test]
+    fn a_page_cannot_grow_the_timeline_without_bound() {
+        let mut t = NameTimeline::new(params());
+        // New speakers past the cap are ignored; known ones still count.
+        for i in 0..MAX_SPEAKER_KEYS + 50 {
+            t.push(&bind(&format!("csrc:{i}"), Some(&format!("P{i}"))));
+        }
+        assert_eq!(t.keys.len(), MAX_SPEAKER_KEYS);
+        assert_eq!(t.bound.len(), MAX_SPEAKER_KEYS);
+        t.push(&rtp(10, &format!("csrc:{}", MAX_SPEAKER_KEYS + 1)));
+        assert!(t.intervals.is_empty(), "a new id past the cap opens nothing");
+        t.push(&rtp(10, "csrc:0"));
+        assert_eq!(t.intervals.len(), 1);
+        // Participants: capped, deduplicated by key.
+        let many: Vec<String> = (0..2 * MAX_TIMELINE_PARTICIPANTS).map(|i| format!("N{i}")).collect();
+        t.push(&MeetingEvent::Participants { at_ms: 0, names: many.clone() });
+        t.push(&MeetingEvent::Participants { at_ms: 0, names: many });
+        assert_eq!(t.participants.len(), MAX_TIMELINE_PARTICIPANTS);
+        assert_eq!(t.participants().len(), MAX_TIMELINE_PARTICIPANTS);
+    }
+
+    #[test]
+    fn old_intervals_age_out_and_the_horizon_is_reported() {
+        let mut t = NameTimeline::new(params());
+        t.push(&rtp(0, "csrc:open")); // never idles: must survive
+        t.push(&bind("csrc:a", Some("Anna")));
+        assert_eq!(t.forgotten_before(), None);
+        let mut ms = 0;
+        while t.forgotten_before().is_none() {
+            t.push(&rtp(ms, "csrc:a"));
+            t.push(&idle(ms + 500, "csrc:a"));
+            ms += 1_000;
+        }
+        assert!(t.intervals.len() <= MAX_INTERVALS);
+        let horizon = t.forgotten_before().unwrap();
+        assert!(horizon > 0 && horizon < ms);
+        // Recent lines still resolve; the open interval kept its index.
+        let last = (ms - 1_000) as i64;
+        assert!(t.intervals.iter().any(|iv| iv.start == last && iv.end == Some(last + 500)));
+        t.push(&idle(ms, "csrc:open"));
+        assert!(t.open.is_empty());
+        let open = t.intervals.iter().find(|iv| iv.key == Key::Id("csrc:open".into())).unwrap();
+        assert_eq!((open.start, open.end), (0, Some(ms as i64)));
+        // Growth goes on bounded.
+        for _ in 0..MAX_INTERVALS {
+            t.push(&rtp(ms, "csrc:a"));
+            t.push(&idle(ms + 500, "csrc:a"));
+            ms += 1_000;
+        }
+        assert!(t.intervals.len() <= MAX_INTERVALS);
+        assert!(t.forgotten_before().unwrap() > horizon);
     }
 
     #[test]

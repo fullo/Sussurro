@@ -11,6 +11,10 @@
  *   base64. Buffers from the page are copied into this world first
  *   (Firefox Xray wrappers).
  * - Meet speaker events (#131) are relayed as they come (JSON data).
+ * - The MAIN world is the page's: what it posts is capped here (#217) —
+ *   speaker events, state and audio blocks per second, block sizes and
+ *   counters checked, error text bounded — before it costs the background
+ *   or the app anything (both cap it again).
  * - The runtime port closing (tab navigating, extension reloaded, service
  *   worker gone) disarms the hook: no capture without a listener. */
 import browser, { type Runtime } from "webextension-polyfill";
@@ -19,6 +23,7 @@ import { detectPlatform } from "../shared/platform";
 import { detectMode, encodePayload, ownBuffer, type TransportMode } from "../shared/transport";
 import type { CaptureSnapshot, FromBackground, FromMain, PageInfo, ToBackground, ToMain, ToPage } from "../shared/messages";
 import type { PageSpeakerMsg } from "../shared/speakerEvents";
+import { MAX_BLOCK_BYTES, MAX_ERROR_CHARS, PAGE_AUDIO, PAGE_CONTROL, PAGE_EVENTS, RateLimiter, pageSeq } from "../shared/ratelimit";
 
 const platform = detectPlatform(location.href);
 const targetOrigin = location.origin === "null" ? "*" : location.origin;
@@ -28,6 +33,16 @@ let state: CaptureSnapshot | null = null;
 let bg: Runtime.Port | null = null;
 let mode: TransportMode = "base64";
 let keepalive: ReturnType<typeof setInterval> | undefined;
+
+const audioRate = new RateLimiter(PAGE_AUDIO.burst, PAGE_AUDIO.perSec);
+const eventRate = new RateLimiter(PAGE_EVENTS.burst, PAGE_EVENTS.perSec);
+const controlRate = new RateLimiter(PAGE_CONTROL.burst, PAGE_CONTROL.perSec);
+
+/** A page audio block this world can own, or null if it is too big. */
+function block(v: unknown): ArrayBuffer | null {
+  const b = ownBuffer(v);
+  return b && b.byteLength <= MAX_BLOCK_BYTES ? b : null;
+}
 
 const toMain = (m: ToMain) => {
   void mainPort.then((p) => p.postMessage(m));
@@ -55,32 +70,37 @@ void mainPort.then((p) => {
     switch (field(m, "t")) {
       case "pcm": {
         if (!bg) return;
-        const mic = ownBuffer(field(m, "mic"));
+        const seq = pageSeq(field(m, "seq"));
+        if (seq === null || !audioRate.allow()) return;
+        const mic = block(field(m, "mic"));
         const rem = field(m, "remote");
-        const remote = rem ? ownBuffer(rem) : null;
-        const out: ToBackground = { type: "pcm", seq: Number(field(m, "seq")) };
+        const remote = rem ? block(rem) : null;
+        const out: ToBackground = { type: "pcm", seq };
         if (mic) out.mic = encodePayload(mode, mic);
         if (remote) out.remote = encodePayload(mode, remote);
         toBg(out);
         return;
       }
       case "state":
+        if (!controlRate.allow()) return;
         // Plain data: a clone makes it this world's own (Firefox).
         state = structuredClone(field(m, "state")) as CaptureSnapshot;
         toBg({ type: "state", state });
         return;
       case "speaker": {
         // Meet names (#131): plain data, made this world's own (Firefox).
-        if (!bg) return;
+        if (!bg || !eventRate.allow()) return;
         const msg = structuredClone(field(m, "msg")) as PageSpeakerMsg;
         if (msg && typeof msg === "object" && typeof msg.type === "string") toBg({ type: "speaker", msg });
         return;
       }
       case "armed":
+        if (!controlRate.allow()) return;
         toBg({ type: "armed", rate: Number(field(m, "rate")), title: document.title, url: location.href, platform, transport: mode });
         return;
       case "arm-failed":
-        toBg({ type: "arm-failed", error: String(field(m, "error")) });
+        if (!controlRate.allow()) return;
+        toBg({ type: "arm-failed", error: String(field(m, "error")).slice(0, MAX_ERROR_CHARS) });
         return;
     }
   };

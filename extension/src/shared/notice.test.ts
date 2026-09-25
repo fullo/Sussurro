@@ -69,8 +69,10 @@ describe("recording notice before the first Start (#136)", () => {
   it("survives Forget / Pair again: its key is not the pairing's", async () => {
     const s = memoryStorage();
     await answerNotice(true, true, s);
-    await setPairing({ port: 4525, token: "0123456789abcdef".repeat(4) }, s);
-    await clearPairing(s);
+    // storage.local is the pairing's old home (#217): it is cleared there too.
+    const stores = { secure: memoryStorage(), legacy: s };
+    await setPairing({ port: 4525, token: "0123456789abcdef".repeat(4) }, stores);
+    await clearPairing(stores);
     expect(Object.values(PAIRING_KEYS)).not.toContain(NOTICE_KEY);
     expect(await isNoticeNeeded(s)).toBe(false);
   });

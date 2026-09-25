@@ -27,6 +27,12 @@ describe("classifyResponse", () => {
     expect(classifyResponse(200, { app: "0.9.0", protocol: PROTOCOL_VERSION, subtitles: "sometimes" })).not.toHaveProperty("subtitles");
   });
 
+  it("reads whether /live takes the token as its first message (#217)", () => {
+    expect(classifyResponse(200, { app: "0.9.1", protocol: PROTOCOL_VERSION, live_auth: "message" })).toMatchObject({ kind: "ok", liveAuth: "message" });
+    expect(classifyResponse(200, { app: "0.9.0", protocol: PROTOCOL_VERSION })).not.toHaveProperty("liveAuth");
+    expect(classifyResponse(200, { app: "0.9.0", protocol: PROTOCOL_VERSION, live_auth: "url" })).not.toHaveProperty("liveAuth");
+  });
+
   it("refuses another protocol", () => {
     expect(classifyResponse(200, { app: "1.2.0", protocol: PROTOCOL_VERSION + 1 })).toEqual({
       kind: "protocol_mismatch",
