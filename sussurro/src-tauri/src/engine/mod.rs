@@ -400,13 +400,15 @@ struct Shared {
 impl Shared {
     fn progress(&self, session_id: u64) -> EngineEvent {
         let backlog = *self.backlog.lock().unwrap();
-        EngineEvent::Progress(progress_payload(
+        let payload = progress_payload(
             session_id,
             &backlog,
             self.total,
             self.queue.len(),
             self.segments_done.load(Ordering::Relaxed),
-        ))
+        );
+        crate::diagnostics::note_progress(&payload);
+        EngineEvent::Progress(payload)
     }
 
     fn sync_queue(&self) {
@@ -908,7 +910,11 @@ fn work(
         }
         let id = item.segments().len() as u32;
         let channel = audio.channel;
-        let built = match stt.transcribe(&audio.samples) {
+        // Timings for Settings → Diagnostics (#101): numbers only.
+        let stt_started = std::time::Instant::now();
+        let transcribed = stt.transcribe(&audio.samples);
+        let stt_time = stt_started.elapsed();
+        let built = match transcribed {
             Ok(transcript) => {
                 transcribed_any = true;
                 if worked.detected.is_none() {
@@ -920,7 +926,9 @@ fn work(
                     .rev()
                     .find(|s| !s.text.trim().is_empty())
                     .map(|s| s.text.clone());
-                build_segment(
+                let calls = crate::diagnostics::cleanup_calls();
+                let clean_started = std::time::Instant::now();
+                let built = build_segment(
                     id,
                     channel,
                     &audio,
@@ -928,7 +936,11 @@ fn work(
                     previous.as_deref(),
                     voice_commands,
                     cleaner,
-                )
+                );
+                let cleanup = (crate::diagnostics::cleanup_calls() != calls)
+                    .then(|| clean_started.elapsed());
+                crate::diagnostics::note_segment(audio.samples.len(), stt_time, cleanup, false);
+                built
             }
             // Cancelled while waiting for the model (a dictation had it,
             // #158): not a failed segment — the run ends below.
@@ -944,6 +956,7 @@ fn work(
                 // range, marked, and go on (a model switch mid-session can
                 // be fixed while the rest keeps coming).
                 eprintln!("engine: segment {id} not transcribed ({e:#})");
+                crate::diagnostics::note_segment(audio.samples.len(), stt_time, None, true);
                 let segment = failed_segment(id, channel, &audio, &e);
                 worked.stt_error = Some(e);
                 Some(segment)

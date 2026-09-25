@@ -136,7 +136,11 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool) {
             let app = app.clone();
             // whisper + ollama take seconds — never block the event thread.
             std::thread::spawn(move || {
-                match process_recording(&app) {
+                // Finish → Idle, phase by phase, for Settings → Diagnostics.
+                let mut timer = crate::diagnostics::DictationTimer::start();
+                let result = process_recording(&app, &mut timer);
+                timer.finish(result.is_ok());
+                match result {
                     Ok(()) => set_status(&app, "idle"),
                     Err(e) => set_status(&app, &format!("error: {e:#}")),
                 }
@@ -581,7 +585,10 @@ fn focused_app_name() -> String {
         .unwrap_or_default()
 }
 
-fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
+fn process_recording(
+    app: &AppHandle,
+    timer: &mut crate::diagnostics::DictationTimer,
+) -> anyhow::Result<()> {
     let state = app.state::<AppState>();
     // Begun by `handle_trigger` at Start. Ends right after the final
     // transcription — or on any early return — so long-form segments,
@@ -590,6 +597,7 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     let target_app = focused_app_name();
 
     let samples = state.recorder.lock().unwrap().stop()?;
+    timer.audio_samples(samples.len());
     if samples.len() < 4_800 {
         // <0.3 s: accidental tap, nothing to transcribe.
         return Ok(());
@@ -604,7 +612,14 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     let samples = crate::audio::resample::trim_silence(&samples, threshold, 1_600, 3_200);
 
     let prompt = dictionary_prompt(&settings.dictionary);
-    let raw = lock_transcriber(&state)?.transcribe(&samples, prompt.as_deref(), &settings.language)?;
+    let waited = std::time::Instant::now();
+    let mut transcriber = lock_transcriber(&state)?;
+    timer.load(waited.elapsed());
+    let started = std::time::Instant::now();
+    let raw = transcriber.transcribe(&samples, prompt.as_deref(), &settings.language);
+    timer.stt(started.elapsed());
+    drop(transcriber);
+    let raw = raw?;
     turn.finish(); // cleanup and injection don't need the model
     if raw.is_empty() {
         return Ok(());
@@ -630,9 +645,9 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
                     let typed_tail = if raw_streaming {
                         tail.to_string()
                     } else {
-                        cleanup_for_app(&settings, &target_app, tail.trim())
+                        timer.time_cleanup(|| cleanup_for_app(&settings, &target_app, tail.trim()))
                     };
-                    inject::inject_text(&typed_tail)?;
+                    timer.time_paste(|| inject::inject_text(&typed_tail))?;
                     final_text.push_str(&typed_tail);
                 }
             }
@@ -655,11 +670,13 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
 
     // Voice shortcut: the transcript IS a snippet cue → paste its text, no LLM.
     if let Some(snippet) = crate::snippets::find(&settings.snippets, &raw) {
-        if to_file {
-            append_to_output_file(&settings.output_file, &snippet.text)?;
-        } else {
-            inject::inject_text(&snippet.text)?;
-        }
+        timer.time_paste(|| {
+            if to_file {
+                append_to_output_file(&settings.output_file, &snippet.text)
+            } else {
+                inject::inject_text(&snippet.text)
+            }
+        })?;
         record_stats(&state, &snippet.text);
         let _ = history::append(
             &state.paths.history_file,
@@ -679,13 +696,15 @@ fn process_recording(app: &AppHandle) -> anyhow::Result<()> {
     } else {
         raw.clone()
     };
-    let cleaned = cleanup_for_app(&settings, &target_app, &processed);
+    let cleaned = timer.time_cleanup(|| cleanup_for_app(&settings, &target_app, &processed));
 
-    if to_file {
-        append_to_output_file(&settings.output_file, &cleaned)?;
-    } else {
-        inject::inject_text(&cleaned)?;
-    }
+    timer.time_paste(|| {
+        if to_file {
+            append_to_output_file(&settings.output_file, &cleaned)
+        } else {
+            inject::inject_text(&cleaned)
+        }
+    })?;
 
     record_stats(&state, &cleaned);
     let _ = history::append(

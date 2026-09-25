@@ -58,7 +58,10 @@ fn run_cleanup(
         );
         return transcript.to_string();
     }
-    match chat(&profile, messages) {
+    let started = std::time::Instant::now();
+    let reply = chat(&profile, messages);
+    crate::diagnostics::note_cleanup_call(started.elapsed(), reply.is_ok());
+    match reply {
         Ok(text) if !text.trim().is_empty() => {
             let cleaned = text.trim().to_string();
             // Small models sometimes ANSWER short dictations instead of
