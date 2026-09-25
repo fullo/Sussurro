@@ -21,12 +21,14 @@
 //! Item ids contain `/` (`2026/09/2026-09-24-weekly-sync`): they are taken
 //! as-is between `/items/` and the action, `%2F` also accepted.
 //!
-//! 0.11 archive routes for scripts (E14, #249; the routes themselves come
-//! with #250 and #251): everything under `/archive`, answered only with
-//! `Settings.api_archive` on and an archive token with the right scope
-//! (`Authorization: Bearer sua_…`, [`tokens`]). Any browser `Origin` is
-//! refused there — extensions too — and no CORS header is ever sent.
+//! 0.11 archive routes for scripts (E14, #249): everything under
+//! `/archive`, answered only with `Settings.api_archive` on and an archive
+//! token with the right scope (`Authorization: Bearer sua_…`, [`tokens`]).
+//! Any browser `Origin` is refused there — extensions too — and no CORS
+//! header is ever sent. The read routes (#250) are in [`archive`]; the
+//! note-from-text write route comes with #251.
 
+pub mod archive;
 pub mod auth;
 pub mod export;
 pub mod guard;
@@ -56,6 +58,11 @@ pub trait Host: Send + Sync + 'static {
     /// `GET /history`: the JSON answer.
     fn history(&self, query: &str, n: usize) -> serde_json::Value;
     fn archive_dir(&self) -> anyhow::Result<PathBuf>;
+    /// The archive's search index file (in app data; never served). Hosts
+    /// without one answer the archive routes with a 500.
+    fn archive_index(&self) -> anyhow::Result<PathBuf> {
+        anyhow::bail!("no archive index")
+    }
     /// Bring the app to the front on item `id`; an error if there is none.
     fn open_item(&self, id: &str) -> anyhow::Result<()>;
     /// Run the long-form engine on a browser meeting; returns the session id.
@@ -245,6 +252,16 @@ pub fn parse_url(url: &str) -> (&str, HashMap<String, String>) {
 ///   `write` otherwise; `people` for emails). No CORS header, ever. Errors
 ///   carry a stable `code`. Tokens are created in Settings → Scripting,
 ///   shown once, stored only as hashes, revocable at once, and never logged.
+/// - Archive read routes (#250, [`archive`]; read-only in 0.11, P15): ids
+///   go through the archive's own id check and confinement, no route takes
+///   a path, and responses are built field by field — never an embedding,
+///   a voice profile (P13), saved audio, a path or anything from app data,
+///   and people's emails only with the `people` scope (without it the text
+///   query and `participant=` can't match an email either). Bounded: pages
+///   of ≤ 200 rows behind an opaque cursor, ≤ 100 values per facet, bodies
+///   ≤ 16 MiB, ≤ [`ARCHIVE_SLOTS`] archive requests at once (503 +
+///   `Retry-After`), so scripts can't take the workers from the extension.
+///   Internal errors are a fixed message; `Cache-Control: no-store`.
 /// - `settings.json` (it holds the extension token and the archive token
 ///   hashes) is written 0600 on Unix.
 ///
@@ -322,6 +339,11 @@ pub const WORKERS: usize = 4;
 /// `/clean` and `/transcribe` running at once: the other workers stay free
 /// for the extension's routes and `/history`.
 pub const SLOW_SLOTS: usize = 2;
+/// Archive requests running at once (#250): a script firing requests in
+/// parallel can't take every worker from the extension.
+pub const ARCHIVE_SLOTS: usize = 2;
+// A worker always stays free for the extension.
+const _: () = assert!(ARCHIVE_SLOTS < WORKERS);
 
 /// What every worker shares.
 struct Ctx {
@@ -331,6 +353,8 @@ struct Ctx {
     slow: guard::Slots,
     /// Per archive token (#249).
     archive_limiter: tokens::RateLimiter,
+    /// See [`ARCHIVE_SLOTS`].
+    archive_slots: guard::Slots,
 }
 
 /// Answer requests on [`WORKERS`] threads until the server is dropped or
@@ -343,6 +367,7 @@ pub fn serve(server: tiny_http::Server, host: Arc<dyn Host>) {
         port,
         slow: guard::Slots::new(SLOW_SLOTS),
         archive_limiter: tokens::RateLimiter::default(),
+        archive_slots: guard::Slots::new(ARCHIVE_SLOTS),
     });
     let workers: Vec<_> = (0..WORKERS)
         .map(|_| {
@@ -430,7 +455,7 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
 
     let route = route(&method, path);
     if route.is_archive() {
-        return handle_archive(ctx, request, &method, path, &config);
+        return handle_archive(ctx, request, &method, &url, &config);
     }
     if route.is_meeting() {
         return handle_meeting(ctx, request, route, &params, &config);
@@ -515,7 +540,7 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
 }
 
 /// The archive middleware (E14, #249), then the archive router.
-fn handle_archive(ctx: &Arc<Ctx>, request: tiny_http::Request, method: &str, path: &str, config: &ApiConfig) {
+fn handle_archive(ctx: &Arc<Ctx>, request: tiny_http::Request, method: &str, url: &str, config: &ApiConfig) {
     let authorization = header(&request, "Authorization");
     let origin = header(&request, "Origin");
     let authorized = match tokens::authorize(
@@ -538,24 +563,42 @@ fn handle_archive(ctx: &Arc<Ctx>, request: tiny_http::Request, method: &str, pat
         }
     };
     ctx.host.archive_token_used(&authorized.id);
-    archive_route(ctx, request, &authorized, method, path)
+    archive_route(ctx, request, &authorized, method, url)
 }
 
-/// The archive routes, for an authorized request. None yet: the read
-/// routes come with #250, `POST /archive/items` with #251 — each checks
-/// `auth.has(…)` for anything beyond the method's scope.
-fn archive_route(
-    _ctx: &Arc<Ctx>,
-    request: tiny_http::Request,
-    _auth: &tokens::Authorized,
-    _method: &str,
-    _path: &str,
-) {
-    respond_json(
-        request,
-        404,
-        serde_json::json!({"error": "unknown archive endpoint", "code": "not_found"}),
-    )
+/// Headers on every archive answer: nothing cached, nothing sniffed —
+/// and never a CORS header.
+const ARCHIVE_HEADERS: [(&str, &str); 2] = [("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")];
+
+/// The archive routes, for an authorized request ([`archive::handle`]; the
+/// write route comes with #251 and checks `auth.has(…)` like the people
+/// route does for emails).
+fn archive_route(ctx: &Arc<Ctx>, request: tiny_http::Request, auth: &tokens::Authorized, method: &str, url: &str) {
+    let reply = match ctx.archive_slots.try_take() {
+        None => {
+            let mut r = archive::Reply::error(503, "busy", "too many archive requests at once, retry later");
+            r.headers.push(("Retry-After", "1".to_string()));
+            r
+        }
+        Some(_slot) => match (ctx.host.archive_dir(), ctx.host.archive_index()) {
+            (Ok(dir), Ok(index)) => archive::handle(&dir, &index, auth, method, url),
+            _ => archive::Reply::internal(),
+        },
+    };
+    let mut headers: Vec<(&str, String)> = ARCHIVE_HEADERS.iter().map(|(k, v)| (*k, v.to_string())).collect();
+    headers.extend(reply.headers.iter().cloned());
+    match reply.body {
+        archive::Body::Json(body) => respond_json_with(request, reply.status, body, &headers),
+        archive::Body::File { content_type, filename, text } => {
+            headers.push(("Content-Type", content_type.to_string()));
+            headers.push((
+                "Content-Disposition",
+                format!("attachment; filename=\"{}\"", filename.replace(['"', '\\', '\r', '\n'], "")),
+            ));
+            let response = tiny_http::Response::from_string(text).with_status_code(reply.status);
+            let _ = request.respond(with_headers(response, &headers));
+        }
+    }
 }
 
 fn handle_meeting(
@@ -789,6 +832,10 @@ impl Host for AppHost {
         let state = self.app.state::<AppState>();
         let settings = state.settings.lock().unwrap().clone();
         crate::state::resolve_archive_dir(&state.paths, &settings)
+    }
+
+    fn archive_index(&self) -> anyhow::Result<PathBuf> {
+        Ok(self.app.state::<AppState>().paths.archive_index.clone())
     }
 
     fn open_item(&self, id: &str) -> anyhow::Result<()> {

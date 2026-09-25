@@ -90,7 +90,9 @@
       <li><a href="#audio">Saved audio, replay, voice map</a></li>
       <li><a href="#qwen3-asr">Qwen3-ASR (optional engine)</a></li>
       <li><a href="#privacy">Privacy and data locations</a></li>
-      <li><a href="#local-api">Local API</a></li>
+      <li><a href="#local-api">Local API</a><ol>
+          <li><a href="#archive-api">The archive API</a></li>
+        </ol></li>
       <li><a href="#troubleshooting">Troubleshooting</a></li>
       <li><a href="#faq">FAQ</a></li>
     </ol>
@@ -539,7 +541,7 @@ participants:
 <section class="chapter" id="local-api" aria-labelledby="h-local-api">
 <h2 id="h-local-api"><span class="n">Chapter 13</span>The local API (scripting)</h2>
 <p class="lead">An HTTP API on <code>127.0.0.1</code> for your own scripts, off by default.</p>
-<p>Turn it on in Settings → Behavior → Advanced: <span class="ui">Local API</span> (port 4525 by default; applies when Sussurro restarts) and <span class="ui">Scripting routes</span> (applies at once). Turning on the local API for the browser extension does not turn on the scripting routes.</p>
+<p>Turn on <span class="ui">Local API</span> in Settings → Behavior → Advanced (port 4525 by default; applies when Sussurro restarts), then <span class="ui">Scripting routes</span> in Settings → <b>Scripting</b> (applies at once). Turning on the local API for the browser extension does not turn on the scripting routes.</p>
 <pre><code># clean up / translate a text with your current settings
 curl -X POST --data "um so this is uh a test" http://127.0.0.1:4525/clean
 
@@ -553,6 +555,56 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
   <li>Web pages can't use them: requests must come for <code>127.0.0.1:&lt;port&gt;</code> or <code>localhost:&lt;port&gt;</code>, and a request from a web page's origin is refused.</li>
   <li><code>/clean</code> accepts up to 1 MiB, <code>/transcribe</code> up to 200 MiB. At most two of them run at once; a third gets <code>503</code> with <code>Retry-After</code>.</li>
   <li>The extension's routes (<code>/app/version</code>, <code>/live</code>, <code>/items/…</code>) always need the pairing token and accept only browser-extension origins; <code>/items/…</code> reach only meetings the extension recorded.</li>
+</ul>
+
+<h3 id="archive-api">The archive API</h3>
+<p>Scripts can list, search, read and export your whole archive under <code>/archive/…</code> with a token of their own. In 0.11 it only reads.</p>
+<ol>
+  <li>In Settings → <b>Scripting</b>, switch on <span class="ui">Archive API</span> (off by default, applies at once; the local API must be on too).</li>
+  <li>Under <span class="ui">New token</span>, give it the name of the script and pick its scopes: <b>Read</b> (items, search, exports, companion documents, people's names) and, only if the script needs them, <b>People's emails</b> (participants' and People's emails).</li>
+  <li>Copy the token: it is shown only once, and Sussurro keeps only a fingerprint of it. Put it in an environment variable, not in the script.</li>
+</ol>
+<pre><code>export SUSSURRO_TOKEN=sua_...        # from Settings → Scripting
+API=http://127.0.0.1:4525
+
+# search: meetings tagged "release" since September, 20 per page
+curl -G -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items" \
+  --data-urlencode "q=roadmap" -d type=meeting -d tag=release -d from=2026-09-01 -d limit=20
+
+# the next page: send back next_cursor (null on the last page)
+curl -G -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items" -d limit=20 -d cursor=...
+
+# one item: frontmatter, text, speakers and timed lines (ids contain slashes)
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items/2026/09/2026-09-24-weekly-sync"
+
+# export as md, txt, srt or vtt
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" -o sync.srt \
+  "$API/archive/items/2026/09/2026-09-24-weekly-sync/export?format=srt"
+
+# companion documents (recipe output), then one of them
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items/2026/09/2026-09-24-weekly-sync/documents"
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items/2026/09/2026-09-24-weekly-sync/documents/document.md"
+
+# People: names and aliases; emails only with the People's emails scope
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/people"</code></pre>
+<table>
+  <thead><tr><th>Route</th><th>Returns</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /archive/items</code></td><td>A page of items: id, type, title, date, tags, categories, participants' names, a snippet for a text search. <code>total</code> and <code>next_cursor</code>; <code>facets</code> with <code>facets=true</code>.</td></tr>
+    <tr><td><code>GET /archive/items/{id}</code></td><td>The frontmatter (<code>meta</code>), the transcript text, the speakers (id and label) and the lines with their times.</td></tr>
+    <tr><td><code>GET /archive/items/{id}/export?format=md|txt|srt|vtt</code></td><td>The same exports as the Export menu, as a file. Notes have no subtitles.</td></tr>
+    <tr><td><code>GET /archive/items/{id}/documents</code>, <code>…/documents/{name}</code></td><td>The companion documents (recipe output and saved answers).</td></tr>
+    <tr><td><code>GET /archive/people</code></td><td>The People registry: id, name, aliases; <code>email</code> with the People's emails scope.</td></tr>
+  </tbody>
+</table>
+<p>Filters of <code>/archive/items</code>: <code>q</code> (full text), <code>type</code>, <code>tag</code>, <code>category</code> and <code>participant_key</code> (repeat them for “any of”; participant keys come from the facets), <code>participant</code> (an exact name), <code>from</code> and <code>to</code> (<code>YYYY-MM-DD</code>), <code>date</code> (<code>today</code>, <code>week</code>, <code>month</code>, <code>year</code>, <code>older</code>; send your local <code>today=</code>), <code>limit</code> (1–200, 50 by default) and <code>cursor</code>. An unknown parameter is a <code>400</code>, so a typo never widens a search.</p>
+<ul>
+  <li>Every error is JSON with a <code>code</code> a script can check: <code>unauthorized</code> (401: no token, or a wrong or revoked one), <code>insufficient_scope</code> (403), <code>archive_api_off</code>, <code>origin_refused</code>, <code>not_found</code>, <code>invalid_id</code>, <code>bad_request</code>, <code>bad_cursor</code>, <code>rate_limited</code> (429, with <code>Retry-After</code>), <code>busy</code> (503).</li>
+  <li>Never served, whatever the token: speaker embeddings, voice profiles, saved audio, file paths and anything from the app's own data folder.</li>
+  <li>Without the People's emails scope, emails are left out of items and of the <code>.md</code> export's frontmatter, and neither <code>q</code> nor <code>participant</code> can match one — so a script can't test whether an address is in your archive. <code>q</code> then doesn't look at participants: use <code>participant=</code> for a name.</li>
+  <li>Browsers are refused, extensions included, and no CORS header is ever sent: the archive API is for scripts only. The token goes in the <code>Authorization</code> header, never in the URL.</li>
+  <li>Bounded: a token gets a burst of 60 requests, then 10 per second; a page holds at most 200 items; an answer is at most 16 MiB; at most two archive requests run at once, so a busy script never stalls the browser extension.</li>
+  <li>Revoke a token in Settings → Scripting: the very next request with it gets a <code>401</code>. Each token shows when it was last used, so you can tell whether a script still needs it.</li>
 </ul>
 <p class="more">More: <a href="../blog/local-api.html">The local API</a></p>
 <a class="top-link" href="#main">↑ Contents</a>

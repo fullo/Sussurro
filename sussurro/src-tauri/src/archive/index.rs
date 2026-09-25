@@ -90,6 +90,13 @@ pub struct SearchFilters {
     /// The viewer's local date (`YYYY-MM-DD`) for the date buckets;
     /// default: this computer's local date.
     pub today: Option<String>,
+    /// Participants by name only (#250, the archive API without the
+    /// `people` scope): the text query leaves out the participants column
+    /// (it holds their emails) and `participant` matches names, never
+    /// emails, so a script can't probe whether an email is in the archive.
+    /// Never set by the UI.
+    #[serde(skip)]
+    pub names_only: bool,
 }
 
 /// A handle on the search index of one archive folder.
@@ -370,6 +377,28 @@ impl Index {
 
     /// [`Index::search`] plus the Library's facet counts (#135), from the
     /// same snapshot of the index.
+    /// The rows of [`Index::search`] without the folder details (no reads
+    /// in the item folders), plus the facet counts when `with_facets`, from
+    /// one snapshot — for the archive API (#250), which serves neither the
+    /// external-send hosts nor audio sizes.
+    pub fn search_rows(
+        &self,
+        query: &str,
+        filters: &SearchFilters,
+        with_facets: bool,
+    ) -> Result<(Vec<ItemSummary>, Option<facets::Facets>)> {
+        let people = if with_facets { read_people(&self.archive) } else { Vec::new() };
+        self.with_conn(|conn| {
+            let rows = search_conn(conn, query, filters)?;
+            let facets = if with_facets {
+                Some(facets::facets_conn(conn, query, filters, &people)?)
+            } else {
+                None
+            };
+            Ok((rows, facets))
+        })
+    }
+
     pub fn search_faceted(&self, query: &str, filters: &SearchFilters) -> Result<FacetedSearch> {
         let people = read_people(&self.archive);
         let (rows, facets) = self.with_conn(|conn| {
@@ -821,6 +850,54 @@ mod tests {
         for q in ["\"", "release OR", "NEAR(", "-", "a AND \"b", "*"] {
             idx.search(q, &Default::default()).unwrap();
         }
+    }
+
+    /// #250: the archive API without the `people` scope searches and
+    /// filters participants by name only — an email is never an oracle.
+    #[test]
+    fn names_only_never_matches_an_email() {
+        let f = fixture();
+        rebuild_index(&f.archive, &f.db).unwrap();
+        let idx = Index::open(&f.archive, &f.db).unwrap();
+        let names_only = SearchFilters {
+            names_only: true,
+            ..Default::default()
+        };
+        for q in ["anna@example.com", "example", "anna"] {
+            assert_eq!(ids(idx.search(q, &Default::default()).unwrap()), vec![f.meeting.clone()], "{q}");
+            assert!(idx.search(q, &names_only).unwrap().is_empty(), "{q}");
+        }
+        // Title, body, tags and categories still match, with snippets, and
+        // user-typed FTS syntax stays harmless inside the column filter.
+        let hits = idx.search("roadmap", &names_only).unwrap();
+        assert_eq!(ids(hits.clone()), vec![f.meeting.clone()]);
+        assert!(hits[0].snippet.is_some());
+        assert_eq!(ids(idx.search("weekly team", &names_only).unwrap()), vec![f.meeting.clone()]);
+        for q in ["\"", "release OR", "NEAR(", "-", "a AND \"b", "*", "} : (", "{title}"] {
+            idx.search(q, &names_only).unwrap();
+        }
+        let by = |participant: &str, names_only: bool| {
+            ids(idx
+                .search(
+                    "",
+                    &SearchFilters {
+                        participant: Some(participant.into()),
+                        names_only,
+                        ..Default::default()
+                    },
+                )
+                .unwrap())
+        };
+        assert_eq!(by("anna@example.com", false), vec![f.meeting.clone()]);
+        assert!(by("anna@example.com", true).is_empty());
+        assert_eq!(by("ANNA ROSSI", true), vec![f.meeting.clone()]);
+        // search_rows: same rows, facets on request, no folder reads needed.
+        let (rows, facets) = idx.search_rows("", &names_only, true).unwrap();
+        assert_eq!(rows.len(), 3);
+        let facets = facets.unwrap();
+        assert_eq!(facets.total, 3);
+        assert!(!serde_json::to_string(&facets).unwrap().contains("anna@example.com"));
+        assert!(idx.search_rows("", &names_only, false).unwrap().1.is_none());
     }
 
     #[test]

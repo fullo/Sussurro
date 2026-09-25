@@ -205,6 +205,20 @@ project decisions here, not in per-machine memory.**
   128 connections and deny the API, not crash it. Don't replace the
   vendored crate with the crates.io one; moving to hyper would be a
   separate decision.
+- **Archive API read routes (0.11, #250, P15)** (`api/archive.rs`, after
+  the #249 token middleware): `GET /archive/items` (facet filters, opaque
+  offset cursor, ≤ 200 per page, facets on `facets=true` capped at 100
+  values), `/items/{id}` (frontmatter, text, speakers id + label, lines),
+  `/export`, `/documents[/name]`, `/archive/people`. Read-only in 0.11.
+  Responses are built **field by field** (never serialize `Item`/`Person`
+  through: a field added later must not leak) — no embeddings, voice
+  profiles, audio, paths or app data. Without the `people` scope emails are
+  stripped (items, `.md` export frontmatter) **and can't be probed**:
+  `SearchFilters.names_only` drops the FTS participants column (it indexes
+  emails) and makes `participant=` match names only. Unknown query params
+  are a 400; internal errors are a fixed message (anyhow errors name
+  paths); bodies ≤ 16 MiB; ≤ 2 archive requests at once (`ARCHIVE_SLOTS`,
+  503) so scripts can't starve the extension's workers.
 - **System audio + mic (0.10 step 1, #139)** (`sources/system.rs`):
   *New → System audio + mic* (it records other people: the #136 notice
   asks first). The mic and **any second input

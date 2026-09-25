@@ -252,7 +252,14 @@ pub(super) fn matching(
 ) -> Result<Matching> {
     let mut sql = String::new();
     let mut args: Vec<Value> = Vec::new();
-    let fts = fts_query(query);
+    // Without the participants column (emails) when names only (#250).
+    let fts = fts_query(query).map(|q| {
+        if f.names_only {
+            format!("{{title body tags categories}} : ({q})")
+        } else {
+            q
+        }
+    });
     if let Some(q) = &fts {
         sql.push_str(
             "FROM items_fts JOIN items i ON i.rowid = items_fts.rowid WHERE items_fts MATCH ?",
@@ -318,12 +325,20 @@ pub(super) fn matching(
     }
     if keep(Facet::Participant) {
         if let Some(p) = trimmed(&f.participant) {
-            sql.push_str(
-                " AND EXISTS (SELECT 1 FROM item_participants p WHERE p.id = i.id \
-                 AND (p.name = ? COLLATE NOCASE OR p.email = ? COLLATE NOCASE))",
-            );
-            args.push(Value::Text(p.clone()));
-            args.push(Value::Text(p));
+            if f.names_only {
+                sql.push_str(
+                    " AND EXISTS (SELECT 1 FROM item_participants p WHERE p.id = i.id \
+                     AND p.name = ? COLLATE NOCASE)",
+                );
+                args.push(Value::Text(p));
+            } else {
+                sql.push_str(
+                    " AND EXISTS (SELECT 1 FROM item_participants p WHERE p.id = i.id \
+                     AND (p.name = ? COLLATE NOCASE OR p.email = ? COLLATE NOCASE))",
+                );
+                args.push(Value::Text(p.clone()));
+                args.push(Value::Text(p));
+            }
         }
         let people = keys("participants", &f.participants, |s| s.trim().to_string())?;
         if !people.is_empty() {
