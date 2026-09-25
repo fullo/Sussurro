@@ -73,7 +73,10 @@ for the Linux `.deb` + AppImage. Per-OS layout and runtime notes are in
 `docs/compile/*.md`. The Rust side locates it (`stt::sidecar`; debug builds
 also find `npm run sidecar`'s output in `src-tauri/binaries/`, so a plain
 `tauri dev` can use Qwen3-ASR) and runs it (`stt::remote`, #117: spawn on a
-random loopback port, health check, restart with backoff, stop on idle
+private Unix socket — a 0700 folder under `<app data>/sidecar/` — or, on
+Windows, a random loopback port whose listener must be the child's; a random
+`LLAMA_API_KEY` per spawn sent as a bearer token, `--no-slots` (#216, see
+`stt::remote::endpoint`); health check, restart with backoff, stop on idle
 unload / engine change / exit, output sanitiser). Its tests run the test
 binary itself as a fake `llama-server`; the real one is an `#[ignore]` test
 that downloads nothing:
@@ -86,7 +89,10 @@ cargo test live_qwen3_asr -- --ignored --nocapture
 ```
 
 (`SUSSURRO_TEST_LLAMA_LIBS` when the libraries are not next to the binary,
-e.g. `src-tauri/binaries/llama-server-libs`.) The server log of the app is
+e.g. `src-tauri/binaries/llama-server-libs`.) With the same variables minus
+the clip, `cargo test live_sidecar_enforces -- --ignored` checks that the
+real server enforces the per-spawn key and hides `/slots` — run it when
+bumping llama.cpp. The server log of the app is
 `llama-server.log` in the app's log folder.
 
 **Bumping llama.cpp**: change `release`/`commit`/`version` and every target's

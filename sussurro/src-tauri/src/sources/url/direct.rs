@@ -42,9 +42,12 @@ pub struct Downloaded {
 const SNIFF_BYTES: usize = 512;
 
 /// A client for one hop: the model downloads' timeouts, no automatic
-/// redirects, and the host pinned to the checked addresses.
+/// redirects, the host pinned to the checked addresses, and never through
+/// a system proxy (`HTTP(S)_PROXY`, OS settings): a proxy would resolve and
+/// connect on its own, past the pinning (#216).
 fn client_for(url: &Url, addrs: &[SocketAddr]) -> Result<reqwest::blocking::Client> {
     let mut b = crate::stt::models::download_client_builder()
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("Sussurro/", env!("CARGO_PKG_VERSION")));
     if let Some(host) = url.host_str() {
@@ -396,6 +399,61 @@ pub(crate) mod tests {
         )
         .unwrap_err();
         assert!(e.to_string().contains("cancelled"));
+    }
+
+    /// Child half of [`direct_downloads_ignore_the_system_proxy`]: runs only
+    /// in the re-launched test binary, with proxy variables set.
+    #[test]
+    fn no_proxy_child() {
+        let Ok(url) = std::env::var("SUSSURRO_TEST_NO_PROXY_URL") else {
+            return; // an ordinary test run
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let dest = TempDownload::create(dir.path(), 1).unwrap();
+        let (r, _) = get(&url, true, super::super::MAX_DOWNLOAD_BYTES, &dest);
+        r.unwrap();
+    }
+
+    /// #216: `HTTP_PROXY` & co. must not take a direct download past the
+    /// address pinning. The test binary re-runs itself with every proxy
+    /// variable pointing at a trap; the download must succeed without the
+    /// trap ever being connected to.
+    #[test]
+    fn direct_downloads_ignore_the_system_proxy() {
+        let srv = serve(vec![("/a.wav", (200, vec![], wav_bytes(0.2)))]);
+        let trap = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        trap.set_nonblocking(true).unwrap();
+        let proxy = format!("http://{}", trap.local_addr().unwrap());
+        let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+        cmd.args([
+            "--exact",
+            "sources::url::direct::tests::no_proxy_child",
+            "--test-threads=1",
+        ])
+        .env("SUSSURRO_TEST_NO_PROXY_URL", format!("{}/a.wav", srv.base))
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy");
+        for var in [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+        ] {
+            cmd.env(var, &proxy);
+        }
+        let out = cmd.output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("1 passed"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            matches!(trap.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+            "the download went through the proxy"
+        );
     }
 
     /// A real direct media link (plan §11, 0.8: "one direct mp3 link").

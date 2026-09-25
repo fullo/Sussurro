@@ -170,11 +170,21 @@ fn multipart_body_has_the_fields_and_the_file() {
 
 // -------------------------------------------------------------- command --
 
+/// `--host`'s value, `--port`'s if any.
+fn listen_of(args: &[OsString]) -> (String, Option<String>) {
+    let after = |f: &str| {
+        args.iter()
+            .position(|x| x == f)
+            .map(|i| args[i + 1].to_string_lossy().into_owned())
+    };
+    (after("--host").unwrap(), after("--port"))
+}
+
 #[test]
-fn server_args_bind_loopback_only_and_keep_paths_whole() {
+fn server_args_listen_privately_and_keep_paths_whole() {
     let model = Path::new("/models dir/Qwen3 ASR.gguf");
     let mmproj = Path::new("/models dir/mmproj; rm -rf ~.gguf");
-    let args = server_args(model, mmproj, 43_210);
+    let args = server_args(model, mmproj, &Endpoint::Tcp(43_210));
     let pos = |a: &str| args.iter().position(|x| x == a).unwrap();
     assert_eq!(
         args[pos("-m") + 1],
@@ -186,44 +196,55 @@ fn server_args_bind_loopback_only_and_keep_paths_whole() {
         mmproj.as_os_str(),
         "shell syntax stays literal"
     );
-    assert_eq!(args[pos("--host") + 1], "127.0.0.1");
-    assert_eq!(args[pos("--port") + 1], "43210");
-    for flag in ["-ngl", "-c", "-np", "--cache-ram", "--no-webui"] {
+    assert_eq!(listen_of(&args), ("127.0.0.1".into(), Some("43210".into())));
+    for flag in ["-ngl", "-c", "-np", "--cache-ram", "--no-webui", "--no-slots"] {
         assert!(args.iter().any(|a| a == flag), "{flag}");
     }
     assert!(!args.iter().any(|a| a == "0.0.0.0"));
+    // #216: the key never goes on the command line (`ps` shows it).
+    assert!(!args.iter().any(|a| a == "--api-key"));
+
+    // A Unix socket: `--host <path>.sock`, no port.
+    let sock = Path::new("/data/sidecar/sc-1-abcdef12/llama.sock");
+    let args = server_args(model, mmproj, &Endpoint::Unix(sock.into()));
+    assert_eq!(listen_of(&args), (sock.to_string_lossy().into_owned(), None));
+    assert!(args.iter().any(|a| a == "--no-slots"));
 }
 
 #[test]
-fn chat_server_args_bind_loopback_only_with_the_alias_and_no_reasoning() {
+fn chat_server_args_listen_privately_with_the_alias_and_no_reasoning() {
     let model = Path::new("/models dir/Qwen3 1.7B; echo.gguf");
-    let args = chat_server_args(model, "qwen3-1.7b", 8192, 40_001);
+    let tcp = Endpoint::Tcp(40_001);
+    let args = chat_server_args(model, "qwen3-1.7b", 8192, &tcp);
     let pos = |a: &str| args.iter().position(|x| x == a).unwrap();
     assert_eq!(args[pos("-m") + 1], model.as_os_str(), "one argument, literal");
     assert_eq!(args[pos("--alias") + 1], "qwen3-1.7b");
-    assert_eq!(args[pos("--host") + 1], "127.0.0.1");
-    assert_eq!(args[pos("--port") + 1], "40001");
+    assert_eq!(listen_of(&args), ("127.0.0.1".into(), Some("40001".into())));
     assert_eq!(args[pos("-c") + 1], "8192");
     assert_eq!(args[pos("-np") + 1], "1");
     assert_eq!(args[pos("--reasoning") + 1], "off");
     assert!(args.iter().any(|a| a == "--no-webui"));
-    assert!(!args.iter().any(|a| a == "--mmproj" || a == "0.0.0.0"));
+    assert!(args.iter().any(|a| a == "--no-slots"));
+    assert!(!args.iter().any(|a| a == "--mmproj" || a == "0.0.0.0" || a == "--api-key"));
+    let sock = Endpoint::Unix("/d/llama.sock".into());
+    let unix = chat_server_args(model, "qwen3-1.7b", 8192, &sock);
+    assert_eq!(listen_of(&unix), ("/d/llama.sock".into(), None));
 
     // The config picks the arguments by role.
     let chat = SidecarConfig::chat("/b".into(), "/l".into(), model.into(), 8192, "qwen3-1.7b");
-    assert_eq!(chat.server_args(40_001), args);
+    assert_eq!(chat.server_args(&tcp), args);
     assert_eq!(chat.label(), "bundled LLM");
     let asr = SidecarConfig::new("/b".into(), "/l".into(), "/m.gguf".into(), "/p.gguf".into());
     assert_eq!(asr.role, SidecarRole::Asr);
     assert_eq!(asr.label(), "Qwen3-ASR");
     assert_eq!(
-        asr.server_args(1),
-        server_args(Path::new("/m.gguf"), Path::new("/p.gguf"), 1)
+        asr.server_args(&sock),
+        server_args(Path::new("/m.gguf"), Path::new("/p.gguf"), &sock)
     );
 }
 
 #[test]
-fn command_runs_the_binary_directly_from_the_lib_dir() {
+fn command_runs_the_binary_directly_from_the_lib_dir_with_the_key_in_its_environment() {
     let mut cfg = SidecarConfig::new(
         "/app/sussurro-llama-server".into(),
         "/app/llama-server-libs".into(),
@@ -231,7 +252,8 @@ fn command_runs_the_binary_directly_from_the_lib_dir() {
         "/m/mmproj.gguf".into(),
     );
     cfg.prefix_args = vec!["--prefix".into()];
-    let cmd = command(&cfg, 5_000);
+    let listen = Endpoint::Tcp(5_000);
+    let cmd = command(&cfg, &listen, "k3y");
     assert_eq!(cmd.get_program(), OsStr::new("/app/sussurro-llama-server"));
     let args: Vec<&OsStr> = cmd.get_args().collect();
     assert_eq!(args[0], "--prefix");
@@ -240,19 +262,22 @@ fn command_runs_the_binary_directly_from_the_lib_dir() {
             .iter()
             .map(|a| a.to_os_string())
             .collect::<Vec<_>>(),
-        server_args(&cfg.model, &cfg.mmproj, 5_000)
+        server_args(&cfg.model, &cfg.mmproj, &listen)
     );
+    assert!(!args.iter().any(|a| *a == "k3y"), "never on the command line");
     assert_eq!(
         cmd.get_current_dir(),
         Some(Path::new("/app/llama-server-libs"))
     );
-    let var = library_path_var(std::env::consts::OS);
-    let (_, value) = cmd
-        .get_envs()
-        .find(|(k, _)| *k == OsStr::new(var))
-        .expect("library path set");
-    let value = value.unwrap().to_string_lossy().into_owned();
+    let env = |name: &str| {
+        cmd.get_envs()
+            .find(|(k, _)| *k == OsStr::new(name))
+            .and_then(|(_, v)| v)
+            .map(|v| v.to_string_lossy().into_owned())
+    };
+    let value = env(library_path_var(std::env::consts::OS)).expect("library path set");
     assert!(value.starts_with("/app/llama-server-libs"), "{value}");
+    assert_eq!(env(API_KEY_VAR).as_deref(), Some("k3y"));
 }
 
 #[test]
@@ -339,6 +364,7 @@ fn as_fake(mut cfg: SidecarConfig, dir: &Path) -> SidecarConfig {
     .map(OsString::from)
     .collect();
     cfg.log_file = Some(dir.join("sidecar.log"));
+    cfg.socket_base = Some(dir.join("s"));
     cfg.start_timeout = Duration::from_secs(30);
     cfg.request_timeout = Duration::from_secs(30);
     cfg.backoff_base = Duration::from_millis(10);
@@ -361,29 +387,54 @@ fn arg_after(args: &[String], flag: &str) -> Option<String> {
 
 /// Not a test of its own: the fake `llama-server` (see [`fake_config`]).
 /// Modes: `ok`; `crash_once` (dies mid-request the first time, then
-/// serves); `crash_always`; `exit_now`; `never_healthy`.
+/// serves); `crash_always`; `exit_now`; `never_healthy`. Like the real one
+/// with an API key, it answers `/health` to anyone and everything else only
+/// with `Authorization: Bearer <LLAMA_API_KEY>` (401 otherwise).
 #[test]
 fn fake_sidecar_server() {
     let args: Vec<String> = std::env::args().collect();
-    let Some(port) = arg_after(&args, "--port") else {
+    let Some(host) = arg_after(&args, "--host") else {
         return; // an ordinary test run
     };
-    if arg_after(&args, "--host").as_deref() != Some("127.0.0.1") {
+    // Started as #216 wants it, or it refuses to run.
+    let key = std::env::var(API_KEY_VAR).unwrap_or_default();
+    if key.len() < 32 || !args.iter().any(|a| a == "--no-slots") {
         std::process::exit(9);
     }
+    let server = if host.ends_with(".sock") {
+        #[cfg(unix)]
+        {
+            tiny_http::Server::http_unix(Path::new(&host)).unwrap()
+        }
+        #[cfg(not(unix))]
+        std::process::exit(9)
+    } else if host == "127.0.0.1" {
+        let port = arg_after(&args, "--port").unwrap();
+        tiny_http::Server::http(format!("127.0.0.1:{port}")).unwrap()
+    } else {
+        std::process::exit(9)
+    };
     let model = PathBuf::from(arg_after(&args, "-m").unwrap());
     let mode = std::fs::read_to_string(&model).unwrap_or_default();
     if mode == "exit_now" {
         std::process::exit(3);
     }
     let crash_marker = model.with_extension("crashed");
-    let server = tiny_http::Server::http(format!("127.0.0.1:{port}")).unwrap();
     let started = Instant::now();
     let json = |v: serde_json::Value, code: u16| {
         tiny_http::Response::from_string(v.to_string()).with_status_code(code)
     };
     for mut req in server.incoming_requests() {
         let url = req.url().to_string();
+        let bearer = format!("Bearer {key}");
+        let authorized = req
+            .headers()
+            .iter()
+            .any(|h| h.field.equiv("Authorization") && h.value.as_str() == bearer);
+        if url != "/health" && !authorized {
+            let _ = req.respond(json(serde_json::json!({"error": "Invalid API Key"}), 401));
+            continue;
+        }
         match (req.method(), url.as_str()) {
             (tiny_http::Method::Get, "/health") => {
                 let ready =
@@ -473,12 +524,13 @@ fn fake_sidecar_server() {
     }
 }
 
-fn get_env(port: u16) -> serde_json::Value {
-    reqwest::blocking::Client::builder()
-        .no_proxy()
+fn get_env(access: &SidecarAccess) -> serde_json::Value {
+    access
+        .client_builder()
         .build()
         .unwrap()
-        .get(format!("http://127.0.0.1:{port}/env"))
+        .get(format!("{}/env", access.base_url()))
+        .bearer_auth(access.api_key())
         .send()
         .unwrap()
         .json()
@@ -497,7 +549,7 @@ pub(crate) fn wait_dead(pid: u32) -> bool {
 }
 
 #[test]
-fn sidecar_starts_healthy_on_loopback_and_dies_with_its_owner() {
+fn sidecar_starts_healthy_privately_and_dies_with_its_owner() {
     let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     let cfg = fake_config(dir.path(), "ok");
@@ -505,10 +557,35 @@ fn sidecar_starts_healthy_on_loopback_and_dies_with_its_owner() {
     let mut t = RemoteTranscriber::start(cfg).unwrap();
     let pid = t.sidecar().pid().unwrap();
     assert!(process_alive(pid));
-    assert!(t.sidecar().port() > 0);
+    let access = t.sidecar().access().unwrap().clone();
+
+    // #216: a Unix socket in a fresh 0700 folder under the socket base.
+    #[cfg(unix)]
+    let run_dir = {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+        let Endpoint::Unix(sock) = access.endpoint() else {
+            panic!("{access:?}");
+        };
+        let run_dir = sock.parent().unwrap().to_path_buf();
+        assert!(run_dir.starts_with(dir.path().join("s")), "{run_dir:?}");
+        let mode = std::fs::metadata(&run_dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{mode:o}");
+        assert!(std::fs::metadata(sock).unwrap().file_type().is_socket());
+        run_dir
+    };
+    #[cfg(not(unix))]
+    assert!(matches!(access.endpoint(), Endpoint::Tcp(p) if *p > 0));
+
+    // Without the per-spawn key, nothing but /health answers.
+    let bare = access.client_builder().build().unwrap();
+    let url = |path: &str| format!("{}{path}", access.base_url());
+    assert_eq!(bare.get(url("/health")).send().unwrap().status(), 200);
+    assert_eq!(bare.get(url("/env")).send().unwrap().status(), 401);
+    let wrong = bare.get(url("/env")).bearer_auth("0".repeat(64)).send().unwrap();
+    assert_eq!(wrong.status(), 401);
 
     // Working directory and library path as #116's layout needs.
-    let env = get_env(t.sidecar().port());
+    let env = get_env(&access);
     let cwd = PathBuf::from(env["cwd"].as_str().unwrap());
     assert_eq!(cwd.canonicalize().unwrap(), libs.canonicalize().unwrap());
     let lib = env["lib"].as_str().unwrap();
@@ -528,6 +605,8 @@ fn sidecar_starts_healthy_on_loopback_and_dies_with_its_owner() {
 
     drop(t);
     assert!(wait_dead(pid), "no zombie after drop");
+    #[cfg(unix)]
+    assert!(!run_dir.exists(), "the socket folder goes with it");
 }
 
 #[test]
@@ -664,6 +743,76 @@ fn kill_all_stops_every_live_sidecar() {
 }
 
 // ----------------------------------------------------------------- live --
+
+/// #216 against the real, pinned `llama-server`: the per-spawn API key
+/// passed in its environment is enforced (everything but `/health` answers
+/// 401 without it or with a wrong one), `/slots` is off, and on macOS/Linux
+/// it listens on its private socket. Same variables as
+/// [`live_qwen3_asr_transcribes_a_fleurs_clip`] minus the clip:
+///
+/// ```sh
+/// SUSSURRO_TEST_LLAMA_SERVER=$B/bin/llama-b11146/llama-server \
+/// SUSSURRO_TEST_QWEN3_ASR_DIR=$B/models \
+/// cargo test live_sidecar_enforces -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn live_sidecar_enforces_its_api_key_and_hides_slots() {
+    let _serial = serial();
+    let binary = PathBuf::from(
+        std::env::var("SUSSURRO_TEST_LLAMA_SERVER").expect("set SUSSURRO_TEST_LLAMA_SERVER"),
+    );
+    let libs = std::env::var("SUSSURRO_TEST_LLAMA_LIBS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| binary.parent().unwrap().to_path_buf());
+    let models = PathBuf::from(
+        std::env::var("SUSSURRO_TEST_QWEN3_ASR_DIR").expect("set SUSSURRO_TEST_QWEN3_ASR_DIR"),
+    );
+    let paths = crate::stt::sidecar::SidecarPaths {
+        binary,
+        lib_dir: libs,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = qwen3_asr_config(&paths, &models, Some(dir.path().join("llama-server.log")));
+    cfg.socket_base = Some(dir.path().join("s"));
+    let mut s = Sidecar::start(cfg).unwrap();
+    let access = s.access().unwrap().clone();
+    println!("listening on {:?}", access.endpoint());
+    #[cfg(unix)]
+    assert!(matches!(access.endpoint(), Endpoint::Unix(_)));
+
+    let client = access
+        .client_builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .unwrap();
+    let url = |p: &str| format!("{}{p}", access.base_url());
+    let status = |r: reqwest::blocking::RequestBuilder| r.send().unwrap().status().as_u16();
+    assert_eq!(status(client.get(url("/health"))), 200, "public");
+    for path in ["/props", "/v1/audio/transcriptions"] {
+        let req = |c: &reqwest::blocking::Client| {
+            if path == "/props" {
+                c.get(url(path))
+            } else {
+                c.post(url(path)).body("x")
+            }
+        };
+        assert_eq!(status(req(&client)), 401, "{path} without the key");
+        assert_eq!(
+            status(req(&client).bearer_auth("0".repeat(64))),
+            401,
+            "{path} with a wrong key"
+        );
+    }
+    assert_eq!(status(client.get(url("/props")).bearer_auth(access.api_key())), 200);
+    let slots = status(client.get(url("/slots")).bearer_auth(access.api_key()));
+    assert_ne!(slots, 200, "--no-slots: /slots answered {slots}");
+
+    // And the app's own path works with the key.
+    let wav = crate::archive::audio::wav_bytes(&tone(16_000));
+    s.transcribe_wav(&wav).unwrap();
+    drop(s);
+}
 
 /// Real sidecar + Qwen3-ASR 1.7B on a FLEURS clip (CC-BY-4.0, #109).
 /// Nothing is downloaded; point the variables at existing files:

@@ -218,23 +218,26 @@ fn chat_ollama(url: &str, model: &str, messages: &[Value], opts: &ChatOptions) -
 
 /// The "Local (bundled)" profile's chat (#118): an OpenAI-compatible
 /// request to the `llama-server` sidecar that `llm` runs (started on first
-/// use; see [`crate::llm::bundled`]), never through a proxy.
+/// use; see [`crate::llm::bundled`]), never through a proxy, with the
+/// server's per-spawn API key.
 pub fn chat_bundled(
     llm: &crate::llm::bundled::BundledLlm,
     messages: &[Value],
     opts: &ChatOptions,
 ) -> Result<String> {
-    let client = reqwest::blocking::Client::builder()
-        .no_proxy() // loopback: never through a system proxy
-        .connect_timeout(Duration::from_secs(2))
-        .timeout(Duration::from_secs(opts.timeout_secs))
-        .build()?;
-    llm.with_server(|url| {
+    llm.with_server(|server| {
+        // Never through a proxy; on the sidecar's private socket where it
+        // has one, with this spawn's API key (#216).
+        let client = server
+            .client_builder()
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(opts.timeout_secs))
+            .build()?;
         chat_openai_with(
             &client,
-            url,
+            &server.base_url(),
             crate::llm::bundled::MODEL_ID,
-            "",
+            server.api_key(),
             messages,
             opts,
         )

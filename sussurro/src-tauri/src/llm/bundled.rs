@@ -1,7 +1,7 @@
 //! The "Local (bundled)" LLM profile (Track E, #118): cleanup and recipes
 //! with no Ollama or other server installed. Sussurro's own `llama-server`
 //! sidecar (#116, the one Qwen3-ASR runs in) serves a small instruct model
-//! on a random loopback port, OpenAI-compatible; the profile is local by
+//! on this machine only, OpenAI-compatible; the profile is local by
 //! construction and never external.
 //!
 //! **Model** — Qwen3 1.7B Q8_0 from `ggml-org/Qwen3-1.7B-GGUF`
@@ -40,9 +40,11 @@
 //! disk cache made the second model's first load take ~25 s either way.
 //!
 //! **Lifecycle** — [`BundledLlm`], the same [`Sidecar`] as Qwen3-ASR
-//! (loopback only, no shell, lib folder as cwd and on the library path,
-//! health check, crash restart with backoff, [`crate::stt::remote::kill_all`]
-//! and the exit guard on every way out): started on the first chat request
+//! (reachable only by Sussurro: a private Unix socket or an owner-checked
+//! loopback port, a per-spawn API key, no `/slots` — #216; no shell, lib
+//! folder as cwd and on the library path, health check, crash restart with
+//! backoff, [`crate::stt::remote::kill_all`] and the exit guard on every
+//! way out): started on the first chat request
 //! (or pre-warmed when a dictation starts with this profile), a crash
 //! during a request is restarted and the request retried once, a live but
 //! failing server is left alone, and it stops after [`IDLE_STOP`] without
@@ -51,7 +53,7 @@
 
 use super::LlmProfile;
 use crate::settings::CleanupApi;
-use crate::stt::remote::{Sidecar, SidecarConfig};
+use crate::stt::remote::{Endpoint, Sidecar, SidecarAccess, SidecarConfig};
 use crate::stt::sidecar::SidecarPaths;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -196,10 +198,10 @@ impl BundledLlm {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The running server's base URL, starting (or restarting) it first;
-    /// counts one request in flight. Concurrent callers wait for the same
-    /// start.
-    fn acquire(&self) -> Result<String> {
+    /// How to reach the running server (endpoint + this spawn's API key),
+    /// starting (or restarting) it first; counts one request in flight.
+    /// Concurrent callers wait for the same start.
+    fn acquire(&self) -> Result<SidecarAccess> {
         let cfg = (self.resolve)()?;
         let mut g = self.lock();
         if g.sidecar.as_ref().is_some_and(|s| !same_server(s.config(), &cfg)) {
@@ -210,21 +212,26 @@ impl BundledLlm {
         }
         let sidecar = g.sidecar.as_mut().expect("set above");
         sidecar.ensure_running()?;
-        let url = sidecar.base_url();
+        let access = sidecar
+            .access()
+            .cloned()
+            .ok_or_else(|| anyhow!("the bundled LLM stopped while starting"))?;
         g.in_flight += 1;
         g.last_used = Some(Instant::now());
-        Ok(url)
+        Ok(access)
     }
 
-    /// Run `request` against the server's base URL. A crash during the
+    /// Run `request` against the server (its endpoint and API key: build
+    /// the client with [`SidecarAccess::client_builder`] and send the key as
+    /// a bearer token). A crash during the
     /// request restarts the server (with the sidecar's backoff) and retries
     /// once; an error from a live server (bad answer, timeout) is returned
     /// as is and the server kept.
-    pub fn with_server<T>(&self, request: impl Fn(&str) -> Result<T>) -> Result<T> {
+    pub fn with_server<T>(&self, request: impl Fn(&SidecarAccess) -> Result<T>) -> Result<T> {
         let mut last = None;
         for _ in 0..2 {
-            let url = self.acquire()?;
-            let result = request(&url);
+            let access = self.acquire()?;
+            let result = request(&access);
             let mut g = self.lock();
             g.in_flight = g.in_flight.saturating_sub(1);
             g.last_used = Some(Instant::now());
@@ -287,13 +294,13 @@ impl BundledLlm {
         self.lock().sidecar.as_ref().and_then(Sidecar::pid)
     }
 
-    /// The server's port, while it runs.
-    pub fn port(&self) -> Option<u16> {
+    /// Where the server listens, while it runs.
+    pub fn endpoint(&self) -> Option<Endpoint> {
         let g = self.lock();
         g.sidecar
             .as_ref()
-            .filter(|s| s.is_running())
-            .map(Sidecar::port)
+            .and_then(Sidecar::access)
+            .map(|a| a.endpoint().clone())
     }
 
     pub fn is_running(&self) -> bool {
@@ -343,7 +350,10 @@ fn app_config() -> Result<SidecarConfig> {
     if !model_exists(&models_dir) {
         return Err(anyhow!(NOT_DOWNLOADED));
     }
-    Ok(sidecar_config(&paths, &models_dir, log))
+    let mut cfg = sidecar_config(&paths, &models_dir, log);
+    cfg.socket_base = crate::app_handle()
+        .and_then(|app| crate::stt::remote::endpoint::app_socket_base(&app));
+    Ok(cfg)
 }
 
 /// The profile's "models on the server" without starting it: the model's
