@@ -453,11 +453,29 @@ project decisions here, not in per-machine memory.**
   lookahead × 3 and end trimming on the last granule (decoded length and
   positions exact). Startup recovery (`repair_any`) cuts a crashed `.opus`
   after its last whole page and sets EOS (empty stream if the headers were
-  cut); foreign files untouched. **Default stays WAV until #248** (Opus
-  playback by decode-to-WAV in the scheme) — then flip `#[default]` on
-  `AudioFormat`; until then the scheme serves `.opus` as `audio/ogg`
-  (WebView2, macOS 15.4+). Windows MSVC link is checked on every PR by the
-  `opus-windows` job (`cargo test -p opus`).
+  cut); foreign files untouched. Windows MSVC link is checked on every PR
+  by the `opus-windows` job (`cargo test -p opus`).
+- **Opus playback, decode and Compress audio (0.11, #248, P16/E15)**:
+  `AudioFormat`'s default is **Opus for new installs**; a settings file
+  without `saved_audio_format` (an existing user) is pinned to WAV and saved
+  once (`Settings::load_migrating`). **The WebView never sees Ogg Opus**:
+  the `sussurro-audio:` scheme serves an `.opus` file as a *virtual* 16-bit
+  WAV (exact decoded length) through `opus::OpusReader` — page index from
+  the headers, seeks restart 200 ms early with the decoder reset,
+  consecutive reads bit-exact; readers cached per file (4 entries, file
+  closed between requests — Windows can't move a folder with an open file,
+  keyed by size + mtime). A request **without `Range`** gets the whole
+  resource (200) up to `MAX_WHOLE` = 128 MiB, else 413 — never a 206 (the
+  old 1 MiB cut, WAV too); Tauri's scheme API takes whole bodies only, so no
+  streaming. `FileStream` decodes Ogg Opus via the same reader (symphonia has
+  no Opus decoder), and *Identify voices* falls back to the item's saved
+  file-channel audio (`audio.<ext>`/`audio-file.<ext>`, WAV first) when the
+  original is gone — links included (`VoiceSource.saved_audio`). *Compress
+  audio* (`archive/compress.rs`; audio bar per item, Settings → Archive →
+  Compress all): encode to `.sussurro/compress-*.part`, decode it through
+  (exact length, no undecodable sample), then under the archive lock (not
+  recording, WAV unchanged) rename in place and WAV → OS trash (trash failure
+  removes the copy); one job at a time, cancel between 64 KiB blocks.
 - **Speaker-aware recipes and Ask (0.10, #143)** (`recipes/`): built-ins
   *Meeting minutes* and *Who said what* are `speakers_only` — offered and
   run only on meetings/transcriptions whose transcript names its speakers
