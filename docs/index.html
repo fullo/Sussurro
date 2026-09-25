@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Sussurro — Local voice dictation. Nothing leaves your machine.</title>
-<meta name="description" content="Fully-local voice dictation for Windows, macOS and Linux. Hold a key, speak, release — cleaned-up text appears wherever your cursor is. No cloud, no account, no telemetry." />
+<title>Sussurro — Local speech-to-text workbench. Nothing leaves your machine.</title>
+<meta name="description" content="Local-first speech-to-text for macOS, Windows and Linux: hotkey dictation, notes, transcriptions of files and links, meetings with speaker labels, all saved as markdown in your own folder. No cloud, no account, no telemetry." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -62,7 +62,7 @@
   .skip-link:focus { left: 0; }
 
   /* anchor targets clear the 66px sticky nav */
-  #top, #how, #features, #privacy, #download { scroll-margin-top: 76px; }
+  #top, #how, #dictation, #tour, #features, #compare, #privacy, #download, #learn { scroll-margin-top: 76px; }
 
   /* ---------- reveal ---------- */
   /* Visible by default; only hidden-then-revealed when JS is present, so the
@@ -214,6 +214,77 @@
   footer a:hover { color: var(--ink); }
   .foot-links { display: flex; gap: 22px; flex-wrap: wrap; list-style: none; margin: 0; }
 
+  /* ---------- workbench additions (#180) ---------- */
+  @media (max-width: 420px){
+    nav .wrap { gap: 12px; padding: 0 16px; } nav .links { gap: 14px; } nav .links a { font-size: 14px; }
+    nav .btn { padding: 8px 14px; } .brand { font-size: 19px; }
+  }
+  @media (max-width: 360px){ nav .links a.hide-xs { display: none; } }
+
+  /* screenshots in a window frame */
+  .shot { background: var(--paper); border: 1px solid var(--border); border-radius: 16px; overflow: hidden;
+    box-shadow: 0 24px 64px rgba(26,26,26,.12), 0 4px 14px rgba(26,26,26,.05); }
+  .shot .bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: var(--paper-alt); }
+  .shot .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--border-strong); display: inline-block; }
+  .shot .bar i:first-child { background: var(--red); }
+  .shot .bar span { margin-left: 8px; font-size: 12.5px; color: var(--text-light); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shot img { display: block; width: 100%; height: auto; }
+  .hero-shot { margin-top: 56px; }
+  .hero-text { max-width: 760px; }
+  .hero-text .lede { max-width: 46ch; }
+
+  /* dictation section: text + the typewriter demo */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+  @media (max-width: 880px){ .split { grid-template-columns: 1fr; gap: 36px; } }
+  .split .sec-head { margin-bottom: 0; }
+  .ticks { list-style: none; margin-top: 22px; display: grid; gap: 10px; }
+  .ticks li { position: relative; padding-left: 26px; font-size: 16px; color: var(--text); }
+  .ticks li::before { content: "✓"; position: absolute; left: 0; color: var(--red); font-weight: 700; }
+
+  /* tour of the workspace */
+  .tour { display: grid; grid-template-columns: repeat(2, 1fr); gap: 34px 28px; list-style: none; }
+  @media (max-width: 760px){ .tour { grid-template-columns: 1fr; } }
+  .tour figure { margin: 0; }
+  .tour figcaption { margin-top: 14px; font-size: 15px; color: var(--text-light); }
+  .tour figcaption b { display: block; font-family: var(--display); font-size: 19px; color: var(--ink); font-weight: 600; margin-bottom: 4px; }
+  .tour figcaption a, .inline-link { color: var(--red-deep); text-decoration: underline; text-underline-offset: 3px; }
+  .tour .tall { display: grid; grid-template-columns: minmax(0, 220px) 1fr; gap: 22px; align-items: start; }
+  @media (max-width: 480px){ .tour .tall { grid-template-columns: 1fr; } .tour .tall .shot { max-width: 260px; } }
+
+  /* download */
+  .dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; list-style: none; text-align: left; margin-top: 8px; }
+  @media (max-width: 860px){ .dl { grid-template-columns: 1fr; } }
+  .dl li { background: var(--paper); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; display: flex; flex-direction: column; gap: 10px; }
+  .dl h3 { font-size: 22px; }
+  .dl .req { font-size: 14px; color: var(--text-light); }
+  .dl p { font-size: 14.5px; color: var(--text); }
+  .dl .btn { align-self: flex-start; margin-top: auto; }
+  .dl code, .notes code, .band code, .step code, .feat code, .tour code { font-family: var(--mono); font-size: .88em; background: var(--paper-alt); padding: 1px 6px; border-radius: 5px; color: var(--ink); }
+  .notes { max-width: 760px; margin: 34px auto 0; text-align: left; font-size: 15px; color: var(--text-light); display: grid; gap: 10px; }
+  .closer .notes p, .closer .dl p { font-size: 15px; margin-bottom: 0; }
+  .closer .dl p { color: var(--text); }
+  .notes a { color: var(--red-deep); text-decoration: underline; text-underline-offset: 3px; }
+  .notes b { color: var(--text); }
+
+  /* privacy band: what can leave */
+  .leave { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px 36px; margin-top: 44px; list-style: none; }
+  @media (max-width: 720px){ .leave { grid-template-columns: 1fr; } }
+  .leave li { color: #d6d5cf; font-size: 15.5px; border-left: 2px solid rgba(255,107,94,.45); padding-left: 14px; }
+  .leave li b { color: #fff; }
+  .band code { background: rgba(255,255,255,.08); color: #f3f2ee; }
+  .band a { color: #ff9a90; text-decoration: underline; text-underline-offset: 3px; }
+
+  /* learn more */
+  .learn { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; list-style: none; }
+  @media (max-width: 720px){ .learn { grid-template-columns: 1fr; } }
+  .learn a { display: block; background: var(--paper); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; transition: transform .18s, box-shadow .25s; height: 100%; }
+  .learn a:hover { transform: translateY(-3px); box-shadow: 0 16px 40px rgba(26,26,26,.10); }
+  .learn h3 { font-size: 24px; margin-bottom: 8px; }
+  .learn p { color: var(--text-light); font-size: 15.5px; }
+  .learn .go { display: inline-block; margin-top: 14px; font-weight: 600; color: var(--red-deep); }
+  .cmp { overflow-x: auto; }
+  .cmp table { min-width: 520px; }
+
   /* ---------- reduced motion ---------- */
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
@@ -221,6 +292,7 @@
     .eyebrow .dot, .demo-clean .cursor { animation: none !important; }
   }
 </style>
+
 <!-- seo:start -->
 <link rel="canonical" href="https://fullo.github.io/Sussurro/" />
 <meta name="robots" content="index, follow" />
@@ -228,17 +300,18 @@
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
 <meta property="og:site_name" content="Sussurro" />
 <meta property="og:type" content="website" />
-<meta property="og:title" content="Sussurro — Local voice dictation. Nothing leaves your machine." />
-<meta property="og:description" content="Fully-local voice dictation for Windows, macOS and Linux. Hold a key, speak, release — cleaned-up text appears wherever your cursor is. No cloud, no account, no telemetry." />
+<meta property="og:title" content="Sussurro — Local speech-to-text workbench. Nothing leaves your machine." />
+<meta property="og:description" content="Hotkey dictation, notes, transcriptions of files and links, meetings with speaker labels — transcribed on your computer and saved as markdown in your own folder." />
 <meta property="og:url" content="https://fullo.github.io/Sussurro/" />
-<meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<meta property="og:image" content="https://fullo.github.io/Sussurro/assets/screenshots/og-workspace.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Sussurro: local speech-to-text workbench, next to a screenshot of its Library with a meeting transcript." />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Sussurro — Local voice dictation. Nothing leaves your machine." />
-<meta name="twitter:description" content="Fully-local voice dictation for Windows, macOS and Linux. Hold a key, speak, release — cleaned-up text appears wherever your cursor is. No cloud, no account, no telemetry." />
-<meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Sussurro","operatingSystem":"Windows, macOS, Linux","applicationCategory":"UtilitiesApplication","description":"Fully-local voice dictation for Windows, macOS and Linux. Hold a key, speak, release — cleaned-up text appears wherever your cursor is. No cloud, no account, no telemetry.","url":"https://fullo.github.io/Sussurro/","image":"https://fullo.github.io/Sussurro/assets/og.png","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"inLanguage":"en"}</script>
+<meta name="twitter:title" content="Sussurro — Local speech-to-text workbench. Nothing leaves your machine." />
+<meta name="twitter:description" content="Hotkey dictation, notes, transcriptions of files and links, meetings with speaker labels — transcribed on your computer and saved as markdown in your own folder." />
+<meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/screenshots/og-workspace.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Sussurro","operatingSystem":"Windows, macOS, Linux","applicationCategory":"ProductivityApplication","description":"Local-first speech-to-text workbench for Windows, macOS and Linux: hotkey dictation, notes, transcriptions of files and links, and meetings with speaker labels, saved as markdown in your own folder. No cloud, no account, no telemetry.","url":"https://fullo.github.io/Sussurro/","image":"https://fullo.github.io/Sussurro/assets/screenshots/og-workspace.png","screenshot":"https://fullo.github.io/Sussurro/assets/screenshots/workspace-library-meeting.png","license":"https://www.gnu.org/licenses/agpl-3.0.html","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"inLanguage":"en"}</script>
 <!-- seo:end -->
 <script>document.documentElement.classList.add('js');</script>
 </head>
@@ -259,14 +332,14 @@
 <nav>
   <div class="wrap">
     <a class="brand" href="#top">
-      <svg class="daruma" id="navDaruma"><use href="#daruma-sym"/></svg>
+      <svg class="daruma" id="navDaruma" aria-hidden="true"><use href="#daruma-sym"/></svg>
       Sussurro
     </a>
     <div class="links">
-      <a class="hideable" href="#how">How it works</a>
       <a class="hideable" href="#features">Features</a>
       <a class="hideable" href="#privacy">Privacy</a>
-      <a href="blog/index.html">Blog</a>
+      <a href="manual/">Manual</a>
+      <a class="hide-xs" href="blog/index.html">Blog</a>
       <a class="btn red" href="#download">Download</a>
     </div>
   </div>
@@ -274,18 +347,76 @@
 
 <main id="main">
 <header class="hero" id="top">
-  <div class="wrap hero-grid">
-    <div>
-      <span class="eyebrow reveal"><span class="dot"></span> 100% on-device · no cloud</span>
-      <h1 class="title reveal">Speak, and it <span class="em">writes.</span><br>Nothing leaves<br>your machine.</h1>
-      <p class="lede reveal">Fully-local voice dictation for Windows, macOS and Linux. Hold a key, talk, release — clean text lands wherever your cursor is.</p>
+  <div class="wrap">
+    <div class="hero-text">
+      <span class="eyebrow reveal"><span class="dot"></span> Local-first · no account · no telemetry</span>
+      <h1 class="title reveal">Your voice, <span class="em">written.</span><br>On your machine.</h1>
+      <p class="lede reveal">A speech-to-text workbench for macOS, Windows and Linux: hotkey dictation into any app, long notes, transcriptions of files and links, and meetings with speaker labels — transcribed on your computer and saved as markdown in your own folder.</p>
       <div class="cta-row reveal">
         <a class="btn red" href="#download">Download free</a>
-        <a class="btn ghost" href="https://github.com/fullo/Sussurro" target="_blank" rel="noopener">View on GitHub →</a>
+        <a class="btn ghost" href="manual/">Read the manual →</a>
       </div>
-      <p class="cta-note reveal">Hold <span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd></span> &nbsp;·&nbsp; <b>⌘⇧Space</b> on Mac &nbsp;·&nbsp; free &amp; open source</p>
+      <p class="cta-note reveal">Dictate with <span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Space</kbd></span> &nbsp;·&nbsp; <b>⌘⇧Space</b> on Mac &nbsp;·&nbsp; free &amp; open source (AGPL-3.0)</p>
     </div>
+    <div class="shot hero-shot reveal">
+      <div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>Sussurro · Library</span></div>
+      <picture>
+        <source srcset="assets/screenshots/workspace-library-meeting.webp" type="image/webp" />
+        <img src="assets/screenshots/workspace-library-meeting.png" width="1440" height="900" fetchpriority="high"
+          alt="The Sussurro workspace. A left sidebar with New, Library, People, Recipes, Models and Settings; the Library lists notes, meetings and transcriptions; the open meeting “Weekly sync — release” shows its transcript line by line with the speakers You, Anna Rossi and Voice 1, its tags, categories and participants, and a side pane with Speakers, Ask and Export." />
+      </picture>
+    </div>
+  </div>
+</header>
 
+<section class="band" id="privacy">
+  <div class="wrap">
+    <h2 class="reveal">Your voice is <span class="accent">yours.</span> It never touches a server.</h2>
+    <p class="reveal">Cloud tools stream your microphone to someone else's computer. Sussurro records, transcribes and cleans up on your device — with local speech models and, if you want cleanup, a local LLM. No account. No telemetry. It works on a plane.</p>
+    <div class="band-stats">
+      <div class="s reveal"><b>0</b><span>bytes of audio sent anywhere</span></div>
+      <div class="s reveal"><b>3</b><span>platforms — macOS, Windows, Linux</span></div>
+      <div class="s reveal"><b>1</b><span>folder of markdown files that you own</span></div>
+    </div>
+    <ul class="leave">
+      <li class="reveal"><b>Models</b> are downloaded once, when you choose them, and verified against their published SHA-256.</li>
+      <li class="reveal"><b>Links</b> you transcribe are downloaded to a temporary file (video sites through yt-dlp), deleted when the transcription ends.</li>
+      <li class="reveal"><b>External LLMs</b> get text, never audio — and only when you say so: recipes and questions ask before every run, cleanup needs an opt-in per profile, and the Library marks what was sent.</li>
+      <li class="reveal"><b>Updates</b> are checked only when you click <em>Check for updates</em>. Recording other people? Sussurro reminds you that they may need to be told.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <div class="kicker">How it works</div>
+      <h2>Any source in. Markdown out.</h2>
+      <p>Every source goes through the same local pipeline and ends up as an item in your Library — a folder of plain files you can open with any editor.</p>
+    </div>
+    <ol class="steps">
+      <li class="step reveal"><h3>Capture</h3><p>Your microphone, an audio file, a link, a browser meeting through the extension, or your computer's sound plus your mic.</p></li>
+      <li class="step reveal"><h3>Transcribe</h3><p>whisper.cpp on the GPU (Metal, Vulkan), NVIDIA Parakeet on the CPU, or the optional Qwen3-ASR — all on your computer.</p></li>
+      <li class="step reveal"><h3>Clean up</h3><p>A local LLM drops fillers and fixes punctuation, segment by segment. Four levels, from None to High.</p></li>
+      <li class="step reveal"><h3>Keep</h3><p>A note, meeting or transcription in <code>Documents/Sussurro</code> — plus subtitles, recipe documents and audio when you ask.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section id="dictation" style="padding-top:0">
+  <div class="wrap split">
+    <div class="sec-head reveal">
+      <div class="kicker">Hotkey dictation</div>
+      <h2>Press. Speak. Release. Done.</h2>
+      <p>Hold the shortcut in any app and talk; let go and the cleaned-up text is pasted where your cursor is. The window can stay closed — Sussurro lives in the tray.</p>
+      <ul class="ticks">
+        <li>Push-to-talk, or tap to start and tap to stop</li>
+        <li>Spoken commands: “new line”, “a capo”, “new bullet”, “scratch that”</li>
+        <li>Personal dictionary, snippets and a tone per app</li>
+        <li>Translate as you speak, even with cleanup off</li>
+        <li>Dictations stay in their own searchable history</li>
+      </ul>
+    </div>
     <div class="demo reveal" aria-hidden="true">
       <div class="demo-bar"><i></i><i></i><i></i><span class="lbl">any app · your cursor</span></div>
       <div class="demo-body">
@@ -301,33 +432,58 @@
       </div>
     </div>
   </div>
-</header>
-
-<section class="band" id="privacy">
-  <div class="wrap">
-    <h2 class="reveal">Your voice is <span class="accent">yours.</span> It never touches a server.</h2>
-    <p class="reveal">Cloud dictation tools stream your microphone to someone else's computer. Sussurro captures, transcribes and cleans up your speech entirely on your device — with a local Whisper model and a local LLM. No account. No telemetry. It works on a plane.</p>
-    <div class="band-stats">
-      <div class="s reveal"><b>0</b><span>bytes of audio sent anywhere</span></div>
-      <div class="s reveal"><b>3</b><span>platforms — Windows, macOS, Linux</span></div>
-      <div class="s reveal"><b>∞</b><span>dictations, no subscription</span></div>
-    </div>
-  </div>
 </section>
 
-<section id="how">
+<section id="tour" style="padding-top:0">
   <div class="wrap">
     <div class="sec-head reveal">
-      <div class="kicker">How it works</div>
-      <h2>Press. Speak. Release. Done.</h2>
-      <p>A local pipeline runs the moment you let go of the key — no round-trip, no waiting on a server.</p>
+      <div class="kicker">The workspace</div>
+      <h2>A tour in six screens.</h2>
+      <p>Everything below is the app as it ships, with sample data. The <a class="inline-link" href="manual/">manual</a> walks through each screen.</p>
     </div>
-    <ol class="steps">
-      <li class="step reveal"><h3>Capture</h3><p>Your microphone is recorded and resampled to 16&nbsp;kHz — locally, only while the key is held.</p></li>
-      <li class="step reveal"><h3>Transcribe</h3><p>whisper.cpp on your GPU (Vulkan / Metal), or NVIDIA Parakeet on CPU — ~10× faster without a GPU.</p></li>
-      <li class="step reveal"><h3>Clean up</h3><p>A small local LLM removes fillers, fixes punctuation and matches the tone of the app you're in.</p></li>
-      <li class="step reveal"><h3>Inject</h3><p>The result is pasted where your cursor is — in any app — and your clipboard is restored.</p></li>
-    </ol>
+    <ul class="tour">
+      <li class="reveal">
+        <figure>
+          <div class="shot"><div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>New · Microphone</span></div>
+            <img src="assets/screenshots/new-microphone.webp" width="1440" height="900" loading="lazy" alt="The New screen while a microphone session records: tabs Microphone, File, Link and System audio + mic; a red Recording 00:09 bar with Stop and Discard; the lines transcribed so far; and the options card with language, cleanup level, default tags, category and Save audio." /></div>
+          <figcaption><b>One screen for every source</b>Microphone, File, Link and System audio + mic share the same options: language, cleanup level, tags, category and whether to keep the audio. <a href="manual/#new">More</a></figcaption>
+        </figure>
+      </li>
+      <li class="reveal">
+        <figure>
+          <div class="shot"><div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>Library · Document</span></div>
+            <img src="assets/screenshots/document-formatted.webp" width="1440" height="900" loading="lazy" alt="A note's Document tab showing a formatted companion document written by the Formatted document recipe: a tl;dr, headings, a table of priorities and a checklist, with its provenance line naming the recipe, profile and model." /></div>
+          <figcaption><b>Recipes write documents</b><em>Formatted document</em> turns a transcript into a tl;dr, headings and tables, saved as <code>document.md</code> next to it. Summary, action items, decisions and minutes too. <a href="manual/#recipes">More</a></figcaption>
+        </figure>
+      </li>
+      <li class="reveal">
+        <figure>
+          <div class="shot"><div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>Ask · external profile</span></div>
+            <img src="assets/screenshots/ask-external-consent.webp" width="1440" height="900" loading="lazy" alt="The confirmation dialog “Send this to llm.example.com?” shown before a recipe runs on an external LLM profile: it lists the document, the task, the people, the size, the server and the model, with Cancel and Send buttons." /></div>
+          <figcaption><b>External only when you say so</b>Local profiles run straight away. An external one asks before every run and shows exactly what goes where; Cancel sends nothing. <a href="manual/#consent">More</a></figcaption>
+        </figure>
+      </li>
+      <li class="reveal">
+        <figure>
+          <div class="shot"><div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>Library · Audio</span></div>
+            <img src="assets/screenshots/audio-replay.webp" width="1440" height="900" loading="lazy" alt="A meeting's Audio tab: a player with −10, play and +10 buttons, a seek bar, speed, “Play only: Anna Rossi” and Follow; the transcript below lights the line being played and dims the other speakers." /></div>
+          <figcaption><b>Replay one speaker at a time</b>When you keep the audio, play the whole recording or only one person's lines back to back, with the transcript lit word by word. <a href="manual/#audio">More</a></figcaption>
+        </figure>
+      </li>
+      <li class="reveal">
+        <figure class="tall">
+          <div class="shot"><img src="assets/screenshots/extension-side-panel.webp" width="800" height="1880" loading="lazy" alt="The browser extension's side panel recording Google Meet: Stop button, the reminder to tell others, level meters for the mic and the call audio, Open in Sussurro, Copy as text and Create .srt, and live lines labelled Anna Rossi, Marco Bianchi, You and Voice 2." /></div>
+          <figcaption><b>Meetings in the browser</b>The extension for Chrome, Edge, Brave and Firefox captures Google Meet, Microsoft Teams and Zoom on the web. You are “You”; on Meet the others get their names, elsewhere Voice 1, Voice 2… The app does the transcribing. <a href="manual/#meetings">More</a></figcaption>
+        </figure>
+      </li>
+      <li class="reveal">
+        <figure>
+          <div class="shot"><div class="bar" aria-hidden="true"><i></i><i></i><i></i><span>New · System audio + mic</span></div>
+            <img src="assets/screenshots/new-system-audio.webp" width="1440" height="900" loading="lazy" alt="The System audio + mic tab: pickers for your microphone and for the computer's sound, set to “This computer's sound (built-in)”, notes about the macOS permission and about echo, and a Start recording button marked Meeting." /></div>
+          <figcaption><b>Calls from desktop apps</b>Zoom, Teams or anything that plays sound: your mic and the computer's sound become two channels of one meeting — built-in capture or a virtual device. <a href="manual/#system-audio">More</a></figcaption>
+        </figure>
+      </li>
+    </ul>
   </div>
 </section>
 
@@ -336,44 +492,56 @@
     <div class="sec-head reveal">
       <div class="kicker">Features</div>
       <h2>More than transcription.</h2>
-      <p>Everything Wispr Flow does — plus a few things it can't, because Sussurro runs the model itself.</p>
+      <p>Because Sussurro runs the models itself, everything happens where your files already are.</p>
     </div>
     <ul class="features">
       <li class="feat reveal">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
-        <h3>AI cleanup, 4 levels</h3><p>None to High. Removes “um”, fixes grammar and punctuation — with graceful fallback to the raw transcript if the model is off.</p>
+        <h3>Hotkey dictation</h3><p>Speak in any app, get clean text at your cursor. Four cleanup levels, spoken formatting commands, translation.</p>
       </li>
       <li class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></svg>
-        <h3>Translate as you speak</h3><p>Dictate in one language, get clean text in another — even with cleanup off. A local trick the cloud tools can't match.</p>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>
+        <h3>Notes from the mic</h3><p>Long sessions transcribed while you talk. Stop, and a note is in your Library — or a meeting, with “Meeting in the room”.</p>
       </li>
       <li class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
-        <h3>Per-app tone</h3><p>Casual with emoji in Slack, formal in email. Rules adapt the cleanup — and the output language — to the app in focus.</p>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+        <h3>Files and links</h3><p>wav, mp3, m4a, aac, flac, ogg — or a link: direct media, or YouTube, Vimeo, SoundCloud and more through yt-dlp.</p>
       </li>
       <li class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6M12 4v16"/></svg>
-        <h3>Streaming typing</h3><p>Words appear while you talk — live, or sentence-by-sentence with each one cleaned before it's typed.</p>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M15 4v14M8 21h8"/></svg>
+        <h3>Browser meetings</h3><p>An extension for Chrome, Edge, Brave and Firefox records Meet, Teams and Zoom on the web, with a live side panel.</p>
       </li>
       <li class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3v18M5 8l7-5 7 5M5 8v8l7 5 7-5V8"/></svg>
-        <h3>Two STT engines</h3><p>Whisper for any language on the GPU, or NVIDIA Parakeet — one CPU-optimized model that auto-detects 25 European languages.</p>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>
+        <h3>System audio + mic</h3><p>Desktop calls as two channels: built-in capture on macOS 14.2+, Windows and Linux, or BlackHole, VB-Cable and friends.</p>
       </li>
       <li class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h16v12H5.2L4 17.5V4Z"/><path d="M8 9h8M8 12h5"/></svg>
-        <h3>Voice commands</h3><p>Say “new line” or “a capo” for an exact line break, “new bullet” for a list item, “scratch that” to drop the last phrase — formatting without touching the keyboard.</p>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></svg>
+        <h3>Speaker labels</h3><p>You on your mic, names from Google Meet, Voice 1, Voice 2… otherwise. Rename, move a line, link a voice to People.</p>
       </li>
       <li class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
-        <h3>Searchable history</h3><p>Every dictation, stored locally as JSONL. Search, re-clean, translate, edit, export to Markdown or JSON. Retention is yours to set.</p>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+        <h3>A markdown archive</h3><p>One folder per item with YAML frontmatter, in <code>Documents/Sussurro</code> or your Obsidian vault. Edits made elsewhere win.</p>
       </li>
       <li class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20a8 8 0 1 0-8-8"/><path d="M4 12H2m2 0 3-3m-3 3 3 3M16 8l2-2m0 0-2-2m2 2h-5"/></svg>
-        <h3>Self-learning dictionary</h3><p>Fix a word once in your history and Sussurro remembers it — your names and jargon spelled right, automatically.</p>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+        <h3>Search and filters</h3><p>Full-text search over titles, transcripts, tags and people; filter by type, tag, category, participant and date.</p>
       </li>
       <li class="feat reveal">
-        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m0 8v3a2 2 0 0 0 2 2h3m8-18h3a2 2 0 0 1 2 2v3m0 8v3a2 2 0 0 1-2 2h-3"/><path d="M9 12h6"/></svg>
-        <h3>Local API</h3><p>An opt-in loopback endpoint: clean text, transcribe files or query your history from any script. Off by default.</p>
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4M10 12h6M10 16h6"/></svg>
+        <h3>Recipes and Ask</h3><p>Formatted document, summary, action items, decisions, minutes, who said what — or ask the transcript a question.</p>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21 4 16.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg>
+        <h3>Your LLM, your call</h3><p>Ollama, any OpenAI-compatible server, or the bundled Qwen3 1.7B with nothing to install. External servers need your consent.</p>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M13 15h4M7 11h10"/></svg>
+        <h3>Subtitles and exports</h3><p><code>.srt</code> and <code>.vtt</code> for meetings and transcriptions, plus <code>.md</code>, <code>.txt</code> and copy as text.</p>
+      </li>
+      <li class="feat reveal">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4V8Z"/></svg>
+        <h3>Audio, only if you want it</h3><p>WAV is saved only when you ask. Then: per-speaker replay, word highlighting, and a map of who sounds like whom.</p>
       </li>
     </ul>
   </div>
@@ -388,15 +556,15 @@
     <div class="cmp reveal">
       <table>
         <thead>
-          <tr><th>&nbsp;</th><th class="us">Sussurro</th><th>Typical cloud dictation</th></tr>
+          <tr><th>&nbsp;</th><th class="us">Sussurro</th><th>Typical cloud transcription</th></tr>
         </thead>
         <tbody>
-          <tr><th scope="row" class="q">Where your audio goes</th><td class="us">Nowhere — stays on device</td><td>Uploaded to a server</td></tr>
-          <tr><th scope="row" class="q">Works offline</th><td class="us"><span class="yes">Yes</span></td><td><span class="no">No</span></td></tr>
+          <tr><th scope="row" class="q">Where your audio goes</th><td class="us">Nowhere — transcribed on your computer</td><td>Uploaded to a server</td></tr>
+          <tr><th scope="row" class="q">Works offline</th><td class="us"><span class="yes">Yes</span>, once the models are downloaded</td><td><span class="no">No</span></td></tr>
           <tr><th scope="row" class="q">Account required</th><td class="us"><span class="yes">None</span></td><td>Sign-up</td></tr>
           <tr><th scope="row" class="q">Price</th><td class="us"><span class="yes">Free &amp; open source</span></td><td>Subscription</td></tr>
-          <tr><th scope="row" class="q">Translate while dictating</th><td class="us"><span class="yes">Yes, locally</span></td><td>Varies</td></tr>
-          <tr><th scope="row" class="q">Runs in any app</th><td class="us"><span class="yes">Yes — paste injection</span></td><td>Yes</td></tr>
+          <tr><th scope="row" class="q">Where transcripts live</th><td class="us"><span class="yes">Markdown files in your folder</span></td><td>In the vendor's app</td></tr>
+          <tr><th scope="row" class="q">Meetings with speaker labels</th><td class="us"><span class="yes">Yes, locally</span></td><td>In the vendor's cloud</td></tr>
           <tr><th scope="row" class="q">You control the model</th><td class="us"><span class="yes">Yes — swap it out</span></td><td><span class="no">No</span></td></tr>
         </tbody>
       </table>
@@ -406,15 +574,51 @@
 
 <section class="closer" id="download">
   <div class="wrap">
-    <svg class="daruma reveal" id="closerDaruma" style="width:56px;height:64px;margin:0 auto 22px;display:block"><use href="#daruma-sym"/></svg>
-    <h2 class="reveal">Paint the eye. Start dictating.</h2>
-    <p class="reveal">Free, open source, and entirely yours. Download for your platform.</p>
-    <div class="cta-row reveal">
-      <a class="btn red" href="https://github.com/fullo/Sussurro/releases" target="_blank" rel="noopener">Windows</a>
-      <a class="btn" href="https://github.com/fullo/Sussurro/releases" target="_blank" rel="noopener">macOS (Apple Silicon)</a>
-      <a class="btn" href="https://github.com/fullo/Sussurro/releases" target="_blank" rel="noopener">Linux</a>
+    <svg class="daruma reveal" id="closerDaruma" aria-hidden="true" style="width:56px;height:64px;margin:0 auto 22px;display:block"><use href="#daruma-sym"/></svg>
+    <h2 class="reveal">Paint the eye. Start talking.</h2>
+    <p class="reveal">Sussurro 0.10 is free, open source and entirely yours. Installers are on the GitHub releases page; what changed is in the <a class="inline-link" href="https://github.com/fullo/Sussurro/blob/main/docs/releases/0.10.0.md" target="_blank" rel="noopener">release notes</a>.</p>
+    <ul class="dl">
+      <li class="reveal">
+        <h3>macOS</h3>
+        <span class="req">Apple Silicon (M1 or later) · macOS 11 or later · <code>.dmg</code></span>
+        <p>Not notarized yet: the first time, right-click the app → <b>Open</b> (or System Settings → Privacy &amp; Security → <b>Open Anyway</b>). If a bundled engine — Qwen3-ASR or the bundled model — won't start, run <code>xattr -cr /Applications/sussurro.app</code> once.</p>
+        <a class="btn red" href="https://github.com/fullo/Sussurro/releases/latest" target="_blank" rel="noopener">Download for macOS</a>
+      </li>
+      <li class="reveal">
+        <h3>Windows</h3>
+        <span class="req">Windows 10 or 11, x64 · <code>.exe</code> installer or <code>.msi</code></span>
+        <p>Not code-signed yet: if SmartScreen stops the installer, click <b>More info</b> → <b>Run anyway</b>; an antivirus may also ask about <code>sussurro-llama-server.exe</code> the first time it runs. Allow desktop apps to use the microphone in the privacy settings.</p>
+        <a class="btn" href="https://github.com/fullo/Sussurro/releases/latest" target="_blank" rel="noopener">Download for Windows</a>
+      </li>
+      <li class="reveal">
+        <h3>Linux</h3>
+        <span class="req">x64 · <code>.AppImage</code>, <code>.deb</code> or <code>.rpm</code> · glibc 2.38+ (Ubuntu 24.04 or newer)</span>
+        <p>Pasting needs a clipboard helper — <code>wl-clipboard</code> on Wayland, <code>xclip</code> or <code>xsel</code> on X11 — and on Wayland the desktop's keyboard permission, or <code>wtype</code> / <code>ydotool</code>.</p>
+        <a class="btn" href="https://github.com/fullo/Sussurro/releases/latest" target="_blank" rel="noopener">Download for Linux</a>
+      </li>
+    </ul>
+    <div class="notes reveal">
+      <p><b>Browser extension.</b> The same release page has <code>sussurro-extension-chrome-…zip</code> (Chrome, Edge, Brave) and <code>sussurro-extension-firefox-…zip</code>; it is not in the browser stores yet. <a href="manual/#meetings">Install and pair it</a>.</p>
+      <p><b>Cleanup is optional.</b> Without it you get exactly what you said. With it, use Ollama, LM Studio, a llama.cpp server or any OpenAI-compatible <code>/v1</code> server — or the bundled model, with nothing to install. <a href="manual/#recipes">LLM profiles</a>.</p>
+      <p><b>Updates</b> are signed and installed from Settings → About → <em>Check for updates</em>, whether or not the installer itself is signed. Prefer to build it yourself? See <a href="https://github.com/fullo/Sussurro/tree/main/docs/compile" target="_blank" rel="noopener">docs/compile</a>.</p>
     </div>
-    <p class="cta-note reveal" style="margin-top:22px">Needs a local <a href="https://ollama.com" target="_blank" rel="noopener" style="text-decoration:underline;text-underline-offset:3px">Ollama</a> for AI cleanup — or run it transcription-only.</p>
+  </div>
+</section>
+
+<section id="learn" style="padding-top:0">
+  <div class="wrap">
+    <ul class="learn">
+      <li class="reveal"><a href="manual/">
+        <h3>The manual</h3>
+        <p>Install and first run, dictation, notes, links, the archive, recipes, meetings, system audio, subtitles, privacy, the local API and troubleshooting — one page, with screenshots.</p>
+        <span class="go">Read the manual →</span>
+      </a></li>
+      <li class="reveal"><a href="blog/index.html">
+        <h3>The blog</h3>
+        <p>Guides and deep-dives: choosing a model, how cleanup avoids hallucinations, Linux injection, Gatekeeper, where your data lives.</p>
+        <span class="go">Browse the blog →</span>
+      </a></li>
+    </ul>
   </div>
 </section>
 </main>
@@ -422,14 +626,15 @@
 <footer>
   <div class="wrap">
     <div class="brand" style="font-size:18px">
-      <svg class="daruma" style="width:22px;height:25px"><use href="#daruma-sym"/></svg>
+      <svg class="daruma" style="width:22px;height:25px" aria-hidden="true"><use href="#daruma-sym"/></svg>
       Sussurro
     </div>
     <ul class="foot-links">
+      <li><a href="manual/">Manual</a></li>
+      <li><a href="blog/index.html">Blog</a></li>
       <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
       <li><a href="https://github.com/fullo/Sussurro/releases">Releases</a></li>
-      <li><a href="https://github.com/fullo/Sussurro/blob/main/README.md">Docs</a></li>
-      <li><a href="https://ollama.com">Ollama</a></li>
+      <li><a href="https://github.com/fullo/Sussurro/blob/main/README.md">README</a></li>
     </ul>
     <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
   </div>

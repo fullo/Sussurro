@@ -11,7 +11,8 @@ to a server yourself.
 > **Hold `Ctrl+Shift+Space` (⌘⇧Space on Mac), speak, release.**
 > The cleaned-up text appears wherever your cursor is.
 
-🌐 Project site: [`docs/index.html`](docs/index.html) · 📰 Guides:
+🌐 Project site: [`docs/index.html`](docs/index.html) · 📖 User manual:
+[`docs/manual/`](docs/manual/index.html) · 📰 Guides:
 [`docs/blog/`](docs/blog/index.html) · 🛠️ Building & contributing:
 [`docs/development.md`](docs/development.md) · 📝 What's new in 0.10:
 [`docs/releases/0.10.0.md`](docs/releases/0.10.0.md)
@@ -465,6 +466,7 @@ token, is readable only by your user on macOS and Linux.
 
 - [`docs/releases/0.10.0.md`](docs/releases/0.10.0.md): what's new in 0.10
   and upgrade notes.
+- [`docs/manual/`](docs/manual/index.html): the user manual, screen by screen.
 - [`docs/blog/`](docs/blog/index.html): a guide for each feature.
 - [`docs/development.md`](docs/development.md): build from source, tests, CI,
   the sidecar and the extension.

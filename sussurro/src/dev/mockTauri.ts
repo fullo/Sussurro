@@ -54,7 +54,7 @@ const settings: Settings = {
   autostart: false,
   sound_feedback: true,
   language: "it",
-  snippets: [{ cue: "firma email", text: "Francesco Fullone\nDarumaHQ" }],
+  snippets: [{ cue: "firma email", text: "Luca Moretti\nStudio Moretti" }],
   live_preview: true,
   app_styles: [],
   models_dir: "",
@@ -186,7 +186,7 @@ let items: Stored[] = params.get("empty")
         id: "2026/09/podcast-daruma-ep-12-intervista",
         meta: meta("Podcast Daruma, ep. 12 — intervista", "transcription", at(1, 17, 5), "00:48:10", "file:podcast-ep12.mp3", {
           tags: ["podcast", "privacy"], categories: ["daruma"],
-          participants: [{ name: "Francesco Fullone", email: "francesco@example.com" }, { name: "Ospite" }],
+          participants: [{ name: "Luca Moretti", email: "luca@example.com" }, { name: "Ospite" }],
         }),
         segments: segs([
           "Benvenuti a una nuova puntata del podcast di Daruma.",
@@ -302,7 +302,7 @@ let people: Person[] = params.get("empty")
   : [
       { id: "p-anna", name: "Anna Rossi", email: "anna@example.com", aliases: ["Anna R.", "Annie"] },
       { id: "p-marco", name: "Marco Bianchi", email: "marco@example.com", aliases: [] },
-      { id: "p-francesco", name: "Francesco Fullone", email: "francesco@example.com", aliases: ["Fullo"] },
+      { id: "p-luca", name: "Luca Moretti", email: "luca@example.com", aliases: ["Luca M."] },
       { id: "p-giulia", name: "Giulia Verdi", aliases: [] },
       // A likely duplicate of Anna, to show the merge hint.
       { id: "p-anna2", name: "Anna R.", email: "a.rossi@studio.example", aliases: [] },

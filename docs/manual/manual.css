@@ -1,0 +1,84 @@
+/* Sussurro manual — layout on top of ../assets/blog.css (same design system). */
+
+html { scroll-padding-top: 80px; }
+nav .links a[aria-current="page"] { color: var(--ink); }
+@media (max-width: 420px){
+  nav .wrap { gap: 12px; padding: 0 16px; } nav .links { gap: 14px; } nav .links a { font-size: 14px; }
+  nav .btn { padding: 8px 14px; } .brand { font-size: 19px; }
+}
+@media (max-width: 360px){ nav .links a.hide-xs { display: none; } }
+
+.man-hero { padding: 64px 0 36px; border-bottom: 1px solid var(--border); }
+.man-hero .kicker { font-size: 14px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--red-deep); }
+.man-hero h1 { font-family: var(--display); font-size: clamp(38px, 6vw, 60px); color: var(--ink); font-weight: 600;
+  letter-spacing: -.015em; line-height: 1.05; margin-top: 12px; }
+.man-hero p { font-size: 19px; color: var(--text-light); margin-top: 16px; max-width: 60ch; }
+.man-hero p a { color: var(--red-deep); text-decoration: underline; text-underline-offset: 3px; }
+
+.man { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 56px; padding-top: 40px; padding-bottom: 72px; }
+@media (max-width: 960px){ .man { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 24px; } }
+
+/* table of contents */
+.toc { position: sticky; top: 88px; align-self: start; max-height: calc(100vh - 110px); overflow-y: auto; font-size: 14.5px; }
+.toc summary { display: none; }
+.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: ch; }
+.toc > details > ol > li { counter-increment: ch; margin: 2px 0; }
+.toc > details > ol > li > a::before { content: counter(ch) ". "; color: var(--red-deep); font-variant-numeric: tabular-nums; }
+.toc a { display: block; padding: 5px 10px; border-radius: 8px; color: var(--text-light); text-decoration: none; }
+.toc a:hover { background: var(--paper-alt); color: var(--ink); }
+.toc a.on { background: var(--red-soft); color: var(--red-deep); font-weight: 600; }
+.toc ol ol { padding-left: 18px; font-size: 13.5px; }
+.toc ol ol a { padding: 3px 10px; }
+@media (max-width: 960px){
+  .toc { position: static; max-height: none; overflow: visible; margin-bottom: 28px; }
+  .toc details { background: var(--paper); border: 1px solid var(--border); border-radius: 14px; padding: 6px 8px; }
+  .toc summary { display: list-item; cursor: pointer; padding: 10px 8px; font-weight: 600; color: var(--ink); }
+  .toc ol ol { display: none; }
+}
+
+/* article */
+.man-body { min-width: 0; }
+.man-body.prose { margin-top: 0; }
+.chapter { padding-top: 8px; }
+.chapter + .chapter { margin-top: 56px; border-top: 1px solid var(--border); padding-top: 40px; }
+.chapter > h2:first-child { margin-top: 0; font-size: clamp(28px, 4vw, 34px); }
+.chapter h2 .n { color: var(--red-deep); font-size: .7em; display: block; font-family: var(--sans); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; margin-bottom: 6px; }
+.prose h3 { scroll-margin-top: 80px; }
+.lead { font-size: 19px !important; color: var(--text-light) !important; }
+
+/* screenshots */
+.fig { margin: 28px 0; }
+.fig a { display: block; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--paper);
+  box-shadow: 0 14px 40px rgba(26,26,26,.09), 0 3px 10px rgba(26,26,26,.04); text-decoration: none; }
+.fig img { display: block; width: 100%; height: auto; }
+.fig figcaption { font-size: 14.5px; color: var(--text-light); margin-top: 10px; line-height: 1.5; }
+.fig.narrow a { max-width: 320px; }
+.fig.half a { max-width: 520px; }
+
+/* tables */
+.prose table { width: 100%; border-collapse: collapse; font-size: 15px; background: var(--paper); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.prose th, .prose td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.5; }
+.prose thead th { background: var(--paper-alt); font-weight: 600; color: var(--ink); }
+.prose tr:last-child td { border-bottom: none; }
+.table-wrap { overflow-x: auto; }
+.table-wrap table { min-width: 520px; }
+
+.prose kbd { font-family: var(--mono); font-size: .82em; color: var(--ink); background: var(--paper); border: 1px solid var(--border-strong);
+  border-bottom-width: 2px; border-radius: 6px; padding: 1px 6px; font-weight: 600; white-space: nowrap; }
+.ui { font-weight: 600; color: var(--ink); }
+.prose dl { display: grid; gap: 14px; }
+.prose dt { font-weight: 600; color: var(--ink); font-size: 17px; }
+.prose dd { margin: 4px 0 0; font-size: 16.5px; line-height: 1.65; }
+.faq dt { font-family: var(--display); font-size: 19px; }
+.more { font-size: 15px !important; color: var(--text-light) !important; }
+.more a { font-weight: 500; }
+.top-link { display: inline-block; margin-top: 18px; font-size: 14px; color: var(--text-light) !important; text-decoration: none !important; }
+.top-link:hover { color: var(--red-deep) !important; }
+
+@media (max-width: 600px){
+  .table-wrap table { min-width: 0; }
+  .prose th, .prose td { padding: 8px 10px; overflow-wrap: break-word; }
+  .prose td code { word-break: break-all; }
+  .prose td:first-child b { word-break: keep-all; }
+  .prose pre { font-size: 12.5px; padding: 14px; }
+}

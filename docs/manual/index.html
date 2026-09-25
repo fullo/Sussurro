@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Manual — Sussurro</title>
+<meta name="description" content="The Sussurro user manual: install and first run, hotkey dictation, notes, files and links, the markdown archive, recipes and LLM profiles, meetings with the browser extension, system audio, subtitles, saved audio, privacy, the local API, troubleshooting and FAQ." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+<link rel="stylesheet" href="manual.css" />
+<!-- seo:start -->
+<link rel="canonical" href="https://fullo.github.io/Sussurro/manual/" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#fafaf8" />
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+<meta property="og:site_name" content="Sussurro" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Manual — Sussurro" />
+<meta property="og:description" content="Everything Sussurro does, screen by screen: dictation, notes, links, the archive, recipes, meetings, system audio, subtitles, privacy and troubleshooting." />
+<meta property="og:url" content="https://fullo.github.io/Sussurro/manual/" />
+<meta property="og:image" content="https://fullo.github.io/Sussurro/assets/screenshots/og-workspace.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Manual — Sussurro" />
+<meta name="twitter:description" content="Everything Sussurro does, screen by screen: dictation, notes, links, the archive, recipes, meetings, system audio, subtitles, privacy and troubleshooting." />
+<meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/screenshots/og-workspace.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Sussurro manual","description":"The Sussurro user manual for version 0.10.","url":"https://fullo.github.io/Sussurro/manual/","image":"https://fullo.github.io/Sussurro/assets/screenshots/og-workspace.png","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"inLanguage":"en","about":{"@type":"SoftwareApplication","name":"Sussurro","softwareVersion":"0.10"}}</script>
+<!-- seo:end -->
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html" aria-current="page">Manual</a>
+    <a class="hide-xs" href="../blog/index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<main id="main">
+<header class="man-hero">
+  <div class="wrap">
+    <div class="kicker">User manual · Sussurro 0.10</div>
+    <h1>The Sussurro manual</h1>
+    <p>Everything the app does, screen by screen: from the first launch to dictation, notes, links, meetings and the archive they end up in. New in 0.10? Start with the <a href="https://github.com/fullo/Sussurro/blob/main/docs/releases/0.10.0.md">release notes</a>. The screenshots use sample data.</p>
+  </div>
+</header>
+
+<div class="wrap man">
+<aside class="toc" aria-label="Contents">
+  <details open id="toc-details">
+    <summary>Contents</summary>
+    <ol>
+      <li><a href="#install">Install and first run</a>
+        <ol>
+          <li><a href="#download">Download and install</a></li>
+          <li><a href="#setup">The guided setup</a></li>
+          <li><a href="#workspace">The workspace</a></li>
+          <li><a href="#models">Speech models</a></li>
+        </ol></li>
+      <li><a href="#dictation">Hotkey dictation</a></li>
+      <li><a href="#new">Notes from the mic and files</a></li>
+      <li><a href="#links">Transcriptions from links</a></li>
+      <li><a href="#archive">The archive and the Library</a></li>
+      <li><a href="#recipes">Recipes and LLM profiles</a>
+        <ol>
+          <li><a href="#profiles">LLM profiles</a></li>
+          <li><a href="#bundled">The bundled model</a></li>
+          <li><a href="#cleanup">Cleanup</a></li>
+          <li><a href="#recipe-list">Recipes</a></li>
+          <li><a href="#ask">Ask</a></li>
+          <li><a href="#consent">External profiles and consent</a></li>
+        </ol></li>
+      <li><a href="#meetings">Meetings with the extension</a>
+        <ol>
+          <li><a href="#extension-install">Install</a></li>
+          <li><a href="#pairing">Pair</a></li>
+          <li><a href="#extension-record">Record</a></li>
+          <li><a href="#speakers">Speakers</a></li>
+          <li><a href="#people">People</a></li>
+        </ol></li>
+      <li><a href="#system-audio">System audio</a></li>
+      <li><a href="#subtitles">Subtitles and exports</a></li>
+      <li><a href="#audio">Saved audio, replay, voice map</a></li>
+      <li><a href="#qwen3-asr">Qwen3-ASR (optional engine)</a></li>
+      <li><a href="#privacy">Privacy and data locations</a></li>
+      <li><a href="#local-api">Local API</a></li>
+      <li><a href="#troubleshooting">Troubleshooting</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ol>
+  </details>
+</aside>
+
+<article class="man-body prose">
+
+<!-- ================================================================ -->
+<section class="chapter" id="install" aria-labelledby="h-install">
+<h2 id="h-install"><span class="n">Chapter 1</span>Install and first run</h2>
+<p class="lead">Sussurro is a desktop app for macOS (Apple Silicon), Windows and Linux. It is free and open source (AGPL-3.0), needs no account and sends nothing anywhere on its own.</p>
+
+<h3 id="download">Download and install</h3>
+<p>Installers are on the <a href="https://github.com/fullo/Sussurro/releases/latest">GitHub releases page</a>. The same page carries the browser extension zips (see <a href="#extension-install">Meetings</a>).</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>System</th><th>Files</th><th>Requirements and first launch</th></tr></thead>
+  <tbody>
+    <tr><td><b>macOS</b></td><td><code>.dmg</code></td><td>Apple Silicon only, macOS 11 or later. The app is not notarized: the first time, right-click <code>sussurro.app</code> → <span class="ui">Open</span>, or allow it in System Settings → Privacy &amp; Security → <span class="ui">Open Anyway</span>. <a href="../blog/macos-signing-gatekeeper.html">Why</a>.</td></tr>
+    <tr><td><b>Windows</b></td><td><code>.exe</code>, <code>.msi</code></td><td>Windows 10 or 11, x64, with WebView2 (built into Windows 11). The installer is not code-signed: if SmartScreen stops it, click <span class="ui">More info</span> → <span class="ui">Run anyway</span>. An antivirus may ask about <code>sussurro-llama-server.exe</code> the first time it runs.</td></tr>
+    <tr><td><b>Linux</b></td><td><code>.AppImage</code>, <code>.deb</code>, <code>.rpm</code></td><td>x64 with glibc 2.38 or newer (Ubuntu 24.04+, Debian 13+, Fedora 39+). To paste text you need a clipboard helper — <code>xclip</code> or <code>xsel</code> on X11, <code>wl-clipboard</code> on Wayland — and on Wayland the desktop's RemoteDesktop permission, or <code>wtype</code> / <code>ydotool</code>. <a href="../blog/linux-injection.html">Details</a>.</td></tr>
+  </tbody>
+</table></div>
+<p>Two optional helpers ship inside the app: a <code>llama-server</code> process used by the <a href="#qwen3-asr">Qwen3-ASR engine</a> and by the <a href="#bundled">bundled model</a>. On macOS, if one of them won't start because the system quarantined it, run this once — Sussurro never removes the quarantine flag by itself:</p>
+<pre><code>xattr -cr /Applications/sussurro.app</code></pre>
+<p><b>Updates</b>: Settings → About → <span class="ui">Check for updates</span>. Update packages are signed with the project's own key, so updating works even though the installers are not OS-signed. Sussurro checks only when you click.</p>
+
+<h3 id="setup">The guided setup</h3>
+<p>The first launch opens a short setup over the workspace. Every step has <span class="ui">Skip this step</span>, and <span class="ui">Skip setup</span> closes it; Settings → About → <span class="ui">Run the setup again</span> brings it back. Upgrading from 0.6 shows a single <em>What's new</em> screen instead, and keeps your settings.</p>
+<figure class="fig"><a href="../assets/screenshots/onboarding-welcome.webp"><img src="../assets/screenshots/onboarding-welcome.webp" width="1440" height="900" loading="lazy" alt="The first step of the guided setup, “Welcome to Sussurro”, over the workspace: the steps Welcome, Permissions, Archive folder, Speech model, Cleanup and Dictation shortcut, a short description of dictation, notes and transcriptions, and cleanup and recipes, and the button Set up Sussurro." /></a>
+<figcaption>The setup has six steps; each can be skipped and reopened later.</figcaption></figure>
+<ol>
+  <li><b>Permissions.</b> <em>Microphone</em> — <span class="ui">Test the microphone</span> makes the system ask now rather than at your first dictation. On macOS also <em>Accessibility</em>, which Sussurro needs to paste into other apps: <span class="ui">Open System Settings</span>, allow Sussurro, then <span class="ui">Check again</span> (macOS may ask to reopen the app). On Windows, allow desktop apps to use the microphone in the privacy settings.</li>
+  <li><b>Archive folder.</b> Notes, meetings and transcriptions are saved in <code>Documents/Sussurro</code>. On macOS the button reads <span class="ui">Allow access and create the folder</span>: the system asks once for the Documents folder, here, so the question never interrupts a recording. <span class="ui">Change…</span> picks another folder, such as an Obsidian vault. If Documents syncs to iCloud Drive or OneDrive, the archive syncs with it.</li>
+  <li><b>Speech model.</b> Choose the engine and download a model (see <a href="#models">Speech models</a>).</li>
+  <li><b>Cleanup.</b> Sussurro looks for LLM servers on this computer only, at their default addresses: Ollama (<code>localhost:11434</code>), LM Studio (<code>localhost:1234</code>) and a llama.cpp server (<code>localhost:8080</code>). <span class="ui">Use for cleanup</span> picks one. If none answers, it offers the <a href="#bundled">bundled model</a>, and <span class="ui">Get Ollama</span> opens Ollama's download page. Cleanup is optional: without it you get exactly what you said.</li>
+  <li><b>Dictation shortcut.</b> Record your shortcut and choose push-to-talk or tap-to-toggle (see <a href="#dictation">Hotkey dictation</a>).</li>
+</ol>
+
+<h3 id="workspace">The workspace</h3>
+<p>The window has a left rail with <b>New</b>, <b>Library</b>, <b>People</b>, <b>Recipes</b>, <b>Models</b> and <b>Settings</b>. At its foot are the <span class="ui">Dictate</span> button, a timer while a recording runs, and the current speech engine and cleanup profile. Closing the window hides it: Sussurro keeps running in the tray (menu: <span class="ui">Show / Hide</span>, <span class="ui">Quit</span>), so the dictation shortcut keeps working.</p>
+<figure class="fig"><a href="../assets/screenshots/workspace-library-meeting.webp"><img src="../assets/screenshots/workspace-library-meeting.webp" width="1440" height="900" loading="lazy" alt="The Library with a meeting open: the item list with type badges on the left, the transcript with speaker chips You, Anna Rossi and Voice 1 in the middle, and the Speakers, Ask and Export pane on the right." /></a>
+<figcaption>Library: the list, the open document and its context pane (Speakers, Ask, Export).</figcaption></figure>
+<p>Settings has these sections: <b>Dictation</b> (shortcut, microphone, push-to-talk), <b>Speech</b> (language, whisper mode), <b>Cleanup</b> (level, translation, cleanup profile), <b>Dictionary &amp; snippets</b> (personal dictionary, app styles, snippets, portable config), <b>Behavior</b> (live preview, sound feedback, voice commands, streaming typing, launch at login, dictate to file, and under Advanced the local API), <b>Dictation history</b>, <b>Archive</b>, <b>Browser extension</b> and <b>About</b> (credits and licences, <span class="ui">Copy diagnostics</span>, <span class="ui">Check for updates</span>, <span class="ui">Run the setup again</span>).</p>
+<p>Below about 1000 px of width, the Library's filters and the document's context pane fold into drawers (<span class="ui">Filters</span>, <span class="ui">Speakers · Ask · Export</span>).</p>
+
+<h3 id="models">Speech models</h3>
+<p>Speech becomes text with a model that runs on your computer. Choose it under <b>Models</b>; models are downloaded once and checked against their published SHA-256.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Engine</th><th>Models</th><th>Good to know</th></tr></thead>
+  <tbody>
+    <tr><td><b>Whisper</b> (whisper.cpp)</td><td>Base · English · 148 MB<br>Small · multilingual · 488 MB<br>Medium · multilingual · 1.5 GB<br>Large v3 Turbo · multilingual · 574 MB (default)</td><td>Any language, on the GPU (Metal on macOS, Vulkan on Windows; CPU on Linux). The only engine that uses your personal dictionary as a hint.</td></tr>
+    <tr><td><b>Parakeet</b> (NVIDIA)</td><td>TDT 0.6B v3 · 456 MB</td><td>Much faster on computers without a strong GPU; recognises 25 European languages by itself.</td></tr>
+    <tr><td><b>Qwen3-ASR</b></td><td>1.7B · about 2.5 GB</td><td>Optional, never the default. See <a href="#qwen3-asr">its chapter</a>.</td></tr>
+  </tbody>
+</table></div>
+<p>Models → Advanced → <span class="ui">Models folder</span> points Sussurro at another folder (empty means the app data folder). Moving the setting doesn't move files: move them yourself. Any <code>ggml-*.bin</code> already in that folder shows up as “installed”, so a folder shared with other whisper.cpp tools is reused. More: <a href="../blog/whisper-vs-parakeet.html">Whisper vs Parakeet</a>.</p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="dictation" aria-labelledby="h-dictation">
+<h2 id="h-dictation"><span class="n">Chapter 2</span>Hotkey dictation</h2>
+<p class="lead">Press the shortcut in any app, speak, and the text is pasted where your cursor is. The window can stay closed.</p>
+<ul>
+  <li><b>Shortcut</b>: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>, or <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>Space</kbd> on macOS. Change it in Settings → Dictation → <span class="ui">Shortcut</span>: click, press the keys, <kbd>Esc</kbd> cancels. A single letter or digit is refused; a function key alone is allowed.</li>
+  <li><b>Push-to-talk</b> (on by default): hold to record, release to stop. Off: tap to start, tap again to stop. The <span class="ui">Dictate</span> button at the bottom of the rail follows the same rule.</li>
+  <li><b>The overlay</b>: a small pill at the bottom of the screen shows <em>Recording</em> and <em>Transcribing…</em>; with <span class="ui">Live preview</span> (Settings → Behavior) it also shows the words as they come. It never takes the focus.</li>
+  <li><b>Pasting</b>: Sussurro puts the text on the clipboard, presses <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd>, then puts back the text that was on your clipboard (images or files on the clipboard are not restored). On Wayland it first tries to type the text through the desktop's RemoteDesktop permission, leaving the clipboard alone.</li>
+  <li><b>Microphone</b>: Settings → Dictation → <span class="ui">Microphone</span>, with a <span class="ui">Test</span> button and a level meter.</li>
+</ul>
+<h3>What happens to the words</h3>
+<ul>
+  <li><b>Cleanup</b> (Settings → Cleanup): <em>None</em> (the raw transcript), <em>Light</em> (fillers, repetitions and false starts removed, grammar and punctuation fixed — the default), <em>Medium</em> (also clearer and shorter), <em>High</em> (rewritten). It runs on your cleanup LLM profile; if that server can't be reached, you get the raw transcript. See <a href="#cleanup">Cleanup</a>.</li>
+  <li><b>Translate to</b> (Settings → Cleanup): dictate in one language, paste in another — even with cleanup set to None.</li>
+  <li><b>Spoken commands</b> (Settings → Behavior → <span class="ui">Voice commands</span>, on by default), in English and Italian: “new line” / “a capo” / “nuova riga” for a line break, “new paragraph” / “nuovo paragrafo”, “period new line” / “punto e a capo”, “new bullet” / “bullet point” / “punto elenco” for a list item. “Scratch that” / “cancella quello” and “quote … end quote” / “apri virgolette … chiudi virgolette” are applied by the cleanup model, so they need a cleanup level above None.</li>
+  <li><b>Personal dictionary</b> (Settings → Dictionary &amp; snippets): names and jargon, used as a hint by Whisper and as preferred spellings by the cleanup model. Correcting a dictation in the history adds the new words for you.</li>
+  <li><b>Snippets</b>: dictate just a cue (“firma email”) and Sussurro pastes the text you stored for it, with no model involved.</li>
+  <li><b>App styles</b>: a tone — and optionally an output language — per app, matched on the focused app's name.</li>
+  <li><b>Streaming typing</b> (Settings → Behavior, off by default): words appear while you talk — word by word with cleanup None and no translation, otherwise sentence by sentence, each sentence cleaned before it is typed. When streaming typed something, snippets and the spoken commands are not applied to that dictation.</li>
+  <li><b>Whisper mode</b> (Settings → Speech): boosts a quiet voice for dictating under your breath.</li>
+  <li><b>Dictate to file</b> (Settings → Behavior): append every dictation to a <code>.md</code> or <code>.txt</code> file instead of pasting it.</li>
+</ul>
+<h3>Dictation history</h3>
+<p>Dictations are <b>not</b> Library items: they go to their own history (<code>history.jsonl</code> in the app data folder). Settings → Dictation history lists them with search, and each entry can be copied, re-cleaned, translated or edited — saving a correction teaches the dictionary. Export to Markdown or JSON; <span class="ui">Keep history for</span> is <em>Keep forever</em> (default), 7, 30 or 90 days.</p>
+<p>A dictation during a long recording goes first: the recording's transcription waits for it, so your text arrives quickly.</p>
+<div class="callout"><span class="k">Good to know</span><p>The cleaned text is pasted straight into the focused app, with no review step. And the shortcut works wherever the focus is — including another app's password field.</p></div>
+<p class="more">More: <a href="../blog/shortcuts-and-triggers.html">shortcuts and triggers</a> · <a href="../blog/voice-commands.html">voice commands</a> · <a href="../blog/ai-cleanup-levels.html">cleanup levels</a> · <a href="../blog/translate-as-you-speak.html">translate as you speak</a> · <a href="../blog/streaming-typing.html">streaming typing</a></p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="new" aria-labelledby="h-new">
+<h2 id="h-new"><span class="n">Chapter 3</span>Notes from the mic and files</h2>
+<p class="lead"><b>New</b> turns every source into an item in your Library. It has four tabs — Microphone, File, Link and System audio + mic — and one options card shared by all of them.</p>
+<p><b>Options — same for every source:</b></p>
+<ul>
+  <li><span class="ui">Language</span> and <span class="ui">Cleanup level</span> for these runs only. They start from your dictation settings and are never saved back to them. The language applies to Whisper; Parakeet and Qwen3-ASR detect it themselves.</li>
+  <li><span class="ui">Default tags</span> and <span class="ui">Category</span>, added to the item when it is saved.</li>
+  <li><span class="ui">Save audio</span>: keep the recording as <code>audio.wav</code> in the item's folder (see <a href="#audio">Saved audio</a>). Off unless you tick it or turn it on in Settings → Archive.</li>
+</ul>
+<p>Three item types, chosen by content: a <b>Note</b> is your own voice; a <b>Meeting</b> is several people talking live; a <b>Transcription</b> is audio recorded by others (a podcast, an interview, a lecture, a link).</p>
+
+<h3 id="new-mic">Microphone</h3>
+<figure class="fig"><a href="../assets/screenshots/new-microphone.webp"><img src="../assets/screenshots/new-microphone.webp" width="1440" height="900" loading="lazy" alt="New → Microphone while recording: a red bar with “Recording 00:09”, Stop and Discard…, the lines transcribed so far with their timestamps, and the options card on the right." /></a>
+<figcaption>A microphone session: lines appear as they are transcribed.</figcaption></figure>
+<ol>
+  <li>Optionally type a <span class="ui">Title</span> (otherwise the first words become the title).</li>
+  <li>Click <span class="ui">Start recording</span>. Sussurro transcribes while you speak, a segment at a time, and the item already appears in the Library marked <em>Recording</em>.</li>
+  <li>Click <span class="ui">■ Stop</span>. The note is saved; <span class="ui">Open in Library</span> takes you to it.</li>
+</ol>
+<p><span class="ui">Discard…</span> asks first, then moves what was transcribed to the trash. If Sussurro stops in the middle of a session (a crash, a shutdown), the item keeps what was transcribed until then and is marked <em>Interrupted</em>.</p>
+<p id="meeting-in-room"><b>Meeting in the room.</b> Tick <span class="ui">Meeting in the room</span> when several people share this microphone. The item is saved as a <b>Meeting</b> and voices are told apart as Voice 1, Voice 2… (see <a href="#speakers">Speakers</a>). Because it records other people, the <a href="#notice">recording notice</a> appears first.</p>
+
+<h3 id="new-file">File</h3>
+<figure class="fig"><a href="../assets/screenshots/new-file.webp"><img src="../assets/screenshots/new-file.webp" width="1440" height="900" loading="lazy" alt="New → File: a drop zone for wav, mp3, m4a, aac, flac and ogg files with Choose a file…, the item type choice Note or Transcription, the Identify voices option, a title field and the Transcribe button." /></a>
+<figcaption>Transcribing a file: pick the item type before you start.</figcaption></figure>
+<ol>
+  <li>Drop an audio file on the window or click <span class="ui">Choose a file…</span> — wav, mp3, m4a, aac, flac or ogg.</li>
+  <li>Choose the <span class="ui">Item type</span>: <b>Note</b> (default — a voice memo, a dictated idea) or <b>Transcription</b> (audio recorded by others, shown with timestamps). For a transcription you can tick <span class="ui">Identify voices</span> to label speakers as Voice 1, Voice 2… (the speaker model downloads on first use).</li>
+  <li>Optionally a title (the file name if empty), then <span class="ui">Transcribe</span>. A progress bar shows how far it got; <span class="ui">Cancel</span> stops and saves nothing.</li>
+</ol>
+<p>Long files are read from disk as a stream, so memory stays flat even for an hour of audio. One file, one link and one recording can run at the same time.</p>
+<p class="more">More: <a href="../blog/archive-and-notes.html">The archive: notes, meetings and transcriptions</a> · <a href="../blog/audio-file-transcription.html">transcribe audio files</a></p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="links" aria-labelledby="h-links">
+<h2 id="h-links"><span class="n">Chapter 4</span>Transcriptions from links</h2>
+<p class="lead">New → <b>Link</b> transcribes a direct link to an audio or video file, or a page on a video platform through <a href="https://github.com/yt-dlp/yt-dlp">yt-dlp</a>. The result is a <b>Transcription</b> whose <code>source</code> is the link.</p>
+<figure class="fig"><a href="../assets/screenshots/new-link.webp"><img src="../assets/screenshots/new-link.webp" width="1440" height="900" loading="lazy" alt="New → Link with a YouTube address: the link is recognised as “Video platform (yt-dlp)” and yt-dlp is found; options Allow local network addresses and Identify voices, a title field, the Transcribe button and the terms-of-service note." /></a>
+<figcaption>Sussurro tells a direct media link from a video page as you type.</figcaption></figure>
+<ul>
+  <li><b>Direct media</b> — a link ending in a media file (mp3, wav, m4a, mp4, mov, flac, ogg, opus, webm, mkv…) — is downloaded by Sussurro itself. Nothing to install.</li>
+  <li><b>Video platforms</b> — YouTube, Vimeo, Dailymotion, Twitch, SoundCloud, Mixcloud, Bandcamp, TikTok, X/Twitter, Facebook, Instagram, Rumble, Bilibili, TED, Streamable and Odysee — go through <code>yt-dlp</code>, which is not bundled. Sussurro finds it on your PATH or in the usual package-manager folders; install it with <code>brew install yt-dlp</code> (macOS), <code>winget install yt-dlp.yt-dlp</code> or <code>scoop install yt-dlp</code> (Windows, then restart Sussurro), <code>sudo apt install yt-dlp</code> or <code>pipx install yt-dlp</code> (Linux — distribution packages can be old). Pages on other sites are refused.</li>
+</ul>
+<p>The run has two steps, <em>Download</em> then <em>Transcribe</em>. The download is a temporary file in the app data folder, deleted when the transcription ends however it ends; <span class="ui">Cancel</span> deletes it too. The title is yours, else the video's title, else the file name.</p>
+<ul>
+  <li><span class="ui">Allow local network addresses</span> (off by default, per run): links to this computer, your router or a NAS are refused unless you tick it. The check covers every address a name resolves to and every redirect.</li>
+  <li><span class="ui">Identify voices</span>: decide now — the download is deleted afterwards, so voices can't be identified later without transcribing the link again.</li>
+  <li>Limits: 2 GB per download; videos whose only audio track is Opus or AC-3 are refused, since no ffmpeg is bundled; system proxy settings are ignored.</li>
+</ul>
+<div class="callout"><span class="k">Terms and copyright</span><p>Downloading from video platforms is subject to their terms of service and to copyright. Transcribe only media you have the right to use.</p></div>
+<p class="more">More: <a href="../blog/transcribe-links.html">Transcribe from a link</a></p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="archive" aria-labelledby="h-archive">
+<h2 id="h-archive"><span class="n">Chapter 5</span>The archive and the Library</h2>
+<p class="lead">Every note, meeting and transcription is a folder of plain files in your archive. The files are the source of truth: the Library is a view on them, and you can open, sync, back up or edit them with anything.</p>
+
+<h3 id="archive-folder">Where it is</h3>
+<p>By default <code>Documents/Sussurro</code> (the system's Documents folder; on Linux without XDG folders, <code>~/Documents/Sussurro</code>). Settings → <b>Archive</b> shows the path, with <span class="ui">Change…</span>, <span class="ui">Use the default</span> and <span class="ui">Show in Finder</span> (Explorer, file manager). Changing it does <b>not</b> move items already saved: they stay in the old folder until you move them yourself.</p>
+<figure class="fig"><a href="../assets/screenshots/settings-archive.webp"><img src="../assets/screenshots/settings-archive.webp" width="1440" height="900" loading="lazy" alt="Settings → Archive: the archive folder path with Change… and Show in Finder, the Save audio switch, the Subtitles menu set to “Only when I ask”, and the Search index Rebuild button." /></a>
+<figcaption>Settings → Archive: folder, saved audio default, subtitles, search index.</figcaption></figure>
+
+<h3 id="layout">What's in a folder</h3>
+<pre><code>Documents/Sussurro/
+  .sussurro/people.json                 the People registry
+  2026/09/2026-09-25-weekly-sync-release/
+    transcript.md                       frontmatter + the transcript
+    document.md                         written by the Formatted document recipe
+    summary.md, action-items.md, …      other recipes and saved answers
+    transcript.srt                      subtitles, when created
+    audio-mic.wav, audio-remote.wav     only with Save audio (audio.wav for one channel)
+    .sussurro/                          segments, word timings, voice data, hashes</code></pre>
+<p>The folder name is the date plus the title, made safe for every OS; renaming the item later doesn't rename the folder.</p>
+
+<h3 id="frontmatter">Frontmatter</h3>
+<p><code>transcript.md</code> starts with YAML metadata, then <code># Title</code> and the text. Notes are paragraphs; meetings and transcriptions have one line per segment, like <code>**[00:00:05] Anna Rossi:** …</code>. For example:</p>
+<pre><code>---
+type: meeting
+title: Weekly sync — release
+date: 2026-09-25T09:30:00+02:00
+duration: 00:42:10
+source: browser:meet.google.com
+language: it
+engine: whisper-large-v3-turbo-q5_0
+tags:
+- release
+categories:
+- team
+participants:
+- name: Anna Rossi
+  email: anna@example.com
+- name: Voice 1
+---</code></pre>
+<ul>
+  <li><code>type</code>: <code>note</code>, <code>meeting</code> or <code>transcription</code>. <code>source</code>: <code>mic</code>, <code>file:&lt;name&gt;</code>, <code>url:&lt;link&gt;</code>, <code>browser:&lt;site&gt;</code> or <code>system</code>.</li>
+  <li>Sussurro also writes <code>status: recording</code> or <code>status: interrupted</code> while those apply, and <code>audio:</code> when audio is saved. Keys it doesn't know — Obsidian's <code>aliases</code>, say — are kept when it rewrites the file.</li>
+  <li>Notes never have participants or speakers.</li>
+</ul>
+
+<h3 id="library">The Library</h3>
+<ul>
+  <li><b>Search</b> the title, the text, tags, categories and participants (names and emails); matches are highlighted.</li>
+  <li><b>Filter</b> by type (Notes, Meetings, Transcriptions) and with the <span class="ui">Tag</span>, <span class="ui">Category</span>, <span class="ui">Participant</span> and <span class="ui">Date</span> menus. Values within one filter are alternatives; different filters combine. Date offers Today, This week (from Monday), This month, This year, Older and a custom range. Filters are remembered.</li>
+  <li><b>Badges</b>: <em>● Recording</em>, <em>Interrupted</em>, <em>✎ Edited outside</em>, <em>↗ Sent externally</em> (text went to an external LLM; the hosts are in the tooltip) and the size of saved audio.</li>
+</ul>
+
+<h3 id="editing">Editing an item</h3>
+<ul>
+  <li>Click the <b>title</b> to rename. Add or remove <b>tags</b>, <b>categories</b> and, on meetings and transcriptions, <b>participants</b> (a participant who matches someone in <a href="#people">People</a> gets their email).</li>
+  <li>Each transcript line has <span class="ui">Edit</span> (<kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Enter</kbd> saves, <kbd>Esc</kbd> cancels), <span class="ui">Delete</span> (click twice) and, where there are speakers, <span class="ui">Move to speaker…</span>. Sussurro keeps both the raw and the cleaned text of each line.</li>
+  <li><span class="ui">Open folder</span> shows the item in your file manager. <span class="ui">Delete…</span> moves the whole folder to the system trash — nothing in the archive is ever deleted for good, and there is no automatic clean-up of old items.</li>
+</ul>
+
+<h3 id="edited-outside">Edits made outside Sussurro</h3>
+<p>Sussurro remembers a hash of every <code>transcript.md</code> it writes. If the file changed since — you edited it in Obsidian or a text editor — <b>your version wins</b>: the item is marked <em>Edited outside Sussurro</em>, line editing is turned off, and Sussurro never rewrites the body. Title, tags, categories and participants still update the frontmatter only. The same rule protects recipe documents (a re-run writes <code>-2.md</code> beside your edited copy) and <code>transcript.srt</code>.</p>
+
+<h3 id="search-index">The search index</h3>
+<p>Search runs on an index in the app data folder (<code>archive-index.sqlite</code>), built from the files and kept up to date as they change. It is derived data: Settings → Archive → <span class="ui">Rebuild</span> recreates it at any time. If it can't be read, the Library falls back to matching titles and tags.</p>
+<p class="more">More: <a href="../blog/archive-and-notes.html">The archive: notes, meetings and transcriptions</a></p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="recipes" aria-labelledby="h-recipes">
+<h2 id="h-recipes"><span class="n">Chapter 6</span>Recipes, Ask and LLM profiles</h2>
+<p class="lead">A language model does three jobs in Sussurro: <b>cleanup</b> of what you dictate or record, <b>recipes</b> that write documents from a transcript, and <b>Ask</b>, which answers questions about one. Each runs on an <b>LLM profile</b> you choose.</p>
+
+<h3 id="profiles">LLM profiles</h3>
+<p>A profile is a server, a model and an optional API key. Sussurro speaks two APIs: <b>Ollama</b> (native) and <b>OpenAI-compatible</b> <code>/v1</code> — which covers llama.cpp's llama-server, LM Studio, DS4, Ollama's own <code>/v1</code> and hosted services. Manage them under <b>Recipes → LLM profiles</b>: <span class="ui">Add profile</span>, then Name, API, Server, API key (OpenAI-compatible only), Model, <span class="ui">Test connection</span> (it lists the server's models) and Context window.</p>
+<figure class="fig"><a href="../assets/screenshots/llm-profiles-bundled.webp"><img src="../assets/screenshots/llm-profiles-bundled.webp" width="1440" height="900" loading="lazy" alt="Recipes → LLM profiles: Local (Ollama, llama3.2:3b, marked Cleanup and Local), LM Studio (Local), Work (llm.example.com, marked External) and Local (bundled) (Built in, Local), with the bundled profile open: Qwen3 1.7B, downloaded, starts on first use and stops after 15 minutes idle, and a Use for cleanup button." /></a>
+<figcaption>Profiles are marked Local or External; the one used for cleanup is marked Cleanup.</figcaption></figure>
+<ul>
+  <li>The default <b>Local</b> profile is Ollama at <code>http://localhost:11434</code> with <code>llama3.2:3b</code>.</li>
+  <li><b>Local or external</b>: a profile is local only when its server is <code>localhost</code>, a loopback address or a <code>.local</code> host. Everything else — a hosted service, but also another computer on your network — is <b>external</b>: text sent to it leaves this computer. You can tick or untick <span class="ui">External</span> by hand; changing the server address works it out again.</li>
+  <li><b>API keys</b> are kept in the system's credential store (macOS Keychain, Windows Credential Manager, a Secret Service keyring on Linux), not in the settings file. Without a working store the key is saved in <code>settings.json</code> and the editor says so.</li>
+  <li><b>Context window</b>: how much the model reads at once. Empty means 4096 tokens, safe for small local models; recipes split longer transcripts into parts that fit.</li>
+</ul>
+
+<h3 id="bundled">The bundled model</h3>
+<p><b>Local (bundled)</b> is a built-in profile: Sussurro runs <b>Qwen3 1.7B</b> itself, on this computer, through its own copy of llama.cpp's server — nothing to install. The model (2.2 GB) is downloaded only when you ask, then checked against a pinned SHA-256. It starts on first use and stops after 15 minutes idle. It is never selected by itself: pick it with <span class="ui">Use the bundled model</span> (offered in the setup and in Settings → Cleanup when no server answers), <span class="ui">Use for cleanup</span> on its card under Models or Recipes, or choose it for a recipe run. The bundled server is reachable only by Sussurro.</p>
+
+<h3 id="cleanup">Cleanup</h3>
+<p>Settings → <b>Cleanup</b> sets the level, <span class="ui">Translate to</span> and the <span class="ui">Profile</span> used for dictations, microphone sessions, file and link transcriptions, and the local API's <code>/clean</code>. Long recordings are cleaned a segment at a time, with the previous segment as context. When the server can't be reached, has no model, or the bundled model isn't downloaded, you get the raw transcript. Advanced → <span class="ui">Cleanup prompts</span> lets you rewrite the instructions per level.</p>
+<p><b>An external cleanup profile needs an opt-in.</b> Cleanup happens without a dialog, so choosing an external profile shows a switch, <span class="ui">Send dictations to <em>host</em> for cleanup</span>. Until you turn it on, cleanup keeps the raw text and sends nothing. The opt-in belongs to that profile and that server: pointing the profile at another host turns it off. Items cleaned this way are marked in the Library.</p>
+
+<h3 id="recipe-list">Recipes</h3>
+<p>A recipe is a named prompt that writes a markdown file next to the transcript (a <em>companion document</em>) or shows an answer in the Ask panel. Six are built in:</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Recipe</th><th>Writes</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Formatted document</td><td><code>document.md</code></td><td>A tl;dr, headings and tables where the content is tabular.</td></tr>
+    <tr><td>Summary</td><td><code>summary.md</code></td><td></td></tr>
+    <tr><td>Action items</td><td><code>action-items.md</code></td><td></td></tr>
+    <tr><td>Decisions</td><td><code>decisions.md</code></td><td></td></tr>
+    <tr><td>Meeting minutes</td><td><code>meeting-minutes.md</code></td><td rowspan="2">Offered only on meetings and transcriptions whose transcript names its speakers.</td></tr>
+    <tr><td>Who said what</td><td><code>who-said-what.md</code></td></tr>
+  </tbody>
+</table></div>
+<figure class="fig"><a href="../assets/screenshots/recipes.webp"><img src="../assets/screenshots/recipes.webp" width="1440" height="900" loading="lazy" alt="The Recipes screen: the built-in recipes Formatted document, Summary, Action items, Decisions, Meeting minutes and Who said what with the file each writes, two of them marked Speakers, and two user recipes, “Domande aperte” writing domande-aperte.md and “Chi ha detto cosa” answering in the Ask panel." /></a>
+<figcaption>Built-in recipes can't be edited: duplicate one to make your own version.</figcaption></figure>
+<ul>
+  <li><b>Your own recipes</b>: <span class="ui">Add recipe</span> with a Name, an Output (<em>Document</em> or <em>Answer</em>) and a Prompt in plain words. Sussurro adds the transcript, its title, date and participants, and the rules (same language, no invented facts, markdown only). Deleting a recipe keeps the documents it wrote.</li>
+  <li><b>Long transcripts</b> are read in parts that fit the profile's context window, then combined — following speaker turns when there are speakers.</li>
+  <li><b>Participants go to the model by name.</b> Their emails go only if you tick <span class="ui">Include participant emails</span> for that run; the tick is never remembered.</li>
+</ul>
+<p id="document-tab"><b>The Document tab.</b> Pick a recipe and a profile and click <span class="ui">Run</span> (<span class="ui">Regenerate</span> if its document exists). Documents are rendered with a provenance line — recipe, profile, model, date, and <em>↗ External</em> with the host when the text left the computer — and saved with the same facts in their frontmatter (<code>generated_by</code>, <code>external</code>, <code>host</code>). An empty tab offers <span class="ui">Write the formatted document</span>. A recipe run never overwrites a document you edited: it writes a new copy next to it.</p>
+<figure class="fig"><a href="../assets/screenshots/document-formatted.webp"><img src="../assets/screenshots/document-formatted.webp" width="1440" height="900" loading="lazy" alt="A note's Document tab: the recipe picker set to Formatted document on the Local profile with Regenerate, and the rendered document.md with a tl;dr, headings, a priorities table and a checklist." /></a>
+<figcaption>The Document tab with the result of <em>Formatted document</em>.</figcaption></figure>
+
+<h3 id="ask">Ask</h3>
+<p>The <b>Ask</b> section of the context pane runs any recipe with one click or answers a question about the open item (<kbd>Enter</kbd> sends, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line, up to 2000 characters). The model answers only from the transcript and, where the transcript names speakers, says who said what. Pick the <span class="ui">LLM profile</span> below the box — each is marked <em>Local</em> or <em>↗ External</em>. An answer can be copied, discarded or <span class="ui">Saved as document</span> next to the transcript. Recipes and questions wait while an item is still recording.</p>
+
+<h3 id="consent">External profiles and consent</h3>
+<p>Local profiles run straight away. On an <b>external</b> profile, every recipe run and every question first shows <b>Send this to <em>host</em>?</b>, with the document, the task, the people involved, the size in characters and tokens, the server and the model. <span class="ui">Cancel</span> is the default and sends nothing.</p>
+<figure class="fig"><a href="../assets/screenshots/ask-external-consent.webp"><img src="../assets/screenshots/ask-external-consent.webp" width="1440" height="900" loading="lazy" alt="The consent dialog “Send this to llm.example.com?”: Work is an external profile; Document “Call con Studio Verdi”, Task “Recipe: Summary”, People “3 participant names — emails are not sent”, Size about 358 characters, Server llm.example.com, Model gpt-4o-mini; buttons Cancel and Send to llm.example.com." /></a>
+<figcaption>Asked every time, for every run on an external profile.</figcaption></figure>
+<p>This is enforced by the app itself, not only the screen: an external run needs a one-time permission for exactly that item, recipe or question, server and model, valid once and for two minutes. There is never a silent fallback from a local profile to an external one. Each item keeps a log of external sends — date, host, profile, model and recipe, never the content — in its <code>.sussurro/external-log.json</code>, which drives the Library's <em>↗ Sent externally</em> badge. What you send is processed under that provider's terms.</p>
+<p class="more">More: <a href="../blog/recipes-and-llm-profiles.html">Recipes, LLM profiles and the privacy gate</a> · <a href="../blog/choosing-ollama-model.html">choosing an Ollama model</a> · <a href="../blog/use-ds4.html">any OpenAI-compatible server</a> · <a href="../blog/cleanup-hallucination-guard.html">how cleanup avoids hallucinations</a></p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="meetings" aria-labelledby="h-meetings">
+<h2 id="h-meetings"><span class="n">Chapter 7</span>Meetings with the browser extension</h2>
+<p class="lead">The Sussurro extension records web meetings — <b>Google Meet</b>, <b>Microsoft Teams</b> and <b>Zoom in the browser</b> — and streams the audio to the Sussurro app on the same computer, which transcribes it live into a <b>Meeting</b>. It works in Chrome, Edge and Brave (116 or later) and Firefox (128 or later).</p>
+
+<h3 id="extension-install">Install</h3>
+<p>The extension is not in the browser stores yet. Each <a href="https://github.com/fullo/Sussurro/releases/latest">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and <code>sussurro-extension-firefox-&lt;version&gt;.zip</code>: use the one with the same version as your app.</p>
+<ul>
+  <li><b>Chrome, Edge, Brave</b>: unzip it into a folder you keep, open <code>chrome://extensions</code> (<code>edge://extensions</code>, <code>brave://extensions</code>), turn on <span class="ui">Developer mode</span>, click <span class="ui">Load unpacked</span> and pick the folder. To update, replace the folder's contents and press the reload icon on the extension's card. On Brave, if the extension can't reach the app, check <code>brave://settings/content/localhostAccess</code>.</li>
+  <li><b>Firefox</b>: open <code>about:debugging#/runtime/this-firefox</code>, click <span class="ui">Load Temporary Add-on…</span> and pick the zip. Firefox removes temporary add-ons when it quits, so load it again after a restart.</li>
+</ul>
+<p>If the extension has no access to a meeting site, its panel offers <span class="ui">Allow access</span>.</p>
+
+<h3 id="pairing">Pair it with the app</h3>
+<figure class="fig"><a href="../assets/screenshots/settings-browser-extension.webp"><img src="../assets/screenshots/settings-browser-extension.webp" width="1440" height="900" loading="lazy" alt="Settings → Browser extension: an explanation, the Recording notice row with Show the notice again, Local API “listening on 127.0.0.1:4525”, and the Pairing code field with Copy pairing code and Regenerate token…" /></a>
+<figcaption>Settings → Browser extension: local API status and pairing code.</figcaption></figure>
+<ol>
+  <li>In Sussurro, open Settings → <b>Browser extension</b>. The extension reaches the app through the <a href="#local-api">local API</a> on <code>127.0.0.1</code>. If it is off, click <span class="ui">Turn on the local API</span> and restart Sussurro.</li>
+  <li>Click <span class="ui">Copy pairing code</span>. The code (<code>sussurro:&lt;port&gt;:&lt;token&gt;</code>) goes to the clipboard; the app never shows the token.</li>
+  <li>Open the extension's options (right-click its toolbar button → <span class="ui">Options</span>), paste the code and click <span class="ui">Save and test</span>. <span class="ui">Test connection</span> says whether the app is reachable and the token right.</li>
+</ol>
+<p>Treat the code like a password. <span class="ui">Regenerate token…</span> invalidates it at once: every browser you paired must then be paired again.</p>
+
+<h3 id="extension-record">Record a meeting</h3>
+<figure class="fig narrow"><a href="../assets/screenshots/extension-side-panel.webp"><img src="../assets/screenshots/extension-side-panel.webp" width="800" height="1880" loading="lazy" alt="The extension's side panel recording Google Meet: Stop, the line “Recording other people — let them know. Why?”, level meters for mic (your microphone) and remote (call audio), “Transcript up to date”, the buttons Open in Sussurro, Copy as text and Create .srt (greyed while recording), and live lines from Anna Rossi, Marco Bianchi, You and Voice 2." /></a>
+<figcaption>The side panel mirrors the live transcript; the app does the work.</figcaption></figure>
+<ol>
+  <li>Join the call in the browser. Click the extension's toolbar button: Chrome opens its <b>side panel</b>, Firefox its <b>sidebar</b>. It says <em>Ready to record Google Meet</em> (or Teams, or Zoom). If you opened the meeting before installing the extension, reload the page.</li>
+  <li>Click <span class="ui">Start recording</span>. Nothing is captured before that. The first time, the <a href="#notice">recording notice</a> appears. While recording, the tab's toolbar button shows a red <b>REC</b> badge.</li>
+  <li>The panel shows level meters for <em>mic</em> (your microphone) and <em>remote</em> (the call), whether the transcript is up to date or a few seconds behind, and the lines as the app writes them.</li>
+  <li><span class="ui">Stop</span> — or closing the tab, or leaving the page — ends it; the app keeps what it received and saves the meeting.</li>
+</ol>
+<p>The panel also has <span class="ui">Open in Sussurro</span> (brings the app to the front on that meeting), <span class="ui">Copy as text</span> and, when subtitles are set to <em>Only when I ask</em>, <span class="ui">Create .srt</span> once the recording ends (it downloads the file). If the connection to the app drops, the extension reconnects and the rest of the call becomes a new item. Audio goes only to the Sussurro app on this computer; the page's own audio is never changed or muted. During a browser meeting the overlay pill reads <em>Recording (meeting)</em>.</p>
+
+<h3 id="notice">The recording notice</h3>
+<p>Recording a meeting records other people. Before the first such recording — in the extension, with System audio + mic, or with Meeting in the room — Sussurro shows <em>You are about to record other people</em>: depending on where you and they are, and on your organisation's rules, you may need to tell them, and some may have to agree first. Sussurro can't tell which rules apply to you. <span class="ui">Don't show this again</span> is ticked by default; <span class="ui">Show the notice again</span> in Settings → Browser extension (or in the extension's options) brings it back. A <em>Recording other people — let them know</em> line stays visible while you record.</p>
+
+<h3 id="speakers">Speakers</h3>
+<p>Meeting lines are labelled in three ways, from the most to the least reliable:</p>
+<ol>
+  <li><b>You</b> — whatever comes from your microphone channel in a browser meeting or a System audio + mic recording.</li>
+  <li><b>Names from Google Meet</b> — on Meet the extension reads the participants' names from the page and matches them to who is speaking, and the participants join the item's frontmatter. It reads only the page's structure, and when it can't read the names reliably it stops rather than guess. Meet changes its pages often, so this is the part most likely to need an update. Teams and Zoom get <em>You</em> and <em>Voice N</em> only.</li>
+  <li><b>Voice 1, Voice 2…</b> — everyone else is told apart by how they sound, with a speaker model (WeSpeaker ResNet34-LM, about 26.5 MB, CC-BY-4.0) downloaded on first use and run on this computer. It is approximate: two similar voices can merge and one voice can split.</li>
+</ol>
+<p>The <b>Speakers</b> section of a meeting or transcription lists each voice with where it came from (<em>mic channel</em>, <em>from Meet</em>, <em>by voice</em>) and its share of the lines. <span class="ui">Rename</span> gives a voice a name in this document; <span class="ui">Link to person…</span> (or a suggested <span class="ui">Link to <em>name</em>?</span>) ties it to someone in People and adds them to the participants with their email; <span class="ui">Add to People</span> creates the person. <span class="ui">Move to speaker…</span> on a line fixes a single line (<em>New voice</em> starts another). <span class="ui">Re-detect speakers</span> recomputes every line's voice from the stored voice prints — lines you moved included — keeping the names you gave.</p>
+<p><b>Transcriptions</b> get speakers only when you ask: tick <span class="ui">Identify voices</span> in New → File or Link, or click <span class="ui">Identify voices</span> in the Speakers section later — that re-reads the original file, so it works only on the computer that transcribed it and while the file is still where it was (links can't: their download is deleted).</p>
+
+<h3 id="people">People</h3>
+<p><b>People</b> is your registry of names, emails and aliases, stored with the archive in <code>.sussurro/people.json</code> and never sent anywhere. When a participant's name matches a person's name or alias — ignoring case, accents and spacing — the participant gets that person's email. Linking only ever <em>adds</em> an email to a participant that has none; a name that matches two people links to nobody. Add the spellings you see in meetings (a Meet display name, a nickname) as aliases.</p>
+<figure class="fig"><a href="../assets/screenshots/people.webp"><img src="../assets/screenshots/people.webp" width="1440" height="900" loading="lazy" alt="The People screen: an explanation of name and alias matching, a search box, a “Possible duplicates” note with Review and merge, and five people with their emails, aliases and how many items they appear in." /></a>
+<figcaption>People: aliases catch the other spellings; possible duplicates can be merged.</figcaption></figure>
+<p>Participant chips offer <span class="ui">+ People</span> to add someone. Deleting or editing a person never changes items that already have their email. People travel to another computer with the archive, or in a portable-config export only if you tick <span class="ui">Include People in the export</span>.</p>
+<p class="more">More: <a href="../blog/meetings-extension.html">Record web meetings with the browser extension</a></p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="system-audio" aria-labelledby="h-system-audio">
+<h2 id="h-system-audio"><span class="n">Chapter 8</span>System audio: calls from desktop apps</h2>
+<p class="lead">New → <b>System audio + mic</b> records a call in Zoom, Teams or any app that plays through the computer: your microphone and the computer's sound become two channels of one <b>Meeting</b>. You are <em>You</em>; the others are Voice 1, Voice 2…</p>
+<figure class="fig"><a href="../assets/screenshots/new-system-audio.webp"><img src="../assets/screenshots/new-system-audio.webp" width="1440" height="900" loading="lazy" alt="New → System audio + mic: Your microphone set to the dictation input, Computer's sound set to “This computer's sound (built-in)”, the note about the macOS permission, the echo note, a link to route the sound through a virtual device instead, a title field and Start recording." /></a>
+<figcaption>Pick your microphone and what carries the computer's sound.</figcaption></figure>
+<p><b>Built-in capture</b> — <em>This computer's sound (built-in)</em> — needs no extra software:</p>
+<ul>
+  <li><b>macOS 14.2 or later</b>: records every app's sound except Sussurro's. The first time, macOS asks to allow Sussurro to record system audio; you can also turn it on in System Settings → Privacy &amp; Security → Screen &amp; System Audio Recording. Without that permission the recording is silent. On older macOS the option is not offered.</li>
+  <li><b>Windows</b>: records what plays on the default output device (WASAPI loopback). It has not been verified on real hardware yet.</li>
+  <li><b>Linux</b>: records the monitor of the default output through PulseAudio or PipeWire, with <code>pactl</code> and <code>parec</code> from <code>pulseaudio-utils</code>.</li>
+</ul>
+<p>It follows the output that was the default when you pressed Start: if you switch outputs mid-call, start a new recording.</p>
+<p><b>A virtual device</b> works everywhere, and is the way on macOS before 14.2. Pick it as the <em>Computer's sound</em>:</p>
+<ul>
+  <li><b>macOS</b> — install BlackHole 2ch (<code>brew install blackhole-2ch</code>) or Rogue Amoeba's Loopback. In Audio MIDI Setup create a Multi-Output Device with your speakers or headphones and BlackHole, and make it the sound output, so you keep hearing the call. Choose <em>BlackHole 2ch</em>.</li>
+  <li><b>Windows</b> — install VB-Cable (or Voicemeeter) from vb-audio.com. Send the meeting app's speaker (or the Windows output) to <em>CABLE Input</em>; to keep hearing it, tick <em>Listen to this device</em> on <em>CABLE Output</em> (Sound → Recording → Properties → Listen). Choose <em>CABLE Output</em>. Some sound cards also offer Stereo Mix.</li>
+  <li><b>Linux</b> — every output has a monitor source. Expose it as an ALSA device (see <a href="https://github.com/fullo/Sussurro/blob/main/docs/compile/linux.md">docs/compile/linux.md</a>), or pick the pulse / pipewire device and route that recording stream to “Monitor of …” in pavucontrol.</li>
+</ul>
+<div class="callout"><span class="k">Use headphones</span><p>On speakers your microphone hears the others too, so their words can end up on your channel as well. Sussurro does not cancel echo.</p></div>
+<p>A System audio + mic recording and a microphone session can't run at the same time — both use the microphone. The recording notice appears before the first one.</p>
+<p class="more">More: <a href="../blog/system-audio.html">Record desktop calls: system audio + mic</a></p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="subtitles" aria-labelledby="h-subtitles">
+<h2 id="h-subtitles"><span class="n">Chapter 9</span>Subtitles and exports</h2>
+<p class="lead">Meetings and transcriptions can have subtitles; every item can be exported.</p>
+<ul>
+  <li><b>Subtitles</b> (Settings → Archive): <em>Only when I ask</em> (default) or <em>Create .srt automatically on every save</em>. They apply to meetings and transcriptions, never to notes. The file is <code>transcript.srt</code> in the item's folder; with <em>Only when I ask</em>, the Export section has <span class="ui">Create .srt</span> (or <span class="ui">Update .srt</span>). Each subtitle has at most two rows of 42 characters and stays up to 7 seconds; a new speaker's first subtitle starts with their name. A <code>transcript.srt</code> you edited is never overwritten.</li>
+  <li><b>Export</b> (context pane): <span class="ui">.md</span>, <span class="ui">.txt</span>, <span class="ui">.srt</span> and <span class="ui">.vtt</span> for meetings and transcriptions; <span class="ui">.md</span> and <span class="ui">.txt</span> for notes — each asks where to save. The <code>.txt</code> of a meeting has one line per segment, <code>[00:12:03] Anna Rossi: …</code>. Also <span class="ui">Copy text</span>, <span class="ui">Copy markdown</span> and <span class="ui">Show folder</span>.</li>
+  <li>From the browser extension: <span class="ui">Copy as text</span>, and <span class="ui">Create .srt</span> when subtitles are <em>Only when I ask</em>.</li>
+</ul>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="audio" aria-labelledby="h-audio">
+<h2 id="h-audio"><span class="n">Chapter 10</span>Saved audio, replay and the voice map</h2>
+<p class="lead">Sussurro keeps only the transcript unless you ask for the audio. With it, you can replay the recording — or one speaker at a time.</p>
+<ul>
+  <li><b>Save audio</b>: tick it in New before you start, or turn it on for every new item in Settings → Archive (it also covers browser meetings). The audio is saved as mono 16 kHz WAV in the item's folder: <code>audio.wav</code>, or one file per channel (<code>audio-mic.wav</code> + <code>audio-remote.wav</code> for a browser meeting, <code>audio-mic.wav</code> + <code>audio-system.wav</code> for System audio + mic). About 115 MB per hour.</li>
+  <li><b>Cloud sync</b>: if the archive syncs to iCloud Drive, OneDrive or another cloud, the audio is uploaded too — the option names the folder.</li>
+  <li><span class="ui">Delete audio…</span> in the item moves the audio to the trash and keeps the transcript.</li>
+  <li>There is no hidden audio cache: an item recorded without <em>Save audio</em> has nothing to play.</li>
+</ul>
+<h3>The Audio tab</h3>
+<figure class="fig"><a href="../assets/screenshots/audio-replay.webp"><img src="../assets/screenshots/audio-replay.webp" width="1440" height="900" loading="lazy" alt="A meeting's Audio tab playing only Anna Rossi: transport buttons −10, play, +10, a seek bar, Speed 1×, Play only “Anna Rossi · 0:12” and Follow; the transcript below dims the other speakers and lights the word being played." /></a>
+<figcaption>“Play only” plays one speaker's lines back to back.</figcaption></figure>
+<ul>
+  <li><span class="ui">−10</span> / <span class="ui">+10</span> seconds, play/pause, a seek bar and <span class="ui">Speed</span> from 0.75× to 2×.</li>
+  <li><span class="ui">Play only</span>: <em>All speakers</em>, or one speaker's lines back to back — each from its own channel, so the others don't bleed in. With two channels, <em>All speakers</em> plays both together.</li>
+  <li>The transcript follows the audio (<span class="ui">Follow</span>), lighting the current line and, where the words were timed, the current word. Click a line to play from there.</li>
+  <li>Keys: <kbd>Space</kbd> play/pause, <kbd>←</kbd> <kbd>→</kbd> 10 seconds, <kbd>↑</kbd> <kbd>↓</kbd> previous/next line.</li>
+</ul>
+<h3 id="voice-map">The voice map</h3>
+<p>Meetings and transcriptions with voice data on at least two lines show a <b>Voice map</b> in the Speakers section: each dot is a line, placed by how the voice sounds, so a speaker's lines usually gather in one cloud. It is a flat picture of something with many more dimensions — closeness is approximate — but it makes a line in the wrong cloud easy to spot. Click a dot (or use the arrow keys and <kbd>Enter</kbd>) to select that line in the transcript, or to jump the player there.</p>
+<figure class="fig"><a href="../assets/screenshots/voice-map.webp"><img src="../assets/screenshots/voice-map.webp" width="1440" height="900" loading="lazy" alt="An in-room meeting with three voices: the Speakers section lists Voice 1, Anna and Voice 3 with their share of lines, and the Voice map below shows the lines as coloured dots in three groups, with a legend and Re-detect speakers." /></a>
+<figcaption>The voice map of an in-room meeting with three voices.</figcaption></figure>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="qwen3-asr" aria-labelledby="h-qwen3">
+<h2 id="h-qwen3"><span class="n">Chapter 11</span>Qwen3-ASR, the optional engine</h2>
+<p class="lead">Besides Whisper and Parakeet, Sussurro can transcribe with <b>Qwen3-ASR 1.7B</b>. It is optional and never the default.</p>
+<figure class="fig half"><a href="../assets/screenshots/models-engines.webp"><img src="../assets/screenshots/models-engines.webp" width="760" height="420" loading="lazy" alt="The Models screen's Qwen3-ASR card, explaining that it is optional, runs in llama.cpp's llama-server bundled with Sussurro, takes no dictionary prompt and needs about 2.5 GB, with a Use Qwen3-ASR button; below it the Local (bundled) card with Use for cleanup." /></a>
+<figcaption>Models → Qwen3-ASR and the bundled LLM.</figcaption></figure>
+<ul>
+  <li>Turn it on with Models → <span class="ui">Use Qwen3-ASR</span> (or the third choice of the engine picker); <span class="ui">Back to Whisper</span> turns it off. The model and its audio projector download once, about 2.5 GB.</li>
+  <li>It detects the language itself and ignores the language setting. It takes <b>no dictionary prompt</b>: your dictionary words only reach the cleanup step.</li>
+  <li>On our benchmark Whisper large-v3-turbo is more accurate on Italian (1.8% vs 2.5% word errors) and Qwen3-ASR on English (3.0% vs 4.5%).</li>
+  <li>It runs in a separate process (llama.cpp's <code>llama-server</code>, bundled with Sussurro), reachable only by Sussurro. Audio goes to it in pieces of at most 30 seconds; long dictations are cut at pauses. It starts when needed and stops after 15 minutes idle, when you change engine and when you quit.</li>
+  <li>If it won't start on macOS, run <code>xattr -cr /Applications/sussurro.app</code> once. If Sussurro crashes on macOS, the helper can stay running: quit <code>sussurro-llama-server</code> in Activity Monitor.</li>
+</ul>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="privacy" aria-labelledby="h-privacy">
+<h2 id="h-privacy"><span class="n">Chapter 12</span>Privacy and data locations</h2>
+<p class="lead">Speech-to-text always runs on your computer. No account, no telemetry, no analytics in the app or the extension.</p>
+<h3>What can leave the computer, and when</h3>
+<ul>
+  <li><b>Model downloads</b>, when you choose a model: Whisper, Qwen3-ASR, the speaker model and the bundled LLM from Hugging Face, Parakeet from its own host. Each is checked against a SHA-256.</li>
+  <li><b>Links you transcribe</b>: the media is downloaded (by yt-dlp for video platforms). Nothing is uploaded.</li>
+  <li><b>External LLM profiles</b>: text — never audio — only per run with your confirmation (recipes, Ask) or with the cleanup opt-in. See <a href="#consent">consent</a>.</li>
+  <li><b>Update checks</b>: only when you click <span class="ui">Check for updates</span>.</li>
+  <li>If your archive is in a synced folder (iCloud Drive, OneDrive, Dropbox), your sync service copies it — including saved audio.</li>
+</ul>
+<p>The browser extension sends audio and page events only to the Sussurro app at <code>127.0.0.1</code>, with the pairing token. The helper processes for Qwen3-ASR and the bundled model are reachable only by Sussurro: a private socket on macOS and Linux, a checked loopback port on Windows, and a new random key at every start.</p>
+<h3 id="data-locations">Where your data lives</h3>
+<div class="table-wrap"><table>
+  <thead><tr><th>What</th><th>Where</th></tr></thead>
+  <tbody>
+    <tr><td>Notes, meetings, transcriptions, recipe documents, subtitles, saved audio</td><td>The archive, <code>Documents/Sussurro/YYYY/MM/&lt;date&gt;-&lt;title&gt;/</code></td></tr>
+    <tr><td>People</td><td><code>&lt;archive&gt;/.sussurro/people.json</code></td></tr>
+    <tr><td>Settings, LLM profiles, the extension's pairing token</td><td><code>settings.json</code> in the app's config folder (readable only by you on macOS and Linux)</td></tr>
+    <tr><td>API keys of LLM profiles</td><td>The system credential store, service <code>com.sussurro.app</code></td></tr>
+    <tr><td>Dictation history and statistics</td><td><code>history.jsonl</code>, <code>stats.json</code> in the app's data folder</td></tr>
+    <tr><td>Search index, paths kept for <em>Identify voices</em>, temporary link downloads</td><td><code>archive-index.sqlite</code>, <code>source-files.json</code>, <code>link-downloads/</code> in the app's data folder</td></tr>
+    <tr><td>Speech, speaker and bundled LLM models</td><td><code>models/</code> in the app's data folder, or your Models folder</td></tr>
+    <tr><td>Logs of the helper processes</td><td><code>llama-server.log</code>, <code>llama-server-llm.log</code> in the app's log folder</td></tr>
+  </tbody>
+</table></div>
+<p>The app's folders follow each system's convention for the identifier <code>com.sussurro.app</code> — on macOS <code>~/Library/Application Support/com.sussurro.app</code>. <span class="ui">Delete…</span> and <span class="ui">Delete audio…</span> move files to the system trash.</p>
+<p class="more">More: <a href="../blog/where-data-lives.html">Where your data lives</a> · <a href="../blog/why-local-first.html">Why local-first</a></p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="local-api" aria-labelledby="h-local-api">
+<h2 id="h-local-api"><span class="n">Chapter 13</span>The local API (scripting)</h2>
+<p class="lead">An HTTP API on <code>127.0.0.1</code> for your own scripts, off by default.</p>
+<p>Turn it on in Settings → Behavior → Advanced: <span class="ui">Local API</span> (port 4525 by default; applies when Sussurro restarts) and <span class="ui">Scripting routes</span> (applies at once). Turning on the local API for the browser extension does not turn on the scripting routes.</p>
+<pre><code># clean up / translate a text with your current settings
+curl -X POST --data "um so this is uh a test" http://127.0.0.1:4525/clean
+
+# transcribe an audio file (wav/mp3/m4a/flac/ogg); also added to the dictation history
+curl -X POST --data-binary @meeting.mp3 "http://127.0.0.1:4525/transcribe?ext=mp3"
+
+# search your dictation history
+curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
+<ul>
+  <li>Loopback only, and no token: any program on your computer can call the scripting routes while they are on — that's why they ship off.</li>
+  <li>Web pages can't use them: requests must come for <code>127.0.0.1:&lt;port&gt;</code> or <code>localhost:&lt;port&gt;</code>, and a request from a web page's origin is refused.</li>
+  <li><code>/clean</code> accepts up to 1 MiB, <code>/transcribe</code> up to 200 MiB. At most two of them run at once; a third gets <code>503</code> with <code>Retry-After</code>.</li>
+  <li>The extension's routes (<code>/app/version</code>, <code>/live</code>, <code>/items/…</code>) always need the pairing token and accept only browser-extension origins; <code>/items/…</code> reach only meetings the extension recorded.</li>
+</ul>
+<p class="more">More: <a href="../blog/local-api.html">The local API</a></p>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter" id="troubleshooting" aria-labelledby="h-troubleshooting">
+<h2 id="h-troubleshooting"><span class="n">Chapter 14</span>Troubleshooting</h2>
+<p class="lead">When something is off, Settings → Dictation shows a setup banner with what is missing. For a bug report, Settings → About → <span class="ui">Copy diagnostics</span> copies the details (never your API keys or People).</p>
+<dl>
+  <dt>The shortcut does nothing</dt>
+  <dd>Another app may own the same combination: record a different one in Settings → Dictation. On Linux, some Wayland desktops block global shortcuts: the <span class="ui">Dictate</span> button and the tray still work. A single letter can't be a shortcut.</dd>
+  <dt>Nothing is pasted</dt>
+  <dd>macOS: allow Sussurro under Privacy &amp; Security → Accessibility (macOS may ask to reopen it). Linux X11: install <code>xclip</code> or <code>xsel</code>. Linux Wayland: install <code>wl-clipboard</code>, and accept the desktop's keyboard-access prompt — or install <code>wtype</code> (wlroots, KDE) or <code>ydotool</code> with its daemon (any desktop, GNOME included). KDE may ask again after a reboot.</dd>
+  <dt>“Microphone access denied” or no input device</dt>
+  <dd>Allow the microphone in the system's privacy settings (on Windows, <em>Let desktop apps access your microphone</em>), then pick it in Settings → Dictation → Microphone and use <span class="ui">Test</span>.</dd>
+  <dt>“Model not downloaded”</dt>
+  <dd>Open <b>Models</b> and download the selected model — or switch to one marked <em>installed</em>.</dd>
+  <dt>The text isn't cleaned up</dt>
+  <dd>You get the raw transcript whenever the cleanup server can't be used: Ollama not installed or not running (start the app, or <code>ollama serve</code>), no model on the server (<code>ollama pull llama3.2:3b</code>), the bundled model not downloaded yet, or an external cleanup profile without its opt-in. The level may also be <em>None</em>. Recipes → LLM profiles → <span class="ui">Test connection</span> checks a server.</dd>
+  <dt>macOS: the archive folder can't be created</dt>
+  <dd>Sussurro was refused access to Documents. Allow it under Privacy &amp; Security → Files and Folders (the setup's <span class="ui">Open Files and Folders</span> link), or choose another folder with <span class="ui">Change…</span>.</dd>
+  <dt>Qwen3-ASR or the bundled model won't start</dt>
+  <dd>On macOS run <code>xattr -cr /Applications/sussurro.app</code> once. On Windows, an antivirus may have blocked <code>sussurro-llama-server.exe</code>. The helper's log is <code>llama-server.log</code> (<code>llama-server-llm.log</code> for the bundled model) in the app's log folder.</dd>
+  <dt>A link won't transcribe</dt>
+  <dd>“Links to video sites need yt-dlp”: install it (see <a href="#links">Links</a>) and try again. A link to your own network needs <span class="ui">Allow local network addresses</span>. Videos with only Opus or AC-3 audio, pages outside the supported platforms and downloads over 2 GB are refused. yt-dlp breaks when sites change: update it.</dd>
+  <dt>The extension says Sussurro is not reachable</dt>
+  <dd>Check that the app is running and that Settings → Browser extension says the local API is listening — after turning it on, restart Sussurro. “Wrong token”: pair again with a fresh <span class="ui">Copy pairing code</span>. “Different versions”: install the extension from the same release as the app. On Brave, allow localhost access. On Firefox, reload the temporary add-on after a restart.</dd>
+  <dt>“Open a Google Meet, Microsoft Teams or Zoom web call”</dt>
+  <dd>The panel doesn't see a meeting in this tab: reload the meeting page (it was open before the extension), or click <span class="ui">Allow access</span> if offered. Zoom works only in its web client.</dd>
+  <dt>Meet names are missing</dt>
+  <dd>When the extension can't read the names reliably it falls back to Voice N rather than guess; Meet's pages change often. Teams and Zoom always get You and Voice N. Rename voices or link them to People afterwards.</dd>
+  <dt>Voices are mixed up</dt>
+  <dd>Move single lines with <span class="ui">Move to speaker…</span>, or use <span class="ui">Re-detect speakers</span>. Voice labels are approximate, especially with short turns or similar voices.</dd>
+  <dt>System audio records silence</dt>
+  <dd>macOS: allow Sussurro under Privacy &amp; Security → Screen &amp; System Audio Recording. Built-in capture missing on macOS: it needs 14.2 or later — use BlackHole. Linux: install <code>pulseaudio-utils</code>. With a virtual device, check that the call's sound is actually routed to it.</dd>
+  <dt>Your words are also on the others' channel, or theirs on yours</dt>
+  <dd>Use headphones: Sussurro does not cancel echo.</dd>
+  <dt>Line editing is off</dt>
+  <dd>The item is still recording (it opens when the session ends), or <code>transcript.md</code> was edited outside Sussurro — then the file wins; see <a href="#edited-outside">Edits made outside Sussurro</a>.</dd>
+  <dt>“Search index unavailable”</dt>
+  <dd>Settings → Archive → <span class="ui">Rebuild</span>. The index is rebuilt from the files; nothing is lost.</dd>
+</dl>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+<!-- ================================================================ -->
+<section class="chapter faq" id="faq" aria-labelledby="h-faq">
+<h2 id="h-faq"><span class="n">Chapter 15</span>FAQ</h2>
+<dl>
+  <dt>Does anything go to the cloud?</dt>
+  <dd>Not unless you choose an external LLM profile and confirm the run (or opt in for cleanup) — and then only text. Audio is transcribed on your computer. See <a href="#privacy">Privacy</a>.</dd>
+  <dt>Does it work offline?</dt>
+  <dd>Yes, once the models are downloaded — as long as your cleanup profile is local (or cleanup is off).</dd>
+  <dt>Do I need Ollama?</dt>
+  <dd>No. Cleanup, recipes and Ask need an LLM, but it can be Ollama, LM Studio, a llama.cpp server, any OpenAI-compatible server, or the bundled model with nothing to install. Without one, dictation and transcription still work and give you the raw text.</dd>
+  <dt>Where are my notes, and can I use Obsidian?</dt>
+  <dd>In <code>Documents/Sussurro</code>, as markdown with YAML frontmatter. Point Settings → Archive → <span class="ui">Change…</span> at a folder inside your vault; edits you make there are respected.</dd>
+  <dt>Why aren't my dictations in the Library?</dt>
+  <dd>Hotkey dictations are pasted where you type and kept in the dictation history (Settings → Dictation history). The Library holds what you record or transcribe from New and the extension.</dd>
+  <dt>Where did command mode go?</dt>
+  <dd>It was removed in 0.10: use your system's voice control (Voice Control on macOS, Voice Access on Windows 11). Spoken formatting commands inside a dictation (“new line”, “scratch that”) still work.</dd>
+  <dt>Which speech engine should I use?</dt>
+  <dd>Whisper Large v3 Turbo is the default and the most accurate on Italian; Parakeet is much faster on computers without a strong GPU; Qwen3-ASR does better on English but takes no dictionary. See <a href="#models">Speech models</a>.</dd>
+  <dt>Does it run on Intel Macs?</dt>
+  <dd>No: macOS builds are Apple Silicon only (the ONNX Runtime used for Parakeet and speaker labels has no Intel build).</dd>
+  <dt>Does Sussurro recognise the same person across meetings?</dt>
+  <dd>Not yet. Voices are told apart within one recording; link them to People to carry names and emails over.</dd>
+  <dt>Is the extension in the Chrome Web Store or Firefox Add-ons?</dt>
+  <dd>Not yet: install it from the release zips (see <a href="#extension-install">Install</a>).</dd>
+  <dt>Can I record video?</dt>
+  <dd>No — Sussurro works with audio only.</dd>
+  <dt>Is it free?</dt>
+  <dd>Yes, free and open source under the AGPL-3.0. The code is on <a href="https://github.com/fullo/Sussurro">GitHub</a>, where you can also report issues.</dd>
+</dl>
+<a class="top-link" href="#main">↑ Contents</a>
+</section>
+
+</article>
+</div>
+</main>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <ul class="foot-links">
+    <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
+    <li><a href="../blog/index.html">Blog</a></li>
+    <li><a href="https://github.com/fullo/Sussurro/blob/main/docs/releases/0.10.0.md">Release notes</a></li>
+    <li><a href="https://github.com/fullo/Sussurro/releases">Download</a></li>
+  </ul>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+
+<script>
+  // Highlight the chapter in view in the table of contents. Without JS the
+  // contents list is still a plain list of links.
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('.toc > details > ol > li > a'));
+    var byId = {};
+    links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+    if (!('IntersectionObserver' in window)) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        links.forEach(function (a) { a.classList.remove('on'); });
+        var a = byId[e.target.id];
+        if (a) a.classList.add('on');
+      });
+    }, { rootMargin: '-80px 0px -70% 0px' });
+    document.querySelectorAll('.chapter').forEach(function (s) { io.observe(s); });
+    // On a narrow screen the contents start folded.
+    var d = document.getElementById('toc-details');
+    if (d && window.matchMedia('(max-width: 960px)').matches) d.open = false;
+  })();
+</script>
+</body>
+</html>
