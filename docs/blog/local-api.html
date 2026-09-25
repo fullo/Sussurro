@@ -56,7 +56,7 @@
     <p>The pipeline that powers dictation is useful outside dictation too. The local API lets any script on your machine tap into it — the same cleanup model, the same STT engine, the same history — over plain HTTP.</p>
 
     <h2>Turn it on</h2>
-    <p>It ships <strong>off by default</strong>. Enable it in <strong>Behavior → Advanced</strong>; it binds to loopback only and applies at restart.</p>
+    <p>It ships <strong>off by default</strong>. Enable it in <strong>Behavior → Advanced</strong>: switch on <strong>Local API</strong> (loopback only, applies at restart) and <strong>Scripting routes</strong> (the token-less <code>/clean</code>, <code>/transcribe</code> and <code>/history</code>; applies at once).</p>
 
     <h2>The endpoints</h2>
     <pre><code># clean up / translate a text with your current settings
@@ -78,7 +78,7 @@ curl "http://127.0.0.1:4525/history?n=10&q=sussurro"</code></pre>
 
     <div class="callout">
       <span class="k">Security</span>
-      <p>Loopback-only means it isn't exposed to the network — but any process on your machine can call it. That's exactly why it ships disabled; turn it on only when you want it, on a machine you trust.</p>
+      <p>Loopback-only means it isn't exposed to the network — but any process on your machine can call it. That's exactly why it ships disabled; turn it on only when you want it, on a machine you trust. Web pages can't use it: requests must name <code>127.0.0.1:&lt;port&gt;</code> or <code>localhost:&lt;port&gt;</code> as their host, and a request carrying a web page's origin is refused. Bodies are capped (1 MiB for <code>/clean</code>, 200 MiB for <code>/transcribe</code>).</p>
     </div>
 
     <p>Because everything runs locally, the API is as private as the app: your text and audio go to your own model and your own disk, never to a server.</p>

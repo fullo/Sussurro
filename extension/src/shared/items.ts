@@ -29,14 +29,22 @@ export function exportFilename(id: string, format: ExportFormat): string {
   return `${folder.replace(/[\\/:*?"<>|]/g, "_") || "transcript"}.${format}`;
 }
 
+/** The app's `code` when an item wasn't recorded by the extension (#215):
+ *  the extension may open or export only the meetings it recorded. */
+export const NOT_EXTENSION_ITEM = "not_extension_item";
+
 /** An answer that is not 2xx → words for the user. Pure. */
 export function describeFailure(status: number, body: unknown): string {
-  const appSays = body && typeof body === "object" && typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : "";
+  const field = (k: "error" | "code") =>
+    body && typeof body === "object" && typeof (body as Record<string, unknown>)[k] === "string" ? ((body as Record<string, string>)[k] as string) : "";
+  const appSays = field("error");
   switch (status) {
     case 401:
       return "Sussurro refused the token. Pair the extension again.";
     case 403:
-      return "Sussurro refused this extension.";
+      return field("code") === NOT_EXTENSION_ITEM
+        ? "The extension can open or export only the meetings it recorded. Open this item in the Sussurro app instead."
+        : "Sussurro refused this extension.";
     case 404:
       return appSays && appSays !== "unknown endpoint"
         ? "Sussurro can't find this item: it was deleted or moved."
