@@ -189,6 +189,16 @@ pub struct Settings {
     /// settings file from before the switch takes `api_enabled`'s value
     /// ([`Settings::load_migrating`]), so existing scripts keep working.
     pub api_scripting: bool,
+    /// The archive routes (`/archive/…`, E14, #249) answer; read on every
+    /// request, so it applies at once. Off by default. Each request also
+    /// needs one of [`Self::archive_tokens`].
+    pub api_archive: bool,
+    /// Archive API tokens (E14): name, scopes, times and the **SHA-256** of
+    /// each token — never the token itself ([`crate::api::tokens`]). Only
+    /// the backend changes them (`archive_token_create` / `_revoke`, and the
+    /// last-used time); a save from the UI keeps the current ones, and the
+    /// UI never receives the hashes ([`Settings::for_ui`]).
+    pub archive_tokens: Vec<crate::api::tokens::ArchiveToken>,
     /// Dictate-to-file mode: when set, completed dictations are APPENDED to
     /// this file (note-taking) instead of being pasted into the focused app.
     pub output_file: String,
@@ -253,6 +263,8 @@ impl Default for Settings {
             api_enabled: false,
             api_port: 4525,
             api_scripting: false,
+            api_archive: false,
+            archive_tokens: Vec::new(),
             output_file: String::new(),
             archive_dir: String::new(),
             onboarding: Onboarding::Welcome,
@@ -479,6 +491,25 @@ impl Settings {
         let json = serde_json::to_string_pretty(&self.for_disk())
             .map_err(|e| std::io::Error::other(format!("serialize settings: {e}")))?;
         write_private_atomic(path, json.as_bytes())
+    }
+
+    /// The settings as the UI gets them: the archive tokens without their
+    /// hashes (#249) — the UI lists them by id, name, scopes and times.
+    pub fn for_ui(&self) -> Settings {
+        let mut out = self.clone();
+        for t in &mut out.archive_tokens {
+            t.sha256.clear();
+        }
+        out
+    }
+
+    /// Carry over what only the backend changes (the extension token, the
+    /// archive tokens) from `current`, the settings in effect: a UI holding
+    /// an older copy must not undo a regenerate or bring back a revoked
+    /// token.
+    pub fn keep_backend_owned(&mut self, current: &Settings) {
+        self.extension_token = current.extension_token.clone();
+        self.archive_tokens = current.archive_tokens.clone();
     }
 
     /// The settings as `settings.json` stores them (#159): a profile whose
@@ -960,6 +991,38 @@ mod tests {
         // Once the key exists, it is the user's choice, whatever the API.
         std::fs::write(&path, r#"{"api_enabled":true,"api_scripting":false}"#).unwrap();
         assert!(!Settings::load(&path).api_scripting);
+    }
+
+    /// #249: the archive API is off by default, even with the local API and
+    /// the scripting routes on; its tokens round-trip as hashes, and a file
+    /// from before 0.11 loads with none.
+    #[test]
+    fn the_archive_api_is_off_by_default_and_tokens_round_trip() {
+        use crate::api::tokens::{create, Scope};
+        assert!(!Settings::default().api_archive);
+        assert!(Settings::default().archive_tokens.is_empty());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"api_enabled":true,"api_scripting":true}"#).unwrap();
+        let old = Settings::load(&path);
+        assert!(!old.api_archive && old.archive_tokens.is_empty());
+        let (stored, new) = create(&[], "ci", &[Scope::Read, Scope::People], chrono::Utc::now()).unwrap();
+        let s = Settings {
+            api_archive: true,
+            archive_tokens: vec![stored.clone()],
+            ..Default::default()
+        };
+        s.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains(&new.token));
+        let back = Settings::load(&path);
+        assert!(back.api_archive);
+        assert_eq!(back.archive_tokens, vec![stored.clone()]);
+        // The UI copy has no hashes; nothing else changes.
+        let ui = back.for_ui();
+        assert!(ui.archive_tokens[0].sha256.is_empty());
+        assert_eq!(ui.archive_tokens[0].name, "ci");
+        assert_eq!(back.archive_tokens[0].sha256, stored.sha256, "for_ui leaves the original alone");
     }
 
     /// #136: the recording notice shows until acknowledged; a settings file

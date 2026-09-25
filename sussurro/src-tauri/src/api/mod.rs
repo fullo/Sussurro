@@ -20,12 +20,19 @@
 //!
 //! Item ids contain `/` (`2026/09/2026-09-24-weekly-sync`): they are taken
 //! as-is between `/items/` and the action, `%2F` also accepted.
+//!
+//! 0.11 archive routes for scripts (E14, #249; the routes themselves come
+//! with #250 and #251): everything under `/archive`, answered only with
+//! `Settings.api_archive` on and an archive token with the right scope
+//! (`Authorization: Bearer sua_…`, [`tokens`]). Any browser `Origin` is
+//! refused there — extensions too — and no CORS header is ever sent.
 
 pub mod auth;
 pub mod export;
 pub mod guard;
 pub mod live;
 pub mod protocol;
+pub mod tokens;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -38,6 +45,10 @@ use crate::state::AppState;
 /// real server on a fake one.
 pub trait Host: Send + Sync + 'static {
     fn config(&self) -> ApiConfig;
+    /// An archive token passed [`tokens::authorize`]: record its last use
+    /// ([`tokens::touch`] decides when that is worth a save). Hosts without
+    /// archive tokens ignore it.
+    fn archive_token_used(&self, _id: &str) {}
     /// `POST /clean`: the JSON answer.
     fn clean(&self, text: &str) -> serde_json::Value;
     /// `POST /transcribe`: status and JSON answer.
@@ -52,14 +63,32 @@ pub trait Host: Send + Sync + 'static {
 }
 
 /// The settings the API checks on every request (so regenerating the
-/// token applies at once).
-#[derive(Debug, Clone, Default, PartialEq)]
+/// token, or revoking an archive token, applies at once).
+#[derive(Clone, Default, PartialEq)]
 pub struct ApiConfig {
     pub extension_token: String,
     /// Told to the extension by `GET /app/version` (#129).
     pub subtitles: crate::settings::SubtitlesMode,
     /// The token-less scripting routes answer (`Settings.api_scripting`).
     pub scripting: bool,
+    /// The archive routes answer (`Settings.api_archive`, #249).
+    pub archive: bool,
+    /// The archive tokens (hashes only).
+    pub archive_tokens: Vec<tokens::ArchiveToken>,
+}
+
+/// Never prints the extension token (nor, through [`tokens::ArchiveToken`],
+/// a hash).
+impl std::fmt::Debug for ApiConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiConfig")
+            .field("extension_token", &if self.extension_token.is_empty() { "" } else { "<redacted>" })
+            .field("subtitles", &self.subtitles)
+            .field("scripting", &self.scripting)
+            .field("archive", &self.archive)
+            .field("archive_tokens", &self.archive_tokens)
+            .finish()
+    }
 }
 
 /// Routes exposed by the local API. Pure mapping — unit tested.
@@ -74,10 +103,18 @@ pub enum Route {
     ExportItem(String),
     /// CORS preflight for a meeting route.
     Preflight,
+    /// Anything under `/archive` (#249): the archive middleware runs first,
+    /// then the archive router (#250, #251).
+    Archive,
     NotFound,
 }
 
 impl Route {
+    /// An archive route: archive token, scopes, no browser origin.
+    pub fn is_archive(&self) -> bool {
+        matches!(self, Route::Archive)
+    }
+
     /// A token-less scripting route (behind `Settings.api_scripting`).
     pub fn is_scripting(&self) -> bool {
         matches!(self, Route::Clean | Route::Transcribe | Route::History)
@@ -129,9 +166,15 @@ fn is_meeting_path(path: &str) -> bool {
         || item_path(path, "export").is_some()
 }
 
+/// Pure: `/archive` or below it.
+pub fn is_archive_path(path: &str) -> bool {
+    path == "/archive" || path.starts_with("/archive/")
+}
+
 /// Pure: method + path → route.
 pub fn route(method: &str, path: &str) -> Route {
     match (method, path) {
+        (_, p) if is_archive_path(p) => Route::Archive,
         ("POST", "/clean") => Route::Clean,
         ("POST", "/transcribe") => Route::Transcribe,
         ("GET", "/history") => Route::History,
@@ -192,7 +235,18 @@ pub fn parse_url(url: &str) -> (&str, HashMap<String, String>) {
 ///   are never logged: transcripts may contain sensitive text.
 /// - Meeting routes: extension token, extension-only origins and CORS
 ///   ([`auth`]); an unpaired app (no token) accepts nothing there.
-/// - `settings.json` (it holds the token) is written 0600 on Unix.
+/// - Archive routes (`/archive…`, E14, #249), after the checks above and
+///   before any route code ([`tokens::authorize`]): **any** `Origin` is
+///   refused (extensions too — they are for scripts), then
+///   `Settings.api_archive` must be on (read per request), then an archive
+///   token (`Authorization: Bearer`, never a query parameter) must match a
+///   stored SHA-256 (constant-time), then its per-token rate limit (burst
+///   60, 10/s: 429 + `Retry-After`) and its scope (`read` for GET/HEAD,
+///   `write` otherwise; `people` for emails). No CORS header, ever. Errors
+///   carry a stable `code`. Tokens are created in Settings → Scripting,
+///   shown once, stored only as hashes, revocable at once, and never logged.
+/// - `settings.json` (it holds the extension token and the archive token
+///   hashes) is written 0600 on Unix.
 ///
 /// - The HTTP layer itself (#223): tiny_http 0.12.0 is vendored with
 ///   patches (`vendor/tiny_http`, each marked `Sussurro (#223)`), because
@@ -275,6 +329,8 @@ struct Ctx {
     /// The port the API listens on: the only one `Host` may name.
     port: u16,
     slow: guard::Slots,
+    /// Per archive token (#249).
+    archive_limiter: tokens::RateLimiter,
 }
 
 /// Answer requests on [`WORKERS`] threads until the server is dropped or
@@ -286,6 +342,7 @@ pub fn serve(server: tiny_http::Server, host: Arc<dyn Host>) {
         host,
         port,
         slow: guard::Slots::new(SLOW_SLOTS),
+        archive_limiter: tokens::RateLimiter::default(),
     });
     let workers: Vec<_> = (0..WORKERS)
         .map(|_| {
@@ -372,6 +429,9 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
     let config = host.config();
 
     let route = route(&method, path);
+    if route.is_archive() {
+        return handle_archive(ctx, request, &method, path, &config);
+    }
     if route.is_meeting() {
         return handle_meeting(ctx, request, route, &params, &config);
     }
@@ -379,7 +439,7 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
         return respond_json_with(
             request,
             403,
-            serde_json::json!({"error": "the scripting routes are off: turn on Settings → Behavior → Advanced → Scripting routes in Sussurro"}),
+            serde_json::json!({"error": "the scripting routes are off: turn on Settings → Scripting → Scripting routes in Sussurro"}),
             &[],
         );
     }
@@ -452,6 +512,50 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
             );
         }
     }
+}
+
+/// The archive middleware (E14, #249), then the archive router.
+fn handle_archive(ctx: &Arc<Ctx>, request: tiny_http::Request, method: &str, path: &str, config: &ApiConfig) {
+    let authorization = header(&request, "Authorization");
+    let origin = header(&request, "Origin");
+    let authorized = match tokens::authorize(
+        config.archive,
+        &config.archive_tokens,
+        authorization.as_deref(),
+        origin.as_deref(),
+        tokens::required_scope(method),
+        &ctx.archive_limiter,
+        std::time::Instant::now(),
+    ) {
+        Ok(a) => a,
+        Err(d) => {
+            return respond_json_with(
+                request,
+                d.status(),
+                serde_json::json!({"error": d.message(), "code": d.code()}),
+                &d.headers(),
+            )
+        }
+    };
+    ctx.host.archive_token_used(&authorized.id);
+    archive_route(ctx, request, &authorized, method, path)
+}
+
+/// The archive routes, for an authorized request. None yet: the read
+/// routes come with #250, `POST /archive/items` with #251 — each checks
+/// `auth.has(…)` for anything beyond the method's scope.
+fn archive_route(
+    _ctx: &Arc<Ctx>,
+    request: tiny_http::Request,
+    _auth: &tokens::Authorized,
+    _method: &str,
+    _path: &str,
+) {
+    respond_json(
+        request,
+        404,
+        serde_json::json!({"error": "unknown archive endpoint", "code": "not_found"}),
+    )
 }
 
 fn handle_meeting(
@@ -633,6 +737,17 @@ impl Host for AppHost {
             extension_token: s.extension_token.clone(),
             subtitles: s.subtitles,
             scripting: s.api_scripting,
+            archive: s.api_archive,
+            archive_tokens: if s.api_archive { s.archive_tokens.clone() } else { Vec::new() },
+        }
+    }
+
+    fn archive_token_used(&self, id: &str) {
+        let state = self.app.state::<AppState>();
+        let mut s = state.settings.lock().unwrap();
+        if tokens::touch(&mut s.archive_tokens, id, chrono::Utc::now()) {
+            // Best effort: a failed save loses only the time shown.
+            let _ = s.save(&state.paths.settings_file);
         }
     }
 

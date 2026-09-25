@@ -342,9 +342,11 @@ pub(crate) fn release_transcriber_if_free<T>(slot: &Mutex<Option<T>>) -> bool {
 /// segment or a dictation can hold it for seconds (#154): a model change
 /// frees the old model only if it's idle, and otherwise its next user
 /// reloads it ([`lock_transcriber`]). Returns whether the model changed.
-pub(crate) fn swap_settings(state: &AppState, settings: crate::settings::Settings) -> bool {
+pub(crate) fn swap_settings(state: &AppState, mut settings: crate::settings::Settings) -> bool {
     let model_changed = {
         let mut current = state.settings.lock().unwrap();
+        // Tokens changed since the caller read the settings stay (#249).
+        settings.keep_backend_owned(&current);
         let changed = current.whisper_model != settings.whisper_model
             || current.engine != settings.engine
             || current.models_dir != settings.models_dir;
