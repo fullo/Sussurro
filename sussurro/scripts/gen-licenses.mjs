@@ -257,6 +257,28 @@ function downloadedModels() {
         "(CC BY 4.0): https://creativecommons.org/licenses/by/4.0/",
       ecosystem: "model",
     },
+    {
+      // Read aloud (#255, P18): downloaded only on the user's request in
+      // Models → Voices, and only while the experimental module is on (P24).
+      name: "Pocket TTS by Kyutai (read aloud)",
+      version: "ONNX export KevinAHM/pocket-tts-onnx@58a6d00c, voices @e81d79e8",
+      license: "CC-BY-4.0",
+      spdx: "",
+      repository: "https://huggingface.co/kyutai/pocket-tts-without-voice-cloning",
+      text:
+        "Read aloud uses Pocket TTS by Kyutai (https://kyutai.org), Italian 24-layer and English " +
+        "models, in the ONNX export by KevinAHM (https://huggingface.co/KevinAHM/pocket-tts-onnx; " +
+        "only the text conditioner, flow LM and Mimi decoder graphs, fp32, unmodified), with voice " +
+        "states from https://huggingface.co/kyutai/pocket-tts-without-voice-cloning. Downloaded " +
+        "only when you ask for them in Models → Voices. Licensed under the Creative Commons " +
+        "Attribution 4.0 International licence (CC BY 4.0): " +
+        "https://creativecommons.org/licenses/by/4.0/. Voices come from recordings under their own " +
+        "licences: Giovanni — Common Voice Italian (CC0); Alba — Alba MacKenna (CC BY 4.0); " +
+        "Marius, Javert — Unmute voice donations (CC0); Anna, George — the VCTK corpus, Centre " +
+        "for Speech Technology Research, University of Edinburgh (CC BY 4.0); Peter — LibriVox " +
+        "reader Peter Yearsley via Voice-Zero (CC0).",
+      ecosystem: "model",
+    },
   ];
 }
 
