@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildManifest, referencedFiles, toManifestVersion, zipName, type Manifest, type Target } from "./manifest";
-import { APP_MATCH, MEETING_MATCHES, detectPlatform } from "../src/shared/platform";
+import { ALL_FRAMES_MATCHES, APP_MATCH, MEETING_MATCHES, TOP_FRAME_MATCHES, detectPlatform } from "../src/shared/platform";
 
 const template = (t: Target): Manifest =>
   JSON.parse(readFileSync(fileURLToPath(new URL(`../manifest.${t}.json`, import.meta.url)), "utf8"));
@@ -72,24 +72,48 @@ describe.each(["chrome", "firefox"] as const)("manifest.%s.json", (t) => {
   });
 
   it("injects a MAIN-world and an ISOLATED-world script on the meeting pages only", () => {
-    const cs = m.content_scripts as { matches: string[]; world?: string; js: string[] }[];
-    expect(cs.map((c) => c.world ?? "ISOLATED")).toEqual(["MAIN", "ISOLATED"]);
-    for (const c of cs) expect(c.matches).toEqual(MEETING_MATCHES);
+    type Cs = { matches: string[]; world?: string; js: string[]; all_frames?: boolean; match_about_blank?: boolean; match_origin_as_fallback?: boolean };
+    const cs = m.content_scripts as Cs[];
+    expect(cs.map((c) => c.world ?? "ISOLATED")).toEqual(["MAIN", "ISOLATED", "MAIN", "ISOLATED"]);
+    expect(cs.map((c) => c.js)).toEqual([["content-main.js"], ["content-isolated.js"], ["content-main.js"], ["content-isolated.js"]]);
+    // Meet and Teams: the top frame only, as before.
+    for (const c of cs.slice(0, 2)) {
+      expect(c.matches).toEqual(TOP_FRAME_MATCHES);
+      expect(c.all_frames).toBeUndefined();
+    }
+    // Zoom (#287): also its frames, but only frames whose own URL is a Zoom
+    // web-client page — no about:blank / origin fallback.
+    for (const c of cs.slice(2)) {
+      expect(c.matches).toEqual(ALL_FRAMES_MATCHES);
+      expect(c.all_frames).toBe(true);
+    }
+    for (const c of cs) {
+      expect(c.match_about_blank).toBeUndefined();
+      expect(c.match_origin_as_fallback).toBeUndefined();
+    }
+    expect([...TOP_FRAME_MATCHES, ...ALL_FRAMES_MATCHES]).toEqual(MEETING_MATCHES);
   });
 
   it("matches what detectPlatform recognises", () => {
     // One sample per match pattern: the manifest and the runtime check agree.
-    const samples = ["https://meet.google.com/a", "https://teams.microsoft.com/a", "https://teams.live.com/a", "https://app.zoom.us/wc/1"];
-    expect(samples.map(detectPlatform)).toEqual(["meet", "teams", "teams", "zoom"]);
+    const samples = ["https://meet.google.com/a", "https://teams.microsoft.com/a", "https://teams.live.com/a", "https://teams.cloud.microsoft/a", "https://app.zoom.us/wc/1"];
+    expect(samples.map(detectPlatform)).toEqual(["meet", "teams", "teams", "teams", "zoom"]);
     expect(MEETING_MATCHES).toHaveLength(samples.length);
   });
 
   if (t === "firefox") {
-    it("pins a Gecko id and Firefox >= 128 (MAIN-world content scripts)", () => {
+    it("pins a Gecko id and Firefox >= 140 (data_collection_permissions, #234)", () => {
       const gecko = (m.browser_specific_settings as { gecko: { id: string; strict_min_version: string } }).gecko;
       expect(gecko.id).toBe("sussurro@darumahq.it");
-      expect(parseInt(gecko.strict_min_version, 10)).toBeGreaterThanOrEqual(128);
+      // 128 was enough for MAIN-world content scripts, but AMO requires
+      // data_collection_permissions, which Firefox reads from 140 on.
+      expect(gecko.strict_min_version).toBe("140.0");
       expect(m.background).toEqual({ scripts: ["background.js"] });
+    });
+
+    it("is desktop-only: no gecko_android (AMO then does not mark it Android-compatible)", () => {
+      // Android has no sidebar and no local Sussurro app to pair with.
+      expect(m.browser_specific_settings).not.toHaveProperty("gecko_android");
     });
 
     it("sets its own extension CSP: Firefox's MV3 default upgrades ws://127.0.0.1 (spike #104)", () => {

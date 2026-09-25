@@ -393,13 +393,20 @@ impl<'a> Conn<'a> {
                     self.warn(out, "a meeting is already running on this connection");
                     return Flow::Continue;
                 }
-                let start = match protocol::validate_start(&info) {
+                let mut start = match protocol::validate_start(&info) {
                     Ok(s) => s,
                     Err(e) => {
                         out.push(ServerMessage::Status(Status::message(State::Error, e.to_string())));
                         return Flow::Continue;
                     }
                 };
+                // The meeting's language (#288), checked against the
+                // engine the run will use; a bad one never stops the
+                // meeting: the dictation's language applies.
+                match protocol::meeting_language(info.language.as_deref(), self.host.config().languages) {
+                    Ok(language) => start.language = language,
+                    Err(e) => self.warn(out, format!("{e}: using the dictation language")),
+                }
                 let Some(events_tx) = self.events_tx.clone() else {
                     return Flow::Continue;
                 };
@@ -886,6 +893,82 @@ mod tests {
         fn start_meeting(&self, _: MeetingStart) -> anyhow::Result<u64> {
             Ok(7)
         }
+    }
+
+    /// A host that keeps the language of each meeting it starts, on an
+    /// engine offering `set` (#288).
+    struct Languages {
+        set: crate::stt::languages::LanguageSet,
+        started: Mutex<Vec<Option<String>>>,
+    }
+
+    impl Host for Languages {
+        fn config(&self) -> ApiConfig {
+            ApiConfig {
+                languages: self.set,
+                dictation_language: "it".into(),
+                ..Default::default()
+            }
+        }
+        fn clean(&self, _: &str) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        fn transcribe(&self, _: Vec<u8>, _: &str) -> (u16, serde_json::Value) {
+            (500, serde_json::Value::Null)
+        }
+        fn history(&self, _: &str, _: usize) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        fn archive_dir(&self) -> anyhow::Result<PathBuf> {
+            anyhow::bail!("no archive")
+        }
+        fn open_item(&self, _: &str) -> anyhow::Result<()> {
+            anyhow::bail!("no")
+        }
+        fn start_meeting(&self, m: MeetingStart) -> anyhow::Result<u64> {
+            self.started.lock().unwrap().push(m.start.language);
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn the_start_language_reaches_the_run_or_falls_back_with_a_warning() {
+        use crate::stt::languages::LanguageSet;
+        let start = |set, extra: &str| {
+            let host = Languages {
+                set,
+                started: Mutex::new(Vec::new()),
+            };
+            let mut c = Conn::new(&host);
+            let mut out = Vec::new();
+            c.on_message(
+                Message::text(format!(
+                    r#"{{"type":"start","url":"https://meet.google.com/a","rate":16000,"channels":2{extra}}}"#
+                )),
+                &mut out,
+            );
+            assert!(c.live.is_some(), "the meeting starts in any case: {out:?}");
+            let started = host.started.lock().unwrap().clone();
+            assert_eq!(started.len(), 1);
+            (started[0].clone(), warnings(&out))
+        };
+        // An older extension: no language, the dictation setting applies.
+        assert_eq!(start(LanguageSet::Whisper, ""), (None, vec![]));
+        assert_eq!(
+            start(LanguageSet::Whisper, r#","language":"en""#),
+            (Some("en".into()), vec![])
+        );
+        assert_eq!(
+            start(LanguageSet::Parakeet, r#","language":"auto""#),
+            (Some("auto".into()), vec![])
+        );
+        // Not one the engine offers: warned, then the dictation setting.
+        let (lang, warned) = start(LanguageSet::Parakeet, r#","language":"ja""#);
+        assert_eq!(lang, None);
+        assert_eq!(warned.len(), 1);
+        assert!(warned[0].contains("Parakeet") && warned[0].contains("dictation language"), "{warned:?}");
+        let (lang, warned) = start(LanguageSet::Whisper, r#","language":"klingon""#);
+        assert_eq!((lang, warned.len()), (None, 1));
     }
 
     /// A connection on a fake clock, with a meeting started at t = 0.

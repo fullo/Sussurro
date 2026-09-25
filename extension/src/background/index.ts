@@ -8,8 +8,13 @@
  * - checks the app with `GET /app/version` before starting and before each
  *   reconnect ("app not running", bad token, app too old, other protocol);
  * - on the side panel's Start, asks the page to connect and arm the hook,
- *   opens the socket, sends `start {title, url, platform, rate, channels}`
- *   and forwards the audio frames, numbering `seq` per connection;
+ *   opens the socket, sends `start {title, url, platform, rate, channels,
+ *   language?}` (the language chosen in the panel, #288, kept for the
+ *   reconnects of that meeting) and forwards the audio frames, numbering
+ *   `seq` per connection;
+ * - when the scripts run in several frames of the tab (Zoom's meeting
+ *   iframe, #287), arms only the frame with the call and sends only its
+ *   audio (frames.ts): one capture per tab, shown in the tab's panel;
  * - buffers audio while (re)connecting (bounded), reconnects with backoff,
  *   sends `ping` when no audio went out for a while;
  * - sends `stop` on Stop, tab close or navigation;
@@ -39,10 +44,12 @@ import { testConnection } from "../shared/connection";
 import { toAppCheck, type AppCheck } from "../shared/appcheck";
 import { decodePayload, makeProbe, type TransportMode } from "../shared/transport";
 import type { CaptureSnapshot, FromBackground, PageInfo, PanelBroadcast, PanelRequest, PanelState, ToBackground, ToOffscreen, ToPage } from "../shared/messages";
-import type { Platform } from "../shared/platform";
+import { detectPlatform, type Platform } from "../shared/platform";
 import { applyLive, initialTranscript, parseAppMessage, type LiveAction, type LiveTranscript } from "../shared/live";
-import { holdsBackground, initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
+import { canTakeStart, holdsBackground, initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
+import { pickCaptureFrame } from "./frames";
 import { SpeakerRelay, sanitizePageSpeaker } from "../shared/speakerEvents";
+import { isLanguageCode } from "../shared/language";
 
 // ---- storage.local: trusted contexts only (Chrome ≥ 140, #217) ------------------
 
@@ -86,14 +93,28 @@ interface Queued {
   buf: ArrayBuffer;
 }
 
+/** One frame of a meeting tab running the content scripts (#287: Zoom's
+ *  meeting iframe as well as the top frame). */
+interface Frame {
+  /** Its runtime port (while connected). */
+  port: Runtime.Port;
+  /** Its last capture snapshot (null: not reported yet). */
+  capture: CaptureSnapshot | null;
+}
+
 interface Tab {
   tabId: number;
   session: Session;
-  /** The meeting page's runtime port (while connected). */
-  port: Runtime.Port | null;
+  /** The tab's frames with an open port, by frame id (0 = top frame). */
+  frames: Map<number, Frame>;
+  /** The one frame that is armed and whose audio is sent (frames.ts);
+   *  null before one is picked and after disarm. */
+  captureFrame: number | null;
+  /** When the current Start began arming (frames.ts waits a little). */
+  armStartedAt: number;
+  pickTimer?: ReturnType<typeof setTimeout>;
   page: { title: string; url: string; platform: Platform | null } | null;
   transport: TransportMode | null;
-  capture: CaptureSnapshot | null;
   ws: WebSocket | null;
   seq: SeqCounter;
   queue: Queued[];
@@ -110,6 +131,9 @@ interface Tab {
   speakerRate: RateLimiter;
   /** What the side panel shows (#129). */
   transcript: LiveTranscript;
+  /** The meeting's language chosen at Start (#288); null: none sent (the
+   *  app uses its dictation language). */
+  language: string | null;
 }
 
 /** Names this background's transcripts: after a restart (Chrome may stop an
@@ -124,10 +148,11 @@ function tabState(tabId: number): Tab {
     t = {
       tabId,
       session: initialSession(),
-      port: null,
+      frames: new Map(),
+      captureFrame: null,
+      armStartedAt: 0,
       page: null,
       transport: null,
-      capture: null,
       ws: null,
       seq: new SeqCounter(),
       queue: [],
@@ -139,6 +164,7 @@ function tabState(tabId: number): Tab {
       speakers: new SpeakerRelay(),
       speakerRate: new RateLimiter(BACKGROUND_EVENTS.burst, BACKGROUND_EVENTS.perSec),
       transcript: initialTranscript(EPOCH),
+      language: null,
     };
     tabs.set(tabId, t);
   }
@@ -188,7 +214,11 @@ function run(t: Tab, e: Effect) {
       void arm(t);
       return;
     case "disarm":
-      toPage(t, { type: "disarm" });
+      // Every frame: only the capture frame is armed, but each closes its
+      // port on `disarm`, so an idle meeting tab doesn't keep us loaded.
+      for (const f of t.frames.values()) post(f.port, { type: "disarm" });
+      t.captureFrame = null;
+      clearTimeout(t.pickTimer);
       stopTabCapture(t);
       t.queue = [];
       // The page's observer stops with the capture (#131).
@@ -216,31 +246,67 @@ function run(t: Tab, e: Effect) {
   }
 }
 
-function toPage(t: Tab, m: FromBackground) {
+function post(port: Runtime.Port, m: FromBackground) {
   try {
-    t.port?.postMessage(m);
+    port.postMessage(m);
   } catch {
     /* the page went away: its onDisconnect reports it */
   }
 }
 
+/** To the capture frame only. */
+function toPage(t: Tab, m: FromBackground) {
+  const f = t.captureFrame !== null ? t.frames.get(t.captureFrame) : undefined;
+  if (f) post(f.port, m);
+}
+
+/** The snapshot the panel and the tab-capture fallback look at: the
+ *  capture frame's, else the top frame's. */
+function captureOf(t: Tab): CaptureSnapshot | null {
+  return t.frames.get(t.captureFrame ?? 0)?.capture ?? null;
+}
+
 async function arm(t: Tab) {
-  t.armedAt = Date.now();
+  t.armedAt = t.armStartedAt = Date.now();
   t.tabCaptureTried = false;
   t.tabCapture = "off";
-  if (t.port) {
-    toPage(t, { type: "arm", remote: true });
-    return;
-  }
-  // Ask the page to open its port; `onConnect` then sends `arm`.
+  t.captureFrame = null;
+  pickFrame(t);
+  // Ask every frame of the tab running our scripts to open its port (a
+  // frame already connected keeps it) and report what it sees: pickFrame
+  // then arms the one with the call (#287).
   try {
     await browser.tabs.sendMessage(t.tabId, { type: "page:connect" } satisfies ToPage);
   } catch {
+    if (t.session.phase !== "arming" || t.frames.size) return;
     dispatch(t, {
       type: "arm-failed",
       error: "This tab is not a supported meeting page, or it was open before the extension was installed: reload it.",
     });
   }
+}
+
+/** Arm the frame the call runs in (frames.ts), or look again once the
+ *  frames had time to report. One capture frame per tab: a frame given up
+ *  (it showed no call) is disarmed first, and only the capture frame's
+ *  audio is sent. */
+function pickFrame(t: Tab) {
+  clearTimeout(t.pickTimer);
+  t.pickTimer = undefined;
+  if (!isCapturing(t.session)) return;
+  const views = [...t.frames].map(([frameId, f]) => ({ frameId, capture: f.capture }));
+  const pick = pickCaptureFrame(views, t.captureFrame, Date.now() - t.armStartedAt);
+  if ("wait" in pick) {
+    t.pickTimer = setTimeout(() => pickFrame(t), pick.wait);
+    return;
+  }
+  if ("none" in pick || pick.frame === t.captureFrame) return;
+  const old = t.captureFrame !== null ? t.frames.get(t.captureFrame) : undefined;
+  if (old) post(old.port, { type: "disarm" });
+  t.captureFrame = pick.frame;
+  // The tab-capture fallback counts from when this frame was armed.
+  t.armedAt = Date.now();
+  toPage(t, { type: "arm", remote: t.tabCapture !== "on" });
 }
 
 async function connect(t: Tab) {
@@ -329,6 +395,8 @@ function sendStart(t: Tab) {
     platform: page?.platform ?? "other",
     rate: t.session.rate,
     channels: 2,
+    // #288: an app older than it ignores the field.
+    ...(t.language ? { language: t.language } : {}),
   });
   // What the page already said about speakers goes to the new item first
   // (#131); timed events wait for this connection's first frame.
@@ -376,6 +444,7 @@ function stopPing(t: Tab) {
 function forget(t: Tab) {
   closeSocket(t);
   clearTimeout(t.retryTimer);
+  clearTimeout(t.pickTimer);
   tabs.delete(t.tabId);
   updateKeepAlive();
 }
@@ -413,37 +482,60 @@ function acceptsAudio(t: Tab): boolean {
 
 function onPagePort(port: Runtime.Port) {
   const tab = port.sender?.tab;
-  if (tab?.id === undefined || (port.sender?.frameId ?? 0) !== 0) {
+  // Any frame the content scripts run in (Zoom's meeting iframe, #287);
+  // the manifests inject them only into meeting pages.
+  const frameId = port.sender?.frameId ?? 0;
+  if (tab?.id === undefined) {
     port.disconnect();
     return;
   }
   const t = tabState(tab.id);
-  if (t.port && t.port !== port) t.port.disconnect();
-  t.port = port;
-  port.postMessage({ type: "hello", probe: makeProbe() } satisfies FromBackground);
-  if (t.session.phase === "arming") port.postMessage({ type: "arm", remote: t.tabCapture !== "on" } satisfies FromBackground);
+  const prev = t.frames.get(frameId);
+  if (prev && prev.port !== port) prev.port.disconnect();
+  const frame: Frame = { port, capture: null };
+  t.frames.set(frameId, frame);
+  const mine = () => t.frames.get(frameId) === frame;
+  const capturing = () => mine() && t.captureFrame === frameId;
+  post(port, { type: "hello", probe: makeProbe() });
+  // The capture frame reconnected while arming: arm it again. Other frames
+  // are picked from the snapshot they send right after connecting.
+  if (frameId === t.captureFrame && t.session.phase === "arming") post(port, { type: "arm", remote: t.tabCapture !== "on" });
 
   port.onMessage.addListener((raw: unknown) => {
+    if (!mine()) return;
     const m = raw as ToBackground;
     switch (m.type) {
-      case "armed":
-        if (!Number.isFinite(m.rate) || m.rate <= 0) return;
-        t.page = { title: m.title, url: m.url, platform: m.platform };
+      case "armed": {
+        // A frame given up meanwhile was already told to disarm.
+        if (!capturing() || !Number.isFinite(m.rate) || m.rate <= 0) return;
+        // The meeting is the tab's page, whichever frame runs the call.
+        const url = frameId === 0 ? m.url : (tab.url ?? m.url);
+        t.page = { title: frameId === 0 ? m.title : (tab.title ?? m.title), url, platform: detectPlatform(url) ?? m.platform };
         t.transport = m.transport;
-        dispatch(t, { type: "armed", rate: m.rate });
+        if (t.session.phase === "arming") dispatch(t, { type: "armed", rate: m.rate });
+        else if (t.session.rate !== undefined && m.rate !== t.session.rate) {
+          // Picked after Start (frames.ts) with another audio rate than the
+          // one the app was told: never seen in one tab, but say so.
+          t.session = { ...t.session, message: `The meeting frame's audio rate changed (${t.session.rate} → ${m.rate} Hz): press Stop, then Start again.` };
+          void broadcastState(t);
+        }
         return;
+      }
       case "arm-failed":
-        dispatch(t, { type: "arm-failed", error: m.error });
+        if (capturing()) dispatch(t, { type: "arm-failed", error: m.error });
         return;
       case "state":
-        t.capture = m.state;
-        maybeTabCapture(t);
-        void broadcastState(t);
+        frame.capture = m.state;
+        pickFrame(t);
+        if (frameId === (t.captureFrame ?? 0)) {
+          maybeTabCapture(t);
+          void broadcastState(t);
+        }
         return;
       case "speaker": {
         // Meet names (#131): kept per tab, sent on the connection's clock.
         const msg = sanitizePageSpeaker(m.msg);
-        if (!msg || !acceptsAudio(t) || !t.speakerRate.allow()) return;
+        if (!capturing() || !msg || !acceptsAudio(t) || !t.speakerRate.allow()) return;
         const live = t.session.phase === "live" && t.ws?.readyState === WebSocket.OPEN;
         for (const w of t.speakers.page(msg, live)) sendText(t, w);
         if (msg.type === "observer_health") void broadcastState(t);
@@ -451,7 +543,8 @@ function onPagePort(port: Runtime.Port) {
       }
       case "pcm": {
         const pseq = pageSeq(m.seq);
-        if (!acceptsAudio(t) || pseq === null) return;
+        // One capturing frame per tab: never another frame's audio (#287).
+        if (!capturing() || !acceptsAudio(t) || pseq === null) return;
         const block = (p: typeof m.mic) => {
           if (typeof p === "string" && p.length > MAX_BLOCK_BYTES * 2) return null;
           const b = p !== undefined ? decodePayload(p) : null;
@@ -466,12 +559,19 @@ function onPagePort(port: Runtime.Port) {
     }
   });
   port.onDisconnect.addListener(() => {
-    if (t.port !== port) return;
-    t.port = null;
-    t.capture = null;
-    t.speakers.clear();
-    // The page unloaded (navigation, reload, tab closed, bfcache).
-    dispatch(t, { type: "page-gone" });
+    if (!mine()) return;
+    t.frames.delete(frameId);
+    if (frameId === t.captureFrame) {
+      // The captured page unloaded (navigation, reload, tab closed, bfcache).
+      t.captureFrame = null;
+      t.speakers.clear();
+      dispatch(t, { type: "page-gone" });
+    } else if (t.captureFrame === null && !t.frames.size) {
+      // The last frame went before one was picked (or after disarm).
+      dispatch(t, { type: "page-gone" });
+    } else {
+      pickFrame(t);
+    }
   });
 }
 
@@ -485,7 +585,7 @@ function maybeTabCapture(t: Tab) {
   const go = shouldTabCapture({
     browser: __BROWSER__,
     capturing: t.session.phase === "live" || t.session.phase === "connecting" || t.session.phase === "reconnecting",
-    remoteVia: t.capture?.armed ? t.capture.remote.via : undefined,
+    remoteVia: captureOf(t)?.armed ? captureOf(t)?.remote.via : undefined,
     armedForMs: Date.now() - t.armedAt,
     alreadyTried: t.tabCaptureTried,
   });
@@ -603,7 +703,7 @@ async function panelState(t: Tab, info?: PageInfo | null): Promise<PanelState> {
   const s = t.session;
   return {
     tabId: t.tabId,
-    meetingPage: info === undefined ? !!t.port || !!t.page : !!info,
+    meetingPage: info === undefined ? t.frames.size > 0 || !!t.page : !!info,
     platform: info?.platform ?? t.page?.platform ?? null,
     paired,
     app: check === null ? null : check.ok ? { ok: true, version: check.app, subtitles: check.subtitles } : { ok: false, problem: check.reason },
@@ -613,10 +713,11 @@ async function panelState(t: Tab, info?: PageInfo | null): Promise<PanelState> {
     itemId: s.itemId,
     serverState: s.serverState,
     attempt: s.attempt,
-    capture: t.capture ?? info?.state ?? null,
+    capture: captureOf(t) ?? info?.state ?? null,
     tabCapture: t.tabCapture,
     transport: t.transport,
     names: t.speakers.lastHealth,
+    language: t.language,
   };
 }
 
@@ -646,9 +747,14 @@ browser.runtime.onMessage.addListener((raw: unknown, sender: Runtime.MessageSend
       })();
     case "panel:transcript":
       return Promise.resolve(tabs.get(m.tabId)?.transcript ?? initialTranscript(EPOCH));
-    case "panel:start":
-      dispatch(tabState(m.tabId), { type: "start" });
+    case "panel:start": {
+      const t = tabState(m.tabId);
+      // The language is fixed for the meeting: a Start while one runs
+      // (ignored by the session) doesn't change it.
+      if (canTakeStart(t.session)) t.language = isLanguageCode(m.language) ? m.language : null;
+      dispatch(t, { type: "start" });
       return Promise.resolve(true);
+    }
     case "panel:stop":
       dispatch(tabState(m.tabId), { type: "stop" });
       return Promise.resolve(true);

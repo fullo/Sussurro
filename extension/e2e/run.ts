@@ -5,9 +5,16 @@
  * keeps working both ways, Stop ends the meeting, and closing the tab mid-
  * capture sends `stop`. The side panel (#129) shows the fake app's live
  * lines with their speaker chips and backlog, and its Open in Sussurro /
- * Copy as text / Create .srt reach the app's item routes. On a fake Meet
+ * Copy as text / Create .srt reach the app's item routes. The meeting's
+ * language (#288) is chosen in the panel before Start and reaches the app
+ * as `start {language: "en"}`, stays fixed while recording and is
+ * remembered per platform (a first Meet start takes the app's dictation
+ * language). On a fake Meet
  * page, the Meet name observer (#131) sends the contributing-
- * source timeline, the bound names, the participants and its health.
+ * source timeline, the bound names, the participants and its health. On a
+ * fake page at the Teams cloud host, and on a fake Zoom page whose call
+ * runs in a same-origin iframe (#287), capture works with the shipped
+ * match patterns — the iframe's call, once, not the top frame's mic.
  *
  *   npm run build && npm run test:e2e            (chromium, chromium-json, firefox)
  *   npm run test:e2e -- chromium firefox edge     (a choice)
@@ -34,7 +41,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Rdp } from "./rdp.ts";
-import { LIVE_SCRIPT, rms, startServer, toneShare, type LiveSession } from "./server.ts";
+import { APP_LANGUAGES, LIVE_SCRIPT, rms, startServer, toneShare, type LiveSession } from "./server.ts";
 
 const EXT = fileURLToPath(new URL("..", import.meta.url));
 const TOKEN = "e2e0".repeat(16);
@@ -83,13 +90,15 @@ async function until<T>(what: string, f: () => T | Promise<T>, ms = 10_000): Pro
   }
 }
 
-/** The built extension, copied, with the content scripts also matching the
- *  local call page (the shipped manifest only matches the meeting sites). */
+/** The built extension, copied, with the top-frame content scripts also
+ *  matching the local call page (the shipped manifest only matches the
+ *  meeting sites; the all-frames Zoom entries stay as shipped, or the call
+ *  page would get each script twice). */
 function testExtension(target: "chrome" | "firefox", config: Config): string {
   const dir = join(tmpRoot, `ext-${config}`);
   cpSync(join(EXT, "dist", target), dir, { recursive: true });
   const mf = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
-  for (const cs of mf.content_scripts) cs.matches.push("http://127.0.0.1/*");
+  for (const cs of mf.content_scripts) if (!cs.all_frames) cs.matches.push("http://127.0.0.1/*");
   if (config === "chromium-json") delete mf.message_serialization;
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(mf, null, 2));
   return dir;
@@ -127,6 +136,10 @@ interface Panel {
   text(): Promise<string>;
   /** The inner text of every element matching `selector`. */
   texts(selector: string): Promise<string[]>;
+  /** The value of a form control (null: not there). */
+  value(testId: string): Promise<string | null>;
+  /** Choose `value` in a `<select>`. */
+  select(testId: string, value: string): Promise<void>;
 }
 
 function pagePanel(p: Page): Panel {
@@ -136,6 +149,8 @@ function pagePanel(p: Page): Panel {
     canClick: (id) => p.locator(`[data-testid="${id}"]:not([disabled])`).isVisible(),
     text: () => p.locator("main").innerText(),
     texts: (selector) => p.locator(selector).allInnerTexts(),
+    value: async (id) => ((await p.locator(`[data-testid="${id}"]`).count()) ? p.locator(`[data-testid="${id}"]`).inputValue() : null),
+    select: async (id, value) => void (await p.selectOption(`[data-testid="${id}"]`, value)),
   };
 }
 
@@ -282,6 +297,12 @@ async function launchFirefox(config: Config): Promise<Launched> {
       canClick: async (id) => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true,
       text: async () => String(await js(`document.querySelector("main")?.innerText ?? ""`)),
       texts: async (selector) => JSON.parse(String(await js(`JSON.stringify([...document.querySelectorAll(${JSON.stringify(selector)})].map((e) => e.innerText))`))) as string[],
+      value: async (id) => ((await js(`${q(id)}?.value ?? null`)) as string | null) ?? null,
+      async select(id, value) {
+        await until(`${id} to be enabled`, async () => (await js(`!!${q(id)} && !${q(id)}.disabled`)) === true);
+        // What a user's pick does: the value, then a bubbling change event.
+        await js(`(() => { const e = ${q(id)}; e.value = ${JSON.stringify(value)}; e.dispatchEvent(new Event("change", { bubbles: true })); return 0; })()`);
+      },
     };
   };
   // The event page may be suspended (idle) or just restarting: wake it,
@@ -427,6 +448,16 @@ async function runConfig(config: Config): Promise<Check[]> {
     await until("Start to be enabled", () => panel.canClick("start"));
     check("no socket before Start", server.sessions.length === 0);
 
+    // 1a. The meeting's language (#288): the app's list, the app's
+    //     dictation language the first time; English chosen for this one.
+    // (Disabled until the platform's memory has been read.)
+    const firstLanguage = await until("the language selector", async () => ((await panel.canClick("language")) ? ((await panel.value("language")) ?? "") : ""), 10_000).catch(() => "");
+    check("the language selector starts on the app's dictation language", firstLanguage === APP_LANGUAGES.default, firstLanguage);
+    const offered = await panel.texts("[data-testid=language] option");
+    check("it offers Auto-detect and the app's languages by native name", JSON.stringify(offered.map((x) => x.trim())) === JSON.stringify(["Auto-detect", "Deutsch", "English", "Italiano"]), offered);
+    await panel.select("language", "en");
+    await until("English chosen", async () => (await panel.value("language")) === "en", 5000);
+
     // 1b. The first Start shows the recording notice (#136) and starts
     //     nothing until it is answered; Cancel starts nothing at all.
     await panel.click("start");
@@ -443,6 +474,9 @@ async function runConfig(config: Config): Promise<Check[]> {
     await until("phase live", async () => (await phase()) === "live", 15_000);
     const reminder = (await panel.texts("[data-testid=reminder]"))[0] ?? "";
     check("the reminder line shows while recording", reminder.includes("Recording other people"), reminder);
+    const recLanguage = (await panel.texts("[data-testid=rec-language]"))[0] ?? "";
+    check("the recording header shows the meeting's language", recLanguage.includes("English"), recLanguage);
+    check("the language can't change while recording", !(await panel.canClick("language")) && (await panel.value("language")) === "en");
     const transport = await panel.status("transport");
     check(`transport is ${config === "chromium-json" ? "base64" : "binary"}`, transport === (config === "chromium-json" ? "base64" : "binary"), transport);
     const t0 = Date.now();
@@ -480,6 +514,8 @@ async function runConfig(config: Config): Promise<Check[]> {
       const restored = await until("the lines in the sidebar", async () => ((await lines()).length === 3 ? await lines() : null), 10_000).catch(() => null);
       check("sidebar: opened mid-meeting, shows the lines so far", JSON.stringify(restored) === JSON.stringify(await panel.texts("[data-testid=transcript] .tx-text")), restored);
       check("sidebar: live, with the reminder", (await sidebar.status("phase")) === "live" && (await sidebar.texts("[data-testid=reminder]")).length === 1);
+      const sidebarLanguage = (await sidebar.texts("[data-testid=rec-language]"))[0] ?? "";
+      check("sidebar: the meeting's language in the recording header, fixed", sidebarLanguage.includes("English") && !(await sidebar.canClick("language")), sidebarLanguage);
       await sidebar.otherTab(true);
       const elsewhere = await until("the sidebar to follow the active tab", async () => ((await sidebar.text()).includes("Open a Google Meet") ? await sidebar.text() : ""), 5000).catch(() => "");
       check("sidebar: follows the window's active tab", elsewhere !== "" && (await lines()).length === 0, elsewhere);
@@ -520,6 +556,7 @@ async function runConfig(config: Config): Promise<Check[]> {
       start.title === "e2e call" && String(start.url).includes("role=A") && start.platform === "other" && rate >= 8000 && rate <= 192000 && start.channels === 2,
       start,
     );
+    check('the app received start {language: "en"} (#288)', start.language === "en", start);
     const mic = s?.channels.get(0);
     const remote = s?.channels.get(1);
     const minFrames = Math.floor(((CAPTURE_MS / 1000) * rate) / 2048 / 2);
@@ -544,6 +581,7 @@ async function runConfig(config: Config): Promise<Check[]> {
     await panel.click("start");
     check("the notice is not shown again once acknowledged", (await panel.texts("[data-testid=notice]")).length === 0);
     await until("second session live", () => server.sessions[1]?.start && (server.sessions[1].channels.get(0)?.frames ?? 0) > 5, 15_000);
+    check("the language is remembered for the next meeting on this site", server.sessions[1]?.start?.language === "en", server.sessions[1]?.start);
     // A new Start is a new meeting: the panel shows only its lines (the
     // script again), not the first meeting's plus a "connection lost" part.
     const again = await panel.texts("[data-testid=transcript] .tx-text");
@@ -557,6 +595,10 @@ async function runConfig(config: Config): Promise<Check[]> {
     //    a route, so the shipped content-script patterns match it) with
     //    tiles and faked contributing sources, in every browser.
     await meetNames();
+
+    // 4b. The Teams cloud host and Zoom's meeting iframe (#287).
+    await hostCapture("teams");
+    await hostCapture("zoom");
 
     // 5. Firefox: the keep-alive lets go once no meeting is on.
     if (b.suspends) {
@@ -593,6 +635,7 @@ async function runConfig(config: Config): Promise<Check[]> {
     const ms = server.sessions[before];
     const ctl = (type: string) => (ms?.controls ?? []).filter((c) => c.type === type);
     check("Meet: start says platform meet", ms?.start?.platform === "meet", ms?.start);
+    check("Meet: its own language memory, first time the app's dictation language", ms?.start?.language === APP_LANGUAGES.default, ms?.start);
     const act = ctl("speaker_active");
     check(
       "Meet: speaker_active from the contributing sources (rtp, csrc ids, t on the audio clock)",
@@ -609,6 +652,79 @@ async function runConfig(config: Config): Promise<Check[]> {
     const health = ctl("observer_health").at(-1);
     check("Meet: observer health ok, with the selector set", health?.state === "ok" && health?.set === "meet-2026-09a", health);
     await M.close();
+  }
+
+  /** Capture on a host the shipped patterns match (#287), served by a route:
+   *  Teams' cloud host (loopback call in the top frame), or a Zoom web-client
+   *  page whose loopback call runs in a same-origin iframe while its top
+   *  frame holds a mic preview. */
+  async function hostCapture(kind: "teams" | "zoom") {
+    const html = (file: string) => ({ status: 200, contentType: "text/html; charset=utf-8", body: readFileSync(join(EXT, "e2e", file), "utf8") });
+    const label = kind === "teams" ? "Teams (teams.cloud.microsoft)" : "Zoom (meeting iframe)";
+    let url: string;
+    if (kind === "teams") {
+      await b.ctx.route("https://teams.cloud.microsoft/**", (r) => r.fulfill(html("loopback.html")));
+      url = "https://teams.cloud.microsoft/v2/?meetingjoin=true";
+    } else {
+      await b.ctx.route("https://app.zoom.us/**", (r) => r.fulfill(html(new URL(r.request().url()).pathname.startsWith("/wc/e2e/meeting") ? "loopback.html" : "zoom.html")));
+      url = "https://app.zoom.us/wc/e2e/join";
+    }
+    const P = await b.ctx.newPage();
+    await P.goto(url);
+    const hooked = () => Symbol.for("sussurro.capture.v1") in window;
+    let call = P.mainFrame();
+    if (kind === "zoom") {
+      call = (await until("the meeting iframe", () => P.frames().find((f) => f.url().endsWith("/wc/e2e/meeting")), 10_000))!;
+      await until("the meeting iframe to load", () => call.evaluate(() => typeof (window as any).callState === "function").catch(() => false), 10_000);
+      const preview = await P.evaluate(() => (window as any).preview);
+      check("Zoom: the hook runs in the top frame (with a mic preview) and in the meeting iframe", (await P.evaluate(hooked)) && (await call.evaluate(hooked)) && preview === 1, preview);
+    } else {
+      check("Teams cloud host: the hook is installed", await P.evaluate(hooked));
+    }
+    await call.click("#join");
+    await until(`the ${kind} loopback call`, () => call.evaluate(() => (window as any).callState().joined), 10_000);
+    const panel = await b.openPanel(await b.tabIdOf(new URL(url).host));
+    shownPanel = panel;
+    await until(`Start on the ${kind} tab`, () => panel.canClick("start"));
+    const before = server.sessions.length;
+    const t0 = Date.now();
+    await panel.click("start");
+    await until(`${kind} session live`, async () => (await panel.status("phase")) === "live", 15_000);
+    const name = kind === "teams" ? "Microsoft Teams" : "Zoom";
+    const shown = await panel.text();
+    check(`${label}: the tab's panel shows the capture`, shown.includes(`Recording ${name}`), shown.replace(/\s+/g, " "));
+    await sleep(5000);
+    await panel.click("stop");
+    const wallSec = (Date.now() - t0) / 1000;
+    await until(`${kind} session done`, async () => (await panel.status("phase")) === "done", 10_000);
+    const s = server.sessions[before];
+    check(`${label}: one /live session for the tab`, server.sessions.length === before + 1, server.sessions.length - before);
+    const start = s?.start ?? {};
+    const rate = Number(start.rate);
+    check(
+      `${label}: start says platform ${kind}, with the tab's URL and title`,
+      start.platform === kind && String(start.url) === url && start.title === (kind === "teams" ? "e2e loopback" : "e2e zoom"),
+      start,
+    );
+    const mic = s?.channels.get(0);
+    const remote = s?.channels.get(1);
+    const info = (c: typeof mic) => c && { frames: c.frames, gaps: c.seqGaps, sec: +((c.frames * 2048) / rate).toFixed(2), rms: +rms(c).toFixed(4), tone300: +toneShare(c.tail, rate, 300).toFixed(3) };
+    // Both channels carry the call's 300 Hz tone: the top frame's mic
+    // preview (another tone, and no remote audio) is not what is captured.
+    check(
+      `${label}: both channels carry the call`,
+      !!mic && !!remote && rms(mic) > 0.01 && rms(remote) > 0.01 && toneShare(mic.tail, rate, 300) > 0.8 && toneShare(remote.tail, rate, 300) > 0.8,
+      { mic: info(mic), remote: info(remote) },
+    );
+    // Captured once: the audio's length fits the wall clock (two capturing
+    // frames would send about twice as many frames), with no seq gaps.
+    const sec = (c: typeof mic) => (c ? (c.frames * 2048) / rate : 0);
+    check(
+      `${label}: captured once (audio length fits the clock, no seq gaps)`,
+      !!mic && !!remote && sec(mic) > wallSec * 0.4 && sec(mic) < wallSec * 1.2 && sec(remote) < wallSec * 1.2 && mic.seqGaps === 0 && remote.seqGaps === 0,
+      { wallSec: +wallSec.toFixed(2), mic: info(mic), remote: info(remote) },
+    );
+    await P.close();
   }
 }
 

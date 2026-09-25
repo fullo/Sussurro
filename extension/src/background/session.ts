@@ -64,6 +64,11 @@ export function isCapturing(s: Session): boolean {
   return s.phase === "arming" || s.phase === "connecting" || s.phase === "live" || s.phase === "reconnecting";
 }
 
+/** Does a `start` begin a new meeting now (else it is ignored)? */
+export function canTakeStart(s: Session): boolean {
+  return s.phase === "idle" || s.phase === "done" || s.phase === "error";
+}
+
 /** Must the background stay loaded for this session? From Start until the
  *  app's `done` (including `stopping`, while the app finishes and the
  *  socket may carry nothing for a while): unloading it would drop the
@@ -82,7 +87,7 @@ export function step(s: Session, ev: SessionEvent, random: () => number = Math.r
 
   switch (ev.type) {
     case "start":
-      if (s.phase !== "idle" && s.phase !== "done" && s.phase !== "error") return same;
+      if (!canTakeStart(s)) return same;
       return { s: { phase: "checking", attempt: 0 }, effects: [{ type: "check" }] };
 
     case "check":

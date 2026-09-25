@@ -82,6 +82,7 @@
           <li><a href="#extension-install">Install</a></li>
           <li><a href="#pairing">Pair</a></li>
           <li><a href="#extension-record">Record</a></li>
+          <li><a href="#extension-language">Language</a></li>
           <li><a href="#speakers">Speakers</a></li>
           <li><a href="#people">People</a></li>
         </ol></li>
@@ -371,7 +372,8 @@ participants:
 <!-- ================================================================ -->
 <section class="chapter" id="meetings" aria-labelledby="h-meetings">
 <h2 id="h-meetings"><span class="n">Chapter 7</span>Meetings with the browser extension</h2>
-<p class="lead">The Sussurro extension records web meetings — <b>Google Meet</b>, <b>Microsoft Teams</b> and <b>Zoom in the browser</b> — and streams the audio to the Sussurro app on the same computer, which transcribes it live into a <b>Meeting</b>. It works in Chrome, Edge and Brave (116 or later) and Firefox (128 or later).</p>
+<p class="lead">The Sussurro extension records web meetings — <b>Google Meet</b>, <b>Microsoft Teams</b> and <b>Zoom in the browser</b> — and streams the audio to the Sussurro app on the same computer, which transcribes it live into a <b>Meeting</b>. It works in Chrome, Edge and Brave (116 or later) and Firefox on the desktop (140 or later; Firefox for Android is not supported).</p>
+<p>It works on these addresses only: Google Meet at <code>meet.google.com</code>; Microsoft Teams at <code>teams.microsoft.com</code>, <code>teams.live.com</code> and <code>teams.cloud.microsoft</code> (where work and school accounts move from 30 September 2026); and the Zoom web client, pages under <code>zoom.us/wc/</code>, including the meeting that Zoom shows inside them.</p>
 
 <h3 id="extension-install">Install</h3>
 <p>The extension is not in the browser stores yet. Each <a href="https://github.com/fullo/Sussurro/releases/latest">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and, for Firefox, the add-on signed by Mozilla, <code>sussurro-extension-firefox-&lt;version&gt;.xpi</code>: use the one with the same version as your app.</p>
@@ -396,11 +398,16 @@ participants:
 <figcaption>The side panel mirrors the live transcript; the app does the work.</figcaption></figure>
 <ol>
   <li>Join the call in the browser. Click the extension's toolbar button: Chrome opens its <b>side panel</b>, Firefox its <b>sidebar</b>. It says <em>Ready to record Google Meet</em> (or Teams, or Zoom). If you opened the meeting before installing the extension, reload the page.</li>
+  <li>Check the <span class="ui">Language</span> next to Start: the language spoken in the meeting (see <a href="#extension-language">below</a>).</li>
   <li>Click <span class="ui">Start recording</span>. Nothing is captured before that. The first time, the <a href="#notice">recording notice</a> appears. While recording, the tab's toolbar button shows a red <b>REC</b> badge.</li>
   <li>The panel shows level meters for <em>mic</em> (your microphone) and <em>remote</em> (the call), whether the transcript is up to date or a few seconds behind, and the lines as the app writes them.</li>
   <li><span class="ui">Stop</span> — or closing the tab, or leaving the page — ends it; the app keeps what it received and saves the meeting.</li>
 </ol>
 <p>The panel also has <span class="ui">Open in Sussurro</span> (brings the app to the front on that meeting), <span class="ui">Copy as text</span> and, when subtitles are set to <em>Only when I ask</em>, <span class="ui">Create .srt</span> once the recording ends (it downloads the file). If the connection to the app drops, the extension reconnects and the rest of the call becomes a new item. Audio goes only to the Sussurro app on this computer; the page's own audio is never changed or muted. During a browser meeting the overlay pill reads <em>Recording (meeting)</em>.</p>
+
+<h3 id="extension-language">The meeting's language</h3>
+<p>The side panel's <span class="ui">Language</span> menu, next to Start, sets the language of this meeting only — your dictation language in Settings doesn't change. It lists <em>Auto-detect</em> and the languages your current engine can transcribe, by their own names (<em>Italiano</em>, <em>English</em>…): about 99 with Whisper (only English with an English-only model), 25 with Parakeet, 30 with Qwen3-ASR (Cantonese and the Chinese dialects under 中文). The first time on a site it shows your dictation language; after that it remembers your last choice separately for Google Meet, Teams and Zoom, so a weekly English call on Teams and an Italian one on Meet each keep theirs. The choice is fixed once you press Start (the menu is greyed while recording) and the panel's header shows it.</p>
+<p>The app uses it for the transcription (Whisper takes it as a hint; Parakeet and Qwen3-ASR detect the language themselves), for the cleanup's list of filler words, and as the meeting's <code>language</code> in its <a href="#frontmatter">frontmatter</a>. With <em>Auto-detect</em> the detected language is recorded. If the engine changed and no longer offers the chosen language, the meeting still records, in your dictation language, and the panel shows why. With an older Sussurro app the menu doesn't appear and meetings use the dictation language.</p>
 
 <h3 id="notice">The recording notice</h3>
 <p>Recording a meeting records other people. Before the first such recording — in the extension, with System audio + mic, or with Meeting in the room — Sussurro shows <em>You are about to record other people</em>: depending on where you and they are, and on your organisation's rules, you may need to tell them, and some may have to agree first. Sussurro can't tell which rules apply to you. <span class="ui">Don't show this again</span> is ticked by default; <span class="ui">Show the notice again</span> in Settings → Browser extension (or in the extension's options) brings it back. A <em>Recording other people — let them know</em> line stays visible while you record.</p>
@@ -552,7 +559,7 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
   <li>Loopback only, and no token: any program on your computer can call the scripting routes while they are on — that's why they ship off.</li>
   <li>Web pages can't use them: requests must come for <code>127.0.0.1:&lt;port&gt;</code> or <code>localhost:&lt;port&gt;</code>, and a request from a web page's origin is refused.</li>
   <li><code>/clean</code> accepts up to 1 MiB, <code>/transcribe</code> up to 200 MiB. At most two of them run at once; a third gets <code>503</code> with <code>Retry-After</code>.</li>
-  <li>The extension's routes (<code>/app/version</code>, <code>/live</code>, <code>/items/…</code>) always need the pairing token and accept only browser-extension origins; <code>/items/…</code> reach only meetings the extension recorded.</li>
+  <li>The extension's routes (<code>/app/version</code>, <code>/app/languages</code>, <code>/live</code>, <code>/items/…</code>) always need the pairing token and accept only browser-extension origins; <code>/items/…</code> reach only meetings the extension recorded.</li>
 </ul>
 <p class="more">More: <a href="../blog/local-api.html">The local API</a></p>
 <a class="top-link" href="#main">↑ Contents</a>
@@ -582,7 +589,7 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
   <dt>The extension says Sussurro is not reachable</dt>
   <dd>Check that the app is running and that Settings → Browser extension says the local API is listening — after turning it on, restart Sussurro. “Wrong token”: pair again with a fresh <span class="ui">Copy pairing code</span>. “Different versions”: install the extension from the same release as the app. On Brave, allow localhost access. On Firefox, install the signed <code>.xpi</code>: a temporary add-on is gone after a restart.</dd>
   <dt>“Open a Google Meet, Microsoft Teams or Zoom web call”</dt>
-  <dd>The panel doesn't see a meeting in this tab: reload the meeting page (it was open before the extension), or click <span class="ui">Allow access</span> if offered. Zoom works only in its web client.</dd>
+  <dd>The panel doesn't see a meeting in this tab: reload the meeting page (it was open before the extension), or click <span class="ui">Allow access</span> if offered — Firefox asks again after an update adds an address, such as <code>teams.cloud.microsoft</code>. Zoom works only in its web client.</dd>
   <dt>Meet names are missing</dt>
   <dd>When the extension can't read the names reliably it falls back to Voice N rather than guess; Meet's pages change often. Teams and Zoom always get You and Voice N. Rename voices or link them to People afterwards.</dd>
   <dt>Voices are mixed up</dt>

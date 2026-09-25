@@ -295,6 +295,15 @@ project decisions here, not in per-machine memory.**
   `content_security_policy` (the MV3 default upgrades `ws://127.0.0.1`).
   `extension/e2e/` (Playwright, runs in CI) proves both channels in
   Chromium + Firefox against a local call; real platforms stay manual (#184).
+  **Hosts and frames (#287)**: Teams is matched on `teams.microsoft.com`,
+  `teams.live.com` and `teams.cloud.microsoft` (org tenants from
+  2026-09-30); Meet/Teams scripts run top-frame only, Zoom's
+  (`*.zoom.us/wc/*`) with `all_frames` because its meeting is a same-origin
+  `/wc/` iframe (no about:blank/origin fallback). The background arms
+  **one frame per tab** (`background/frames.ts`: peer connection first,
+  a higher tier replaces the pick) and drops other frames' audio; only the
+  top frame answers `page:info`. `MEETING_MATCHES` = `TOP_FRAME_MATCHES` +
+  `ALL_FRAMES_MATCHES` in `shared/platform.ts`, pinned by the manifest test.
 - **Extension side panel (0.9, #129)** (`extension/src/sidepanel/`,
   `extension/src/shared/live.ts`): a live mirror only (E3). The background
   keeps each tab's transcript (pure reducer over the app's `/live`
@@ -309,6 +318,18 @@ project decisions here, not in per-machine memory.**
   permission). The background must never import page code (React,
   `@sussurro/transcript`): Chrome's service worker has no DOM, and the
   extension build fails if `background.js` uses `document`.
+- **Meeting language (#288)** (`stt/languages.rs`,
+  `extension/src/shared/language.ts`): the side panel's Language menu
+  (Auto-detect + the active engine's languages by native name from the
+  token route `GET /app/languages`: Whisper 99, `*.en` model `en`,
+  Parakeet 25, Qwen3-ASR 29 codes) sends `start.language` — additive, the
+  protocol stays 2. The app makes it the run's `RunOptions.language` (STT
+  hint, frontmatter `language`, #218 cleanup fillers); missing = dictation
+  setting; a code the engine doesn't offer falls back to it with a
+  `warning` (never refuses the meeting). The extension remembers the choice
+  per platform in `storage.local` `meetingLanguage` (not a secret), first
+  time = the app's dictation language; greyed while recording, shown in
+  the recording header; an app without the route (404) gets no selector.
 - **Meet names (0.9, #131, P8)** (`speakers/names.rs`,
   `extension/src/content/meet/`): layer 1 mic = "You", layer 2 names on
   **Meet only** (Teams/Zoom: layers 1 + 3), layer 3 Voice N. The page's
@@ -348,7 +369,9 @@ project decisions here, not in per-machine memory.**
   while such a run records. README → Privacy → *Recording meetings and
   consent* is the notice's link target — keep the anchor stable.
 - **Extension browsers (0.9, #137)**: one Chrome build for Chrome, Edge
-  and Brave, one Firefox build (≥ 128); feature parity except the
+  and Brave, one Firefox build (desktop ≥ 140 since #234 — the first
+  release that reads `data_collection_permissions`; no `gecko_android`,
+  Firefox for Android is not a target); feature parity except the
   Chrome-only tab-capture fallback, which is compiled out of the Firefox
   build (the build fails if `background.js` calls tabCapture/offscreen).
   Firefox's MV3 background is an event page (no persistent background)

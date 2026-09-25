@@ -33,9 +33,10 @@ export function baseConfig(target: Target): UserConfig {
       __BROWSER__: JSON.stringify(target),
     },
     build: {
-      // MAIN-world content scripts need Chrome >= 111 / Firefox >= 128;
-      // the side panel API needs Chrome >= 116 (see the manifests).
-      target: ["chrome116", "firefox128"],
+      // The side panel API needs Chrome >= 116; Firefox's minimum is 140,
+      // the first release that reads data_collection_permissions (#234; see
+      // the manifests).
+      target: ["chrome116", "firefox140"],
     },
   };
 }

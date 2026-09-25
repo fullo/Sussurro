@@ -919,7 +919,13 @@ pub(crate) fn meeting_request(
         title: start.title.clone(),
         names: Some(names),
         source_label: start.source_label(),
-        options: RunOptions::default(),
+        // The meeting's language from the side panel (#288); none = the
+        // dictation setting. It sets the STT hint, the frontmatter's
+        // `language` and the per-segment cleanup's fillers (#218).
+        options: RunOptions {
+            language: start.language.clone(),
+            ..Default::default()
+        },
     }
 }
 

@@ -1,6 +1,6 @@
 /* Local server for the capture harness: the two-peer call page, its
  * WebSocket signalling, and a fake Sussurro app — `GET /app/version`,
- * `POST /items/{id}/open`, `GET /items/{id}/export` and `WS /live` with the
+ * `GET /app/languages` (#288), `POST /items/{id}/open`, `GET /items/{id}/export` and `WS /live` with the
  * app's checks (extension Origin, token) — that parses the audio frames and
  * measures each channel, and answers `start` with a scripted transcript
  * (`LIVE_SCRIPT`) for the side panel (#129). Loopback only. */
@@ -55,6 +55,18 @@ export const LIVE_SCRIPT: object[] = [
   { type: "status", state: "recording", backlog_s: 7.2, processed_s: 5, queue_len: 1 },
 ];
 
+/** The fake app's `GET /app/languages` (#288): dictation language Italian,
+ *  so the panel's first choice on a platform is "it". */
+export const APP_LANGUAGES = {
+  engine: "whisper",
+  default: "it",
+  languages: [
+    { code: "it", name: "Italiano" },
+    { code: "en", name: "English" },
+    { code: "de", name: "Deutsch" },
+  ],
+};
+
 /** A request to the item routes. */
 export interface ItemRequest {
   method: string;
@@ -85,7 +97,7 @@ export async function startServer(token: string, opts: ServerOptions = {}) {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const origin = req.headers.origin;
     const item = /^\/items\/(.+)\/(open|export)$/.exec(url.pathname);
-    if (url.pathname === "/app/version" || item) {
+    if (url.pathname === "/app/version" || url.pathname === "/app/languages" || item) {
       if (origin && !isExtensionOrigin(origin)) return void res.writeHead(403).end();
       const cors = isExtensionOrigin(origin) ? { "Access-Control-Allow-Origin": origin!, Vary: "Origin" } : {};
       if (req.method === "OPTIONS") {
@@ -95,6 +107,7 @@ export async function startServer(token: string, opts: ServerOptions = {}) {
       }
       if (req.headers.authorization !== `Bearer ${token}`) return void res.writeHead(401, cors).end();
       const json = (status: number, body: object) => void res.writeHead(status, { ...cors, "Content-Type": "application/json" }).end(JSON.stringify(body));
+      if (url.pathname === "/app/languages") return json(200, APP_LANGUAGES);
       if (!item) return json(200, { app: "e2e", protocol: 2, protocol_min: 1, subtitles: "on_request", live_auth: "message" });
       const [, id, action] = item;
       items.push({ method: req.method ?? "", path: url.pathname, format: url.searchParams.get("format") });

@@ -194,7 +194,7 @@ from source: [`docs/development.md`](docs/development.md).
   (`brew install yt-dlp`, `winget install yt-dlp.yt-dlp`, `pipx install
   yt-dlp`). Sussurro finds it on your PATH or in the usual package-manager
   folders. Direct media links need nothing.
-- Chrome, Edge or Brave 116+, or Firefox 128+, for the meetings extension.
+- Chrome, Edge or Brave 116+, or Firefox 140+ (desktop; not Firefox for Android), for the meetings extension.
 - **Headphones** for calls: Sussurro does not cancel echo, so on speakers
   your microphone also records the others.
 
@@ -404,7 +404,7 @@ refused upload closes the connection instead of being read; at most two
 otherwise), so a long transcription never stalls the extension.
 
 The same API serves the [browser extension](#browser-extension-meetings):
-its routes (`/app/version`, `/live`, `/items/…`) always need the pairing
+its routes (`/app/version`, `/app/languages`, `/live`, `/items/…`) always need the pairing
 token and accept only browser-extension origins, never a web page, and
 `/items/…` reach only the meetings the extension recorded — not your notes,
 dictations or other transcriptions. `settings.json`, which holds the pairing
