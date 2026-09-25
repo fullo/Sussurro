@@ -105,7 +105,7 @@
 <p class="lead">Sussurro is a desktop app for macOS (Apple Silicon), Windows and Linux. It is free and open source (AGPL-3.0), needs no account and sends nothing anywhere on its own.</p>
 
 <h3 id="download">Download and install</h3>
-<p>Installers are on the <a href="https://github.com/fullo/Sussurro/releases/latest">GitHub releases page</a>. The same page carries the browser extension zips (see <a href="#extension-install">Meetings</a>).</p>
+<p>Installers are on the <a href="https://github.com/fullo/Sussurro/releases/latest">GitHub releases page</a>. The same page carries the browser extension (see <a href="#extension-install">Meetings</a>).</p>
 <div class="table-wrap"><table>
   <thead><tr><th>System</th><th>Files</th><th>Requirements and first launch</th></tr></thead>
   <tbody>
@@ -374,10 +374,10 @@ participants:
 <p class="lead">The Sussurro extension records web meetings — <b>Google Meet</b>, <b>Microsoft Teams</b> and <b>Zoom in the browser</b> — and streams the audio to the Sussurro app on the same computer, which transcribes it live into a <b>Meeting</b>. It works in Chrome, Edge and Brave (116 or later) and Firefox (128 or later).</p>
 
 <h3 id="extension-install">Install</h3>
-<p>The extension is not in the browser stores yet. Each <a href="https://github.com/fullo/Sussurro/releases/latest">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and <code>sussurro-extension-firefox-&lt;version&gt;.zip</code>: use the one with the same version as your app.</p>
+<p>The extension is not in the browser stores yet. Each <a href="https://github.com/fullo/Sussurro/releases/latest">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and, for Firefox, the add-on signed by Mozilla, <code>sussurro-extension-firefox-&lt;version&gt;.xpi</code>: use the one with the same version as your app.</p>
 <ul>
   <li><b>Chrome, Edge, Brave</b>: unzip it into a folder you keep, open <code>chrome://extensions</code> (<code>edge://extensions</code>, <code>brave://extensions</code>), turn on <span class="ui">Developer mode</span>, click <span class="ui">Load unpacked</span> and pick the folder. To update, replace the folder's contents and press the reload icon on the extension's card. On Brave, if the extension can't reach the app, check <code>brave://settings/content/localhostAccess</code>.</li>
-  <li><b>Firefox</b>: open <code>about:debugging#/runtime/this-firefox</code>, click <span class="ui">Load Temporary Add-on…</span> and pick the zip. Firefox removes temporary add-ons when it quits, so load it again after a restart.</li>
+  <li><b>Firefox</b>: drag the <code>.xpi</code> onto a Firefox window (or open <code>about:addons</code>, gear menu → <span class="ui">Install Add-on From File…</span>) and confirm. It stays installed and updates itself when a new release is out. The unsigned <code>sussurro-extension-firefox-&lt;version&gt;.zip</code> is for development only: <code>about:debugging</code> loads it as a temporary add-on, removed when Firefox quits.</li>
 </ul>
 <p>If the extension has no access to a meeting site, its panel offers <span class="ui">Allow access</span>.</p>
 
@@ -580,7 +580,7 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
   <dt>A link won't transcribe</dt>
   <dd>“Links to video sites need yt-dlp”: install it (see <a href="#links">Links</a>) and try again. A link to your own network needs <span class="ui">Allow local network addresses</span>. Videos with only Opus or AC-3 audio, pages outside the supported platforms and downloads over 2 GB are refused. yt-dlp breaks when sites change: update it.</dd>
   <dt>The extension says Sussurro is not reachable</dt>
-  <dd>Check that the app is running and that Settings → Browser extension says the local API is listening — after turning it on, restart Sussurro. “Wrong token”: pair again with a fresh <span class="ui">Copy pairing code</span>. “Different versions”: install the extension from the same release as the app. On Brave, allow localhost access. On Firefox, reload the temporary add-on after a restart.</dd>
+  <dd>Check that the app is running and that Settings → Browser extension says the local API is listening — after turning it on, restart Sussurro. “Wrong token”: pair again with a fresh <span class="ui">Copy pairing code</span>. “Different versions”: install the extension from the same release as the app. On Brave, allow localhost access. On Firefox, install the signed <code>.xpi</code>: a temporary add-on is gone after a restart.</dd>
   <dt>“Open a Google Meet, Microsoft Teams or Zoom web call”</dt>
   <dd>The panel doesn't see a meeting in this tab: reload the meeting page (it was open before the extension), or click <span class="ui">Allow access</span> if offered. Zoom works only in its web client.</dd>
   <dt>Meet names are missing</dt>
@@ -622,7 +622,7 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
   <dt>Does Sussurro recognise the same person across meetings?</dt>
   <dd>Not yet. Voices are told apart within one recording; link them to People to carry names and emails over.</dd>
   <dt>Is the extension in the Chrome Web Store or Firefox Add-ons?</dt>
-  <dd>Not yet: install it from the release zips (see <a href="#extension-install">Install</a>).</dd>
+  <dd>Not yet: install it from the release files — the Chrome zip, or the Firefox <code>.xpi</code>, which Mozilla signs without listing it (see <a href="#extension-install">Install</a>).</dd>
   <dt>Can I record video?</dt>
   <dd>No — Sussurro works with audio only.</dd>
   <dt>Is it free?</dt>

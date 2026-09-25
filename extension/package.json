@@ -14,10 +14,11 @@
     "build:chrome": "node scripts/build.ts chrome",
     "build:firefox": "node scripts/build.ts firefox",
     "typecheck": "tsc",
-    "lint": "web-ext lint --source-dir dist/firefox",
+    "lint": "web-ext lint --self-hosted --source-dir dist/firefox",
     "test": "vitest run",
     "test:e2e": "node e2e/run.ts",
-    "licenses": "node ../sussurro/scripts/gen-licenses.mjs --extension"
+    "licenses": "node ../sussurro/scripts/gen-licenses.mjs --extension",
+    "update-manifest": "node scripts/update-manifest.ts"
   },
   "dependencies": {
     "react": "^19.1.0",

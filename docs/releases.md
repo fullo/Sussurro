@@ -50,7 +50,9 @@ The version lives in four files, kept in sync:
 Pushing a `v*` tag (e.g. `git tag v0.4.1 && git push origin v0.4.1`) triggers
 `.github/workflows/release.yml`: signed installers for Windows, macOS (Apple
 Silicon) and Linux, published as a **draft** release together with the updater
-manifest (`latest.json`). Publish by un-drafting.
+manifest (`latest.json`), the browser-extension zips and, with the AMO
+secrets set, the signed Firefox `.xpi` (see below). Publish by un-drafting,
+then add the Firefox update entry (*Firefox extension signing and updates*).
 
 - Never force-move an existing release tag — bump the patch version instead.
 - **Release notes** for users live in `docs/releases/<version>.md`
@@ -77,7 +79,67 @@ files, signed with `TAURI_SIGNING_PRIVATE_KEY` as usual) and the extension job
 uploads its zips, as workflow artifacts kept for **3 days**. No `latest.json`
 is produced — tauri-action only writes it into a release. Dispatching on a
 **tag** ref behaves exactly like pushing that tag. It costs the same Actions
-minutes as a real release.
+minutes as a real release. A build-only run never signs the Firefox
+extension.
+
+## Firefox extension signing and updates
+
+Release Firefox installs only add-ons signed by Mozilla. On a **tag** run,
+the release workflow's `extension` job signs the Firefox build on
+addons.mozilla.org (AMO) through the **unlisted** channel —
+self-distribution: Mozilla reviews and signs it automatically, nothing is
+listed in the store — and attaches `sussurro-extension-firefox-<version>.xpi`
+to the draft release next to the zips (#228). Each submission uploads the
+sources the minified bundle is built from (see `extension/README.md` →
+*Source code for AMO review*).
+
+Signing is skipped with a `::notice::`, never a failure, when the run is not
+for a tag, when either secret is missing, or when the version is a
+pre-release (`X.Y.Z-rc.N`: the Firefox manifest has no suffix, so it would
+use up `X.Y.Z` on AMO). The decision is `extension/scripts/amo-sign-gate.sh`,
+unit-tested with dry runs of each case.
+
+**One-time setup (maintainer):**
+
+1. Sign in at <https://addons.mozilla.org/developers/> with the Mozilla
+   account that should own the add-on and accept the Firefox Add-on
+   Distribution Agreement if asked.
+2. *Tools → Manage API Keys* (<https://addons.mozilla.org/developers/addon/api/key/>)
+   → **Generate new credentials**: a *JWT issuer* (`user:…`) and a
+   *JWT secret*.
+3. Store them as repository secrets (each command prompts for the value, so
+   it stays out of the shell history):
+
+   ```bash
+   gh secret set AMO_JWT_ISSUER
+   gh secret set AMO_JWT_SECRET
+   ```
+
+Nothing has to be created on AMO by hand: the first signed submission
+creates the unlisted add-on under the gecko id `sussurro@darumahq.it`.
+**Never change that id** — AMO ties the add-on and every version to it, and
+installed copies only update within it. AMO signs each version number once:
+a re-run skips a version already attached to the release; a submission that
+failed after reaching AMO needs a version bump, or the signed file
+downloaded from the Developer Hub and attached by hand. Regenerating the
+API credentials only means updating the two secrets.
+
+**Updates after each release.** Installed copies look for updates at the
+manifest's `update_url`, `https://fullo.github.io/Sussurro/extension/updates.json`,
+which GitHub Pages serves from `docs/extension/updates.json` on `main`. After
+**publishing** the release (a draft's assets are not public):
+
+```bash
+git switch -c release/ext-updates-X.Y.Z origin/main
+cd extension && npm ci
+npm run update-manifest -- X.Y.Z     # downloads the release's .xpi, checks version + id, adds the entry
+git commit -am "extension: offer X.Y.Z to Firefox" && git push -u origin HEAD   # PR, merge
+```
+
+The entry holds the version, the release asset's URL and its `sha256:` hash;
+Firefox refuses a download whose hash differs. Until it is merged, installed
+copies stay on their version (users can still install the new `.xpi` by
+hand). A release without a signed `.xpi` (secrets not set) gets no entry.
 
 ## Updater signing key (one-time setup)
 
