@@ -25,7 +25,8 @@ import { version as pkgVersion } from "../../package.json";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
 import { DATE_BUCKETS, localToday, type DateBucket, type Facets, type FacetValue } from "../lib/facets";
-import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Participant, Person, Recipe, Segment, Settings, VoiceStatus } from "../lib/types";
+import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Participant, Person, Recipe, Segment, Settings, VoiceStatus, OwnVoiceStatus } from "../lib/types";
+import { singleChannel } from "../lib/ownVoice";
 import type { CalendarAttendee, CalendarLinkStatus, CalendarMatch, PlannedAttendee } from "../lib/calendar";
 import { nameFromEmail } from "../lib/participants";
 
@@ -396,6 +397,23 @@ function mockVoice(personId: string, speechMs: number, documents: number): Voice
     updated: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
   };
 }
+
+/* ---------- Your own voice, "You" (#243) ---------- */
+// Mirrors speakers::own_voice: faked numbers only (?you=1 starts enrolled).
+const OWN_MIN_MS = 20_000;
+const OWN_TARGET_MS = 30_000;
+const OWN_MAX_MS = 90_000;
+let ownVoice: OwnVoiceStatus = {
+  enrolled: params.get("you") === "1",
+  speech_ms: params.get("you") === "1" ? 29_000 : 0,
+  label_as_you: params.get("you") === "1",
+  updated: params.get("you") === "1" ? "2026-09-25T10:00:00Z" : "",
+  min_speech_ms: OWN_MIN_MS,
+  target_ms: OWN_TARGET_MS,
+  max_ms: OWN_MAX_MS,
+};
+/** When the enrolment recording started (`null` = not recording). */
+let ownEnrolStart: number | null = null;
 
 function voiceOff(personId: string): VoiceStatus {
   return { ...mockVoice(personId, 0, 0), enabled: false, ready: false, updated: "" };
@@ -1500,9 +1518,70 @@ function handle(cmd: string, a: Args): unknown {
     case "voice_forget":
       return voices.delete(String(a.personId));
     case "voices_forget_all": {
-      const n = voices.size;
+      // "You" is in the same folder: forgetting all voices forgets it too.
+      const n = voices.size + (ownVoice.enrolled ? 1 : 0);
       voices.clear();
+      ownVoice = { ...ownVoice, enrolled: false, speech_ms: 0, label_as_you: false, updated: "" };
       return n;
+    }
+    case "own_voice_status":
+      return { ...ownVoice };
+    case "own_voice_enrol_start":
+      ownEnrolStart = Date.now();
+      return null;
+    case "own_voice_enrol_progress":
+      return ownEnrolStart === null
+        ? { recording: false, elapsed_ms: 0, level: 0, failed: false }
+        : { recording: true, elapsed_ms: Date.now() - ownEnrolStart, level: 0.02 + Math.random() * 0.08, failed: false };
+    case "own_voice_enrol_cancel":
+      ownEnrolStart = null;
+      return null;
+    case "own_voice_enrol_finish": {
+      if (ownEnrolStart === null) throw "no recording of your voice is running";
+      const elapsed = Math.min(Date.now() - ownEnrolStart, OWN_MAX_MS);
+      ownEnrolStart = null;
+      // Faked: 95 % of the reading counts as speech.
+      const speech = Math.round(elapsed * 0.95);
+      return new Promise((resolve, reject) =>
+        setTimeout(() => {
+          if (speech < OWN_MIN_MS) {
+            reject(
+              `Only ${Math.floor(speech / 1000)} s of speech was heard — read the whole paragraph aloud (at least 20 s of speech are needed).`,
+            );
+            return;
+          }
+          ownVoice = {
+            ...ownVoice,
+            enrolled: true,
+            speech_ms: speech,
+            label_as_you: ownVoice.enrolled ? ownVoice.label_as_you : true,
+            updated: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+          };
+          resolve({ ...ownVoice });
+        }, 800),
+      );
+    }
+    case "own_voice_set_label":
+      if (!ownVoice.enrolled) throw "record your voice first";
+      ownVoice = { ...ownVoice, label_as_you: !!a.enabled };
+      return { ...ownVoice };
+    case "own_voice_forget": {
+      const had = ownVoice.enrolled;
+      ownVoice = { ...ownVoice, enrolled: false, speech_ms: 0, label_as_you: false, updated: "" };
+      return had;
+    }
+    case "own_voice_find": {
+      // Faked: the first voice without a label of the user's is "you".
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      if (!ownVoice.enrolled) throw "record your voice first";
+      if (!singleChannel(toItem(s))) throw 'in this recording your voice is on its own channel: it is "You" already';
+      if (!s.voiceOf) throw "this document has no voice data to look for your voice in";
+      const sp = (s.speakers ?? []).find(
+        (x) => x.own_voice === true || (x.own_voice !== false && !x.person_id && /^voice:\d+$/.test(x.id) && x.label === x.id.replace("voice:", "Voice ")),
+      );
+      if (sp) Object.assign(sp, { own_voice: true, label: "You", color: "#1a1a1a" });
+      return { item: toItem(s), found: !!sp };
     }
     case "archive_update_segment":
     case "archive_delete_segment": {
@@ -1542,12 +1621,18 @@ function handle(cmd: string, a: Args): unknown {
         const label = String(a.label).trim().replace(/\s+/g, " ");
         sp.label = label || sp.id.replace("voice:", "Voice ");
         delete sp.label_before_link;
+        // An automatic "You" the user renamed is never "You" again (#243).
+        if (sp.own_voice === true) Object.assign(sp, { own_voice: false, color: voice(Number(sp.id.split(":")[1]) || 1).color });
       } else if (cmd === "archive_link_speaker") {
         // Mirrors speakers::doc::link_speaker (#130), simplified.
         const sp = speakers.find((x) => x.id === a.speakerId);
         if (!sp) throw `no speaker '${a.speakerId}' in this document`;
         const person = people.find((x) => x.id === a.personId);
         if (!person) throw "that person is no longer in People";
+        if (sp.own_voice === true) {
+          const n = Number(sp.id.split(":")[1]) || 1;
+          Object.assign(sp, { own_voice: false, label: `Voice ${n}`, color: voice(n).color });
+        }
         const old = sp.label;
         const generic = /^voice \d+$|^you$/i.test(old.trim());
         sp.person_id = person.id;
