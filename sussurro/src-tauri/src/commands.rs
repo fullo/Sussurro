@@ -72,6 +72,126 @@ pub async fn credential_store_status() -> Result<crate::secrets::StoreStatus, St
         .map_err(|e| e.to_string())
 }
 
+// ---- Calendar attendees (#252) ----
+
+/// Settings → Calendar: whether a private ICS link is saved (its host
+/// only, never the link) and whether the credential store works.
+#[tauri::command]
+pub async fn calendar_link_status() -> Result<crate::calendar::link::LinkStatus, String> {
+    // May block on D-Bus (Linux) or a keychain prompt: off the main thread.
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::calendar::link::status(&crate::secrets::OsStore)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Save (or replace) the private ICS link — in the OS credential store
+/// only. Main window only.
+#[tauri::command]
+pub async fn calendar_link_save(
+    window: tauri::WebviewWindow,
+    link: String,
+) -> Result<crate::calendar::link::LinkStatus, String> {
+    crate::config_io::check_import_caller(window.label())?;
+    blocking(move || crate::calendar::link::save(&crate::secrets::OsStore, &link)).await
+}
+
+/// Remove the saved ICS link. Main window only.
+#[tauri::command]
+pub async fn calendar_link_remove(
+    window: tauri::WebviewWindow,
+) -> Result<crate::calendar::link::LinkStatus, String> {
+    crate::config_io::check_import_caller(window.label())?;
+    blocking(|| crate::calendar::link::remove(&crate::secrets::OsStore)).await
+}
+
+/// "Add attendees from calendar…" with a file: the native picker opens from
+/// Rust (no path crosses IPC, like `pick_import_file`), the `.ics` is read
+/// with the import guards and matched against item `id`. `None` when the
+/// user cancelled. Main window only.
+#[tauri::command]
+pub async fn calendar_events_from_file(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<crate::calendar::CalendarMatch>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    crate::config_io::check_import_caller(window.label())?;
+    let (dir, _) = archive_paths(&state)?;
+    let dialog = window
+        .dialog()
+        .file()
+        .set_title("Choose a calendar file")
+        .add_filter("Calendar (.ics)", &["ics"])
+        .set_parent(&window);
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(picked) = dialog.blocking_pick_file() else {
+            return Ok(None);
+        };
+        let path = picked
+            .into_path()
+            .map_err(|e| format!("could not read file: {e}"))?;
+        let bytes =
+            crate::config_io::read_picked_file(&path, "ics", crate::calendar::MAX_ICS_BYTES)
+                .map_err(|e| format!("could not read file: {e:#}"))?;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let text = String::from_utf8_lossy(&bytes);
+        crate::calendar::match_item(&dir, &id, &text, name)
+            .map(Some)
+            .map_err(|e| format!("{e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// "Add attendees from calendar…" with the saved ICS link: fetched with the
+/// link source's network rules, matched against item `id`. Errors name the
+/// host at most. Main window only.
+#[tauri::command]
+pub async fn calendar_events_from_link(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<crate::calendar::CalendarMatch, String> {
+    crate::config_io::check_import_caller(window.label())?;
+    let (dir, _) = archive_paths(&state)?;
+    blocking(move || {
+        let url = crate::calendar::link::load(&crate::secrets::OsStore)?.ok_or_else(|| {
+            anyhow::anyhow!("no calendar link is saved: add one in Settings → Calendar")
+        })?;
+        let host = url.host_str().unwrap_or_default().to_string();
+        let text = crate::calendar::link::fetch(&url, false)?;
+        crate::calendar::match_item(&dir, &id, &text, host)
+    })
+    .await
+}
+
+/// Add the attendees the user picked (from `calendar_events_*`) to item
+/// `id`'s participants: new ones added, a missing email completed only
+/// when picked, nothing replaced; then the People registry's linking.
+#[tauri::command]
+pub async fn calendar_add_attendees(
+    state: State<'_, AppState>,
+    id: String,
+    attendees: Vec<crate::calendar::PlannedAttendee>,
+) -> Result<crate::calendar::AttendeesAdded, String> {
+    let (dir, db) = archive_paths(&state)?;
+    blocking(move || {
+        let mut added = crate::calendar::add_to_item(&dir, &id, &attendees)?;
+        if added.applied != crate::calendar::Applied::default() {
+            reindex(&dir, &db, |idx| idx.index_item(&id));
+        }
+        added.item = added.item.without_embeddings();
+        Ok(added)
+    })
+    .await
+}
+
 /// The browser extension's pairing token (#126, E6), created on first use.
 /// Settings → Browser extension (#127) copies it into the pairing code.
 #[tauri::command]

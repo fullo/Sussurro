@@ -455,3 +455,59 @@ fn long_open_ended_series_stay_fast() {
     );
     assert!(started.elapsed() < std::time::Duration::from_secs(2));
 }
+
+/// End to end on a temporary archive: match, then add with the People
+/// registry's usual linking.
+#[test]
+fn match_and_add_on_an_archive_item() {
+    use crate::archive::types::SegmentsFile;
+    let dir = tempfile::tempdir().unwrap();
+    let archive = dir.path();
+    crate::archive::people::modify(archive, |people| {
+        people.push(person("p-1", "Luca", Some("luca@example.com")));
+        Ok(())
+    })
+    .unwrap();
+    let mut meta = meeting("2026-09-24T10:00:00+02:00", "01:00:00");
+    meta.participants = vec![part("Giulia Neri", None)];
+    let id = crate::archive::create_item(archive, &meta, &SegmentsFile::default()).unwrap();
+
+    let found = match_item(archive, &id, MISC, "misc.ics".into()).unwrap();
+    assert_eq!(found.source, "misc.ics");
+    assert_eq!(found.events_read, 6);
+    assert_eq!(found.candidates[0].title, "Design review");
+    let plan = &found.candidates[0].plan;
+    // Giulia is listed without an email (maybe on purpose): only offered.
+    assert_eq!(plan[0].action, PlanAction::CompleteEmail);
+    // Luca has no email in the calendar: the People registry has one.
+    assert_eq!(plan[1].email.as_deref(), Some("luca@example.com"));
+    assert!(plan[1].email_from_people && plan[1].in_people);
+
+    let picked: Vec<PlannedAttendee> = plan
+        .iter()
+        .filter(|p| p.action == PlanAction::Add)
+        .cloned()
+        .collect();
+    let done = add_to_item(archive, &id, &picked).unwrap();
+    assert_eq!((done.applied.added, done.applied.completed), (1, 0));
+    let saved = crate::archive::read_item(archive, &id)
+        .unwrap()
+        .meta
+        .participants;
+    assert_eq!(
+        saved,
+        [
+            part("Giulia Neri", None),
+            part("Luca", Some("luca@example.com"))
+        ]
+    );
+    // Nothing picked: nothing written.
+    let again = add_to_item(archive, &id, &[]).unwrap();
+    assert_eq!(again.applied, Applied::default());
+
+    // A file that isn't a calendar.
+    let e = match_item(archive, &id, "<html>", "x.ics".into())
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("not a calendar file"), "{e}");
+}

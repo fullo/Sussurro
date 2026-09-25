@@ -36,6 +36,7 @@ use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Duration, FixedOffset, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use time::{DateValue, ZoneRef, Zones};
 
 /// Slack on both sides of the recording when matching events: a meeting
@@ -758,6 +759,64 @@ pub fn apply_attendees(meta: &mut ItemMeta, picked: &[PlannedAttendee]) -> Resul
     }
     meta.participants = normalize_participants(&meta.participants);
     Ok(applied)
+}
+
+// ---- On an archive item ------------------------------------------------------
+
+/// What "Add attendees from calendar…" gets back.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CalendarMatch {
+    /// The file's name, or the link's host (never the link).
+    pub source: String,
+    /// Events in the calendar (a recurring one counts once).
+    pub events_read: usize,
+    /// Best first ([`match_events`]); empty when nothing is near.
+    pub candidates: Vec<Candidate>,
+    /// What the reader noticed ([`CalendarSource::notes`]).
+    pub notes: Vec<String>,
+}
+
+/// Match calendar `text` against item `id` of `archive`, with the People
+/// registry for names and emails.
+pub fn match_item(archive: &Path, id: &str, text: &str, source: String) -> Result<CalendarMatch> {
+    let item = crate::archive::read_item(archive, id)?;
+    let w = meeting_window(&item.meta)?;
+    let cal = IcsCalendar::parse(text, *w.start.offset())
+        .map_err(|e| anyhow!("this is not a calendar file Sussurro can read ({e})"))?;
+    let people = crate::archive::people::read_people(archive);
+    let candidates = find(&cal, &item.meta, &people)?;
+    Ok(CalendarMatch {
+        source,
+        events_read: cal.len(),
+        candidates,
+        notes: cal.notes(),
+    })
+}
+
+/// What `calendar_add_attendees` returns.
+#[derive(Debug, Clone, Serialize)]
+pub struct AttendeesAdded {
+    pub item: crate::archive::Item,
+    #[serde(flatten)]
+    pub applied: Applied,
+}
+
+/// Apply the picked attendees to item `id` ([`apply_attendees`]), then the
+/// People registry's usual linking for new participants (the same step
+/// as a save from the participant chips). Refused while the item records.
+pub fn add_to_item(archive: &Path, id: &str, picked: &[PlannedAttendee]) -> Result<AttendeesAdded> {
+    let item = crate::archive::read_item(archive, id)?;
+    if item.recording {
+        bail!("this item is still being recorded: add attendees when the recording ends");
+    }
+    let mut meta = item.meta.clone();
+    let applied = apply_attendees(&mut meta, picked)?;
+    if applied == Applied::default() {
+        return Ok(AttendeesAdded { item, applied });
+    }
+    crate::archive::people::link_on_save(archive, id, &mut meta);
+    let item = crate::archive::update_meta(archive, id, &meta)?;
+    Ok(AttendeesAdded { item, applied })
 }
 
 #[cfg(test)]
