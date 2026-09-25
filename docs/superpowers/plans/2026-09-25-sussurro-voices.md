@@ -59,7 +59,7 @@ Each needs a maintainer decision; the recommendation is what the issues
 assume.
 
 - **P12 — Voice recognition is opt-in, suggest-only, and built only from
-  confirmed lines.** *Needs maintainer decision.* A person gets a voice
+  confirmed lines.** *Decided by the maintainer (2026-09-25): recommendation accepted.* A person gets a voice
   profile only when the user links a speaker to them (the existing
   `SpeakerEdit::Link`) and turns on *Recognise this voice* for that person.
   The profile is built from the embeddings of the linked lines, and a match
@@ -70,7 +70,7 @@ assume.
   apply above a high threshold. Rejected for 0.11: a wrong name in a
   transcript is worse than no name.
 - **P13 — Voice profiles live in app data, not in the archive.**
-  *Needs maintainer decision.* Voiceprints used to identify a person are
+  *Decided by the maintainer (2026-09-25): recommendation accepted.* Voiceprints used to identify a person are
   biometric data under GDPR art. 9 (section 4.1). The archive is often
   synced to iCloud Drive or OneDrive (P4) and is meant to be moved and
   shared, so profiles stay in `<app data>/voices/` (mode 0600), are never
@@ -79,25 +79,22 @@ assume.
   *Recommendation: yes.* Consequence: a second machine re-learns voices
   from the archive's confirmed links (the per-line embeddings already in
   `segments.json` make this a rebuild, not a re-recording).
-- **P14 — The user's own voice ("You") is a profile too.** *Needs
-  maintainer decision.* A short enrolment (read a paragraph, about 30 s)
+- **P14 — The user's own voice ("You") is a profile too.** *Decided by the maintainer (2026-09-25): recommendation accepted.* A short enrolment (read a paragraph, about 30 s)
   lets room meetings and system-audio recordings label the user's lines
   "You" even on a single channel. *Recommendation: yes, optional, offered
   in the speaker panel of a room meeting.* It is also the reference for
   cloning the user's own voice in 0.13.
-- **P15 — Archive HTTP API: read-only in 0.11, writes later.** *Needs
-  maintainer decision.* Scripts can list, search, read and export items
+- **P15 — Archive HTTP API: read-only in 0.11, writes later.** *Decided by the maintainer (2026-09-25): recommendation accepted.* Scripts can list, search, read and export items
   and list people (names only by default) through scoped tokens; creating
   items from text or audio and editing metadata come in a later release
   after the read API has been used. *Recommendation: read-only first,* plus
   one write route, `POST /archive/items` for a note from text, because it
   is the most requested automation (clipboard or shortcut → note).
-- **P16 — Saved audio becomes Opus by default.** *Needs maintainer
-  decision.* New saves are Ogg Opus mono (24 kb/s), about 10× smaller than
+- **P16 — Saved audio becomes Opus by default.** *Decided by the maintainer (2026-09-25): recommendation accepted.* New saves are Ogg Opus mono (24 kb/s), about 10× smaller than
   today's 256 kb/s WAV; WAV stays available as a setting. Existing WAV
   items are untouched; a *Compress audio* action converts one item or all.
   *Recommendation: yes,* since the archive is often cloud-synced.
-- **P17 — Read-aloud scope for 0.12.** *Needs maintainer decision.* One
+- **P17 — Read-aloud scope for 0.12.** *Decided by the maintainer (2026-09-25): recommendation accepted.* One
   narrator voice per document; output saved as `speech.opus` (or
   `speech-<recipe>.opus`) in the item folder when the user asks, otherwise
   played from a temporary file. A link to an article (URL source) becomes a
@@ -105,8 +102,8 @@ assume.
   audio is generated. A two-voice "podcast" recipe is a stretch goal.
   *Recommendation: yes; podcast in 0.12 only if the single-voice path is
   done early.*
-- **P18 — Default TTS engine.** *Needs maintainer decision after spike
-  V0-2.* The bake-off compares Kyutai **Pocket TTS**
+- **P18 — Default TTS engine.** *Postponed by the maintainer (2026-09-25) until the listening test of
+  spike V0-2 (#236).* The bake-off compares Kyutai **Pocket TTS**
   (MIT code, CC-BY-4.0 weights, native Italian 24-layer model since April
   2026, 100M parameters, streaming, no phonemizer), **Qwen3-TTS 1.7B-Base**
   (Apache-2.0 code and weights, Italian among its 10 languages, but no
@@ -116,32 +113,29 @@ assume.
   without voice cloning) as the default read-aloud engine, if the
   maintainer's listening test on Italian agrees; Kokoro-82M is rejected as
   default (Italian voices graded C, and Italian needs espeak-ng, GPL-3.0).*
-- **P19 — Whose voice can be cloned.** *Needs maintainer decision.* The
+- **P19 — Whose voice can be cloned.** *Decided by the maintainer (2026-09-25): recommendation accepted.* The
   user's own voice (enrolled in the app, P14) and a person who recorded the
   consent statement in the app, in a live session, verified (section 4.6).
   Never a voice taken from a meeting, a transcription, a link, a file or
   any archive audio, even with the owner's say-so in text. *Recommendation:
   own voice only in 0.13.0; consenting others in 0.13.x after the
   maintainer's legal review (P20).*
-- **P20 — Legal review before cloning ships.** *Needs maintainer
-  decision.* The EU AI Act transparency duties (art. 50) apply from
+- **P20 — Legal review before cloning ships.** *Decided by the maintainer (2026-09-25): recommendation accepted.* The EU AI Act transparency duties (art. 50) apply from
   2 August 2026 and Italy's AI law adds a deepfake offence (section 4.7).
   *Recommendation: the 0.13 release waits on a written check by a lawyer of
   the consent text, the marking and the README wording; the plan's reading
   is not legal advice.*
-- **P21 — All generated audio is marked, cloned or not.** *Needs
-  maintainer decision.* Metadata (a tag that says "synthetic speech,
+- **P21 — All generated audio is marked, cloned or not.** *Decided by the maintainer (2026-09-25): recommendation accepted.* Metadata (a tag that says "synthetic speech,
   generated by Sussurro") on every file, plus an inaudible watermark on
   every file. Art. 50(2) covers any synthetic audio, not only clones.
   *Recommendation: yes, from 0.12; the watermark cannot be switched off in
   the UI.*
-- **P22 — Calendar attendees: calendar files first, OAuth later.** *Needs
-  maintainer decision.* 0.11 reads attendees from an `.ics` file or a
+- **P22 — Calendar attendees: calendar files first, OAuth later.** *Decided by the maintainer (2026-09-25): recommendation accepted.* 0.11 reads attendees from an `.ics` file or a
   private ICS link the user pastes (no account, no OAuth). Google and
   Microsoft OAuth come in Track A, only if the maintainer creates the
   accounts and accepts Google's verification process (section 4.9).
   *Recommendation: yes.*
-- **P23 — Store listings.** *Needs maintainer decision.* List the extension
+- **P23 — Store listings.** *Decided by the maintainer (2026-09-25): recommendation accepted.* List the extension
   on the Chrome Web Store, Edge Add-ons and AMO (listed). Keep the release
   zips and the self-hosted Firefox `.xpi` for users who prefer them.
   *Recommendation: yes; AMO first (the account and signing already exist),

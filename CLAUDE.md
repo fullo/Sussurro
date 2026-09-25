@@ -794,12 +794,23 @@ fixes from them ship as 0.10.x patch releases.
   voice cloning with consent moved from #146 (still open as the umbrella)
   into the voices plan below.
 
-### 0.11–0.13 — voices (planned 2026-09-25; decisions P12–P23 pending)
+### 0.11–0.13 — voices (planned 2026-09-25; decisions P12–P23 taken 2026-09-25)
 
 Plan, research and checklists:
 `docs/superpowers/plans/2026-09-25-sussurro-voices.md`. Product decisions
-P12–P23 are **proposals awaiting the maintainer**; issues that depend on one
-carry `needs maintainer` and are not `agent-ready`. Milestones and epics:
+P12–P17 and P19–P23 were **accepted by the maintainer on 2026-09-25** as
+recommended: voice recognition is opt-in and suggest-only, built from
+confirmed lines (min. 60 s from 2 documents); voice profiles live in app
+data (0600), never in the archive, exports or the API (GDPR art. 9); "You"
+enrolment; archive API read-only plus `POST /archive/items` for notes;
+Opus by default for saved audio; ICS attendees first, OAuth later;
+single-narrator read-aloud; every generated audio file is marked (metadata
++ watermark that can't be switched off); cloning only the user's own voice
+in 0.13.0, consenting others later; **0.13 ships only after a lawyer's
+written review (#261)**; store listings AMO → Chrome → Edge. **P18 (default
+TTS engine) is postponed** until the listening test of spike #236; #255,
+#256 and #264 wait on it. Issues that still need the maintainer (accounts,
+legal review) carry `needs maintainer`. Milestones and epics:
 `Phase V0 — Voices spikes` (#274, spikes #235–#240), `0.11 — Known voices`
 (#275), `0.12 — Read aloud` (#276), `0.13 — Your voice, with consent`
 (#277), `Track A — Accounts and stores` (#278).
