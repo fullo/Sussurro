@@ -1,7 +1,18 @@
 {
   "addons": {
     "sussurro@darumahq.it": {
-      "updates": []
+      "updates": [
+        {
+          "version": "0.10.0",
+          "update_link": "https://github.com/fullo/Sussurro/releases/download/v0.10.0/sussurro-extension-firefox-0.10.0.xpi",
+          "update_hash": "sha256:88ab1c015ecbb8931145f3ca68eca83f1fcaf56cf52d5d0d56af737682ee50d7",
+          "browser_specific_settings": {
+            "gecko": {
+              "strict_min_version": "128.0"
+            }
+          }
+        }
+      ]
     }
   }
 }
