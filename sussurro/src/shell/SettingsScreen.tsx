@@ -7,6 +7,7 @@ import { fileManagerName, fmtCount } from "../lib/format";
 import type { SubtitlesMode } from "../lib/types";
 import { BehaviorCard } from "../settings/BehaviorCard";
 import { CleanupCard } from "../settings/CleanupCard";
+import { DiagnosticsCard } from "../settings/DiagnosticsCard";
 import { DictationCard } from "../settings/DictationCard";
 import { ExtensionCard } from "../settings/ExtensionCard";
 import { HistoryCard } from "../settings/HistoryCard";
@@ -24,6 +25,7 @@ export type SectionId =
   | "history"
   | "archive"
   | "extension"
+  | "diagnostics"
   | "about";
 
 const SECTIONS: { id: SectionId; label: string }[] = [
@@ -35,11 +37,12 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "history", label: "Dictation history" },
   { id: "archive", label: "Archive" },
   { id: "extension", label: "Browser extension" },
+  { id: "diagnostics", label: "Diagnostics" },
   { id: "about", label: "About" },
 ];
 
 /** Settings: one section at a time — dictation, speech, cleanup, dictionary,
- *  behavior, history, archive, browser extension and About. */
+ *  behavior, history, archive, browser extension, diagnostics and About. */
 export function SettingsScreen({
   ctl,
   section,
@@ -115,6 +118,7 @@ export function SettingsScreen({
           {section === "history" && <HistoryCard ctl={ctl} />}
           {section === "archive" && <ArchiveCard ctl={ctl} />}
           {section === "extension" && <ExtensionCard ctl={ctl} />}
+          {section === "diagnostics" && <DiagnosticsCard ctl={ctl} />}
           {section === "about" && <AboutCard ctl={ctl} onAbout={onAbout} onRunSetup={onRunSetup} />}
         </div>
       </div>

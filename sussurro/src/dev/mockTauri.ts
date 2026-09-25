@@ -1169,7 +1169,9 @@ function handle(cmd: string, a: Args): unknown {
     case "open_settings":
       return null;
     case "diagnostics":
-      return "Sussurro dev preview";
+      return mockDiagnosticsReport();
+    case "diagnostics_snapshot":
+      return mockDiagnosticsSnapshot();
     case "archive_dir":
       return settings.archive_dir || ARCHIVE;
     case "archive_prepare":
@@ -1545,4 +1547,110 @@ export function installMockTauri(): void {
     protocol = "asset",
   ) => (protocol === "sussurro-audio" ? mockAudioUrl(p) : `${protocol}://localhost/${encodeURIComponent(p)}`);
   console.info("[dev] Tauri backend mocked — browser preview only");
+}
+
+/* ---------- Settings → Diagnostics (#101) ---------- */
+
+/** Fake timings: a handful of dictations and long-form segments, with the
+ *  CPU reading moving a little on every poll so the panel looks live. */
+const mockTimings = (() => {
+  const now = Date.now();
+  const dict = [1180, 1420, 960, 2310, 1250, 1090, 1610, 1330].map((total, i) => {
+    const stt = Math.round(total * 0.52);
+    const cleanup = i === 3 ? null : Math.round(total * 0.34);
+    return {
+      at_ms: now - (8 - i) * 95_000,
+      audio_ms: 2400 + i * 610,
+      load_ms: i === 0 ? 2140 : 0,
+      stt_ms: stt,
+      cleanup_ms: cleanup,
+      paste_ms: 48 + i * 3,
+      total_ms: i === 0 ? total + 2140 : total,
+      failed: false,
+    };
+  });
+  const seg = Array.from({ length: 12 }, (_, i) => ({
+    at_ms: now - (12 - i) * 20_000,
+    audio_ms: 18_000 + (i % 4) * 2500,
+    load_ms: null,
+    stt_ms: 1300 + (i % 5) * 170,
+    cleanup_ms: 900 + (i % 3) * 240,
+    paste_ms: null,
+    total_ms: 2200 + (i % 5) * 170 + (i % 3) * 240,
+    failed: false,
+  }));
+  return { dict, seg };
+})();
+
+function nearestRank(values: number[], p: number): number {
+  const v = values.slice().sort((a, b) => a - b);
+  return v[Math.min(v.length, Math.max(1, Math.ceil((p / 100) * v.length))) - 1];
+}
+
+function mockStat(values: (number | null)[]) {
+  const v = values.filter((x): x is number => x != null);
+  return v.length ? { median: nearestRank(v, 50), p90: nearestRank(v, 90), count: v.length } : null;
+}
+
+type MockSample = (typeof mockTimings.dict)[number] | (typeof mockTimings.seg)[number];
+
+function mockSummary(s: MockSample[]) {
+  return {
+    count: s.length,
+    total: mockStat(s.map((x) => x.total_ms)),
+    load: mockStat(s.map((x) => x.load_ms)),
+    stt: mockStat(s.map((x) => x.stt_ms)),
+    cleanup: mockStat(s.map((x) => x.cleanup_ms)),
+    paste: mockStat(s.map((x) => x.paste_ms)),
+    realtime_factor: mockStat(s.map((x) => (x.stt_ms != null && x.audio_ms ? x.stt_ms / x.audio_ms : null))),
+  };
+}
+
+function mockDiagnosticsSnapshot() {
+  const { dict, seg } = mockTimings;
+  const running = !!(mic || fileRun || linkRun);
+  return {
+    version: pkgVersion,
+    os: "macos aarch64",
+    dictations: dict,
+    dictation_summary: mockSummary(dict),
+    segments: seg,
+    segment_summary: mockSummary(seg),
+    stt: {
+      engine: settings.engine,
+      model: settings.engine === "whisper" ? settings.whisper_model : settings.engine === "parakeet" ? "parakeet-tdt-0.6b-v3-int8" : "qwen3-asr-1.7b-q8",
+      state: running ? "busy" : "loaded",
+      backend:
+        settings.engine === "parakeet"
+          ? { kind: "CPU", device: null, source: "engine", note: "ONNX Runtime" }
+          : { kind: "Metal", device: "Apple M2 Pro", source: settings.engine === "whisper" ? "whisper.cpp log" : "llama-server log", note: settings.engine === "whisper" ? "with BLAS" : "29/29 layers on the GPU" },
+      model_file_bytes: settings.engine === "parakeet" ? 671_000_000 : settings.engine === "whisper" ? 574_041_195 : 2_430_000_000,
+      sidecar:
+        settings.engine === "qwen3_asr"
+          ? { available: true, running: true, memory_bytes: 2_210_000_000, backend: null, failures: 0, model_file_bytes: 2_430_000_000 }
+          : null,
+    },
+    cleanup: {
+      active: settings.cleanup_level !== "none",
+      profile: "Local",
+      api: "ollama",
+      endpoint: "http://localhost:11434",
+      external: false,
+      last_call: { ms: 612 + Math.round(Math.random() * 40), ok: true, age_s: 42 },
+    },
+    bundled_llm: { available: true, running: false, memory_bytes: null, backend: null, failures: 0, model_file_bytes: 2_170_000_000 },
+    process: { memory_bytes: 1_184_000_000 + Math.round(Math.random() * 4_000_000), cpu_percent: running ? 38 + Math.random() * 8 : 0.4 + Math.random() * 0.6, cpus: 12 },
+    backlog: running ? [{ session_id: (mic ?? fileRun ?? linkRun)!.id, backlog_s: 3.4, processed_s: 184, queue_len: 1, segments_done: 9 }] : [],
+    recording: !!mic,
+  };
+}
+
+function mockDiagnosticsReport() {
+  return `Sussurro ${pkgVersion} — diagnostics (dev preview)
+OS: macos aarch64
+STT: whisper · model ${settings.whisper_model}
+Performance (this session only, never saved):
+  Last dictation: record 6.7 s · STT 692 ms · cleanup 452 ms · paste 69 ms · Finish→Idle 1.3 s
+  STT engine: whisper · ${settings.whisper_model} · loaded · Metal (Apple M2 Pro), with BLAS — from whisper.cpp log
+`;
 }
