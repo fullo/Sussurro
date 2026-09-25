@@ -152,7 +152,8 @@ project decisions here, not in per-machine memory.**
   with an `Origin` must come from a browser extension (cross-site POSTs to
   the token-less routes). The token-less scripting routes answer only with
   `Settings.api_scripting` (read per request, applies at once): **off on a
-  new install** — pairing turns `api_enabled` on, not these — and a
+  new install** — the Browser extension card's "Turn on the local API"
+  sets `api_enabled` only (pairing itself sets nothing) — and a
   settings file without the key takes `api_enabled`'s value (saved once),
   so existing scripts keep working. Bodies: `Content-Length` checked
   against the cap (`/clean` 1 MiB, `/transcribe` 200 MiB) **before
@@ -563,7 +564,7 @@ project decisions here, not in per-machine memory.**
   fails in ~3 s with no steps and the annotation "job was not started …
   spending limit". Fix: Billing & plans on the owner account. Meanwhile
   `scripts/ci-local.sh` mirrors test.yml inside WSL2 Ubuntu 24.04
-  (`wsl -d Ubuntu -u root -- bash /mnt/f/GitHub/Sussurro/scripts/ci-local.sh
+  (`wsl -d Ubuntu-dev -u root -- bash /mnt/f/GitHub/Sussurro/scripts/ci-local.sh
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
