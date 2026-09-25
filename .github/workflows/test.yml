@@ -75,6 +75,25 @@ jobs:
           path: extension/dist/*.zip
           retention-days: 14
 
+  # Saved audio as Ogg Opus (#247): libopus is a CMake build inside
+  # opusic-sys, linked statically. The full Windows app build needs the
+  # Vulkan SDK and runs only in the release workflow, so this checks on
+  # every PR that libopus compiles and links with MSVC: the opus crate's own
+  # tests encode and decode through it. (Linux: the test job below builds
+  # it with the app; macOS: the release workflow.)
+  opus-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: sussurro/src-tauri
+          key: opus-windows
+      - name: libopus builds and links with MSVC (opus crate tests)
+        working-directory: sussurro/src-tauri
+        run: cargo test --locked -p opus
+
   test:
     # 24.04: the ort (onnxruntime) prebuilt binaries need glibc >= 2.38
     runs-on: ubuntu-24.04

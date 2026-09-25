@@ -13,6 +13,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 brew install node cmake ollama
 ```
 
+CMake builds the two bundled C/C++ libraries: whisper.cpp and libopus (saved
+audio as Ogg Opus, via the `opusic-sys` crate). Both are linked statically,
+so the app needs no extra runtime library.
+
 Transcription runs on the GPU via **Metal** — no extra setup needed.
 
 ## Build & run
