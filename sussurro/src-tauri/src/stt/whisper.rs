@@ -35,7 +35,9 @@ impl Transcriber {
         if let Some(p) = initial_prompt {
             params.set_initial_prompt(p);
         }
-        state.full(params, samples).context("whisper inference failed")?;
+        state
+            .full(params, samples)
+            .context("whisper inference failed")?;
 
         let n = state.full_n_segments();
         let mut text = String::new();
@@ -68,7 +70,9 @@ impl Transcriber {
         if let Some(p) = initial_prompt {
             params.set_initial_prompt(p);
         }
-        state.full(params, samples).context("whisper inference failed")?;
+        state
+            .full(params, samples)
+            .context("whisper inference failed")?;
 
         let eot = self.ctx.token_eot();
         let mut text = String::new();
@@ -89,7 +93,8 @@ impl Transcriber {
                 });
             }
         }
-        let language = whisper_rs::get_lang_str(state.full_lang_id_from_state()).map(str::to_string);
+        let language =
+            whisper_rs::get_lang_str(state.full_lang_id_from_state()).map(str::to_string);
         Ok(super::TimedTranscript {
             text: text.trim().to_string(),
             words: words_from_tokens(&pieces),

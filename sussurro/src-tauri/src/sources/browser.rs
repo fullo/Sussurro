@@ -46,7 +46,11 @@ const POLL: Duration = Duration::from_millis(250);
 pub enum Chunk {
     Audio(Frame),
     /// `len` samples of silence on `channel` starting at `start`.
-    Silence { channel: Channel, start: u64, len: u64 },
+    Silence {
+        channel: Channel,
+        start: u64,
+        len: u64,
+    },
 }
 
 impl Chunk {
@@ -257,14 +261,22 @@ impl Source for BrowserSource {
             match self.rx.recv_timeout(POLL) {
                 Ok(Chunk::Audio(f)) if f.samples.is_empty() => continue,
                 Ok(Chunk::Audio(f)) => return Ok(Some(f)),
-                Ok(Chunk::Silence { channel, start, len }) => {
+                Ok(Chunk::Silence {
+                    channel,
+                    start,
+                    len,
+                }) => {
                     self.silence = (len > 0).then_some((channel, start, len));
                     if let Some(f) = self.take_silence() {
                         return Ok(Some(f));
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    if self.cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
+                    if self
+                        .cancel
+                        .as_ref()
+                        .is_some_and(|c| c.load(Ordering::Relaxed))
+                    {
                         return Ok(None);
                     }
                 }
@@ -304,7 +316,9 @@ mod tests {
             for (ch, total) in [(Channel::Mic, &mut mic), (Channel::Remote, &mut remote)] {
                 let p = mux.push(ch, seq, &frame, T0);
                 for c in &p.chunks {
-                    let Chunk::Audio(f) = c else { panic!("no gap here") };
+                    let Chunk::Audio(f) = c else {
+                        panic!("no gap here")
+                    };
                     assert_eq!(f.channel, ch);
                     let base = if ch == Channel::Remote {
                         *remote_start.get_or_insert(f.start as usize)
@@ -364,7 +378,9 @@ mod tests {
                 len: 640
             }
         );
-        let Chunk::Audio(f) = &p.chunks[1] else { panic!() };
+        let Chunk::Audio(f) = &p.chunks[1] else {
+            panic!()
+        };
         assert_eq!(f.start, 960);
         // A repeat (or an older frame) is dropped without moving the clock.
         let p = mux.push(Channel::Mic, 3, &frame, HOUR);
@@ -403,7 +419,12 @@ mod tests {
         // …and a stream of 5-byte jumps adds nothing past the budget.
         let mut total = 0;
         for k in 1..1_000u32 {
-            total += silence(&mux.push(Channel::Remote, 30_000 + k * 1_000_000, &[], Duration::from_secs(10)));
+            total += silence(&mux.push(
+                Channel::Remote,
+                30_000 + k * 1_000_000,
+                &[],
+                Duration::from_secs(10),
+            ));
         }
         assert_eq!(total, 0);
         // The budget is per channel, and the per-gap cap still applies.
@@ -412,7 +433,12 @@ mod tests {
         assert_eq!(silence(&p), MAX_GAP_SAMPLES);
         // Real audio is never cut.
         let before = mux.position();
-        let p = mux.push(Channel::Remote, 1_000_000_000, &frame, Duration::from_secs(10));
+        let p = mux.push(
+            Channel::Remote,
+            1_000_000_000,
+            &frame,
+            Duration::from_secs(10),
+        );
         assert_eq!(silence(&p), 0);
         assert_eq!(audio_len(&p), 320);
         assert!(mux.position() >= before);
@@ -426,7 +452,9 @@ mod tests {
         }
         let p = mux.push(Channel::Remote, 7, &[0.5; 320], T0);
         assert_eq!(p.lost, 0, "the first seq of a channel is its start");
-        let Chunk::Audio(f) = &p.chunks[0] else { panic!() };
+        let Chunk::Audio(f) = &p.chunks[0] else {
+            panic!()
+        };
         assert_eq!((f.channel, f.start), (Channel::Remote, 16_000));
         assert_eq!(mux.push(Channel::Remote, 8, &[0.5; 320], T0).lost, 0);
     }
@@ -450,7 +478,10 @@ mod tests {
         let a = src.next_frame().unwrap().unwrap();
         assert_eq!((a.channel, a.start, a.samples.len()), (Channel::Mic, 0, 10));
         let s1 = src.next_frame().unwrap().unwrap();
-        assert_eq!((s1.channel, s1.start, s1.samples.len()), (Channel::Remote, 5, 16_000));
+        assert_eq!(
+            (s1.channel, s1.start, s1.samples.len()),
+            (Channel::Remote, 5, 16_000)
+        );
         let s2 = src.next_frame().unwrap().unwrap();
         assert_eq!((s2.start, s2.samples.len()), (16_005, 4_000));
         assert!(s2.samples.iter().all(|&x| x == 0.0));

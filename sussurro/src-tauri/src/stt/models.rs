@@ -35,9 +35,7 @@ pub fn validate_model_name(name: &str) -> Result<()> {
     if valid {
         Ok(())
     } else {
-        anyhow::bail!(
-            "invalid model name '{name}' — use a simple file name like ggml-base.bin"
-        )
+        anyhow::bail!("invalid model name '{name}' — use a simple file name like ggml-base.bin")
     }
 }
 
@@ -76,8 +74,8 @@ fn hf_tree_api(repo: &str) -> String {
 /// Parse a HuggingFace tree listing and return the published SHA-256 of
 /// `file` (the entry's `lfs.oid`). Pure — testable without network.
 pub fn sha256_from_hf_tree(json: &str, file: &str) -> Result<String> {
-    let entries: Vec<serde_json::Value> = serde_json::from_str(json)
-        .context("HuggingFace tree API returned invalid JSON")?;
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_str(json).context("HuggingFace tree API returned invalid JSON")?;
     let entry = entries
         .iter()
         .find(|e| e.get("path").and_then(|p| p.as_str()) == Some(file))
@@ -190,8 +188,7 @@ pub fn ensure_hf_file_pinned(
 /// Whether a download whose digest is `actual` may be kept: it matches
 /// the repo's `published` one and, when set, the `pinned` one. Pure.
 pub fn digest_accepted(actual: &str, published: &str, pinned: Option<&str>) -> bool {
-    actual.eq_ignore_ascii_case(published)
-        && pinned.is_none_or(|p| actual.eq_ignore_ascii_case(p))
+    actual.eq_ignore_ascii_case(published) && pinned.is_none_or(|p| actual.eq_ignore_ascii_case(p))
 }
 
 fn ensure_hf_file_verified(
@@ -389,7 +386,10 @@ mod tests {
         std::fs::write(dir.path().join(VAD_MODEL_FILE), b"fake vad").unwrap();
         assert!(vad_model_exists(dir.path()));
         let got = ensure_vad_model(dir.path()).unwrap();
-        assert_eq!(got.file_name().and_then(|n| n.to_str()), Some(VAD_MODEL_FILE));
+        assert_eq!(
+            got.file_name().and_then(|n| n.to_str()),
+            Some(VAD_MODEL_FILE)
+        );
     }
 
     #[test]
@@ -399,7 +399,10 @@ mod tests {
         // The path is canonicalized (symlink-free) — compare against that,
         // not the raw tempdir, which may sit behind a symlink (macOS).
         let got = ensure_model(dir.path(), "ggml-tiny.bin").unwrap();
-        assert_eq!(got.file_name().and_then(|n| n.to_str()), Some("ggml-tiny.bin"));
+        assert_eq!(
+            got.file_name().and_then(|n| n.to_str()),
+            Some("ggml-tiny.bin")
+        );
         assert!(got.exists());
         if let Ok(canon_dir) = dir.path().canonicalize() {
             assert!(got.starts_with(&canon_dir));
@@ -416,7 +419,10 @@ mod tests {
         std::fs::write(dir.path().join(QWEN3_ASR_MMPROJ), b"fake").unwrap();
         assert!(qwen3_asr_exists(dir.path()));
         let got = ensure_qwen3_asr(dir.path()).unwrap();
-        assert_eq!(got.file_name().and_then(|n| n.to_str()), Some(QWEN3_ASR_MODEL));
+        assert_eq!(
+            got.file_name().and_then(|n| n.to_str()),
+            Some(QWEN3_ASR_MODEL)
+        );
         // Valid names, fetched from the gate's repo.
         assert!(validate_model_name(QWEN3_ASR_MODEL).is_ok());
         assert!(validate_model_name(QWEN3_ASR_MMPROJ).is_ok());
@@ -453,14 +459,17 @@ mod tests {
             "..",
             "../evil.bin",
             "..\\..\\ProgramData\\x\\mal.bin", // Windows traversal
-            "a/b/c.bin", // forward separator
-            "a\\b\\c.bin", // backslash separator
-            "C:\\Windows\\mal.bin", // drive letter
-            "/etc/passwd", // absolute path
-            "//server/share/x", // UNC-style
-            "..ggml/evil.bin", // separator after a dot-run
+            "a/b/c.bin",                       // forward separator
+            "a\\b\\c.bin",                     // backslash separator
+            "C:\\Windows\\mal.bin",            // drive letter
+            "/etc/passwd",                     // absolute path
+            "//server/share/x",                // UNC-style
+            "..ggml/evil.bin",                 // separator after a dot-run
         ] {
-            assert!(validate_model_name(name).is_err(), "{name:?} should be invalid");
+            assert!(
+                validate_model_name(name).is_err(),
+                "{name:?} should be invalid"
+            );
         }
     }
 
@@ -552,7 +561,10 @@ mod tests {
         std::fs::write(dir.path().join(file), b"gguf").unwrap();
         assert!(crate::llm::bundled::model_exists(dir.path()));
         assert_eq!(
-            crate::llm::bundled::ensure_model(dir.path()).unwrap().canonicalize().unwrap(),
+            crate::llm::bundled::ensure_model(dir.path())
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
             dir.path().join(file).canonicalize().unwrap()
         );
     }

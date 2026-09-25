@@ -372,7 +372,10 @@ impl Index {
     /// hosts (#122), read from its folder.
     pub fn search(&self, query: &str, filters: &SearchFilters) -> Result<Vec<ItemSummary>> {
         let rows = self.with_conn(|conn| search_conn(conn, query, filters))?;
-        Ok(rows.into_iter().map(|s| s.with_folder_details(&self.archive)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|s| s.with_folder_details(&self.archive))
+            .collect())
     }
 
     /// [`Index::search`] plus the Library's facet counts (#135), from the
@@ -387,7 +390,11 @@ impl Index {
         filters: &SearchFilters,
         with_facets: bool,
     ) -> Result<(Vec<ItemSummary>, Option<facets::Facets>)> {
-        let people = if with_facets { read_people(&self.archive) } else { Vec::new() };
+        let people = if with_facets {
+            read_people(&self.archive)
+        } else {
+            Vec::new()
+        };
         self.with_conn(|conn| {
             let rows = search_conn(conn, query, filters)?;
             let facets = if with_facets {
@@ -408,7 +415,10 @@ impl Index {
             ))
         })?;
         Ok(FacetedSearch {
-            items: rows.into_iter().map(|s| s.with_folder_details(&self.archive)).collect(),
+            items: rows
+                .into_iter()
+                .map(|s| s.with_folder_details(&self.archive))
+                .collect(),
             facets,
         })
     }
@@ -864,7 +874,11 @@ mod tests {
             ..Default::default()
         };
         for q in ["anna@example.com", "example", "anna"] {
-            assert_eq!(ids(idx.search(q, &Default::default()).unwrap()), vec![f.meeting.clone()], "{q}");
+            assert_eq!(
+                ids(idx.search(q, &Default::default()).unwrap()),
+                vec![f.meeting.clone()],
+                "{q}"
+            );
             assert!(idx.search(q, &names_only).unwrap().is_empty(), "{q}");
         }
         // Title, body, tags and categories still match, with snippets, and
@@ -872,8 +886,20 @@ mod tests {
         let hits = idx.search("roadmap", &names_only).unwrap();
         assert_eq!(ids(hits.clone()), vec![f.meeting.clone()]);
         assert!(hits[0].snippet.is_some());
-        assert_eq!(ids(idx.search("weekly team", &names_only).unwrap()), vec![f.meeting.clone()]);
-        for q in ["\"", "release OR", "NEAR(", "-", "a AND \"b", "*", "} : (", "{title}"] {
+        assert_eq!(
+            ids(idx.search("weekly team", &names_only).unwrap()),
+            vec![f.meeting.clone()]
+        );
+        for q in [
+            "\"",
+            "release OR",
+            "NEAR(",
+            "-",
+            "a AND \"b",
+            "*",
+            "} : (",
+            "{title}",
+        ] {
             idx.search(q, &names_only).unwrap();
         }
         let by = |participant: &str, names_only: bool| {
@@ -896,7 +922,9 @@ mod tests {
         assert_eq!(rows.len(), 3);
         let facets = facets.unwrap();
         assert_eq!(facets.total, 3);
-        assert!(!serde_json::to_string(&facets).unwrap().contains("anna@example.com"));
+        assert!(!serde_json::to_string(&facets)
+            .unwrap()
+            .contains("anna@example.com"));
         assert!(idx.search_rows("", &names_only, false).unwrap().1.is_none());
     }
 

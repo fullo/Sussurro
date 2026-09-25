@@ -272,6 +272,26 @@ pub struct Segment {
     /// failing. Omitted from JSON when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt_error: Option<String>,
+    /// Overlapping speech inside this line (0.11, #244): stretches where
+    /// the segmentation model heard two people at once, on the session
+    /// clock like `start_ms`/`end_ms`. Set when the line is labelled (end
+    /// of a run with speakers, "Identify voices") and only for a line that
+    /// counts as overlapped ([`crate::speakers::overlap::is_overlapped`]).
+    /// Omitted from JSON when empty; files from before #244 read as none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overlap: Vec<OverlapSpan>,
+}
+
+/// One stretch of overlapping speech in a line (#244).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct OverlapSpan {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    /// The second speaker heard there: the nearest line of the same
+    /// channel with another speaker ([`crate::speakers::overlap`]). The
+    /// line keeps its own speaker. `None` when no such line is near.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker_id: Option<String>,
 }
 
 /// A speaker as known to one document.
@@ -428,6 +448,7 @@ mod tests {
                 words_estimated: false,
                 embedding: None,
                 stt_error: None,
+                overlap: Vec::new(),
             }],
         };
         let json = serde_json::to_string(&f).unwrap();

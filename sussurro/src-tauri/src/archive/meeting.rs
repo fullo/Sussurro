@@ -203,14 +203,14 @@ mod tests {
         append_events(&archive, &id, &[]).unwrap();
         append_events(&archive, &id, std::slice::from_ref(&b)).unwrap();
         assert_eq!(read_events(&archive, &id).unwrap(), vec![a, b.clone()]);
-        let raw = std::fs::read_to_string(
-            archive
-                .join(&id)
-                .join(META_DIR)
-                .join(MEETING_EVENTS_FILE),
-        )
-        .unwrap();
-        assert!(raw.lines().next().unwrap().contains(r#""kind":"participants""#));
+        let raw =
+            std::fs::read_to_string(archive.join(&id).join(META_DIR).join(MEETING_EVENTS_FILE))
+                .unwrap();
+        assert!(raw
+            .lines()
+            .next()
+            .unwrap()
+            .contains(r#""kind":"participants""#));
         assert!(append_events(&archive, "2026/09/missing", std::slice::from_ref(&b)).is_err());
     }
 
@@ -237,7 +237,10 @@ mod tests {
         w.append(&[ev(1)]).unwrap();
         w.append(&[]).unwrap();
         w.append(&[ev(2), ev(3)]).unwrap();
-        assert_eq!(read_events(&archive, &id).unwrap(), vec![ev(0), ev(1), ev(2), ev(3)]);
+        assert_eq!(
+            read_events(&archive, &id).unwrap(),
+            vec![ev(0), ev(1), ev(2), ev(3)]
+        );
         assert!(EventsWriter::open(&archive, "2026/09/missing").is_err());
     }
 

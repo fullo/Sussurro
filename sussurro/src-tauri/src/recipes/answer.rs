@@ -112,14 +112,20 @@ pub fn answer_file_name(answer: &PendingAnswer) -> String {
 
 /// The saved document for `answer` on the item titled `item_title`: file
 /// name asked for, provenance frontmatter, body.
-pub fn answer_document(item_title: &str, answer: &PendingAnswer) -> (String, CompanionMeta, String) {
+pub fn answer_document(
+    item_title: &str,
+    answer: &PendingAnswer,
+) -> (String, CompanionMeta, String) {
     let item_title = item_title.trim();
     let (title, body) = match &answer.question {
         Some(q) => (
             format!("{item_title} — {}", shorten(q, TITLE_QUESTION_CHARS)),
             format!("> **Question:** {q}\n\n{}", answer.text.trim()),
         ),
-        None => (format!("{item_title} — {}", answer.recipe_name.trim()), answer.text.trim().to_string()),
+        None => (
+            format!("{item_title} — {}", answer.recipe_name.trim()),
+            answer.text.trim().to_string(),
+        ),
     };
     let mut extra = std::collections::BTreeMap::new();
     extra.insert(KIND_KEY.to_string(), serde_json::Value::from(KIND_ANSWER));
@@ -138,7 +144,11 @@ pub fn answer_document(item_title: &str, answer: &PendingAnswer) -> (String, Com
         profile: answer.profile.trim().to_string(),
         model: answer.model.trim().to_string(),
         external: answer.external,
-        host: if answer.external { answer.host.trim().to_string() } else { String::new() },
+        host: if answer.external {
+            answer.host.trim().to_string()
+        } else {
+            String::new()
+        },
         date: answer.date.clone(),
         transcript: TRANSCRIPT_FILE.to_string(),
         extra,
@@ -214,7 +224,10 @@ mod tests {
 
     #[test]
     fn questions_are_normalized_and_bounded() {
-        assert_eq!(normalize_question("  Who sends\n the   file? ").unwrap(), "Who sends the file?");
+        assert_eq!(
+            normalize_question("  Who sends\n the   file? ").unwrap(),
+            "Who sends the file?"
+        );
         assert!(normalize_question(" \n\t ").is_err());
         assert!(normalize_question(&"x".repeat(MAX_QUESTION_CHARS)).is_ok());
         let err = normalize_question(&"x".repeat(MAX_QUESTION_CHARS + 1)).unwrap_err();
@@ -235,14 +248,24 @@ mod tests {
     #[test]
     fn question_prompt_assembly_single_map_and_reduce() {
         let r = question_recipe("Who sends the file?").unwrap();
-        let ctx = Context { title: "Weekly sync".into(), kind: "meeting".into(), ..Default::default() };
+        let ctx = Context {
+            title: "Weekly sync".into(),
+            kind: "meeting".into(),
+            ..Default::default()
+        };
         // Whole transcript: the question is the task, then the fenced transcript.
-        let single = user(&single_messages(&r, &ctx, "[00:01:01] Anna: I send it Friday."));
+        let single = user(&single_messages(
+            &r,
+            &ctx,
+            "[00:01:01] Anna: I send it Friday.",
+        ));
         assert!(single.starts_with("Task:\nAnswer this question about the transcript:\n<question>\nWho sends the file?\n</question>"));
         assert!(single.contains("<transcript>\nTitle: Weekly sync\nKind: meeting\n[00:01:01] Anna: I send it Friday.\n</transcript>"));
         // Long transcript: every map step keeps the question as the task…
         let map = user(&map_messages(&r, &ctx, "chunk", 1, 3));
-        assert!(map.contains("<task>\nAnswer this question about the transcript:\n<question>\nWho sends the file?"));
+        assert!(map.contains(
+            "<task>\nAnswer this question about the transcript:\n<question>\nWho sends the file?"
+        ));
         assert!(map.contains("<transcript part=\"1/3\">"));
         // …and the reduce answers it from the notes.
         let reduce = user(&reduce_messages(&r, &ctx, "### Part 1\n- a"));
@@ -264,7 +287,10 @@ mod tests {
                     id: i as u32,
                     start_ms: i as u64 * 1000,
                     end_ms: i as u64 * 1000 + 900,
-                    text: format!("Line {i}: Anna sends the file on Friday. {}", "x".repeat(80)),
+                    text: format!(
+                        "Line {i}: Anna sends the file on Friday. {}",
+                        "x".repeat(80)
+                    ),
                     ..Default::default()
                 })
                 .collect(),
@@ -274,7 +300,14 @@ mod tests {
     }
 
     fn local() -> LlmProfile {
-        LlmProfile::new("local", "Local", CleanupApi::Ollama, "http://localhost:11434", "", "llama3.2:3b")
+        LlmProfile::new(
+            "local",
+            "Local",
+            CleanupApi::Ollama,
+            "http://localhost:11434",
+            "",
+            "llama3.2:3b",
+        )
     }
 
     #[test]
@@ -297,21 +330,40 @@ mod tests {
             &mut |p: Progress| phases.push(p.phase),
         )
         .unwrap();
-        assert_eq!(out, RunOutput { file: None, answer: Some("Anna, on Friday.".into()) });
+        assert_eq!(
+            out,
+            RunOutput {
+                file: None,
+                answer: Some("Anna, on Friday.".into())
+            }
+        );
         assert!(phases.contains(&Phase::Map) && phases.last() == Some(&Phase::Reduce));
         let calls = model.calls.borrow().len();
         assert!(calls > 2);
         for i in 0..calls - 1 {
-            assert!(model.user(i).contains("<question>\nWho sends the file?\n</question>"));
+            assert!(model
+                .user(i)
+                .contains("<question>\nWho sends the file?\n</question>"));
         }
-        assert!(list_companions(&archive, &id).unwrap().is_empty(), "answers are not persisted");
+        assert!(
+            list_companions(&archive, &id).unwrap().is_empty(),
+            "answers are not persisted"
+        );
     }
 
     fn answer(item_id: &str, question: Option<&str>) -> PendingAnswer {
         PendingAnswer {
             item_id: item_id.into(),
-            recipe_id: if question.is_some() { QUESTION_RECIPE_ID.into() } else { "open-questions".into() },
-            recipe_name: if question.is_some() { QUESTION_RECIPE_NAME.into() } else { "Open questions".into() },
+            recipe_id: if question.is_some() {
+                QUESTION_RECIPE_ID.into()
+            } else {
+                "open-questions".into()
+            },
+            recipe_name: if question.is_some() {
+                QUESTION_RECIPE_NAME.into()
+            } else {
+                "Open questions".into()
+            },
             question: question.map(str::to_string),
             profile: "Local".into(),
             model: "llama3.2:3b".into(),
@@ -337,29 +389,51 @@ mod tests {
 
     #[test]
     fn saved_answer_names() {
-        assert_eq!(answer_file_name(&answer("x", Some("Who sends the file?"))), "who-sends-the-file.md");
-        assert_eq!(answer_file_name(&answer("x", Some("Perché è così?"))), "perche-e-cosi.md");
-        assert_eq!(answer_file_name(&answer("x", Some("Document?"))), "question-document.md");
-        assert_eq!(answer_file_name(&answer("x", Some("Transcript"))), "question-transcript.md");
+        assert_eq!(
+            answer_file_name(&answer("x", Some("Who sends the file?"))),
+            "who-sends-the-file.md"
+        );
+        assert_eq!(
+            answer_file_name(&answer("x", Some("Perché è così?"))),
+            "perche-e-cosi.md"
+        );
+        assert_eq!(
+            answer_file_name(&answer("x", Some("Document?"))),
+            "question-document.md"
+        );
+        assert_eq!(
+            answer_file_name(&answer("x", Some("Transcript"))),
+            "question-transcript.md"
+        );
         assert_eq!(answer_file_name(&answer("x", Some("???"))), "untitled.md");
         let long = answer_file_name(&answer("x", Some(&"word ".repeat(40))));
-        assert!(long.len() <= crate::archive::paths::MAX_SLUG_LEN + 3, "{long}");
+        assert!(
+            long.len() <= crate::archive::paths::MAX_SLUG_LEN + 3,
+            "{long}"
+        );
         assert_eq!(answer_file_name(&answer("x", None)), "open-questions.md");
     }
 
     #[test]
     fn saved_answer_carries_provenance() {
-        let (file, meta, body) = answer_document(" Weekly sync ", &answer("x", Some("Who sends the file?")));
+        let (file, meta, body) =
+            answer_document(" Weekly sync ", &answer("x", Some("Who sends the file?")));
         assert_eq!(file, "who-sends-the-file.md");
         assert_eq!(meta.title, "Weekly sync — Who sends the file?");
         assert_eq!(meta.generated_by, "Question / Local / llama3.2:3b");
         assert_eq!(meta.recipe, "question");
-        assert_eq!((meta.profile.as_str(), meta.model.as_str(), meta.external), ("Local", "llama3.2:3b", false));
+        assert_eq!(
+            (meta.profile.as_str(), meta.model.as_str(), meta.external),
+            ("Local", "llama3.2:3b", false)
+        );
         assert_eq!(meta.date, NOW);
         assert_eq!(meta.transcript, "transcript.md");
         assert_eq!(meta.extra[KIND_KEY], "answer");
         assert_eq!(meta.extra["question"], "Who sends the file?");
-        assert_eq!(body, "> **Question:** Who sends the file?\n\nAnna, on Friday.");
+        assert_eq!(
+            body,
+            "> **Question:** Who sends the file?\n\nAnna, on Friday."
+        );
 
         let (_, meta, body) = answer_document("Weekly sync", &answer("x", None));
         assert_eq!(meta.title, "Weekly sync — Open questions");
@@ -369,7 +443,9 @@ mod tests {
 
         let long = "why ".repeat(60);
         let (_, meta, _) = answer_document("T", &answer("x", Some(long.trim())));
-        assert!(meta.title.ends_with('…') && meta.title.chars().count() <= 4 + TITLE_QUESTION_CHARS + 1);
+        assert!(
+            meta.title.ends_with('…') && meta.title.chars().count() <= 4 + TITLE_QUESTION_CHARS + 1
+        );
     }
 
     #[test]
@@ -379,9 +455,15 @@ mod tests {
         let id = meeting(&archive, 2);
         let a = answer(&id, Some("Who sends the file?"));
         assert_eq!(save_answer(&archive, &a).unwrap(), "who-sends-the-file.md");
-        assert_eq!(save_answer(&archive, &a).unwrap(), "who-sends-the-file-2.md");
+        assert_eq!(
+            save_answer(&archive, &a).unwrap(),
+            "who-sends-the-file-2.md"
+        );
         let raw = std::fs::read_to_string(archive.join(&id).join("who-sends-the-file.md")).unwrap();
-        assert!(raw.contains("generated_by: Question / Local / llama3.2:3b\n"), "{raw}");
+        assert!(
+            raw.contains("generated_by: Question / Local / llama3.2:3b\n"),
+            "{raw}"
+        );
         assert!(raw.contains("kind: answer\n"), "{raw}");
         assert!(raw.contains("[the transcript](transcript.md)"));
         let (meta, _) = parse_companion(&raw);
@@ -405,7 +487,10 @@ mod tests {
         let b = store.put(answer("b", None));
         assert_ne!(a, b);
         assert_eq!(store.get("a", a).unwrap().question.as_deref(), Some("q"));
-        assert!(store.get("b", a).is_none(), "an answer is only reachable from its item");
+        assert!(
+            store.get("b", a).is_none(),
+            "an answer is only reachable from its item"
+        );
         assert!(store.remove("a", a));
         assert!(!store.remove("a", a));
         assert!(store.get("a", a).is_none());

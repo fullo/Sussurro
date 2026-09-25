@@ -12,7 +12,7 @@
 use super::source_files::{self, Entry, FileState};
 use crate::archive::{self, Channel, ItemType, SegmentsFile};
 use crate::sources::Source;
-use crate::speakers::tracker::{EmbedderLoader, Labelled};
+use crate::speakers::tracker::{EmbedderLoader, Labelled, SpeakerModels};
 use crate::speakers::{SpeakerOptions, Tracker};
 use anyhow::{bail, Result};
 use serde::Serialize;
@@ -162,6 +162,7 @@ pub fn apply(file: &mut SegmentsFile, labels: &[VoiceLabel]) -> Result<Identifie
         };
         seg.speaker_id = Some(speaker_id.clone());
         seg.embedding = Some(embedding.clone());
+        seg.overlap = l.labelled.overlap_at(l.span.start_ms);
         lines += 1;
         if let Some(sp) = &l.labelled.new_speaker {
             if !file.speakers.iter().any(|s| s.id == sp.id) {
@@ -173,6 +174,7 @@ pub fn apply(file: &mut SegmentsFile, labels: &[VoiceLabel]) -> Result<Identifie
         bail!("no line is long enough to tell voices apart (at least 1 s of speech each)");
     }
     crate::speakers::doc::finalize_live(file);
+    crate::speakers::overlap::assign_second_speakers(file);
     let voices = file
         .speakers
         .iter()
@@ -196,10 +198,15 @@ fn file_name_of(source: &str) -> &str {
 /// (lossless) when a Compress audio left both. Its clock is the file's, so
 /// the lines' times fit it. Pure.
 pub fn saved_voice_audio(item: &archive::Item) -> Option<String> {
-    ["audio.wav", "audio-file.wav", "audio.opus", "audio-file.opus"]
-        .into_iter()
-        .find(|name| item.audio.iter().any(|f| f.name == *name))
-        .map(str::to_string)
+    [
+        "audio.wav",
+        "audio-file.wav",
+        "audio.opus",
+        "audio-file.opus",
+    ]
+    .into_iter()
+    .find(|name| item.audio.iter().any(|f| f.name == *name))
+    .map(str::to_string)
 }
 
 /// Whether "Identify voices" can run on this item, and if not, why — in
@@ -294,16 +301,18 @@ pub fn identify_voices(
     id: &str,
     load: EmbedderLoader,
 ) -> Result<(archive::Item, Identified)> {
-    identify_voices_with_own_voice(archive, store, id, load, None)
+    identify_voices_with_own_voice(archive, store, id, load.into(), None)
 }
 
-/// [`identify_voices`], then the user's enrolled voice (`you`, #243)
-/// labels its best match "You" ([`crate::speakers::own_voice::label_you`]).
+/// [`identify_voices`] with the run's models — the overlap model too, when
+/// given (#244: overlapped lines get their spans and second speakers) —
+/// then the user's enrolled voice (`you`, #243) labels its best match
+/// "You" ([`crate::speakers::own_voice::label_you`]).
 pub fn identify_voices_with_own_voice(
     archive: &Path,
     store: &Path,
     id: &str,
-    load: EmbedderLoader,
+    models: SpeakerModels,
     you: Option<&[f32]>,
 ) -> Result<(archive::Item, Identified)> {
     let item = archive::read_item(archive, id)?;
@@ -321,11 +330,12 @@ pub fn identify_voices_with_own_voice(
     if spans.is_empty() {
         bail!("this transcription has no transcribed lines");
     }
-    let embedder = load()?;
+    let embedder = (models.embedder)()?;
     let mut tracker = Tracker::new(
         SpeakerOptions::clustering(&[Channel::File]),
         Box::new(move || Ok(embedder)),
-    );
+    )
+    .with_overlap(models.overlap);
     let mut source = crate::sources::file::FileSource::open(&path)?;
     let labels = label_source(&mut source, &spans, &mut tracker)?;
     let mut identified = None;
@@ -727,6 +737,7 @@ mod tests {
                 speaker_id: Some(voice.into()),
                 embedding: Some(emb.clone()),
                 new_speaker: new.then(|| crate::speakers::doc::voice_speaker(1)),
+                overlap: Vec::new(),
             },
         };
         let labels = vec![

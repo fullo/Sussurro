@@ -955,9 +955,10 @@ impl Sidecar {
             "audio.wav",
             wav,
         );
-        let access = self.access.as_ref().ok_or_else(|| {
-            PostError::Transport(anyhow::anyhow!("the sidecar is not running"))
-        })?;
+        let access = self
+            .access
+            .as_ref()
+            .ok_or_else(|| PostError::Transport(anyhow::anyhow!("the sidecar is not running")))?;
         let resp = self
             .http
             .post(format!("{}/v1/audio/transcriptions", access.base_url()))

@@ -197,7 +197,14 @@ fn server_args_listen_privately_and_keep_paths_whole() {
         "shell syntax stays literal"
     );
     assert_eq!(listen_of(&args), ("127.0.0.1".into(), Some("43210".into())));
-    for flag in ["-ngl", "-c", "-np", "--cache-ram", "--no-webui", "--no-slots"] {
+    for flag in [
+        "-ngl",
+        "-c",
+        "-np",
+        "--cache-ram",
+        "--no-webui",
+        "--no-slots",
+    ] {
         assert!(args.iter().any(|a| a == flag), "{flag}");
     }
     assert!(!args.iter().any(|a| a == "0.0.0.0"));
@@ -207,7 +214,10 @@ fn server_args_listen_privately_and_keep_paths_whole() {
     // A Unix socket: `--host <path>.sock`, no port.
     let sock = Path::new("/data/sidecar/sc-1-abcdef12/llama.sock");
     let args = server_args(model, mmproj, &Endpoint::Unix(sock.into()));
-    assert_eq!(listen_of(&args), (sock.to_string_lossy().into_owned(), None));
+    assert_eq!(
+        listen_of(&args),
+        (sock.to_string_lossy().into_owned(), None)
+    );
     assert!(args.iter().any(|a| a == "--no-slots"));
 }
 
@@ -217,7 +227,11 @@ fn chat_server_args_listen_privately_with_the_alias_and_no_reasoning() {
     let tcp = Endpoint::Tcp(40_001);
     let args = chat_server_args(model, "qwen3-1.7b", 8192, &tcp);
     let pos = |a: &str| args.iter().position(|x| x == a).unwrap();
-    assert_eq!(args[pos("-m") + 1], model.as_os_str(), "one argument, literal");
+    assert_eq!(
+        args[pos("-m") + 1],
+        model.as_os_str(),
+        "one argument, literal"
+    );
     assert_eq!(args[pos("--alias") + 1], "qwen3-1.7b");
     assert_eq!(listen_of(&args), ("127.0.0.1".into(), Some("40001".into())));
     assert_eq!(args[pos("-c") + 1], "8192");
@@ -225,7 +239,9 @@ fn chat_server_args_listen_privately_with_the_alias_and_no_reasoning() {
     assert_eq!(args[pos("--reasoning") + 1], "off");
     assert!(args.iter().any(|a| a == "--no-webui"));
     assert!(args.iter().any(|a| a == "--no-slots"));
-    assert!(!args.iter().any(|a| a == "--mmproj" || a == "0.0.0.0" || a == "--api-key"));
+    assert!(!args
+        .iter()
+        .any(|a| a == "--mmproj" || a == "0.0.0.0" || a == "--api-key"));
     let sock = Endpoint::Unix("/d/llama.sock".into());
     let unix = chat_server_args(model, "qwen3-1.7b", 8192, &sock);
     assert_eq!(listen_of(&unix), ("/d/llama.sock".into(), None));
@@ -264,7 +280,10 @@ fn command_runs_the_binary_directly_from_the_lib_dir_with_the_key_in_its_environ
             .collect::<Vec<_>>(),
         server_args(&cfg.model, &cfg.mmproj, &listen)
     );
-    assert!(!args.iter().any(|a| *a == "k3y"), "never on the command line");
+    assert!(
+        !args.iter().any(|a| *a == "k3y"),
+        "never on the command line"
+    );
     assert_eq!(
         cmd.get_current_dir(),
         Some(Path::new("/app/llama-server-libs"))
@@ -335,7 +354,10 @@ pub(crate) fn fake_config(dir: &Path, mode: &str) -> SidecarConfig {
     std::fs::write(&model, mode).unwrap();
     let mmproj = dir.join("mmproj.gguf");
     std::fs::write(&mmproj, "").unwrap();
-    as_fake(SidecarConfig::new(std::env::current_exe().unwrap(), libs, model, mmproj), dir)
+    as_fake(
+        SidecarConfig::new(std::env::current_exe().unwrap(), libs, model, mmproj),
+        dir,
+    )
 }
 
 /// [`fake_config`] for a chat-model sidecar (#118): the fake answers
@@ -348,7 +370,13 @@ pub(crate) fn fake_chat_config(dir: &Path, name: &str, mode: &str) -> SidecarCon
     let model = dir.join(name);
     std::fs::write(&model, mode).unwrap();
     as_fake(
-        SidecarConfig::chat(std::env::current_exe().unwrap(), libs, model, 2048, "fake-chat"),
+        SidecarConfig::chat(
+            std::env::current_exe().unwrap(),
+            libs,
+            model,
+            2048,
+            "fake-chat",
+        ),
         dir,
     )
 }
@@ -581,7 +609,11 @@ fn sidecar_starts_healthy_privately_and_dies_with_its_owner() {
     let url = |path: &str| format!("{}{path}", access.base_url());
     assert_eq!(bare.get(url("/health")).send().unwrap().status(), 200);
     assert_eq!(bare.get(url("/env")).send().unwrap().status(), 401);
-    let wrong = bare.get(url("/env")).bearer_auth("0".repeat(64)).send().unwrap();
+    let wrong = bare
+        .get(url("/env"))
+        .bearer_auth("0".repeat(64))
+        .send()
+        .unwrap();
     assert_eq!(wrong.status(), 401);
 
     // Working directory and library path as #116's layout needs.
@@ -804,7 +836,10 @@ fn live_sidecar_enforces_its_api_key_and_hides_slots() {
             "{path} with a wrong key"
         );
     }
-    assert_eq!(status(client.get(url("/props")).bearer_auth(access.api_key())), 200);
+    assert_eq!(
+        status(client.get(url("/props")).bearer_auth(access.api_key())),
+        200
+    );
     let slots = status(client.get(url("/slots")).bearer_auth(access.api_key()));
     assert_ne!(slots, 200, "--no-slots: /slots answered {slots}");
 

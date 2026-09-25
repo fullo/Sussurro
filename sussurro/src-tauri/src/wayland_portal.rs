@@ -189,7 +189,10 @@ pub fn type_text(text: &str) -> Result<()> {
         if slot.is_none() {
             *slot = Some(connect().await?);
         }
-        if type_keysyms(slot.as_ref().expect("session"), &keysyms).await.is_ok() {
+        if type_keysyms(slot.as_ref().expect("session"), &keysyms)
+            .await
+            .is_ok()
+        {
             return Ok(());
         }
         // Session died mid-use (compositor restart, revoked grant):
@@ -207,7 +210,10 @@ pub fn key_combo(letter: char) -> Result<()> {
         if slot.is_none() {
             *slot = Some(connect().await?);
         }
-        if combo_keysym(slot.as_ref().expect("session"), letter_keysym).await.is_ok() {
+        if combo_keysym(slot.as_ref().expect("session"), letter_keysym)
+            .await
+            .is_ok()
+        {
             return Ok(());
         }
         *slot = Some(connect().await?);

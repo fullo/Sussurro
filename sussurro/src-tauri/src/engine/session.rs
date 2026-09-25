@@ -530,7 +530,7 @@ where
         transcribe,
         clean,
         detector,
-        embedder_loader,
+        speaker_models,
         sink,
     )
 }
@@ -539,19 +539,20 @@ where
 /// pass a fake embedder instead of the downloaded WeSpeaker. `speaker_model`
 /// is called only when the run labels voices ([`speaker_options`]).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_request_with_speakers<T, C>(
+pub(crate) fn run_request_with_speakers<T, C, M>(
     shared: &Mutex<Settings>,
     paths: &AppPaths,
     req: Request,
     transcribe: T,
     clean: C,
     detector: impl FnOnce(&Path) -> Box<dyn SpeechDetector>,
-    speaker_model: impl FnOnce(std::path::PathBuf) -> crate::speakers::tracker::EmbedderLoader,
+    speaker_model: impl FnOnce(std::path::PathBuf) -> M,
     sink: Arc<dyn EngineSink>,
 ) -> Result<RunResult>
 where
     T: FnMut(&[f32], &str) -> Result<TimedTranscript> + Send,
     C: Fn(&Settings, Option<&str>, &str) -> String + Send + Sync,
+    M: Into<crate::speakers::tracker::SpeakerModels>,
 {
     let global = shared.lock().unwrap().clone();
     // This run's settings: the dictation's plus the choices made in New
@@ -571,7 +572,7 @@ where
             if o.two_channel {
                 o.names = req.names.clone();
             }
-            crate::speakers::Tracker::new(o, speaker_model(models_dir.clone()))
+            crate::speakers::Tracker::with_models(o, speaker_model(models_dir.clone()).into())
                 .with_own_voice(own_voice_for_runs(paths))
         });
         Ok(Job {
@@ -687,9 +688,35 @@ pub(crate) fn own_voice_for_runs(paths: &AppPaths) -> Option<Vec<f32>> {
     .labelling_voice()
 }
 
+/// The speaker models of a run: the embedder ([`embedder_loader`]) and the
+/// overlap model ([`overlap_loader`], #244).
+pub(crate) fn speaker_models(
+    models_dir: std::path::PathBuf,
+) -> crate::speakers::tracker::SpeakerModels {
+    crate::speakers::tracker::SpeakerModels {
+        embedder: embedder_loader(models_dir.clone()),
+        overlap: Some(overlap_loader(models_dir)),
+    }
+}
+
+/// Loads the overlap model (pyannote segmentation-3.0, #244) when a line
+/// first needs it: downloaded into the models folder on first use and
+/// verified against its pinned SHA-256.
+pub(crate) fn overlap_loader(
+    models_dir: std::path::PathBuf,
+) -> crate::speakers::overlap::OverlapLoader {
+    Box::new(move || {
+        let path = crate::speakers::segmentation::ensure_model(&models_dir)?;
+        let model = crate::speakers::segmentation::Segmentation::load(&path)?;
+        Ok(Box::new(model) as Box<dyn crate::speakers::overlap::OverlapModel>)
+    })
+}
+
 /// Loads the speaker model when a run first needs it: downloaded into the
 /// models folder on first use and verified against its pinned SHA-256.
-pub(crate) fn embedder_loader(models_dir: std::path::PathBuf) -> crate::speakers::tracker::EmbedderLoader {
+pub(crate) fn embedder_loader(
+    models_dir: std::path::PathBuf,
+) -> crate::speakers::tracker::EmbedderLoader {
     Box::new(move || {
         let path = crate::speakers::model::ensure_model(&models_dir)?;
         let model = crate::speakers::model::WeSpeaker::load(&path)?;
@@ -1048,7 +1075,10 @@ fn remember_source_file(state: &AppState, result: &RunResult, path: &Path) {
         super::source_files::record(&source_files_path(state), &archive, &result.item_id, path)
     });
     if let Err(e) = recorded {
-        eprintln!("engine: original file of {} not remembered ({e:#})", result.item_id);
+        eprintln!(
+            "engine: original file of {} not remembered ({e:#})",
+            result.item_id
+        );
     }
 }
 
@@ -1378,12 +1408,22 @@ mod tests {
             language: Some("it".into()),
             ..Default::default()
         };
-        let req = system_request(3, cancel.clone(), source, "Standup".into(), false, options.clone());
+        let req = system_request(
+            3,
+            cancel.clone(),
+            source,
+            "Standup".into(),
+            false,
+            options.clone(),
+        );
         assert_eq!(req.item_type, ItemType::Meeting);
         assert_eq!(req.source_label, "system");
         assert_eq!(req.source.channel(), crate::archive::Channel::System);
         assert_eq!((req.title.as_str(), req.options), ("Standup", options));
-        assert!(matches!(req.policy, Policy::Spill { .. }), "a live source spills");
+        assert!(
+            matches!(req.policy, Policy::Spill { .. }),
+            "a live source spills"
+        );
         // The run's cancel reaches the source: it stops waiting for audio.
         cancel.store(true, Ordering::Relaxed);
         let mut source = req.source;
@@ -1445,16 +1485,34 @@ mod tests {
                 language: run_language.into(),
                 ..Default::default()
             };
-            let (settings, _stt, cleaner) =
-                run_parts(&global, &RunOptions::default(), |_: &[f32], _: &str| (), clean);
+            let (settings, _stt, cleaner) = run_parts(
+                &global,
+                &RunOptions::default(),
+                |_: &[f32], _: &str| (),
+                clean,
+            );
             assert_eq!(cleaner.clean_detected(None, "x", detected), "x");
-            assert_eq!(seen.lock().unwrap().pop().unwrap(), expected, "{run_language:?} {detected:?}");
-            assert_eq!(cleaner.settings, settings, "the run's settings stay as they were");
+            assert_eq!(
+                seen.lock().unwrap().pop().unwrap(),
+                expected,
+                "{run_language:?} {detected:?}"
+            );
+            assert_eq!(
+                cleaner.settings, settings,
+                "the run's settings stay as they were"
+            );
         }
         // The plain `clean` uses the run's settings as they are.
-        let global = Settings { language: "auto".into(), ..Default::default() };
-        let (_, _stt, cleaner) =
-            run_parts(&global, &RunOptions::default(), |_: &[f32], _: &str| (), clean);
+        let global = Settings {
+            language: "auto".into(),
+            ..Default::default()
+        };
+        let (_, _stt, cleaner) = run_parts(
+            &global,
+            &RunOptions::default(),
+            |_: &[f32], _: &str| (),
+            clean,
+        );
         cleaner.clean(None, "x");
         assert_eq!(seen.lock().unwrap().pop().unwrap(), "auto");
     }
@@ -1497,7 +1555,11 @@ mod tests {
 
             for source in ["file:a.wav", "url:https://x.org/a.mp3"] {
                 let t = speaker_options(ItemType::Transcription, Channel::File, source, identify);
-                assert_eq!(t.is_some(), identify, "transcription {source}: toggle {identify}");
+                assert_eq!(
+                    t.is_some(),
+                    identify,
+                    "transcription {source}: toggle {identify}"
+                );
                 if let Some(o) = t {
                     assert!(o.clusters(Channel::File) && !o.two_channel);
                 }
@@ -1519,8 +1581,11 @@ mod tests {
         // System audio + mic (#139): the mic is You, the system side is
         // clustered, whatever the toggle.
         for identify in [false, true] {
-            let sys = speaker_options(ItemType::Meeting, Channel::System, "system", identify).unwrap();
-            assert!(sys.two_channel && sys.clusters(Channel::System) && !sys.clusters(Channel::Mic));
+            let sys =
+                speaker_options(ItemType::Meeting, Channel::System, "system", identify).unwrap();
+            assert!(
+                sys.two_channel && sys.clusters(Channel::System) && !sys.clusters(Channel::Mic)
+            );
         }
     }
 

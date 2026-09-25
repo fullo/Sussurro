@@ -1,4 +1,6 @@
-use crate::llm::{KeyStorage, LlmProfile, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, LOCAL_PROFILE_ID};
+use crate::llm::{
+    KeyStorage, LlmProfile, DEFAULT_OLLAMA_MODEL, DEFAULT_OLLAMA_URL, LOCAL_PROFILE_ID,
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -364,7 +366,9 @@ impl Settings {
         for p in &mut self.llm_profiles {
             p.id = p.id.trim().to_string();
             if p.id.is_empty() || !seen.insert(p.id.clone()) {
-                while all.contains(&format!("profile-{next}")) || seen.contains(&format!("profile-{next}")) {
+                while all.contains(&format!("profile-{next}"))
+                    || seen.contains(&format!("profile-{next}"))
+                {
                     next += 1;
                 }
                 p.id = format!("profile-{next}");
@@ -374,7 +378,11 @@ impl Settings {
                 p.name = "Untitled".into();
             }
         }
-        if !self.llm_profiles.iter().any(|p| p.id == self.cleanup_profile) {
+        if !self
+            .llm_profiles
+            .iter()
+            .any(|p| p.id == self.cleanup_profile)
+        {
             self.cleanup_profile = self.llm_profiles[0].id.clone();
         }
         crate::recipes::normalize_user_recipes(&mut self.recipes);
@@ -441,9 +449,13 @@ impl Settings {
             LOCAL_PROFILE_ID,
             "Local",
             self.legacy_cleanup_api.clone().unwrap_or_default(),
-            self.legacy_ollama_url.as_deref().unwrap_or(DEFAULT_OLLAMA_URL),
+            self.legacy_ollama_url
+                .as_deref()
+                .unwrap_or(DEFAULT_OLLAMA_URL),
             self.legacy_api_key.as_deref().unwrap_or(""),
-            self.legacy_ollama_model.as_deref().unwrap_or(DEFAULT_OLLAMA_MODEL),
+            self.legacy_ollama_model
+                .as_deref()
+                .unwrap_or(DEFAULT_OLLAMA_MODEL),
         )
     }
 
@@ -622,7 +634,9 @@ pub fn endpoint_host(url: &str) -> Option<String> {
         authority = &authority[at + 1..];
     }
     let host = if let Some(bracketed) = authority.strip_prefix('[') {
-        bracketed.split_once(']').map(|(inner, _)| inner.to_string())
+        bracketed
+            .split_once(']')
+            .map(|(inner, _)| inner.to_string())
     } else if let Some(colon) = authority.rfind(':') {
         Some(authority[..colon].to_string())
     } else {
@@ -740,8 +754,8 @@ mod tests {
             "http://localhost:11434",
             "http://localhost",
             "https://localhost:8080/v1/chat/completions",
-            "localhost:11434", // no scheme
-            "HTTP://LOCALHOST/", // case-insensitive
+            "localhost:11434",             // no scheme
+            "HTTP://LOCALHOST/",           // case-insensitive
             "http://user@localhost:11434", // userinfo stripped
             "http://127.0.0.1:11434",
             "http://[::1]:11434",
@@ -768,7 +782,14 @@ mod tests {
 
     #[test]
     fn is_local_endpoint_handles_malformed_input() {
-        for url in ["", "   ", "http://", "://nope", "not a url", "http://:11434"] {
+        for url in [
+            "",
+            "   ",
+            "http://",
+            "://nope",
+            "not a url",
+            "http://:11434",
+        ] {
             assert!(!is_local_endpoint(url), "{url}");
         }
     }
@@ -810,7 +831,9 @@ mod tests {
         loaded.save(&path).unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
         assert!(!saved.contains("command_hotkey"), "{saved}");
-        assert!(!serde_json::to_string(&s).unwrap().contains("command_hotkey"));
+        assert!(!serde_json::to_string(&s)
+            .unwrap()
+            .contains("command_hotkey"));
     }
 
     /// #138: meetings are always on; a settings.json from the 0.9 preview
@@ -826,7 +849,10 @@ mod tests {
             let path = dir.path().join("settings.json");
             std::fs::write(&path, &legacy).unwrap();
             let loaded = Settings::load(&path);
-            assert_eq!(loaded.hotkey, "Alt+Space", "load() must not fall back to defaults");
+            assert_eq!(
+                loaded.hotkey, "Alt+Space",
+                "load() must not fall back to defaults"
+            );
             assert_eq!(loaded.extension_token, "abc");
             assert!(loaded.save_audio);
             loaded.save(&path).unwrap();
@@ -924,7 +950,10 @@ mod tests {
             )
             .unwrap();
             let s = Settings::load(&path);
-            assert_eq!(s.hotkey, "Alt+Space", "ui_v2={flag} must not reset the file");
+            assert_eq!(
+                s.hotkey, "Alt+Space",
+                "ui_v2={flag} must not reset the file"
+            );
             assert_eq!(s.archive_dir, "/notes");
             s.save(&path).unwrap();
             let saved = std::fs::read_to_string(&path).unwrap();
@@ -982,7 +1011,13 @@ mod tests {
         assert_eq!(s.cleanup_llm().model, "qwen2.5:7b");
         s.save(&path).unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
-        for gone in ["ollama_url", "ollama_model", "command_hotkey", "cleanup_api", "ui_v2"] {
+        for gone in [
+            "ollama_url",
+            "ollama_model",
+            "command_hotkey",
+            "cleanup_api",
+            "ui_v2",
+        ] {
             assert!(!saved.contains(gone), "{gone} in {saved}");
         }
         assert_eq!(Settings::load(&path).onboarding, Onboarding::WhatsNew);
@@ -1027,7 +1062,11 @@ mod tests {
         let mut s = Settings::default();
         let first = s.ensure_extension_token().unwrap();
         assert_eq!(first.len(), 64);
-        assert_eq!(s.ensure_extension_token().unwrap(), first, "stable once created");
+        assert_eq!(
+            s.ensure_extension_token().unwrap(),
+            first,
+            "stable once created"
+        );
         let second = s.regenerate_extension_token().unwrap();
         assert_ne!(second, first);
         assert_eq!(s.extension_token, second);
@@ -1042,7 +1081,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         for (api_enabled, expected) in [(true, true), (false, false)] {
-            std::fs::write(&path, format!(r#"{{"api_enabled":{api_enabled},"api_port":4525}}"#)).unwrap();
+            std::fs::write(
+                &path,
+                format!(r#"{{"api_enabled":{api_enabled},"api_port":4525}}"#),
+            )
+            .unwrap();
             let (s, migrated) = Settings::load_migrating(&path);
             assert!(migrated, "the new key must be written once");
             assert_eq!(s.api_scripting, expected);
@@ -1069,7 +1112,8 @@ mod tests {
         std::fs::write(&path, r#"{"api_enabled":true,"api_scripting":true}"#).unwrap();
         let old = Settings::load(&path);
         assert!(!old.api_archive && old.archive_tokens.is_empty());
-        let (stored, new) = create(&[], "ci", &[Scope::Read, Scope::People], chrono::Utc::now()).unwrap();
+        let (stored, new) =
+            create(&[], "ci", &[Scope::Read, Scope::People], chrono::Utc::now()).unwrap();
         let s = Settings {
             api_archive: true,
             archive_tokens: vec![stored.clone()],
@@ -1085,7 +1129,10 @@ mod tests {
         let ui = back.for_ui();
         assert!(ui.archive_tokens[0].sha256.is_empty());
         assert_eq!(ui.archive_tokens[0].name, "ci");
-        assert_eq!(back.archive_tokens[0].sha256, stored.sha256, "for_ui leaves the original alone");
+        assert_eq!(
+            back.archive_tokens[0].sha256, stored.sha256,
+            "for_ui leaves the original alone"
+        );
     }
 
     /// #136: the recording notice shows until acknowledged; a settings file
@@ -1098,7 +1145,10 @@ mod tests {
         let seen: Settings = serde_json::from_str(r#"{"meeting_notice_seen":true}"#).unwrap();
         assert!(seen.meeting_notice_seen);
         let back: Settings = serde_json::from_str(&serde_json::to_string(&seen).unwrap()).unwrap();
-        assert!(back.meeting_notice_seen, "round-trips through settings.json");
+        assert!(
+            back.meeting_notice_seen,
+            "round-trips through settings.json"
+        );
     }
 
     /// #242: voice suggestions are on unless turned off; a settings file
@@ -1191,10 +1241,22 @@ mod tests {
         s.save(&path).unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
         let json: serde_json::Value = serde_json::from_str(&saved).unwrap();
-        for key in ["ollama_url", "ollama_model", "cleanup_api", "api_key", "command_hotkey"] {
-            assert!(json.get(key).is_none(), "{key} must not be written: {saved}");
+        for key in [
+            "ollama_url",
+            "ollama_model",
+            "cleanup_api",
+            "api_key",
+            "command_hotkey",
+        ] {
+            assert!(
+                json.get(key).is_none(),
+                "{key} must not be written: {saved}"
+            );
         }
-        assert_eq!(json["llm_profiles"][0]["base_url"], "http://localhost:8080/v1");
+        assert_eq!(
+            json["llm_profiles"][0]["base_url"],
+            "http://localhost:8080/v1"
+        );
         assert_eq!(json["cleanup_profile"], "local");
         let (again, migrated_again) = Settings::load_migrating(&path);
         assert!(!migrated_again);
@@ -1251,7 +1313,14 @@ mod tests {
 
     #[test]
     fn cleanup_llm_picks_the_selected_profile() {
-        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com/v1", "k", "gpt");
+        let work = LlmProfile::new(
+            "work",
+            "Work",
+            CleanupApi::Openai,
+            "https://api.example.com/v1",
+            "k",
+            "gpt",
+        );
         let mut s = Settings {
             llm_profiles: vec![LlmProfile::default(), work.clone()],
             cleanup_profile: "work".into(),
@@ -1272,10 +1341,23 @@ mod tests {
     fn normalize_repairs_ids_and_names() {
         let mut s = Settings {
             llm_profiles: vec![
-                LlmProfile { id: "a".into(), ..Default::default() },
-                LlmProfile { id: "a".into(), name: " ".into(), ..Default::default() },
-                LlmProfile { id: "".into(), ..Default::default() },
-                LlmProfile { id: "profile-1".into(), ..Default::default() },
+                LlmProfile {
+                    id: "a".into(),
+                    ..Default::default()
+                },
+                LlmProfile {
+                    id: "a".into(),
+                    name: " ".into(),
+                    ..Default::default()
+                },
+                LlmProfile {
+                    id: "".into(),
+                    ..Default::default()
+                },
+                LlmProfile {
+                    id: "profile-1".into(),
+                    ..Default::default()
+                },
             ],
             cleanup_profile: "a".into(),
             ..Default::default()
@@ -1342,7 +1424,10 @@ mod tests {
             name: "Renamed".into(),
             ..profile()
         };
-        let dup = LlmProfile { id: "other".into(), ..profile() };
+        let dup = LlmProfile {
+            id: "other".into(),
+            ..profile()
+        };
         let mut s = Settings {
             llm_profiles: vec![LlmProfile::default(), tampered, dup],
             cleanup_profile: PROFILE_ID.into(),
@@ -1360,7 +1445,14 @@ mod tests {
     #[test]
     fn a_user_profile_with_the_reserved_id_is_renamed_and_keeps_cleanup() {
         use crate::llm::bundled::PROFILE_ID;
-        let mine = LlmProfile::new(PROFILE_ID, "Bundled", CleanupApi::Openai, "http://localhost:8080/v1", "", "m");
+        let mine = LlmProfile::new(
+            PROFILE_ID,
+            "Bundled",
+            CleanupApi::Openai,
+            "http://localhost:8080/v1",
+            "",
+            "m",
+        );
         let mut s = Settings {
             llm_profiles: vec![LlmProfile::default(), mine.clone()],
             cleanup_profile: PROFILE_ID.into(),
@@ -1369,7 +1461,10 @@ mod tests {
         assert!(s.ensure_bundled_profile());
         let ids: Vec<_> = s.llm_profiles.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids, ["local", "bundled-2", PROFILE_ID]);
-        assert_eq!(s.cleanup_profile, "bundled-2", "cleanup stays on the user's profile");
+        assert_eq!(
+            s.cleanup_profile, "bundled-2",
+            "cleanup stays on the user's profile"
+        );
         assert_eq!(s.cleanup_llm().base_url, mine.base_url);
         assert!(s.llm_profiles.iter().filter(|p| p.bundled).count() == 1);
     }
@@ -1380,7 +1475,14 @@ mod tests {
     fn manual_external_override_survives_a_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let mut lan = LlmProfile::new("lan", "LAN box", CleanupApi::Ollama, "http://192.168.1.5:11434", "", "m");
+        let mut lan = LlmProfile::new(
+            "lan",
+            "LAN box",
+            CleanupApi::Ollama,
+            "http://192.168.1.5:11434",
+            "",
+            "m",
+        );
         assert!(lan.external);
         lan.external = false;
         let s = Settings {
@@ -1397,7 +1499,10 @@ mod tests {
     #[test]
     fn load_missing_or_corrupt_file_falls_back_to_defaults() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(Settings::load(&dir.path().join("nope.json")), Settings::default());
+        assert_eq!(
+            Settings::load(&dir.path().join("nope.json")),
+            Settings::default()
+        );
         let bad = dir.path().join("bad.json");
         std::fs::write(&bad, "{not json").unwrap();
         assert_eq!(Settings::load(&bad), Settings::default());

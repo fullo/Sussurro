@@ -115,13 +115,24 @@ pub fn builtin_recipes() -> Vec<Recipe> {
         builtin: true,
         speakers_only: false,
     };
-    let speakers = |id: &str, name: &str, prompt: &str| Recipe { speakers_only: true, ..r(id, name, prompt) };
+    let speakers = |id: &str, name: &str, prompt: &str| Recipe {
+        speakers_only: true,
+        ..r(id, name, prompt)
+    };
     vec![
-        r(FORMATTED_DOCUMENT_ID, "Formatted document", FORMATTED_DOCUMENT_PROMPT),
+        r(
+            FORMATTED_DOCUMENT_ID,
+            "Formatted document",
+            FORMATTED_DOCUMENT_PROMPT,
+        ),
         r("summary", "Summary", SUMMARY_PROMPT),
         r("action-items", "Action items", ACTION_ITEMS_PROMPT),
         r("decisions", "Decisions", DECISIONS_PROMPT),
-        speakers(MEETING_MINUTES_ID, "Meeting minutes", MEETING_MINUTES_PROMPT),
+        speakers(
+            MEETING_MINUTES_ID,
+            "Meeting minutes",
+            MEETING_MINUTES_PROMPT,
+        ),
         speakers(WHO_SAID_WHAT_ID, "Who said what", WHO_SAID_WHAT_PROMPT),
     ]
 }
@@ -203,25 +214,48 @@ mod tests {
         let names: Vec<_> = b.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(
             names,
-            ["Formatted document", "Summary", "Action items", "Decisions", "Meeting minutes", "Who said what"]
+            [
+                "Formatted document",
+                "Summary",
+                "Action items",
+                "Decisions",
+                "Meeting minutes",
+                "Who said what"
+            ]
         );
-        assert!(b.iter().all(|r| r.builtin && r.target == RecipeTarget::CompanionDocument));
+        assert!(b
+            .iter()
+            .all(|r| r.builtin && r.target == RecipeTarget::CompanionDocument));
         assert!(b.iter().all(|r| !r.prompt.trim().is_empty()));
         let fd = &b[0].prompt;
         assert!(fd.contains("tl;dr") && fd.contains("######") && fd.contains("table"));
         // Only the meeting recipes need speakers.
-        let speakers: Vec<_> = b.iter().filter(|r| r.speakers_only).map(|r| r.id.as_str()).collect();
+        let speakers: Vec<_> = b
+            .iter()
+            .filter(|r| r.speakers_only)
+            .map(|r| r.id.as_str())
+            .collect();
         assert_eq!(speakers, [MEETING_MINUTES_ID, WHO_SAID_WHAT_ID]);
     }
 
     #[test]
     fn meeting_recipes_ask_for_attributed_structure() {
         let minutes = find_recipe(&[], MEETING_MINUTES_ID).unwrap().prompt;
-        for part in ["## Attendees", "## Agenda", "## Decisions", "## Action items", "Action | Owner | Due", "never invent"] {
+        for part in [
+            "## Attendees",
+            "## Agenda",
+            "## Decisions",
+            "## Action items",
+            "Action | Owner | Due",
+            "never invent",
+        ] {
             assert!(minutes.contains(part), "{part}: {minutes}");
         }
         let who = find_recipe(&[], WHO_SAID_WHAT_ID).unwrap().prompt;
-        assert!(who.contains("For each speaker") && who.contains("only what that speaker said"), "{who}");
+        assert!(
+            who.contains("For each speaker") && who.contains("only what that speaker said"),
+            "{who}"
+        );
     }
 
     #[test]
@@ -230,7 +264,12 @@ mod tests {
             assert!(applies(&r, true), "{}", r.id);
             assert_eq!(applies(&r, false), !r.speakers_only, "{}", r.id);
         }
-        let user = Recipe { id: "u".into(), name: "U".into(), speakers_only: true, ..Default::default() };
+        let user = Recipe {
+            id: "u".into(),
+            name: "U".into(),
+            speakers_only: true,
+            ..Default::default()
+        };
         assert!(!applies(&user, false) && applies(&user, true));
     }
 
@@ -240,11 +279,28 @@ mod tests {
         let files: Vec<_> = b.iter().map(companion_file_name).collect();
         assert_eq!(
             files,
-            ["document.md", "summary.md", "action-items.md", "decisions.md", "meeting-minutes.md", "who-said-what.md"]
+            [
+                "document.md",
+                "summary.md",
+                "action-items.md",
+                "decisions.md",
+                "meeting-minutes.md",
+                "who-said-what.md"
+            ]
         );
-        let user = |name: &str| Recipe { id: "u".into(), name: name.into(), ..Default::default() };
-        assert_eq!(companion_file_name(&user("Domande aperte")), "domande-aperte.md");
-        assert_eq!(companion_file_name(&user("Transcript")), "recipe-transcript.md");
+        let user = |name: &str| Recipe {
+            id: "u".into(),
+            name: name.into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            companion_file_name(&user("Domande aperte")),
+            "domande-aperte.md"
+        );
+        assert_eq!(
+            companion_file_name(&user("Transcript")),
+            "recipe-transcript.md"
+        );
         assert_eq!(companion_file_name(&user("Document")), "recipe-document.md");
         assert_eq!(companion_file_name(&user("??")), "untitled.md");
     }
@@ -252,11 +308,32 @@ mod tests {
     #[test]
     fn normalize_user_recipes_repairs_ids_names_and_flags() {
         let mut r = vec![
-            Recipe { id: "summary".into(), name: "Mine".into(), builtin: true, ..Default::default() },
-            Recipe { id: "q".into(), name: " Q ".into(), ..Default::default() },
-            Recipe { id: "q".into(), name: "".into(), ..Default::default() },
-            Recipe { id: "recipe-1".into(), name: "R".into(), ..Default::default() },
-            Recipe { id: "question".into(), name: "Mine too".into(), ..Default::default() },
+            Recipe {
+                id: "summary".into(),
+                name: "Mine".into(),
+                builtin: true,
+                ..Default::default()
+            },
+            Recipe {
+                id: "q".into(),
+                name: " Q ".into(),
+                ..Default::default()
+            },
+            Recipe {
+                id: "q".into(),
+                name: "".into(),
+                ..Default::default()
+            },
+            Recipe {
+                id: "recipe-1".into(),
+                name: "R".into(),
+                ..Default::default()
+            },
+            Recipe {
+                id: "question".into(),
+                name: "Mine too".into(),
+                ..Default::default()
+            },
         ];
         normalize_user_recipes(&mut r);
         let ids: Vec<_> = r.iter().map(|x| x.id.as_str()).collect();
@@ -271,7 +348,11 @@ mod tests {
 
     #[test]
     fn find_covers_builtins_and_user_recipes() {
-        let user = vec![Recipe { id: "mine".into(), name: "Mine".into(), ..Default::default() }];
+        let user = vec![Recipe {
+            id: "mine".into(),
+            name: "Mine".into(),
+            ..Default::default()
+        }];
         assert_eq!(find_recipe(&user, "summary").unwrap().name, "Summary");
         assert_eq!(find_recipe(&user, "mine").unwrap().name, "Mine");
         assert!(find_recipe(&user, "nope").is_none());

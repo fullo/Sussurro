@@ -169,13 +169,20 @@ pub fn validate_name(name: &str, existing: &[ArchiveToken]) -> Result<String, St
         return Err("give the token a name (what script uses it)".into());
     }
     if name.chars().count() > MAX_NAME_CHARS {
-        return Err(format!("the name is too long (at most {MAX_NAME_CHARS} characters)"));
+        return Err(format!(
+            "the name is too long (at most {MAX_NAME_CHARS} characters)"
+        ));
     }
     if name.chars().any(char::is_control) {
         return Err("the name can't contain control characters".into());
     }
-    if existing.iter().any(|t| t.name.to_lowercase() == name.to_lowercase()) {
-        return Err(format!("a token named \u{201c}{name}\u{201d} already exists"));
+    if existing
+        .iter()
+        .any(|t| t.name.to_lowercase() == name.to_lowercase())
+    {
+        return Err(format!(
+            "a token named \u{201c}{name}\u{201d} already exists"
+        ));
     }
     Ok(name.to_string())
 }
@@ -214,7 +221,9 @@ pub fn create_with(
     id: String,
 ) -> Result<(ArchiveToken, NewToken), String> {
     if existing.len() >= MAX_TOKENS {
-        return Err(format!("at most {MAX_TOKENS} tokens: revoke one you no longer use"));
+        return Err(format!(
+            "at most {MAX_TOKENS} tokens: revoke one you no longer use"
+        ));
     }
     let name = validate_name(name, existing)?;
     let scopes = normalize_scopes(scopes)?;
@@ -299,7 +308,9 @@ impl RateLimiter {
         let mut buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
         if buckets.len() > 2 * MAX_TOKENS && !buckets.contains_key(id) {
             // Revoked tokens' buckets: drop the stale ones.
-            buckets.retain(|_, (_, last)| now.saturating_duration_since(*last) < Duration::from_secs(60));
+            buckets.retain(|_, (_, last)| {
+                now.saturating_duration_since(*last) < Duration::from_secs(60)
+            });
         }
         let (level, last) = buckets.entry(id.to_string()).or_insert((self.burst, now));
         let refill = now.saturating_duration_since(*last).as_secs_f64() * self.per_sec;
@@ -375,10 +386,16 @@ impl Denied {
     /// Extra response headers (never CORS).
     pub fn headers(self) -> Vec<(&'static str, String)> {
         match self {
-            Denied::Unauthorized => vec![("WWW-Authenticate", "Bearer realm=\"sussurro-archive\"".into())],
+            Denied::Unauthorized => vec![(
+                "WWW-Authenticate",
+                "Bearer realm=\"sussurro-archive\"".into(),
+            )],
             Denied::Scope(s) => vec![(
                 "WWW-Authenticate",
-                format!("Bearer realm=\"sussurro-archive\", error=\"insufficient_scope\", scope=\"{}\"", s.as_str()),
+                format!(
+                    "Bearer realm=\"sussurro-archive\", error=\"insufficient_scope\", scope=\"{}\"",
+                    s.as_str()
+                ),
             )],
             Denied::RateLimited(secs) => vec![("Retry-After", secs.to_string())],
             Denied::Origin | Denied::Off => Vec::new(),
@@ -420,10 +437,14 @@ pub fn authorize(
     if !enabled {
         return Err(Denied::Off);
     }
-    let given = authorization.and_then(auth::bearer_token).ok_or(Denied::Unauthorized)?;
+    let given = authorization
+        .and_then(auth::bearer_token)
+        .ok_or(Denied::Unauthorized)?;
     let token = find(tokens, given).ok_or(Denied::Unauthorized)?;
     if let Err(wait) = limiter.check(&token.id, now) {
-        return Err(Denied::RateLimited(wait.as_secs_f64().ceil().max(1.0) as u64));
+        return Err(Denied::RateLimited(
+            wait.as_secs_f64().ceil().max(1.0) as u64
+        ));
     }
     if !token.scopes.contains(&required) {
         return Err(Denied::Scope(required));
@@ -442,11 +463,15 @@ mod tests {
     const T: &str = "sua_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     fn now() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-09-25T10:00:00Z").unwrap().with_timezone(&Utc)
+        DateTime::parse_from_rfc3339("2026-09-25T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
     }
 
     fn make(name: &str, scopes: &[Scope], token: &str, id: &str) -> ArchiveToken {
-        create_with(&[], name, scopes, now(), token.into(), id.into()).unwrap().0
+        create_with(&[], name, scopes, now(), token.into(), id.into())
+            .unwrap()
+            .0
     }
 
     fn limiter() -> RateLimiter {
@@ -512,10 +537,19 @@ mod tests {
         let existing = vec![make("Backup", &[Scope::Read], T, "a")];
         assert!(validate_name("", &existing).is_err());
         assert!(validate_name("   ", &existing).is_err());
-        assert!(validate_name("backup", &existing).is_err(), "duplicate, any case");
+        assert!(
+            validate_name("backup", &existing).is_err(),
+            "duplicate, any case"
+        );
         assert!(validate_name("tab\tname", &existing).is_err());
         assert!(validate_name(&"x".repeat(MAX_NAME_CHARS + 1), &existing).is_err());
-        assert_eq!(validate_name(&"é".repeat(MAX_NAME_CHARS), &existing).unwrap().chars().count(), MAX_NAME_CHARS);
+        assert_eq!(
+            validate_name(&"é".repeat(MAX_NAME_CHARS), &existing)
+                .unwrap()
+                .chars()
+                .count(),
+            MAX_NAME_CHARS
+        );
         assert!(normalize_scopes(&[]).is_err());
         assert_eq!(
             normalize_scopes(&[Scope::Write, Scope::Read, Scope::Write]).unwrap(),
@@ -543,8 +577,17 @@ mod tests {
             make("b", &[Scope::Write], &T.replace('f', "e"), "id-b"),
         ];
         assert_eq!(find(&tokens, T).map(|t| t.id.as_str()), Some("id-a"));
-        assert_eq!(find(&tokens, &T.replace('f', "e")).map(|t| t.id.as_str()), Some("id-b"));
-        for wrong in ["", "sua_", &T[..T.len() - 1], &T.to_uppercase(), &tokens[0].sha256] {
+        assert_eq!(
+            find(&tokens, &T.replace('f', "e")).map(|t| t.id.as_str()),
+            Some("id-b")
+        );
+        for wrong in [
+            "",
+            "sua_",
+            &T[..T.len() - 1],
+            &T.to_uppercase(),
+            &tokens[0].sha256,
+        ] {
             assert!(find(&tokens, wrong).is_none(), "{wrong}");
         }
         assert!(find(&[], T).is_none());
@@ -555,12 +598,29 @@ mod tests {
         let mut tokens = vec![make("a", &[Scope::Read], T, "id-a")];
         let lim = limiter();
         let bearer = format!("Bearer {T}");
-        assert!(authorize(true, &tokens, Some(&bearer), None, Scope::Read, &lim, Instant::now()).is_ok());
+        assert!(authorize(
+            true,
+            &tokens,
+            Some(&bearer),
+            None,
+            Scope::Read,
+            &lim,
+            Instant::now()
+        )
+        .is_ok());
         assert!(!revoke(&mut tokens, "nope"));
         assert!(revoke(&mut tokens, "id-a"));
         assert!(tokens.is_empty());
         assert_eq!(
-            authorize(true, &tokens, Some(&bearer), None, Scope::Read, &lim, Instant::now()),
+            authorize(
+                true,
+                &tokens,
+                Some(&bearer),
+                None,
+                Scope::Read,
+                &lim,
+                Instant::now()
+            ),
             Err(Denied::Unauthorized)
         );
     }
@@ -573,7 +633,12 @@ mod tests {
         let tokens = vec![
             make("r", &[Scope::Read], read, "r"),
             make("w", &[Scope::Write], write, "w"),
-            make("rpw", &[Scope::Read, Scope::People, Scope::Write], both, "rpw"),
+            make(
+                "rpw",
+                &[Scope::Read, Scope::People, Scope::Write],
+                both,
+                "rpw",
+            ),
         ];
         let lim = limiter();
         let go = |token: &str, method: &str| {
@@ -596,7 +661,9 @@ mod tests {
         assert!(a.has(Scope::People) && a.has(Scope::Write));
         assert!(!go(read, "GET").unwrap().has(Scope::People));
         assert_eq!(Denied::Scope(Scope::Write).status(), 403);
-        assert!(Denied::Scope(Scope::Write).headers()[0].1.contains("scope=\"write\""));
+        assert!(Denied::Scope(Scope::Write).headers()[0]
+            .1
+            .contains("scope=\"write\""));
     }
 
     #[test]
@@ -613,13 +680,29 @@ mod tests {
             "",
         ] {
             assert_eq!(
-                authorize(true, &tokens, Some(&bearer), Some(origin), Scope::Read, &lim, Instant::now()),
+                authorize(
+                    true,
+                    &tokens,
+                    Some(&bearer),
+                    Some(origin),
+                    Scope::Read,
+                    &lim,
+                    Instant::now()
+                ),
                 Err(Denied::Origin),
                 "{origin}"
             );
             // Refused even when off, so a page learns nothing either way.
             assert_eq!(
-                authorize(false, &tokens, Some(&bearer), Some(origin), Scope::Read, &lim, Instant::now()),
+                authorize(
+                    false,
+                    &tokens,
+                    Some(&bearer),
+                    Some(origin),
+                    Scope::Read,
+                    &lim,
+                    Instant::now()
+                ),
                 Err(Denied::Origin)
             );
         }
@@ -632,8 +715,17 @@ mod tests {
         let lim = limiter();
         let bearer = format!("Bearer {T}");
         let at = Instant::now();
-        assert_eq!(authorize(false, &tokens, Some(&bearer), None, Scope::Read, &lim, at), Err(Denied::Off));
-        for auth in [None, Some("Bearer "), Some("Basic abc"), Some("Bearer sua_nope"), Some(T)] {
+        assert_eq!(
+            authorize(false, &tokens, Some(&bearer), None, Scope::Read, &lim, at),
+            Err(Denied::Off)
+        );
+        for auth in [
+            None,
+            Some("Bearer "),
+            Some("Basic abc"),
+            Some("Bearer sua_nope"),
+            Some(T),
+        ] {
             assert_eq!(
                 authorize(true, &tokens, auth, None, Scope::Read, &lim, at),
                 Err(Denied::Unauthorized),
@@ -657,7 +749,10 @@ mod tests {
             assert!(lim.check("a", t0).is_ok(), "burst request {i}");
         }
         let wait = lim.check("a", t0).unwrap_err();
-        assert!(wait > Duration::ZERO && wait <= Duration::from_millis(100), "{wait:?}");
+        assert!(
+            wait > Duration::ZERO && wait <= Duration::from_millis(100),
+            "{wait:?}"
+        );
         // Another token has its own bucket.
         assert!(lim.check("b", t0).is_ok());
         // 10/s: after 100 ms one more, after 1 s ten more.
@@ -692,7 +787,15 @@ mod tests {
         // A wrong token never touches the limiter (and is never limited).
         for _ in 0..10 {
             assert_eq!(
-                authorize(true, &tokens, Some("Bearer sua_x"), None, Scope::Read, &lim, at),
+                authorize(
+                    true,
+                    &tokens,
+                    Some("Bearer sua_x"),
+                    None,
+                    Scope::Read,
+                    &lim,
+                    at
+                ),
                 Err(Denied::Unauthorized)
             );
         }
@@ -704,8 +807,16 @@ mod tests {
         assert!(!touch(&mut tokens, "nope", now()));
         assert!(touch(&mut tokens, "a", now()));
         assert_eq!(tokens[0].last_used.as_deref(), Some("2026-09-25T10:00:00Z"));
-        assert!(!touch(&mut tokens, "a", now() + chrono::TimeDelta::seconds(59)));
-        assert!(touch(&mut tokens, "a", now() + chrono::TimeDelta::seconds(60)));
+        assert!(!touch(
+            &mut tokens,
+            "a",
+            now() + chrono::TimeDelta::seconds(59)
+        ));
+        assert!(touch(
+            &mut tokens,
+            "a",
+            now() + chrono::TimeDelta::seconds(60)
+        ));
         assert_eq!(tokens[0].last_used.as_deref(), Some("2026-09-25T10:01:00Z"));
         // An unreadable value is replaced.
         tokens[0].last_used = Some("garbage".into());

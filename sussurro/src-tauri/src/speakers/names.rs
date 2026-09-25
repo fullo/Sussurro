@@ -223,7 +223,8 @@ impl NameTimeline {
         }
         let k = ends.len() / 2;
         let (_, &mut horizon, _) = ends.select_nth_unstable(k);
-        self.intervals.retain(|iv| iv.end.is_none_or(|e| e > horizon));
+        self.intervals
+            .retain(|iv| iv.end.is_none_or(|e| e > horizon));
         self.forgotten_before = Some(self.forgotten_before.map_or(horizon, |f| f.max(horizon)));
         for (i, iv) in self.intervals.iter().enumerate() {
             if iv.end.is_none() {
@@ -702,13 +703,24 @@ mod tests {
         assert_eq!(t.keys.len(), MAX_SPEAKER_KEYS);
         assert_eq!(t.bound.len(), MAX_SPEAKER_KEYS);
         t.push(&rtp(10, &format!("csrc:{}", MAX_SPEAKER_KEYS + 1)));
-        assert!(t.intervals.is_empty(), "a new id past the cap opens nothing");
+        assert!(
+            t.intervals.is_empty(),
+            "a new id past the cap opens nothing"
+        );
         t.push(&rtp(10, "csrc:0"));
         assert_eq!(t.intervals.len(), 1);
         // Participants: capped, deduplicated by key.
-        let many: Vec<String> = (0..2 * MAX_TIMELINE_PARTICIPANTS).map(|i| format!("N{i}")).collect();
-        t.push(&MeetingEvent::Participants { at_ms: 0, names: many.clone() });
-        t.push(&MeetingEvent::Participants { at_ms: 0, names: many });
+        let many: Vec<String> = (0..2 * MAX_TIMELINE_PARTICIPANTS)
+            .map(|i| format!("N{i}"))
+            .collect();
+        t.push(&MeetingEvent::Participants {
+            at_ms: 0,
+            names: many.clone(),
+        });
+        t.push(&MeetingEvent::Participants {
+            at_ms: 0,
+            names: many,
+        });
         assert_eq!(t.participants.len(), MAX_TIMELINE_PARTICIPANTS);
         assert_eq!(t.participants().len(), MAX_TIMELINE_PARTICIPANTS);
     }
@@ -730,10 +742,17 @@ mod tests {
         assert!(horizon > 0 && horizon < ms);
         // Recent lines still resolve; the open interval kept its index.
         let last = (ms - 1_000) as i64;
-        assert!(t.intervals.iter().any(|iv| iv.start == last && iv.end == Some(last + 500)));
+        assert!(t
+            .intervals
+            .iter()
+            .any(|iv| iv.start == last && iv.end == Some(last + 500)));
         t.push(&idle(ms, "csrc:open"));
         assert!(t.open.is_empty());
-        let open = t.intervals.iter().find(|iv| iv.key == Key::Id("csrc:open".into())).unwrap();
+        let open = t
+            .intervals
+            .iter()
+            .find(|iv| iv.key == Key::Id("csrc:open".into()))
+            .unwrap();
         assert_eq!((open.start, open.end), (0, Some(ms as i64)));
         // Growth goes on bounded.
         for _ in 0..MAX_INTERVALS {

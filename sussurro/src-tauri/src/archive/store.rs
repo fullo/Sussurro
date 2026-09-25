@@ -763,7 +763,10 @@ pub enum SpeakerEdit {
     /// Link a speaker to a person of the People registry (#132): the
     /// person's name as label (unless renamed) and a participant with
     /// name + email in the frontmatter.
-    Link { speaker_id: String, person_id: String },
+    Link {
+        speaker_id: String,
+        person_id: String,
+    },
     /// Undo a link; the speaker gets its previous label back.
     Unlink { speaker_id: String },
 }
@@ -887,9 +890,7 @@ fn modify_segments_with(
     let path = transcript_path(&dir);
     let bytes = std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
     if is_edited_externally(&dir, &bytes) {
-        bail!(
-            "'{id}' was {EDITED_OUTSIDE_ERROR}: its transcript.md is kept as is — edit it there"
-        );
+        bail!("'{id}' was {EDITED_OUTSIDE_ERROR}: its transcript.md is kept as is — edit it there");
     }
     let (mut meta, _) = frontmatter::parse(&String::from_utf8_lossy(&bytes))?;
     // A live item is still being written by its capture session (#153).
@@ -899,6 +900,9 @@ fn modify_segments_with(
     let original = read_segments(&dir)?;
     let mut segments = original.clone();
     change(&mut meta, &mut segments)?;
+    // A line moved, re-detected, identified or deleted can change who
+    // else speaks in an overlapped line nearby (#244).
+    crate::speakers::overlap::assign_second_speakers(&mut segments);
     // Rendered from the very bytes checked above, and replaced only if the
     // file still holds them (#155): an external save that lands meanwhile
     // wins, and the change is undone in segments.json too — it could
@@ -1233,14 +1237,23 @@ mod tests {
         m.item_type = ItemType::Transcription;
         let id = create_item(archive, &m, &segs(&["Uno.", "Due.", "Tre."])).unwrap();
 
-        let item = edit_segment(archive, &id, 1, SegmentEdit::Text("  Due, corretto. ".into()))
-            .unwrap();
+        let item = edit_segment(
+            archive,
+            &id,
+            1,
+            SegmentEdit::Text("  Due, corretto. ".into()),
+        )
+        .unwrap();
         let s = &item.segments.segments[1];
         assert_eq!(s.text, "Due, corretto.");
         assert_eq!(s.raw, "Due."); // raw STT kept
         assert!(s.edited);
         assert!(!item.segments.segments[0].edited);
-        assert!(item.body.contains("[00:00:01] Due, corretto."), "{}", item.body);
+        assert!(
+            item.body.contains("[00:00:01] Due, corretto."),
+            "{}",
+            item.body
+        );
         assert!(!item.edited_externally); // still app-owned
 
         // Same text again: nothing changes, not flagged as a new edit.
@@ -1266,13 +1279,15 @@ mod tests {
         live.set_session_state(Some(SessionState::Recording));
         let id = create_item(archive, &live, &segs(&["Uno."])).unwrap();
         let err = edit_segment(archive, &id, 0, SegmentEdit::Delete).unwrap_err();
-        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("still being recorded"),
+            "{err:#}"
+        );
 
         let mut failed = segs(&["", "Due."]);
         failed.segments[0].stt_error = Some("model crashed".into());
         let id = create_item(archive, &meta("Buco", DATE), &failed).unwrap();
-        let item =
-            edit_segment(archive, &id, 0, SegmentEdit::Text("Uno, a mano.".into())).unwrap();
+        let item = edit_segment(archive, &id, 0, SegmentEdit::Text("Uno, a mano.".into())).unwrap();
         let s = &item.segments.segments[0];
         assert_eq!(s.text, "Uno, a mano.");
         assert!(s.stt_error.is_none() && s.edited);
@@ -1284,7 +1299,9 @@ mod tests {
         let archive = tmp.path();
         let id = create_item(archive, &meta("Nota", DATE), &segs(&["Uno.", "Due."])).unwrap();
         let path = archive.join(&id).join("transcript.md");
-        let edited = std::fs::read_to_string(&path).unwrap().replace("Due.", "Due!");
+        let edited = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("Due.", "Due!");
         std::fs::write(&path, &edited).unwrap();
         let before = std::fs::read(archive.join(&id).join(".sussurro/segments.json")).unwrap();
 
@@ -1363,7 +1380,10 @@ mod tests {
         let id = live::begin_session(archive, &meta("Live", DATE)).unwrap();
         live::checkpoint(archive, &id, &segs(&["Uno.", "Due."]), true).unwrap();
         let err = edit_segment(archive, &id, 0, SegmentEdit::Delete).unwrap_err();
-        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("still being recorded"),
+            "{err:#}"
+        );
         assert_eq!(read_item(archive, &id).unwrap().segments.segments.len(), 2);
 
         let fallback = meta("Live", DATE);
@@ -1711,7 +1731,11 @@ mod tests {
         let id = voiced_meeting(archive);
         let item = read_item(archive, &id).unwrap();
         assert_eq!(item.embedded_segments, 6);
-        assert!(item.body.contains("**[00:00:05] Voice 2:** Frase 1."), "{}", item.body);
+        assert!(
+            item.body.contains("**[00:00:05] Voice 2:** Frase 1."),
+            "{}",
+            item.body
+        );
 
         let move_to = |seg: u32, sp: &str| SpeakerEdit::Move {
             segment_id: seg,
@@ -1723,7 +1747,11 @@ mod tests {
             label: "Anna".into(),
         };
         let item = edit_speakers(archive, &id, rename).unwrap();
-        assert!(item.body.contains("**[00:00:05] Anna:** Frase 1."), "{}", item.body);
+        assert!(
+            item.body.contains("**[00:00:05] Anna:** Frase 1."),
+            "{}",
+            item.body
+        );
         assert!(!item.edited_externally);
 
         // On disk, not only in the returned item.
@@ -1733,12 +1761,18 @@ mod tests {
         assert_eq!(saved.speakers[0].label, "Anna");
         assert!(saved.segments.iter().all(|s| s.embedding.is_some()));
         let markdown = std::fs::read_to_string(dir.join(TRANSCRIPT_FILE)).unwrap();
-        assert!(markdown.contains("**[00:00:00] Anna:** Frase 0."), "{markdown}");
+        assert!(
+            markdown.contains("**[00:00:00] Anna:** Frase 0."),
+            "{markdown}"
+        );
 
         // A bad target changes nothing.
         let before = std::fs::read(dir.join(META_DIR).join(SEGMENTS_FILE)).unwrap();
         assert!(edit_speakers(archive, &id, move_to(1, "voice:9")).is_err());
-        assert_eq!(std::fs::read(dir.join(META_DIR).join(SEGMENTS_FILE)).unwrap(), before);
+        assert_eq!(
+            std::fs::read(dir.join(META_DIR).join(SEGMENTS_FILE)).unwrap(),
+            before
+        );
     }
 
     #[test]
@@ -1819,13 +1853,23 @@ mod tests {
             person_id: anna.id.clone(),
         };
         let item = edit_speakers(archive, &id, link).unwrap();
-        assert!(item.body.contains("**[00:00:05] Anna Rossi:** Frase 1."), "{}", item.body);
+        assert!(
+            item.body.contains("**[00:00:05] Anna Rossi:** Frase 1."),
+            "{}",
+            item.body
+        );
         assert_eq!(item.meta.participants.len(), 1);
-        assert_eq!(item.meta.participants[0].email.as_deref(), Some("anna@example.com"));
+        assert_eq!(
+            item.meta.participants[0].email.as_deref(),
+            Some("anna@example.com")
+        );
         // On disk: the frontmatter and segments.json agree.
         let again = read_item(archive, &id).unwrap();
         assert_eq!(again.meta.participants, item.meta.participants);
-        assert_eq!(again.segments.speakers[1].person_id.as_deref(), Some(anna.id.as_str()));
+        assert_eq!(
+            again.segments.speakers[1].person_id.as_deref(),
+            Some(anna.id.as_str())
+        );
         assert!(!again.edited_externally);
 
         let item = edit_speakers(
@@ -1845,7 +1889,10 @@ mod tests {
             person_id: "p-gone".into(),
         };
         let err = edit_speakers(archive, &id, gone).unwrap_err();
-        assert!(format!("{err:#}").contains("no longer in People"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("no longer in People"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -1857,6 +1904,9 @@ mod tests {
         m.item_type = ItemType::Meeting;
         let id = live::begin_session(archive, &m).unwrap();
         let err = edit_speakers(archive, &id, SpeakerEdit::Redetect).unwrap_err();
-        assert!(format!("{err:#}").contains("still being recorded"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("still being recorded"),
+            "{err:#}"
+        );
     }
 }

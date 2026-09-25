@@ -96,7 +96,10 @@ fn bad(message: &str) -> Reply {
 pub fn json_content_type(content_type: Option<&str>) -> bool {
     let Some(ct) = content_type else { return true };
     let mut parts = ct.split(';').map(str::trim);
-    if !parts.next().is_some_and(|m| m.eq_ignore_ascii_case("application/json")) {
+    if !parts
+        .next()
+        .is_some_and(|m| m.eq_ignore_ascii_case("application/json"))
+    {
         return false;
     }
     parts.all(|p| match p.split_once('=') {
@@ -159,7 +162,9 @@ fn labels(v: &Value, key: &str) -> Result<Vec<String>, Reply> {
         };
         let s = s.trim();
         if s.chars().count() > MAX_LABEL_CHARS {
-            return Err(bad(&format!("each of `{key}` may have at most {MAX_LABEL_CHARS} characters")));
+            return Err(bad(&format!(
+                "each of `{key}` may have at most {MAX_LABEL_CHARS} characters"
+            )));
         }
         if s.chars().any(char::is_control) {
             return Err(bad(&format!("`{key}` can't contain control characters")));
@@ -180,7 +185,10 @@ pub fn parse_note(body: &[u8]) -> Result<NewNote, Reply> {
         return Err(invalid());
     };
     if map.keys().any(|k| !FIELDS.contains(&k.as_str())) {
-        return Err(bad(&format!("unknown field; a note accepts: {}", FIELDS.join(", "))));
+        return Err(bad(&format!(
+            "unknown field; a note accepts: {}",
+            FIELDS.join(", ")
+        )));
     }
     let text = match map.get("text") {
         Some(Value::String(s)) => clean_text(s),
@@ -199,7 +207,9 @@ pub fn parse_note(body: &[u8]) -> Result<NewNote, Reply> {
             }
             let t = s.split_whitespace().collect::<Vec<_>>().join(" ");
             if t.chars().count() > MAX_TITLE_CHARS {
-                return Err(bad(&format!("`title` is too long (at most {MAX_TITLE_CHARS} characters)")));
+                return Err(bad(&format!(
+                    "`title` is too long (at most {MAX_TITLE_CHARS} characters)"
+                )));
             }
             t
         }
@@ -431,7 +441,12 @@ fn created(answer: Value, id: &str, replayed: bool) -> Reply {
 
 /// The note's frontmatter and segments (pure). `cleaned[i]` is paragraph
 /// `i` after cleanup (the paragraph itself without cleanup).
-pub fn build_note(note: &NewNote, cleaned: &[String], token_name: &str, date: &str) -> (ItemMeta, SegmentsFile) {
+pub fn build_note(
+    note: &NewNote,
+    cleaned: &[String],
+    token_name: &str,
+    date: &str,
+) -> (ItemMeta, SegmentsFile) {
     let segments: Vec<Segment> = note
         .paragraphs
         .iter()
@@ -452,7 +467,11 @@ pub fn build_note(note: &NewNote, cleaned: &[String], token_name: &str, date: &s
         })
         .collect();
     let title = if note.title.is_empty() {
-        let first = cleaned.iter().map(|t| t.trim()).find(|t| !t.is_empty()).unwrap_or("");
+        let first = cleaned
+            .iter()
+            .map(|t| t.trim())
+            .find(|t| !t.is_empty())
+            .unwrap_or("");
         crate::engine::title_from_text(first)
     } else {
         note.title.clone()
@@ -490,19 +509,24 @@ pub fn create(
     now: Instant,
 ) -> Reply {
     if !json_content_type(content_type) {
-        return Reply::error(415, "unsupported_media_type", "send the note as Content-Type: application/json (UTF-8)");
+        return Reply::error(
+            415,
+            "unsupported_media_type",
+            "send the note as Content-Type: application/json (UTF-8)",
+        );
     }
-    let key = match idempotency_key.map(str::trim) {
-        None => None,
-        Some(k) if valid_idempotency_key(k) => Some(k),
-        Some(_) => {
-            return Reply::error(
+    let key =
+        match idempotency_key.map(str::trim) {
+            None => None,
+            Some(k) if valid_idempotency_key(k) => Some(k),
+            Some(_) => return Reply::error(
                 400,
                 "invalid_idempotency_key",
-                &format!("`Idempotency-Key` must be 1 to {MAX_IDEMPOTENCY_KEY} visible ASCII characters"),
-            )
-        }
-    };
+                &format!(
+                    "`Idempotency-Key` must be 1 to {MAX_IDEMPOTENCY_KEY} visible ASCII characters"
+                ),
+            ),
+        };
     let note = match parse_note(body) {
         Ok(n) => n,
         Err(r) => return r,
@@ -523,19 +547,19 @@ pub fn create(
                 r.headers.push(("Retry-After", "1".to_string()));
                 return r;
             }
-            Claim::Mismatch => {
-                return Reply::error(
-                    422,
-                    "idempotency_mismatch",
-                    "this Idempotency-Key was used with a different body: use a new key for a new note",
-                )
-            }
+            Claim::Mismatch => return Reply::error(
+                422,
+                "idempotency_mismatch",
+                "this Idempotency-Key was used with a different body: use a new key for a new note",
+            ),
         }
     }
     let reply = create_claimed(host, archive_dir, index, auth, &note, state, now);
     if let Some(k) = key {
         match &reply.body {
-            Body::Json(answer) if reply.status == 201 => state.idempotency.finish(&auth.id, k, answer.clone()),
+            Body::Json(answer) if reply.status == 201 => {
+                state.idempotency.finish(&auth.id, k, answer.clone())
+            }
             _ => state.idempotency.release(&auth.id, k),
         }
     }
@@ -559,7 +583,10 @@ fn create_claimed(
             return Reply::error(
                 413,
                 "too_long_for_cleanup",
-                &format!("cleanup takes at most {} KiB of text: create a longer note without `cleanup`", MAX_CLEANUP_BYTES >> 10),
+                &format!(
+                    "cleanup takes at most {} KiB of text: create a longer note without `cleanup`",
+                    MAX_CLEANUP_BYTES >> 10
+                ),
             );
         }
         if let Err(refused) = host.note_cleanup_gate() {
@@ -583,10 +610,15 @@ fn create_claimed(
     let date = chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
     let (meta, segments) = build_note(note, &cleaned, &auth.name, &date);
     let Ok(id) = archive::create_item(archive_dir, &meta, &segments) else {
-        return Reply::error(500, "internal", "the note could not be written to the archive");
+        return Reply::error(
+            500,
+            "internal",
+            "the note could not be written to the archive",
+        );
     };
     // Best effort: a failed index update is caught up by the next sync.
-    if let Err(e) = archive::Index::open(archive_dir, index).and_then(|mut idx| idx.index_item(&id)) {
+    if let Err(e) = archive::Index::open(archive_dir, index).and_then(|mut idx| idx.index_item(&id))
+    {
         eprintln!("archive index: update failed ({e:#})");
     }
     host.note_created(&id);
@@ -681,7 +713,17 @@ mod tests {
     }
 
     fn post(f: &Fx, auth: &Authorized, body: &str, key: Option<&str>, at: Instant) -> Reply {
-        create(&f.host, &f.archive, &f.index, auth, body.as_bytes(), Some("application/json"), key, &f.state, at)
+        create(
+            &f.host,
+            &f.archive,
+            &f.index,
+            auth,
+            body.as_bytes(),
+            Some("application/json"),
+            key,
+            &f.state,
+            at,
+        )
     }
 
     fn json_of(r: &Reply) -> Value {
@@ -696,7 +738,10 @@ mod tests {
     }
 
     fn header<'a>(r: &'a Reply, name: &str) -> Option<&'a str> {
-        r.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        r.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     fn items(f: &Fx) -> usize {
@@ -733,7 +778,10 @@ mod tests {
         let v = json_of(&r);
         let id = v["id"].as_str().unwrap().to_string();
         assert!(id.ends_with("-idea-for-the-release"), "{id}");
-        assert_eq!(header(&r, "Location"), Some(format!("/archive/items/{id}").as_str()));
+        assert_eq!(
+            header(&r, "Location"),
+            Some(format!("/archive/items/{id}").as_str())
+        );
         assert_eq!(v["location"], location(&id));
         assert_eq!(v["replayed"], false);
         assert_eq!(v["cleaned"], false);
@@ -747,12 +795,24 @@ mod tests {
         assert_eq!(item.meta.tags, vec!["idea", "Release"]);
         assert_eq!(item.meta.categories, vec!["work"]);
         assert!(item.meta.participants.is_empty() && item.meta.duration.is_none());
-        assert!(item.meta.extra.is_empty(), "no audio, no status: {:?}", item.meta.extra);
+        assert!(
+            item.meta.extra.is_empty(),
+            "no audio, no status: {:?}",
+            item.meta.extra
+        );
         let date = chrono::DateTime::parse_from_rfc3339(&item.meta.date).unwrap();
-        assert!((chrono::Utc::now() - date.with_timezone(&chrono::Utc)).num_seconds().abs() < 60);
+        assert!(
+            (chrono::Utc::now() - date.with_timezone(&chrono::Utc))
+                .num_seconds()
+                .abs()
+                < 60
+        );
         assert!(item.segments.speakers.is_empty());
         assert_eq!(item.segments.segments.len(), 2);
-        assert_eq!(item.segments.segments[0].text, "First paragraph,\nsecond line.");
+        assert_eq!(
+            item.segments.segments[0].text,
+            "First paragraph,\nsecond line."
+        );
         assert_eq!(
             item.body,
             "\n# Idea for the release\n\nFirst paragraph,\nsecond line.\n\nSecond paragraph.\n"
@@ -763,11 +823,26 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert!(files.iter().all(|n| !n.ends_with(".wav") && !n.ends_with(".opus")), "{files:?}");
+        assert!(
+            files
+                .iter()
+                .all(|n| !n.ends_with(".wav") && !n.ends_with(".opus")),
+            "{files:?}"
+        );
 
         // Through the read routes: listed (indexed) and readable.
-        let read = Authorized { id: "r".into(), name: "reader".into(), scopes: vec![Scope::Read] };
-        let found = super::super::archive::handle(&f.archive, &f.index, &read, "GET", "/archive/items?q=paragraph");
+        let read = Authorized {
+            id: "r".into(),
+            name: "reader".into(),
+            scopes: vec![Scope::Read],
+        };
+        let found = super::super::archive::handle(
+            &f.archive,
+            &f.index,
+            &read,
+            "GET",
+            "/archive/items?q=paragraph",
+        );
         assert_eq!(json_of(&found)["items"][0]["id"], id.as_str());
         let got = super::super::archive::handle(&f.archive, &f.index, &read, "GET", &location(&id));
         assert_eq!(got.status, 200);
@@ -777,17 +852,35 @@ mod tests {
     #[test]
     fn a_missing_title_comes_from_the_text() {
         let f = fixture();
-        let r = post(&f, &writer(), r#"{"text": "Comprare il caffè e il latte domani mattina presto, prima delle otto."}"#, None, Instant::now());
+        let r = post(
+            &f,
+            &writer(),
+            r#"{"text": "Comprare il caffè e il latte domani mattina presto, prima delle otto."}"#,
+            None,
+            Instant::now(),
+        );
         assert_eq!(r.status, 201);
-        assert_eq!(json_of(&r)["title"], "Comprare il caffè e il latte domani mattina");
-        let r = post(&f, &writer(), r#"{"title": "   ", "text": "Short."}"#, None, Instant::now());
+        assert_eq!(
+            json_of(&r)["title"],
+            "Comprare il caffè e il latte domani mattina"
+        );
+        let r = post(
+            &f,
+            &writer(),
+            r#"{"title": "   ", "text": "Short."}"#,
+            None,
+            Instant::now(),
+        );
         assert_eq!(json_of(&r)["title"], "Short");
     }
 
     #[test]
     fn invalid_bodies_are_refused_without_echoing_them() {
         let f = fixture();
-        let long_title = format!(r#"{{"text":"x","title":"{}"}}"#, "t".repeat(MAX_TITLE_CHARS + 1));
+        let long_title = format!(
+            r#"{{"text":"x","title":"{}"}}"#,
+            "t".repeat(MAX_TITLE_CHARS + 1)
+        );
         let many_tags = json!({"text": "x", "tags": (0..=MAX_LABELS).map(|i| format!("t{i}")).collect::<Vec<_>>()}).to_string();
         let long_tag = json!({"text": "x", "tags": ["t".repeat(MAX_LABEL_CHARS + 1)]}).to_string();
         for (body, want) in [
@@ -795,7 +888,10 @@ mod tests {
             ("not json", "invalid_json"),
             ("[1, 2]", "invalid_json"),
             ("\"text\"", "invalid_json"),
-            (r#"{"text": "secret-probe", "path": "/etc/passwd"}"#, "bad_request"),
+            (
+                r#"{"text": "secret-probe", "path": "/etc/passwd"}"#,
+                "bad_request",
+            ),
             (r#"{"title": "x"}"#, "bad_request"),
             (r#"{"text": null}"#, "bad_request"),
             (r#"{"text": 42}"#, "bad_request"),
@@ -813,26 +909,84 @@ mod tests {
             let r = post(&f, &writer(), body, None, Instant::now());
             assert_eq!((r.status, code(&r).as_str()), (400, want), "{body}");
             let text = json_of(&r).to_string();
-            assert!(!text.contains("/etc/passwd") && !text.contains("secret-probe"), "{text}");
+            assert!(
+                !text.contains("/etc/passwd") && !text.contains("secret-probe"),
+                "{text}"
+            );
         }
         // Not UTF-8.
-        let r = create(&f.host, &f.archive, &f.index, &writer(), b"{\"text\": \"\xff\"}", None, None, &f.state, Instant::now());
+        let r = create(
+            &f.host,
+            &f.archive,
+            &f.index,
+            &writer(),
+            b"{\"text\": \"\xff\"}",
+            None,
+            None,
+            &f.state,
+            Instant::now(),
+        );
         assert_eq!((r.status, code(&r).as_str()), (400, "invalid_json"));
         // Other content types.
-        for ct in ["text/plain", "application/x-www-form-urlencoded", "application/json; charset=latin-1"] {
-            let r = create(&f.host, &f.archive, &f.index, &writer(), br#"{"text":"x"}"#, Some(ct), None, &f.state, Instant::now());
-            assert_eq!((r.status, code(&r).as_str()), (415, "unsupported_media_type"), "{ct}");
+        for ct in [
+            "text/plain",
+            "application/x-www-form-urlencoded",
+            "application/json; charset=latin-1",
+        ] {
+            let r = create(
+                &f.host,
+                &f.archive,
+                &f.index,
+                &writer(),
+                br#"{"text":"x"}"#,
+                Some(ct),
+                None,
+                &f.state,
+                Instant::now(),
+            );
+            assert_eq!(
+                (r.status, code(&r).as_str()),
+                (415, "unsupported_media_type"),
+                "{ct}"
+            );
         }
         assert_eq!(items(&f), 0, "nothing created");
         // Accepted forms.
-        for ct in [None, Some("application/json"), Some("Application/JSON; charset=UTF-8")] {
-            let r = create(&f.host, &f.archive, &f.index, &writer(), br#"{"text":"x","tags":null}"#, ct, None, &f.state, Instant::now());
+        for ct in [
+            None,
+            Some("application/json"),
+            Some("Application/JSON; charset=UTF-8"),
+        ] {
+            let r = create(
+                &f.host,
+                &f.archive,
+                &f.index,
+                &writer(),
+                br#"{"text":"x","tags":null}"#,
+                ct,
+                None,
+                &f.state,
+                Instant::now(),
+            );
             assert_eq!(r.status, 201, "{ct:?}");
         }
         // Stray control characters are dropped, not refused.
-        let r = post(&f, &writer(), r#"{"text": "bell\u0007 here\u000c"}"#, None, Instant::now());
+        let r = post(
+            &f,
+            &writer(),
+            r#"{"text": "bell\u0007 here\u000c"}"#,
+            None,
+            Instant::now(),
+        );
         let id = json_of(&r)["id"].as_str().unwrap().to_string();
-        assert_eq!(archive::read_item(&f.archive, &id).unwrap().segments.segments[0].text, "bell here");
+        assert_eq!(
+            archive::read_item(&f.archive, &id)
+                .unwrap()
+                .segments
+                .segments[0]
+                .text,
+            "bell here"
+        );
     }
 
     #[test]
@@ -842,7 +996,9 @@ mod tests {
         assert!(paragraphs(" \n\t\n").is_empty());
         assert_eq!(clean_text("a\r\nb\rc\u{0}d\te"), "a\nb\ncd\te");
         assert!(json_content_type(None));
-        assert!(json_content_type(Some("application/json;charset=\"utf-8\"")));
+        assert!(json_content_type(Some(
+            "application/json;charset=\"utf-8\""
+        )));
         assert!(!json_content_type(Some("application/jsonp")));
         assert!(!json_content_type(Some("text/json")));
     }
@@ -857,33 +1013,79 @@ mod tests {
 
         let f = fixture();
         // Not asked: never cleaned.
-        let r = post(&f, &writer(), r#"{"text": "plain text"}"#, None, Instant::now());
-        assert_eq!((r.status, json_of(&r)["cleaned"].as_bool()), (201, Some(false)));
+        let r = post(
+            &f,
+            &writer(),
+            r#"{"text": "plain text"}"#,
+            None,
+            Instant::now(),
+        );
+        assert_eq!(
+            (r.status, json_of(&r)["cleaned"].as_bool()),
+            (201, Some(false))
+        );
         assert_eq!(f.host.cleaned.load(Ordering::SeqCst), 0);
         // Asked, local: each paragraph cleaned, the text as sent kept as raw.
-        let r = post(&f, &writer(), r#"{"text": "one\n\ntwo", "cleanup": true}"#, None, Instant::now());
-        assert_eq!((r.status, json_of(&r)["cleaned"].as_bool()), (201, Some(true)));
+        let r = post(
+            &f,
+            &writer(),
+            r#"{"text": "one\n\ntwo", "cleanup": true}"#,
+            None,
+            Instant::now(),
+        );
+        assert_eq!(
+            (r.status, json_of(&r)["cleaned"].as_bool()),
+            (201, Some(true))
+        );
         assert_eq!(f.host.cleaned.load(Ordering::SeqCst), 2);
         let id = json_of(&r)["id"].as_str().unwrap().to_string();
         let item = archive::read_item(&f.archive, &id).unwrap();
-        assert_eq!(item.meta.title, "ONE", "the title comes from the cleaned text");
+        assert_eq!(
+            item.meta.title, "ONE",
+            "the title comes from the cleaned text"
+        );
         assert_eq!(item.segments.segments[1].raw, "two");
         assert_eq!(item.segments.segments[1].text, "TWO");
         let before = items(&f);
         // External or off: refused, nothing created, nothing cleaned.
-        for (gate, want) in [(CleanupRefused::External, "cleanup_external"), (CleanupRefused::Off, "cleanup_off")] {
+        for (gate, want) in [
+            (CleanupRefused::External, "cleanup_external"),
+            (CleanupRefused::Off, "cleanup_off"),
+        ] {
             *f.host.gate.borrow_mut() = Err(gate);
-            let r = post(&f, &writer(), r#"{"text": "secret", "cleanup": true}"#, None, Instant::now());
+            let r = post(
+                &f,
+                &writer(),
+                r#"{"text": "secret", "cleanup": true}"#,
+                None,
+                Instant::now(),
+            );
             assert_eq!((r.status, code(&r).as_str()), (409, want));
             // Without cleanup the same note goes through.
-            assert_eq!(post(&f, &writer(), r#"{"text": "fine", "cleanup": false}"#, None, Instant::now()).status, 201);
+            assert_eq!(
+                post(
+                    &f,
+                    &writer(),
+                    r#"{"text": "fine", "cleanup": false}"#,
+                    None,
+                    Instant::now()
+                )
+                .status,
+                201
+            );
         }
         assert_eq!(f.host.cleaned.load(Ordering::SeqCst), 2);
         assert_eq!(items(&f), before + 2);
         // The settings changed between the gate and the cleanup: still refused.
         *f.host.gate.borrow_mut() = Ok(());
         *f.host.clean_refused.borrow_mut() = Some(CleanupRefused::External);
-        let r = post(&f, &writer(), r#"{"text": "secret", "cleanup": true}"#, None, Instant::now());
+        let r = post(
+            &f,
+            &writer(),
+            r#"{"text": "secret", "cleanup": true}"#,
+            None,
+            Instant::now(),
+        );
         assert_eq!(code(&r), "cleanup_external");
         assert_eq!(items(&f), before + 2);
         // Too long to clean.
@@ -901,7 +1103,13 @@ mod tests {
         let first = post(&f, &writer(), body, Some("clip-1"), t0);
         assert_eq!(first.status, 201);
         let id = json_of(&first)["id"].as_str().unwrap().to_string();
-        let again = post(&f, &writer(), body, Some("clip-1"), t0 + Duration::from_secs(60));
+        let again = post(
+            &f,
+            &writer(),
+            body,
+            Some("clip-1"),
+            t0 + Duration::from_secs(60),
+        );
         assert_eq!(again.status, 201);
         assert_eq!(json_of(&again)["id"], id.as_str());
         assert_eq!(json_of(&again)["replayed"], true);
@@ -909,25 +1117,50 @@ mod tests {
         assert_eq!(header(&again, "Location"), header(&first, "Location"));
         assert_eq!(items(&f), 1, "one note");
         // Another body with the same key: refused.
-        let other = post(&f, &writer(), r#"{"text": "Buy bread"}"#, Some("clip-1"), t0);
-        assert_eq!((other.status, code(&other).as_str()), (422, "idempotency_mismatch"));
+        let other = post(
+            &f,
+            &writer(),
+            r#"{"text": "Buy bread"}"#,
+            Some("clip-1"),
+            t0,
+        );
+        assert_eq!(
+            (other.status, code(&other).as_str()),
+            (422, "idempotency_mismatch")
+        );
         // Another token's key space is its own.
         let mut other_token = writer();
         other_token.id = "w2".into();
         let theirs = post(&f, &other_token, body, Some("clip-1"), t0);
         assert_ne!(json_of(&theirs)["id"], id.as_str());
         // No key, or a new one: a new note.
-        assert_ne!(json_of(&post(&f, &writer(), body, None, t0))["id"], id.as_str());
-        assert_ne!(json_of(&post(&f, &writer(), body, Some("clip-2"), t0))["id"], id.as_str());
+        assert_ne!(
+            json_of(&post(&f, &writer(), body, None, t0))["id"],
+            id.as_str()
+        );
+        assert_ne!(
+            json_of(&post(&f, &writer(), body, Some("clip-2"), t0))["id"],
+            id.as_str()
+        );
         // After the TTL the key is forgotten.
-        let later = post(&f, &writer(), body, Some("clip-1"), t0 + IDEMPOTENCY_TTL + Duration::from_secs(1));
+        let later = post(
+            &f,
+            &writer(),
+            body,
+            Some("clip-1"),
+            t0 + IDEMPOTENCY_TTL + Duration::from_secs(1),
+        );
         assert_eq!(json_of(&later)["replayed"], false);
         assert_ne!(json_of(&later)["id"], id.as_str());
         // Malformed keys.
         let long = "k".repeat(MAX_IDEMPOTENCY_KEY + 1);
         for bad in ["", "   ", "with space", "caffè", long.as_str()] {
             let r = post(&f, &writer(), body, Some(bad), t0);
-            assert_eq!((r.status, code(&r).as_str()), (400, "invalid_idempotency_key"), "{bad:?}");
+            assert_eq!(
+                (r.status, code(&r).as_str()),
+                (400, "invalid_idempotency_key"),
+                "{bad:?}"
+            );
         }
     }
 
@@ -936,10 +1169,16 @@ mod tests {
         let f = fixture();
         *f.host.gate.borrow_mut() = Err(CleanupRefused::External);
         let body = r#"{"text": "x", "cleanup": true}"#;
-        assert_eq!(post(&f, &writer(), body, Some("k"), Instant::now()).status, 409);
+        assert_eq!(
+            post(&f, &writer(), body, Some("k"), Instant::now()).status,
+            409
+        );
         *f.host.gate.borrow_mut() = Ok(());
         let r = post(&f, &writer(), body, Some("k"), Instant::now());
-        assert_eq!((r.status, json_of(&r)["replayed"].as_bool()), (201, Some(false)));
+        assert_eq!(
+            (r.status, json_of(&r)["replayed"].as_bool()),
+            (201, Some(false))
+        );
     }
 
     #[test]
@@ -950,19 +1189,28 @@ mod tests {
         assert_eq!(store.claim("t", "k", b"a", t0), Claim::InProgress);
         assert_eq!(store.claim("t", "k", b"b", t0), Claim::Mismatch);
         store.finish("t", "k", json!({"id": "x"}));
-        assert_eq!(store.claim("t", "k", b"a", t0), Claim::Replay(json!({"id": "x"})));
+        assert_eq!(
+            store.claim("t", "k", b"a", t0),
+            Claim::Replay(json!({"id": "x"}))
+        );
         store.release("t", "k");
         assert_eq!(store.claim("t", "k", b"b", t0), Claim::New);
         for i in 0..MAX_IDEMPOTENCY_ENTRIES + 10 {
             let k = format!("k{i}");
-            assert_eq!(store.claim("t", &k, b"a", t0 + Duration::from_millis(i as u64)), Claim::New);
+            assert_eq!(
+                store.claim("t", &k, b"a", t0 + Duration::from_millis(i as u64)),
+                Claim::New
+            );
             store.finish("t", &k, json!({"id": i}));
         }
         let len = store.entries.lock().unwrap().len();
         assert!(len <= MAX_IDEMPOTENCY_ENTRIES, "{len}");
         // The oldest went first; the newest are kept.
         let last = format!("k{}", MAX_IDEMPOTENCY_ENTRIES + 9);
-        assert!(matches!(store.claim("t", &last, b"a", t0), Claim::Replay(_)));
+        assert!(matches!(
+            store.claim("t", &last, b"a", t0),
+            Claim::Replay(_)
+        ));
         assert_eq!(store.claim("t", "k0", b"zzz", t0), Claim::New);
     }
 
@@ -980,14 +1228,37 @@ mod tests {
             assert!(created < 100, "never limited");
         };
         assert_eq!(created, CREATE_BURST as usize);
-        assert_eq!((limited.status, code(&limited).as_str()), (429, "rate_limited"));
+        assert_eq!(
+            (limited.status, code(&limited).as_str()),
+            (429, "rate_limited")
+        );
         assert_eq!(header(&limited, "Retry-After"), Some("2"));
         assert_eq!(items(&f), created, "nothing past the limit");
         // A replay and a refusal cost nothing; validation errors neither.
         assert_eq!(post(&f, &writer(), "{}", None, t0).status, 400);
         // 30 a minute afterwards.
-        assert_eq!(post(&f, &writer(), r#"{"text": "n"}"#, None, t0 + Duration::from_secs(2)).status, 201);
-        assert_eq!(post(&f, &writer(), r#"{"text": "n"}"#, None, t0 + Duration::from_secs(2)).status, 429);
+        assert_eq!(
+            post(
+                &f,
+                &writer(),
+                r#"{"text": "n"}"#,
+                None,
+                t0 + Duration::from_secs(2)
+            )
+            .status,
+            201
+        );
+        assert_eq!(
+            post(
+                &f,
+                &writer(),
+                r#"{"text": "n"}"#,
+                None,
+                t0 + Duration::from_secs(2)
+            )
+            .status,
+            429
+        );
 
         // For all tokens together.
         let limits = CreateLimits::new(RateLimiter::new(5.0, 0.5), RateLimiter::new(8.0, 1.0));
@@ -1009,9 +1280,14 @@ mod tests {
         std::fs::write(&f.archive, "a file, not a folder").unwrap();
         let r = post(&f, &writer(), r#"{"text": "x"}"#, Some("k"), Instant::now());
         assert_eq!((r.status, code(&r).as_str()), (500, "internal"));
-        assert!(!json_of(&r).to_string().contains(f.archive.to_str().unwrap()));
+        assert!(!json_of(&r)
+            .to_string()
+            .contains(f.archive.to_str().unwrap()));
         // The key was released.
         std::fs::remove_file(&f.archive).unwrap();
-        assert_eq!(post(&f, &writer(), r#"{"text": "x"}"#, Some("k"), Instant::now()).status, 201);
+        assert_eq!(
+            post(&f, &writer(), r#"{"text": "x"}"#, Some("k"), Instant::now()).status,
+            201
+        );
     }
 }

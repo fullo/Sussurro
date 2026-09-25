@@ -153,11 +153,15 @@ fn enigo_combo(letter: char) -> Result<()> {
 fn enigo_combo_inner(letter: char) -> Result<()> {
     let mut enigo = Enigo::new(&EnigoSettings::default()).context("init enigo")?;
     let modifier = paste_modifier();
-    enigo.key(modifier, Direction::Press).context("modifier down")?;
+    enigo
+        .key(modifier, Direction::Press)
+        .context("modifier down")?;
     enigo
         .key(Key::Unicode(letter), Direction::Click)
         .context("press key")?;
-    enigo.key(modifier, Direction::Release).context("modifier up")?;
+    enigo
+        .key(modifier, Direction::Release)
+        .context("modifier up")?;
     Ok(())
 }
 

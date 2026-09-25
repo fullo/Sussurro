@@ -147,7 +147,13 @@ pub fn run(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<String> {
-    let input: Vec<InputLine> = lines.iter().map(|l| InputLine { text: l.clone(), ..Default::default() }).collect();
+    let input: Vec<InputLine> = lines
+        .iter()
+        .map(|l| InputLine {
+            text: l.clone(),
+            ..Default::default()
+        })
+        .collect();
     run_input(model, recipe, ctx, &input, context_tokens, cancel, progress)
 }
 
@@ -164,7 +170,10 @@ pub fn run_input(
 ) -> Result<String> {
     let lines: Vec<String> = input.iter().map(InputLine::format).collect();
     if recipe.prompt.trim().is_empty() {
-        bail!("the recipe “{}” has no prompt — write one in Recipes", recipe.name);
+        bail!(
+            "the recipe “{}” has no prompt — write one in Recipes",
+            recipe.name
+        );
     }
     if lines.is_empty() {
         bail!("this item has no text to run a recipe on");
@@ -173,43 +182,79 @@ pub fn run_input(
 
     // 1. Everything at once.
     let transcript = lines.join("\n");
-    let single_budget =
-        input_budget_chars(context_tokens, messages_chars(&single_messages(recipe, ctx, "")));
+    let single_budget = input_budget_chars(
+        context_tokens,
+        messages_chars(&single_messages(recipe, ctx, "")),
+    );
     if transcript.chars().count() <= single_budget {
         check(cancel)?;
-        progress(Progress { phase: Phase::Single, done: 0, total: 1 });
+        progress(Progress {
+            phase: Phase::Single,
+            done: 0,
+            total: 1,
+        });
         let out = call(&single_messages(recipe, ctx, &transcript))?;
-        progress(Progress { phase: Phase::Single, done: 1, total: 1 });
+        progress(Progress {
+            phase: Phase::Single,
+            done: 1,
+            total: 1,
+        });
         return non_empty(out);
     }
 
     // 2. Map.
-    let map_budget =
-        input_budget_chars(context_tokens, messages_chars(&map_messages(recipe, ctx, "", 99, 99)));
+    let map_budget = input_budget_chars(
+        context_tokens,
+        messages_chars(&map_messages(recipe, ctx, "", 99, 99)),
+    );
     let chunks = chunk_turns(input, map_budget);
     let total = chunks.len();
     let mut notes = Vec::with_capacity(total);
     for (i, chunk) in chunks.iter().enumerate() {
         check(cancel)?;
-        progress(Progress { phase: Phase::Map, done: i, total });
+        progress(Progress {
+            phase: Phase::Map,
+            done: i,
+            total,
+        });
         let n = call(&map_messages(recipe, ctx, chunk, i + 1, total))?;
-        notes.push(if n.is_empty() { "- (nothing relevant)".to_string() } else { n });
+        notes.push(if n.is_empty() {
+            "- (nothing relevant)".to_string()
+        } else {
+            n
+        });
     }
-    progress(Progress { phase: Phase::Map, done: total, total });
+    progress(Progress {
+        phase: Phase::Map,
+        done: total,
+        total,
+    });
 
     // 3. Reduce, merging level by level while the notes don't fit.
-    let reduce_budget =
-        input_budget_chars(context_tokens, messages_chars(&reduce_messages(recipe, ctx, "")));
-    let merge_budget =
-        input_budget_chars(context_tokens, messages_chars(&merge_messages(recipe, ctx, "")));
+    let reduce_budget = input_budget_chars(
+        context_tokens,
+        messages_chars(&reduce_messages(recipe, ctx, "")),
+    );
+    let merge_budget = input_budget_chars(
+        context_tokens,
+        messages_chars(&merge_messages(recipe, ctx, "")),
+    );
     let mut level = 0;
     loop {
         let all = format_notes(&notes, 1);
         if all.chars().count() <= reduce_budget {
             check(cancel)?;
-            progress(Progress { phase: Phase::Reduce, done: 0, total: 1 });
+            progress(Progress {
+                phase: Phase::Reduce,
+                done: 0,
+                total: 1,
+            });
             let out = call(&reduce_messages(recipe, ctx, &all))?;
-            progress(Progress { phase: Phase::Reduce, done: 1, total: 1 });
+            progress(Progress {
+                phase: Phase::Reduce,
+                done: 1,
+                total: 1,
+            });
             return non_empty(out);
         }
         level += 1;
@@ -225,7 +270,13 @@ pub fn run_input(
         let half = merge_budget / 2;
         let sized: Vec<String> = notes
             .iter()
-            .map(|n| if n.chars().count() > half { truncate_notes(n, half.saturating_sub(32).max(1)) } else { n.clone() })
+            .map(|n| {
+                if n.chars().count() > half {
+                    truncate_notes(n, half.saturating_sub(32).max(1))
+                } else {
+                    n.clone()
+                }
+            })
             .collect();
         let groups = group_notes(&sized, merge_budget);
         let total = groups.len();
@@ -233,16 +284,28 @@ pub fn run_input(
         let mut first = 1;
         for (i, g) in groups.iter().enumerate() {
             check(cancel)?;
-            progress(Progress { phase: Phase::Merge, done: i, total });
+            progress(Progress {
+                phase: Phase::Merge,
+                done: i,
+                total,
+            });
             if g.len() == 1 {
                 merged.push(g[0].clone());
             } else {
                 let n = call(&merge_messages(recipe, ctx, &format_notes(g, first)))?;
-                merged.push(if n.is_empty() { format_notes(g, first) } else { n });
+                merged.push(if n.is_empty() {
+                    format_notes(g, first)
+                } else {
+                    n
+                });
             }
             first += g.len();
         }
-        progress(Progress { phase: Phase::Merge, done: total, total });
+        progress(Progress {
+            phase: Phase::Merge,
+            done: total,
+            total,
+        });
         notes = merged;
     }
 }
@@ -309,7 +372,10 @@ pub(crate) mod tests {
         }
 
         pub(crate) fn user(&self, i: usize) -> String {
-            self.calls.borrow()[i][1]["content"].as_str().unwrap().to_string()
+            self.calls.borrow()[i][1]["content"]
+                .as_str()
+                .unwrap()
+                .to_string()
         }
     }
 
@@ -341,17 +407,31 @@ pub(crate) mod tests {
     }
 
     fn lines(n: usize, len: usize) -> Vec<String> {
-        (0..n).map(|i| format!("[00:00:{:02}] {}", i % 60, "x".repeat(len))).collect()
+        (0..n)
+            .map(|i| format!("[00:00:{:02}] {}", i % 60, "x".repeat(len)))
+            .collect()
     }
 
-    fn run_fake(model: &FakeModel, lines: &[String], ctx_tokens: u32) -> (Result<String>, Vec<Progress>) {
+    fn run_fake(
+        model: &FakeModel,
+        lines: &[String],
+        ctx_tokens: u32,
+    ) -> (Result<String>, Vec<Progress>) {
         let mut seen = Vec::new();
         let cancel = model
             .cancel_after
             .as_ref()
             .map(|(_, f)| f.clone())
             .unwrap_or_else(|| std::sync::Arc::new(AtomicBool::new(false)));
-        let r = run(model, &recipe(), &Context::default(), lines, ctx_tokens, &cancel, &mut |p| seen.push(p));
+        let r = run(
+            model,
+            &recipe(),
+            &Context::default(),
+            lines,
+            ctx_tokens,
+            &cancel,
+            &mut |p| seen.push(p),
+        );
         (r, seen)
     }
 
@@ -362,7 +442,14 @@ pub(crate) mod tests {
         assert_eq!(r.unwrap(), "# Summary\nok");
         assert_eq!(m.calls.borrow().len(), 1);
         assert!(m.user(0).starts_with("Task:\nSummarise"));
-        assert_eq!(progress.last().unwrap(), &Progress { phase: Phase::Single, done: 1, total: 1 });
+        assert_eq!(
+            progress.last().unwrap(),
+            &Progress {
+                phase: Phase::Single,
+                done: 1,
+                total: 1
+            }
+        );
     }
 
     #[test]
@@ -373,7 +460,9 @@ pub(crate) mod tests {
         let (r, progress) = run_fake(&m, &input, 4096);
         assert_eq!(r.unwrap(), "final");
         let calls = m.calls.borrow().len();
-        let maps = (0..calls).filter(|&i| m.user(i).starts_with("This is part ")).count();
+        let maps = (0..calls)
+            .filter(|&i| m.user(i).starts_with("This is part "))
+            .count();
         assert!(maps > 3, "{maps} map calls");
         assert_eq!(calls, maps + 1, "one reduce after the maps");
         // Every map chunk fits the budget the prompt was sized for.
@@ -388,15 +477,27 @@ pub(crate) mod tests {
         let covered: Vec<String> = (0..maps)
             .flat_map(|i| {
                 let u = m.user(i);
-                let body = u.split("\">\n").nth(1).unwrap().trim_end_matches("\n</transcript>").to_string();
+                let body = u
+                    .split("\">\n")
+                    .nth(1)
+                    .unwrap()
+                    .trim_end_matches("\n</transcript>")
+                    .to_string();
                 body.lines().map(str::to_string).collect::<Vec<_>>()
             })
             .collect();
         assert_eq!(covered, input);
         // The reduce sees every note, numbered.
         let reduce = m.user(calls - 1);
-        assert!(reduce.contains(&format!("### Part {maps}\n- note {maps}")), "{reduce}");
-        assert!(progress.contains(&Progress { phase: Phase::Map, done: maps, total: maps }));
+        assert!(
+            reduce.contains(&format!("### Part {maps}\n- note {maps}")),
+            "{reduce}"
+        );
+        assert!(progress.contains(&Progress {
+            phase: Phase::Map,
+            done: maps,
+            total: maps
+        }));
         assert_eq!(progress.last().unwrap().phase, Phase::Reduce);
     }
 
@@ -417,7 +518,9 @@ pub(crate) mod tests {
         let (r, progress) = run_fake(&m, &lines(400, 90), 4096);
         assert_eq!(r.unwrap(), "final");
         let calls = m.calls.borrow().len();
-        let merges = (0..calls).filter(|&i| m.user(i).contains("Merge these notes")).count();
+        let merges = (0..calls)
+            .filter(|&i| m.user(i).contains("Merge these notes"))
+            .count();
         assert!(merges > 0);
         assert!(progress.iter().any(|p| p.phase == Phase::Merge));
         // Merge inputs fit the window too.
@@ -425,7 +528,11 @@ pub(crate) mod tests {
         for i in 0..calls {
             let u = m.user(i);
             if let Some(notes) = u.split("<notes>\n").nth(1) {
-                assert!(notes.chars().count() <= budget, "call {i}: {}", notes.chars().count());
+                assert!(
+                    notes.chars().count() <= budget,
+                    "call {i}: {}",
+                    notes.chars().count()
+                );
             }
         }
         assert!(m.user(calls - 1).starts_with("Task:\n"));
@@ -448,8 +555,19 @@ pub(crate) mod tests {
         assert!(run_fake(&m, &lines(2, 5), 4096).0.is_err());
         let m = FakeModel::new("x");
         assert!(run_fake(&m, &[], 4096).0.is_err());
-        let empty = Recipe { name: "E".into(), ..Default::default() };
-        let r = run(&m, &empty, &Context::default(), &lines(2, 5), 4096, &AtomicBool::new(false), &mut |_| {});
+        let empty = Recipe {
+            name: "E".into(),
+            ..Default::default()
+        };
+        let r = run(
+            &m,
+            &empty,
+            &Context::default(),
+            &lines(2, 5),
+            4096,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
         assert!(format!("{:#}", r.unwrap_err()).contains("no prompt"));
         assert!(m.calls.borrow().is_empty());
     }
@@ -465,7 +583,9 @@ pub(crate) mod tests {
 
     #[test]
     fn grouping_keeps_order_and_budget() {
-        let notes: Vec<String> = (0..10).map(|i| format!("- {i} {}", "y".repeat(50))).collect();
+        let notes: Vec<String> = (0..10)
+            .map(|i| format!("- {i} {}", "y".repeat(50)))
+            .collect();
         let groups = group_notes(&notes, 200);
         assert!(groups.len() > 1);
         assert_eq!(groups.concat(), notes);
@@ -510,7 +630,16 @@ pub(crate) mod tests {
         u.lines()
             .filter_map(|l| l.strip_prefix("- [00:00:00] "))
             .filter_map(|l| l.split_once(": point "))
-            .map(|(sp, rest)| (rest.split_whitespace().next().unwrap().trim_end_matches('…').to_string(), sp.to_string()))
+            .map(|(sp, rest)| {
+                (
+                    rest.split_whitespace()
+                        .next()
+                        .unwrap()
+                        .trim_end_matches('…')
+                        .to_string(),
+                    sp.to_string(),
+                )
+            })
             .collect()
     }
 
@@ -518,17 +647,39 @@ pub(crate) mod tests {
     fn map_chunks_start_on_speaker_turns() {
         let m = FakeModel::new("final");
         let input = speaker_input(60);
-        let r = run_input(&m, &recipe(), &speaker_ctx(), &input, 4096, &AtomicBool::new(false), &mut |_| {});
+        let r = run_input(
+            &m,
+            &recipe(),
+            &speaker_ctx(),
+            &input,
+            4096,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
         assert_eq!(r.unwrap(), "final");
         let calls = m.calls.borrow().len();
-        let maps: Vec<String> = (0..calls).map(|i| m.user(i)).filter(|u| u.starts_with("This is part ")).collect();
+        let maps: Vec<String> = (0..calls)
+            .map(|i| m.user(i))
+            .filter(|u| u.starts_with("This is part "))
+            .collect();
         assert!(maps.len() > 2);
         let mut covered = Vec::new();
         for u in &maps {
-            assert!(u.contains("speaker by speaker"), "map notes are asked per speaker");
-            let body = u.split("\">\n").nth(1).unwrap().trim_end_matches("\n</transcript>");
+            assert!(
+                u.contains("speaker by speaker"),
+                "map notes are asked per speaker"
+            );
+            let body = u
+                .split("\">\n")
+                .nth(1)
+                .unwrap()
+                .trim_end_matches("\n</transcript>");
             let body: Vec<&str> = body.lines().filter(|l| l.starts_with('[')).collect();
-            assert!(body[0].contains(" line 0 "), "a chunk starts mid-turn: {}", body[0]);
+            assert!(
+                body[0].contains(" line 0 "),
+                "a chunk starts mid-turn: {}",
+                body[0]
+            );
             covered.extend(body.iter().map(|l| l.to_string()));
         }
         let formatted: Vec<String> = input.iter().map(InputLine::format).collect();
@@ -541,7 +692,13 @@ pub(crate) mod tests {
         // Verbose attributed notes: 25 bullets per part, so merges are needed.
         m.map_reply = Box::new(|i| {
             (0..25)
-                .map(|k| format!("- [00:00:00] {}: point {i}.{k} {}", owner(i, k), "n".repeat(60)))
+                .map(|k| {
+                    format!(
+                        "- [00:00:00] {}: point {i}.{k} {}",
+                        owner(i, k),
+                        "n".repeat(60)
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         });
@@ -549,13 +706,21 @@ pub(crate) mod tests {
         m.merge_with = Some(Box::new(|u: &str| {
             u.split("### Part ")
                 .skip(1)
-                .flat_map(|part| part.lines().filter(|l| l.starts_with("- [")).take(3).map(str::to_string).collect::<Vec<_>>())
+                .flat_map(|part| {
+                    part.lines()
+                        .filter(|l| l.starts_with("- ["))
+                        .take(3)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         }));
         let input = speaker_input(90);
         let (tx, mut phases) = (&AtomicBool::new(false), Vec::new());
-        let r = run_input(&m, &recipe(), &speaker_ctx(), &input, 4096, tx, &mut |p| phases.push(p.phase));
+        let r = run_input(&m, &recipe(), &speaker_ctx(), &input, 4096, tx, &mut |p| {
+            phases.push(p.phase)
+        });
         assert_eq!(r.unwrap(), "final");
         assert!(phases.contains(&Phase::Merge), "the notes needed merging");
         let calls = m.calls.borrow().len();
@@ -566,7 +731,10 @@ pub(crate) mod tests {
                 continue;
             }
             if u.contains("Merge these notes") {
-                assert!(u.contains("never combine bullets of different speakers"), "{u}");
+                assert!(
+                    u.contains("never combine bullets of different speakers"),
+                    "{u}"
+                );
             } else {
                 assert!(u.contains("keep that attribution exactly"), "{u}");
             }
@@ -574,7 +742,11 @@ pub(crate) mod tests {
             // the speaker the map gave it.
             for (point, sp) in attributed(&u) {
                 let (i, k) = point.split_once('.').unwrap();
-                assert_eq!(sp, owner(i.parse().unwrap(), k.parse().unwrap()), "point {point}");
+                assert_eq!(
+                    sp,
+                    owner(i.parse().unwrap(), k.parse().unwrap()),
+                    "point {point}"
+                );
                 checked += 1;
             }
         }

@@ -10,6 +10,11 @@
 //! "Voice N". At the end of the run [`Tracker::finish_names`] redoes the
 //! attribution with every event the page sent (a name learned late applies
 //! to the earlier lines too).
+//!
+//! With the overlap model (#244, [`Tracker::with_overlap`]) each line of a
+//! clustered channel is also checked for overlapping speech; the spans go
+//! to `Segment.overlap` and the second speakers are filled in once the
+//! voices are final ([`super::overlap::assign_second_speakers`]).
 
 use super::cluster::{mean_embedding, OnlineClusterer};
 use super::doc::{
@@ -17,6 +22,7 @@ use super::doc::{
 };
 use super::model::SpeakerEmbedder;
 use super::names::{Attribution, SharedNames};
+use super::overlap::{OverlapLoader, OverlapModel};
 use super::{LIVE_WINDOW_MS, MIN_EMBED_MS, ONLINE_THRESHOLD};
 use crate::archive::{Channel, DocSpeaker, SegmentsFile};
 use anyhow::Result;
@@ -74,6 +80,31 @@ enum Embedder {
     Failed,
 }
 
+/// The overlap model, loaded like the embedder; without it (none given, or
+/// it failed to load) lines simply carry no overlap.
+enum Overlap {
+    None,
+    Pending(OverlapLoader),
+    Ready(Box<dyn OverlapModel>),
+}
+
+/// The models a run's speaker labels use: the embedder, and the overlap
+/// model when the run checks for overlapping speech (#244). Tests give an
+/// [`EmbedderLoader`] alone (`into()`): no overlap model, no download.
+pub struct SpeakerModels {
+    pub embedder: EmbedderLoader,
+    pub overlap: Option<OverlapLoader>,
+}
+
+impl From<EmbedderLoader> for SpeakerModels {
+    fn from(embedder: EmbedderLoader) -> Self {
+        Self {
+            embedder,
+            overlap: None,
+        }
+    }
+}
+
 /// A segment's speaker, as decided by the [`Tracker`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Labelled {
@@ -82,6 +113,18 @@ pub struct Labelled {
     pub embedding: Option<Vec<f32>>,
     /// A speaker the document doesn't list yet.
     pub new_speaker: Option<DocSpeaker>,
+    /// Overlapping speech in the line (#244), in ms from its start; empty
+    /// unless the line counts as overlapped
+    /// ([`super::overlap::line_spans`]).
+    pub overlap: Vec<(u64, u64)>,
+}
+
+impl Labelled {
+    /// The overlap spans on the session clock, for a line starting at
+    /// `start_ms` (second speakers are filled in at the end of the run).
+    pub fn overlap_at(&self, start_ms: u64) -> Vec<crate::archive::OverlapSpan> {
+        super::overlap::spans_at(start_ms, &self.overlap)
+    }
 }
 
 /// Equal pieces of at most `max` samples covering `len`, each at least
@@ -106,6 +149,7 @@ fn ms_to_samples(ms: u64) -> usize {
 pub struct Tracker {
     options: SpeakerOptions,
     embedder: Embedder,
+    overlap: Overlap,
     /// One clusterer per clustered channel, with the voice number each of
     /// its clusters got (`None` until a segment is labelled with it).
     channels: Vec<(Channel, OnlineClusterer, Vec<Option<u32>>)>,
@@ -128,6 +172,7 @@ impl Tracker {
         Self {
             options,
             embedder: Embedder::Pending(load),
+            overlap: Overlap::None,
             channels: Vec::new(),
             next_voice: 1,
             you_listed: false,
@@ -142,6 +187,43 @@ impl Tracker {
     pub fn with_own_voice(mut self, you: Option<Vec<f32>>) -> Self {
         self.own_voice = you;
         self
+    }
+
+    /// Check each clustered line for overlapping speech with this model
+    /// (loaded the first time a line needs it; a model that fails to load
+    /// only turns the check off).
+    pub fn with_overlap(mut self, load: Option<OverlapLoader>) -> Self {
+        self.overlap = load.map_or(Overlap::None, Overlap::Pending);
+        self
+    }
+
+    /// A tracker for `models` (the run's embedder and overlap model).
+    pub fn with_models(options: SpeakerOptions, models: SpeakerModels) -> Self {
+        Self::new(options, models.embedder).with_overlap(models.overlap)
+    }
+
+    /// Overlap spans of one line (ms from its start); empty without the
+    /// model or when it fails on this line.
+    fn detect_overlap(&mut self, samples: &[f32]) -> Vec<(u64, u64)> {
+        if samples.len() < ms_to_samples(super::overlap::MIN_LINE_MS) {
+            return Vec::new();
+        }
+        if let Overlap::Pending(_) = self.overlap {
+            let Overlap::Pending(load) = std::mem::replace(&mut self.overlap, Overlap::None) else {
+                unreachable!()
+            };
+            match load() {
+                Ok(m) => self.overlap = Overlap::Ready(m),
+                Err(e) => eprintln!("speakers: no overlap detection for this session ({e:#})"),
+            }
+        }
+        let Overlap::Ready(model) = &mut self.overlap else {
+            return Vec::new();
+        };
+        super::overlap::detect(model.as_mut(), samples).unwrap_or_else(|e| {
+            eprintln!("speakers: overlap not checked on a line ({e:#})");
+            Vec::new()
+        })
     }
 
     /// End of the run, after the voices are final: the best match of the
@@ -190,8 +272,8 @@ impl Tracker {
             self.you_listed = true;
             return Labelled {
                 speaker_id: Some(YOU_ID.to_string()),
-                embedding: None,
                 new_speaker,
+                ..Default::default()
             };
         }
         if !self.options.clusters(channel) {
@@ -207,6 +289,12 @@ impl Tracker {
             _ => None,
         };
         let clustered = self.cluster(channel, samples);
+        // Only lines that got voice data (long enough, embedder loaded).
+        let overlap = if clustered.is_some() {
+            self.detect_overlap(samples)
+        } else {
+            Vec::new()
+        };
         if let (Some((s, _)), Some((pos, c, _))) = (span, &clustered) {
             if self.options.names_on(channel) {
                 self.clustered.push((channel, s, *pos, *c));
@@ -218,16 +306,21 @@ impl Tracker {
                 speaker_id: Some(id),
                 embedding: clustered.map(|c| c.2),
                 new_speaker,
+                overlap,
             };
         }
         let Some((pos, cluster, embedding)) = clustered else {
-            return Labelled::default();
+            return Labelled {
+                overlap,
+                ..Default::default()
+            };
         };
         let (number, new_speaker) = self.voice_of(pos, cluster);
         Labelled {
             speaker_id: Some(super::doc::voice_id(number)),
             embedding: Some(embedding),
             new_speaker,
+            overlap,
         }
     }
 
@@ -336,7 +429,10 @@ impl Tracker {
         let mut changed = 0;
         for i in 0..file.segments.len() {
             let seg = &file.segments[i];
-            if !self.options.names_on(seg.channel) || seg.stt_error.is_some() || seg.start_ms < horizon {
+            if !self.options.names_on(seg.channel)
+                || seg.stt_error.is_some()
+                || seg.start_ms < horizon
+            {
                 continue;
             }
             let want = match names.attribute(seg.start_ms, seg.end_ms) {
@@ -498,6 +594,62 @@ pub(crate) mod tests {
                 .as_deref(),
             Some("voice:1")
         );
+    }
+
+    #[test]
+    fn clustered_lines_are_checked_for_overlap_when_the_model_is_given() {
+        use crate::speakers::overlap::tests::LoudIsOverlap;
+        let loads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let l2 = loads.clone();
+        let (load, _) = fake_loader(4);
+        let opts = SpeakerOptions {
+            cluster: vec![Channel::Mic, Channel::Remote],
+            two_channel: true,
+            names: None,
+        };
+        let mut t = Tracker::with_models(
+            opts,
+            SpeakerModels {
+                embedder: load,
+                overlap: Some(Box::new(move || {
+                    l2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    Ok(Box::new(LoudIsOverlap) as Box<dyn OverlapModel>)
+                })),
+            },
+        );
+        // The mic of a two-channel run is "You": never checked.
+        assert!(t.label(Channel::Mic, &audio(2, 4000)).overlap.is_empty());
+        assert_eq!(loads.load(std::sync::atomic::Ordering::Relaxed), 0);
+        // A loud (fake-overlapping) remote line: one span over the line.
+        let l = t.label(Channel::Remote, &audio(2, 4000));
+        assert_eq!(l.overlap.len(), 1);
+        assert!(
+            l.overlap[0].0 == 0 && l.overlap[0].1 >= 3_900,
+            "{:?}",
+            l.overlap
+        );
+        assert!(l.speaker_id.is_some() && l.embedding.is_some());
+        let at = l.overlap_at(10_000);
+        assert_eq!((at[0].start_ms, at[0].speaker_id.clone()), (10_000, None));
+        // A quiet line: none; the model was loaded once.
+        assert!(t.label(Channel::Remote, &audio(0, 4000)).overlap.is_empty());
+        assert_eq!(loads.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        // No overlap model (tests, older callers): nothing, no load.
+        let (load, _) = fake_loader(4);
+        let mut plain =
+            Tracker::with_models(SpeakerOptions::clustering(&[Channel::File]), load.into());
+        assert!(plain
+            .label(Channel::File, &audio(2, 4000))
+            .overlap
+            .is_empty());
+
+        // A model that fails to load only turns the check off.
+        let (load, _) = fake_loader(4);
+        let mut broken = Tracker::new(SpeakerOptions::clustering(&[Channel::File]), load)
+            .with_overlap(Some(Box::new(|| anyhow::bail!("offline"))));
+        let l = broken.label(Channel::File, &audio(2, 4000));
+        assert!(l.overlap.is_empty() && l.speaker_id.is_some());
     }
 
     #[test]

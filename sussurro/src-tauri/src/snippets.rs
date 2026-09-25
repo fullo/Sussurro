@@ -37,10 +37,11 @@ pub fn learned_words(original: &str, corrected: &str, dictionary: &[String]) -> 
             .collect()
     }
 
-    let original_words: HashSet<String> =
-        words(original).into_iter().map(|w| w.to_lowercase()).collect();
-    let dictionary_words: HashSet<String> =
-        dictionary.iter().map(|w| w.to_lowercase()).collect();
+    let original_words: HashSet<String> = words(original)
+        .into_iter()
+        .map(|w| w.to_lowercase())
+        .collect();
+    let dictionary_words: HashSet<String> = dictionary.iter().map(|w| w.to_lowercase()).collect();
     let mut seen = HashSet::new();
 
     words(corrected)
@@ -57,7 +58,10 @@ mod tests {
     use super::*;
 
     fn snip(cue: &str, text: &str) -> Snippet {
-        Snippet { cue: cue.into(), text: text.into() }
+        Snippet {
+            cue: cue.into(),
+            text: text.into(),
+        }
     }
 
     #[test]

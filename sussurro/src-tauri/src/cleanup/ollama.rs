@@ -254,7 +254,14 @@ fn chat_openai(
     messages: &[Value],
     opts: &ChatOptions,
 ) -> Result<String> {
-    chat_openai_with(&http_client(opts.timeout_secs)?, url, model, api_key, messages, opts)
+    chat_openai_with(
+        &http_client(opts.timeout_secs)?,
+        url,
+        model,
+        api_key,
+        messages,
+        opts,
+    )
 }
 
 fn chat_openai_with(
@@ -325,23 +332,37 @@ mod tests {
     #[test]
     fn level_none_skips_network_entirely() {
         // Would panic/hang if it tried the network: URL is unroutable.
-        let out = cleanup(&cfg(CleanupLevel::None, "http://0.0.0.0:1"), None, "um raw text");
+        let out = cleanup(
+            &cfg(CleanupLevel::None, "http://0.0.0.0:1"),
+            None,
+            "um raw text",
+        );
         assert_eq!(out, "um raw text");
     }
 
     #[test]
     fn unreachable_ollama_falls_back_to_raw_transcript() {
         // Discard port: connection refused instantly.
-        let out = cleanup(&cfg(CleanupLevel::Light, "http://127.0.0.1:9"), None, "um raw text");
+        let out = cleanup(
+            &cfg(CleanupLevel::Light, "http://127.0.0.1:9"),
+            None,
+            "um raw text",
+        );
         assert_eq!(out, "um raw text");
     }
 
     #[test]
     fn chunked_cleanup_falls_back_to_the_raw_segment() {
         let s = cfg(CleanupLevel::Light, "http://127.0.0.1:9");
-        assert_eq!(cleanup_with_context(&s, Some("before"), "um segment"), "um segment");
+        assert_eq!(
+            cleanup_with_context(&s, Some("before"), "um segment"),
+            "um segment"
+        );
         let none = cfg(CleanupLevel::None, "http://0.0.0.0:1");
-        assert_eq!(cleanup_with_context(&none, None, "um segment"), "um segment");
+        assert_eq!(
+            cleanup_with_context(&none, None, "um segment"),
+            "um segment"
+        );
     }
 
     #[test]
@@ -387,10 +408,21 @@ mod tests {
         };
         assert!(s.cleanup_blocked() && !s.cleanup_sends_externally());
         assert_eq!(cleanup(&s, None, "um raw text"), "um raw text");
-        assert_eq!(cleanup_with_context(&s, Some("before"), "um segment"), "um segment");
+        assert_eq!(
+            cleanup_with_context(&s, Some("before"), "um segment"),
+            "um segment"
+        );
         std::thread::sleep(Duration::from_millis(100));
-        assert_eq!(external_hits.load(Ordering::SeqCst), 0, "nothing may reach the external host");
-        assert_eq!(local_hits.load(Ordering::SeqCst), 0, "no fallback to the local profile");
+        assert_eq!(
+            external_hits.load(Ordering::SeqCst),
+            0,
+            "nothing may reach the external host"
+        );
+        assert_eq!(
+            local_hits.load(Ordering::SeqCst),
+            0,
+            "no fallback to the local profile"
+        );
 
         // Opted in for its host: cleanup goes there (and only there).
         s.llm_profiles[1].cleanup_opt_in = "127.0.0.1".into();
@@ -420,16 +452,22 @@ mod tests {
         assert!(!s.cleanup_blocked() && !s.cleanup_sends_externally());
         assert_eq!(cleanup(&s, None, "um raw text"), "um raw text");
         let err = list_models(&s.cleanup_llm()).unwrap_err();
-        assert!(format!("{err:#}").contains("no bundled llama-server"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("no bundled llama-server"),
+            "{err:#}"
+        );
         assert!(!crate::llm::bundled::global().is_running());
     }
 
     #[test]
     fn unreachable_openai_falls_back_to_raw_transcript() {
-        let s = cfg_api(CleanupLevel::Light, CleanupApi::Openai, "http://127.0.0.1:9");
+        let s = cfg_api(
+            CleanupLevel::Light,
+            CleanupApi::Openai,
+            "http://127.0.0.1:9",
+        );
         assert_eq!(cleanup(&s, None, "um raw text"), "um raw text");
     }
-
 
     #[test]
     fn openai_base_strips_trailing_slash_and_v1() {
@@ -464,7 +502,10 @@ mod tests {
                 "Proviamo l'audio. Va.",
             );
             println!("cleaned: {out}");
-            assert!(out.to_lowercase().contains("audio"), "reply-like output: {out}");
+            assert!(
+                out.to_lowercase().contains("audio"),
+                "reply-like output: {out}"
+            );
         }
     }
 
@@ -484,10 +525,19 @@ mod tests {
                 "um so this is uh another test right after",
             );
             println!("cleaned: {out}");
-            assert!(out.to_lowercase().contains("test"), "unrelated output: {out}");
-            assert!(!out.to_lowercase().contains("questo"), "translated to Italian: {out}");
+            assert!(
+                out.to_lowercase().contains("test"),
+                "unrelated output: {out}"
+            );
+            assert!(
+                !out.to_lowercase().contains("questo"),
+                "translated to Italian: {out}"
+            );
             // The guard falling back to raw would leave the fillers in.
-            assert!(!out.to_lowercase().contains("um"), "cleanup did not run: {out}");
+            assert!(
+                !out.to_lowercase().contains("um"),
+                "cleanup did not run: {out}"
+            );
         }
     }
 
@@ -504,14 +554,20 @@ mod tests {
         ] {
             let p = profile(api.clone(), url);
             let models = list_models(&p).unwrap();
-            assert!(models.iter().any(|m| m.starts_with("llama3.2")), "{api:?}: {models:?}");
+            assert!(
+                models.iter().any(|m| m.starts_with("llama3.2")),
+                "{api:?}: {models:?}"
+            );
             let out = cleanup(
                 &cfg_api(CleanupLevel::Light, api.clone(), url),
                 None,
                 "um so basically i think uh we should ship it",
             );
             println!("{api:?}: {out}");
-            assert!(!out.to_lowercase().contains(" uh "), "{api:?} did not clean: {out}");
+            assert!(
+                !out.to_lowercase().contains(" uh "),
+                "{api:?} did not clean: {out}"
+            );
         }
     }
 

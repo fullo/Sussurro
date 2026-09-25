@@ -124,7 +124,11 @@ pub fn ensure_model(models_dir: &Path) -> Result<PathBuf> {
 }
 
 /// The sidecar configuration for the model in `models_dir`.
-pub fn sidecar_config(paths: &SidecarPaths, models_dir: &Path, log_file: Option<PathBuf>) -> SidecarConfig {
+pub fn sidecar_config(
+    paths: &SidecarPaths,
+    models_dir: &Path,
+    log_file: Option<PathBuf>,
+) -> SidecarConfig {
     let mut cfg = SidecarConfig::chat(
         paths.binary.clone(),
         paths.lib_dir.clone(),
@@ -204,7 +208,10 @@ impl BundledLlm {
     fn acquire(&self) -> Result<SidecarAccess> {
         let cfg = (self.resolve)()?;
         let mut g = self.lock();
-        if g.sidecar.as_ref().is_some_and(|s| !same_server(s.config(), &cfg)) {
+        if g.sidecar
+            .as_ref()
+            .is_some_and(|s| !same_server(s.config(), &cfg))
+        {
             g.sidecar = None; // another models folder: stop the old one
         }
         if g.sidecar.is_none() {
@@ -243,7 +250,10 @@ impl BundledLlm {
                     return Ok(v);
                 }
                 Err(e) => {
-                    let crashed = g.sidecar.as_mut().is_some_and(|s| s.crashed_within(CRASH_GRACE));
+                    let crashed = g
+                        .sidecar
+                        .as_mut()
+                        .is_some_and(|s| s.crashed_within(CRASH_GRACE));
                     if !crashed {
                         return Err(e);
                     }
@@ -304,7 +314,10 @@ impl BundledLlm {
     }
 
     pub fn is_running(&self) -> bool {
-        self.lock().sidecar.as_ref().is_some_and(Sidecar::is_running)
+        self.lock()
+            .sidecar
+            .as_ref()
+            .is_some_and(Sidecar::is_running)
     }
 
     /// The running server's process id, without waiting: `None` when it
@@ -312,7 +325,10 @@ impl BundledLlm {
     /// whole start). For diagnostics (#101).
     pub fn try_pid(&self) -> Option<u32> {
         let g = self.inner.try_lock().ok()?;
-        g.sidecar.as_ref().filter(|s| s.is_running()).and_then(Sidecar::pid)
+        g.sidecar
+            .as_ref()
+            .filter(|s| s.is_running())
+            .and_then(Sidecar::pid)
     }
 }
 
@@ -359,8 +375,8 @@ fn app_config() -> Result<SidecarConfig> {
         return Err(anyhow!(NOT_DOWNLOADED));
     }
     let mut cfg = sidecar_config(&paths, &models_dir, log);
-    cfg.socket_base = crate::app_handle()
-        .and_then(|app| crate::stt::remote::endpoint::app_socket_base(&app));
+    cfg.socket_base =
+        crate::app_handle().and_then(|app| crate::stt::remote::endpoint::app_socket_base(&app));
     Ok(cfg)
 }
 

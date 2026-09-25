@@ -643,7 +643,11 @@ impl Cleaner for ExternalLlm {
         let items = archive::list_items(&self.archive);
         let logged = items
             .first()
-            .map(|i| archive::external::read_log(&self.archive, &i.id).unwrap().len())
+            .map(|i| {
+                archive::external::read_log(&self.archive, &i.id)
+                    .unwrap()
+                    .len()
+            })
             .unwrap_or(0);
         self.logged_at_call.lock().unwrap().push(logged);
         if let Some(c) = &self.cancel_after_first {
@@ -663,18 +667,34 @@ fn external_cleanup_is_logged_before_the_first_send_even_if_the_run_fails() {
     let mut j = job(dir.path(), Vec::new(), Policy::Block { max_queued: 4 });
     let sink = Arc::new(VecSink::default());
     j.source = Box::new(BreaksAfterASegment {
-        inner: VecSource::new(bursts(&[(true, 3.0), (false, 2.5)].repeat(6)), Channel::File),
+        inner: VecSource::new(
+            bursts(&[(true, 3.0), (false, 2.5)].repeat(6)),
+            Channel::File,
+        ),
         after: (16_000.0 * 5.5 * 3.0) as usize,
         sink: sink.clone(),
     });
     j.external_cleanup = Some(external_entry());
-    let llm = ExternalLlm { archive: archive_dir.clone(), logged_at_call: Mutex::new(Vec::new()), cancel_after_first: None };
-    let mut stt = FakeStt { calls: 0, fail_on: None };
+    let llm = ExternalLlm {
+        archive: archive_dir.clone(),
+        logged_at_call: Mutex::new(Vec::new()),
+        cancel_after_first: None,
+    };
+    let mut stt = FakeStt {
+        calls: 0,
+        fail_on: None,
+    };
     let err = run(j, &mut stt, &llm, sink).unwrap_err();
     assert!(format!("{err:#}").contains("decode error"));
     let calls = llm.logged_at_call.lock().unwrap().clone();
-    assert!(!calls.is_empty(), "a segment was cleaned before the failure");
-    assert!(calls.iter().all(|&n| n == 1), "logged before the first send, once per run: {calls:?}");
+    assert!(
+        !calls.is_empty(),
+        "a segment was cleaned before the failure"
+    );
+    assert!(
+        calls.iter().all(|&n| n == 1),
+        "logged before the first send, once per run: {calls:?}"
+    );
 
     let items = archive::list_items(&archive_dir);
     assert_eq!(items.len(), 1);
@@ -690,19 +710,33 @@ fn external_cleanup_is_logged_before_the_first_send_even_if_the_run_fails() {
 fn external_cleanup_is_logged_before_the_first_send_even_if_the_run_is_cancelled() {
     let dir = tempfile::tempdir().unwrap();
     let archive_dir = dir.path().join("archive");
-    let mut j = job(dir.path(), bursts(&[(true, 3.0), (false, 2.5)].repeat(10)), Policy::Block { max_queued: 1 });
+    let mut j = job(
+        dir.path(),
+        bursts(&[(true, 3.0), (false, 2.5)].repeat(10)),
+        Policy::Block { max_queued: 1 },
+    );
     j.external_cleanup = Some(external_entry());
     let llm = ExternalLlm {
         archive: archive_dir.clone(),
         logged_at_call: Mutex::new(Vec::new()),
         cancel_after_first: Some(j.cancel.clone()),
     };
-    let mut stt = FakeStt { calls: 0, fail_on: None };
+    let mut stt = FakeStt {
+        calls: 0,
+        fail_on: None,
+    };
     let err = run(j, &mut stt, &llm, Arc::new(VecSink::default())).unwrap_err();
     assert!(format!("{err:#}").contains("cancelled"));
     let calls = llm.logged_at_call.lock().unwrap().clone();
-    assert_eq!(calls.first(), Some(&1), "the entry was on disk when the first text went out: {calls:?}");
-    assert!(calls.iter().all(|&n| n == 1), "one entry per run: {calls:?}");
+    assert_eq!(
+        calls.first(),
+        Some(&1),
+        "the entry was on disk when the first text went out: {calls:?}"
+    );
+    assert!(
+        calls.iter().all(|&n| n == 1),
+        "one entry per run: {calls:?}"
+    );
 }
 
 /// A finished run with several externally cleaned segments logs one entry.
@@ -710,14 +744,42 @@ fn external_cleanup_is_logged_before_the_first_send_even_if_the_run_is_cancelled
 fn external_cleanup_is_logged_once_per_run() {
     let dir = tempfile::tempdir().unwrap();
     let archive_dir = dir.path().join("archive");
-    let mut j = job(dir.path(), bursts(&[(true, 3.0), (false, 2.5)].repeat(3)), Policy::Block { max_queued: 2 });
+    let mut j = job(
+        dir.path(),
+        bursts(&[(true, 3.0), (false, 2.5)].repeat(3)),
+        Policy::Block { max_queued: 2 },
+    );
     j.external_cleanup = Some(external_entry());
-    let llm = ExternalLlm { archive: archive_dir.clone(), logged_at_call: Mutex::new(Vec::new()), cancel_after_first: None };
-    let r = run(j, &mut FakeStt { calls: 0, fail_on: None }, &llm, Arc::new(VecSink::default())).unwrap();
+    let llm = ExternalLlm {
+        archive: archive_dir.clone(),
+        logged_at_call: Mutex::new(Vec::new()),
+        cancel_after_first: None,
+    };
+    let r = run(
+        j,
+        &mut FakeStt {
+            calls: 0,
+            fail_on: None,
+        },
+        &llm,
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
     let calls = llm.logged_at_call.lock().unwrap().clone();
-    assert!(calls.len() >= 2 && calls.iter().all(|&n| n == 1), "{calls:?}");
-    assert_eq!(archive::external::read_log(&archive_dir, &r.item_id).unwrap(), [external_entry()]);
-    assert_eq!(archive::read_item(&archive_dir, &r.item_id).unwrap().external_hosts, ["api.example.com"]);
+    assert!(
+        calls.len() >= 2 && calls.iter().all(|&n| n == 1),
+        "{calls:?}"
+    );
+    assert_eq!(
+        archive::external::read_log(&archive_dir, &r.item_id).unwrap(),
+        [external_entry()]
+    );
+    assert_eq!(
+        archive::read_item(&archive_dir, &r.item_id)
+            .unwrap()
+            .external_hosts,
+        ["api.example.com"]
+    );
 }
 
 /// Without an external cleanup nothing is logged.
@@ -725,11 +787,31 @@ fn external_cleanup_is_logged_once_per_run() {
 fn local_cleanup_logs_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let archive_dir = dir.path().join("archive");
-    let j = job(dir.path(), bursts(&[(true, 3.0), (false, 2.5)].repeat(2)), Policy::Block { max_queued: 2 });
-    let llm = ExternalLlm { archive: archive_dir.clone(), logged_at_call: Mutex::new(Vec::new()), cancel_after_first: None };
-    let r = run(j, &mut FakeStt { calls: 0, fail_on: None }, &llm, Arc::new(VecSink::default())).unwrap();
+    let j = job(
+        dir.path(),
+        bursts(&[(true, 3.0), (false, 2.5)].repeat(2)),
+        Policy::Block { max_queued: 2 },
+    );
+    let llm = ExternalLlm {
+        archive: archive_dir.clone(),
+        logged_at_call: Mutex::new(Vec::new()),
+        cancel_after_first: None,
+    };
+    let r = run(
+        j,
+        &mut FakeStt {
+            calls: 0,
+            fail_on: None,
+        },
+        &llm,
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
     assert!(llm.logged_at_call.lock().unwrap().iter().all(|&n| n == 0));
-    assert!(archive::read_item(&archive_dir, &r.item_id).unwrap().external_hosts.is_empty());
+    assert!(archive::read_item(&archive_dir, &r.item_id)
+        .unwrap()
+        .external_hosts
+        .is_empty());
 }
 
 /// The subtitles setting *Always* (#133): the finished item gets its
@@ -743,7 +825,13 @@ fn always_subtitles_write_the_sidecar_at_the_end_of_a_run() {
         (ItemType::Transcription, false, false),
     ] {
         let dir = tempfile::tempdir().unwrap();
-        let audio = bursts(&[(false, 1.0), (true, 3.0), (false, 2.0), (true, 2.0), (false, 1.0)]);
+        let audio = bursts(&[
+            (false, 1.0),
+            (true, 3.0),
+            (false, 2.0),
+            (true, 2.0),
+            (false, 1.0),
+        ]);
         let mut j = job(dir.path(), audio, Policy::Block { max_queued: 2 });
         j.meta.item_type = item_type;
         j.write_subtitles = write;
@@ -900,7 +988,10 @@ fn build_segment_gives_the_cleaner_the_detected_language() {
         build_segment(0, Channel::Mic, &audio, t, None, false, &cleaner).unwrap();
     }
     // A blank language counts as not reported.
-    assert_eq!(*cleaner.0.lock().unwrap(), [Some("it".to_string()), None, None]);
+    assert_eq!(
+        *cleaner.0.lock().unwrap(),
+        [Some("it".to_string()), None, None]
+    );
     // A cleaner without `clean_detected` still gets every segment.
     let plain = FakeCleaner::default();
     let t = TimedTranscript {
@@ -922,11 +1013,17 @@ fn the_external_log_cleaner_forwards_the_detected_language_only_when_allowed() {
         entry: external_entry(),
         logged: std::sync::Mutex::new(Some(allowed)),
     };
-    assert_eq!(make(true).clean_detected(None, "ehm ciao", Some("it")), "ehm ciao");
+    assert_eq!(
+        make(true).clean_detected(None, "ehm ciao", Some("it")),
+        "ehm ciao"
+    );
     assert_eq!(make(true).clean(None, "hello"), "hello");
     assert_eq!(*inner.0.lock().unwrap(), [Some("it".to_string()), None]);
     // Not recorded: nothing reaches the LLM, the raw text stays.
-    assert_eq!(make(false).clean_detected(None, "ehm ciao", Some("it")), "ehm ciao");
+    assert_eq!(
+        make(false).clean_detected(None, "ehm ciao", Some("it")),
+        "ehm ciao"
+    );
     assert_eq!(inner.0.lock().unwrap().len(), 2);
 }
 
@@ -1828,7 +1925,14 @@ fn external_cleanup_marks_the_item_only_when_it_was_sent() {
             documents_dir: Some(dir.path().join("Documents")),
             home_dir: Some(dir.path().to_path_buf()),
         };
-        let mut work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com/v1", "", "gpt");
+        let mut work = LlmProfile::new(
+            "work",
+            "Work",
+            CleanupApi::Openai,
+            "https://api.example.com/v1",
+            "",
+            "gpt",
+        );
         work.cleanup_opt_in = opt_in.into();
         let shared = Mutex::new(Settings {
             cleanup_level: CleanupLevel::Light,
@@ -1839,7 +1943,10 @@ fn external_cleanup_marks_the_item_only_when_it_was_sent() {
         let req = Request {
             id: 9,
             cancel: Arc::new(AtomicBool::new(false)),
-            source: Box::new(VecSource::new(bursts(&[(true, 2.0), (false, 1.0)]), Channel::File)),
+            source: Box::new(VecSource::new(
+                bursts(&[(true, 2.0), (false, 1.0)]),
+                Channel::File,
+            )),
             policy: Policy::Block { max_queued: 2 },
             defer: false,
             item_type: ItemType::Transcription,
@@ -1856,7 +1963,10 @@ fn external_cleanup_marks_the_item_only_when_it_was_sent() {
             &paths,
             req,
             |_: &[f32], _: &str| -> Result<TimedTranscript> {
-                Ok(TimedTranscript { text: "ciao".into(), ..Default::default() })
+                Ok(TimedTranscript {
+                    text: "ciao".into(),
+                    ..Default::default()
+                })
             },
             |_: &Settings, _: Option<&str>, raw: &str| raw.to_string(),
             |_| Box::new(EnergyDetector::default()),
@@ -1864,13 +1974,24 @@ fn external_cleanup_marks_the_item_only_when_it_was_sent() {
         )
         .unwrap();
         let archive_dir = dir.path().join("Documents").join("Sussurro");
-        archive::read_item(&archive_dir, &r.item_id).unwrap().external_hosts
+        archive::read_item(&archive_dir, &r.item_id)
+            .unwrap()
+            .external_hosts
     };
 
     assert_eq!(run_with("api.example.com", None), ["api.example.com"]);
-    assert!(run_with("", None).is_empty(), "no opt-in: nothing sent, nothing recorded");
-    assert!(run_with("other.example", None).is_empty(), "an opt-in for another host doesn't count");
-    assert!(run_with("api.example.com", Some(CleanupLevel::None)).is_empty(), "cleanup None sends nothing");
+    assert!(
+        run_with("", None).is_empty(),
+        "no opt-in: nothing sent, nothing recorded"
+    );
+    assert!(
+        run_with("other.example", None).is_empty(),
+        "an opt-in for another host doesn't count"
+    );
+    assert!(
+        run_with("api.example.com", Some(CleanupLevel::None)).is_empty(),
+        "cleanup None sends nothing"
+    );
 }
 
 // ---- speakers (#130) -------------------------------------------------------
@@ -1905,7 +2026,10 @@ fn a_run_with_speakers_labels_voices_and_stores_embeddings() {
     let mut j = job(dir.path(), audio, Policy::Block { max_queued: 1 });
     j.meta.item_type = ItemType::Meeting;
     let (load, calls) = fake_loader(5);
-    j.speakers = Some(Tracker::new(SpeakerOptions::clustering(&[Channel::File]), load));
+    j.speakers = Some(Tracker::new(
+        SpeakerOptions::clustering(&[Channel::File]),
+        load,
+    ));
     let sink = Arc::new(VecSink::default());
     let mut stt = FakeStt {
         calls: 0,
@@ -1922,7 +2046,12 @@ fn a_run_with_speakers_labels_voices_and_stores_embeddings() {
         .map(|s| s.speaker_id.as_deref().unwrap())
         .collect();
     assert_eq!(who, ["voice:1", "voice:2", "voice:1", "voice:2"]);
-    let ids: Vec<&str> = item.segments.speakers.iter().map(|s| s.id.as_str()).collect();
+    let ids: Vec<&str> = item
+        .segments
+        .speakers
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect();
     assert_eq!(ids, ["voice:1", "voice:2"]);
     assert_eq!(item.embedded_segments, 4);
     assert!(item.body.contains("] Voice 2:**"), "{}", item.body);
@@ -1937,13 +2066,21 @@ fn a_run_with_speakers_labels_voices_and_stores_embeddings() {
         })
         .collect();
     assert_eq!(segs.len(), 4);
-    assert!(segs.iter().all(|s| s.embedding.is_none() && s.speaker_id.is_some()));
+    assert!(segs
+        .iter()
+        .all(|s| s.embedding.is_none() && s.speaker_id.is_some()));
 }
 
 #[test]
 fn a_run_without_speakers_stores_no_voices() {
     let dir = tempfile::tempdir().unwrap();
-    let audio = voiced(&[(None, 1.0), (Some(0), 3.0), (None, 3.0), (Some(1), 3.0), (None, 1.0)]);
+    let audio = voiced(&[
+        (None, 1.0),
+        (Some(0), 3.0),
+        (None, 3.0),
+        (Some(1), 3.0),
+        (None, 1.0),
+    ]);
     let mut stt = FakeStt {
         calls: 0,
         fail_on: None,
@@ -1958,7 +2095,90 @@ fn a_run_without_speakers_stores_no_voices() {
     let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
     assert!(item.segments.speakers.is_empty());
     assert_eq!(item.embedded_segments, 0);
-    assert!(item.segments.segments.iter().all(|s| s.speaker_id.is_none()));
+    assert!(item
+        .segments
+        .segments
+        .iter()
+        .all(|s| s.speaker_id.is_none()));
+}
+
+/// #244: with the overlap model, a run stores the spans of an overlapped
+/// line and, once the voices are final, the second speaker of each span.
+#[test]
+fn a_run_with_the_overlap_model_marks_overlapped_lines_and_a_second_voice() {
+    use crate::speakers::overlap::{OverlapModel, FRAME_STEP, RECEPTIVE_FIELD};
+    use crate::speakers::{tracker::tests::fake_loader, SpeakerOptions, Tracker};
+    /// Fake: every frame of a window that holds loud audio is overlap.
+    struct LoudWindow;
+    impl OverlapModel for LoudWindow {
+        fn frame_overlap(&mut self, windows: &[Vec<f32>]) -> Result<Vec<Vec<f32>>> {
+            Ok(windows
+                .iter()
+                .map(|w| {
+                    let loud = w.iter().any(|x| x.abs() > 0.5);
+                    let len = w.iter().rposition(|x| *x != 0.0).unwrap_or(0);
+                    (0..589)
+                        .map(|i| {
+                            let centre = i * FRAME_STEP + RECEPTIVE_FIELD / 2;
+                            if loud && centre < len {
+                                0.9
+                            } else {
+                                0.0
+                            }
+                        })
+                        .collect()
+                })
+                .collect())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let audio = voiced(&[
+        (None, 1.0),
+        (Some(0), 6.0),
+        (None, 3.0),
+        (Some(1), 6.0),
+        (None, 3.0),
+        // Louder: the fake model hears two people here.
+        (Some(2), 3.0),
+        (None, 3.0),
+        (Some(0), 6.0),
+        (None, 3.0),
+        (Some(1), 6.0),
+        (None, 1.0),
+    ]);
+    let mut j = job(dir.path(), audio, Policy::Block { max_queued: 1 });
+    j.meta.item_type = ItemType::Meeting;
+    let (load, _) = fake_loader(5);
+    j.speakers = Some(
+        Tracker::new(SpeakerOptions::clustering(&[Channel::File]), load)
+            .with_overlap(Some(Box::new(|| {
+                Ok(Box::new(LoudWindow) as Box<dyn OverlapModel>)
+            }))),
+    );
+    let sink = Arc::new(VecSink::default());
+    let mut stt = FakeStt {
+        calls: 0,
+        fail_on: None,
+    };
+    let r = run(j, &mut stt, &FakeCleaner::default(), sink.clone()).unwrap();
+    let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+    let lines = &item.segments.segments;
+    assert_eq!(lines.len(), 5);
+    let flagged: Vec<usize> = (0..5).filter(|&i| !lines[i].overlap.is_empty()).collect();
+    assert_eq!(flagged, [2], "only the loud line is overlapped");
+    let line = &lines[2];
+    let span = &line.overlap[0];
+    assert!(span.start_ms >= line.start_ms && span.end_ms <= line.end_ms);
+    // The 3 s voice folded into a real one; the second voice is the other.
+    let second = span.speaker_id.as_deref().expect("a second voice");
+    assert!(second.starts_with("voice:"));
+    assert_ne!(Some(second), line.speaker_id.as_deref());
+    // The live event carried the span (the second voice comes at the end).
+    let events = sink.0.lock().unwrap();
+    assert!(events.iter().any(|e| matches!(
+        e,
+        EngineEvent::Segment(p) if !p.segment.overlap.is_empty() && p.segment.overlap[0].speaker_id.is_none()
+    )));
 }
 
 #[test]
@@ -1978,14 +2198,28 @@ fn a_short_voice_folds_into_its_neighbour_at_the_end_of_the_run() {
     ]);
     let mut j = job(dir.path(), audio, Policy::Block { max_queued: 1 });
     let (load, _) = fake_loader(5);
-    j.speakers = Some(Tracker::new(SpeakerOptions::clustering(&[Channel::File]), load));
+    j.speakers = Some(Tracker::new(
+        SpeakerOptions::clustering(&[Channel::File]),
+        load,
+    ));
     let mut stt = FakeStt {
         calls: 0,
         fail_on: None,
     };
-    let r = run(j, &mut stt, &FakeCleaner::default(), Arc::new(VecSink::default())).unwrap();
+    let r = run(
+        j,
+        &mut stt,
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
     let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
-    let ids: Vec<&str> = item.segments.speakers.iter().map(|s| s.id.as_str()).collect();
+    let ids: Vec<&str> = item
+        .segments
+        .speakers
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect();
     assert_eq!(ids, ["voice:1", "voice:2"]);
     let who: Vec<&str> = item
         .segments
@@ -2087,11 +2321,18 @@ fn two_channels_segment_separately_on_one_clock_in_time_order() {
     let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
     let segs = &item.segments.segments;
     let mic: Vec<_> = segs.iter().filter(|s| s.channel == Channel::Mic).collect();
-    let remote: Vec<_> = segs.iter().filter(|s| s.channel == Channel::Remote).collect();
+    let remote: Vec<_> = segs
+        .iter()
+        .filter(|s| s.channel == Channel::Remote)
+        .collect();
     assert_eq!((mic.len(), remote.len()), (1, 1), "{segs:?}");
     assert!(mic[0].start_ms < 700, "{}", mic[0].start_ms);
     // On the run's clock: 1 s offset + 1 s of silence.
-    assert!((1_700..2_100).contains(&remote[0].start_ms), "{}", remote[0].start_ms);
+    assert!(
+        (1_700..2_100).contains(&remote[0].start_ms),
+        "{}",
+        remote[0].start_ms
+    );
     // The remote reply finished first, but the item is in time order.
     assert_eq!(segs[0].channel, Channel::Mic);
     assert!(segs.windows(2).all(|w| w[0].start_ms <= w[1].start_ms));
@@ -2099,7 +2340,11 @@ fn two_channels_segment_separately_on_one_clock_in_time_order() {
     ids.sort();
     assert_eq!(ids, [0, 1], "ids stay unique");
     // The run lasts as long as the furthest channel (15.5 s), not the sum.
-    assert!((15_000..16_500).contains(&r.duration_ms), "{}", r.duration_ms);
+    assert!(
+        (15_000..16_500).contains(&r.duration_ms),
+        "{}",
+        r.duration_ms
+    );
 }
 
 /// #134: the "Identify voices" run option reaches the engine — through the
@@ -2131,7 +2376,13 @@ fn identify_voices_run_option_reaches_the_engine() {
             id: 11,
             cancel: Arc::new(AtomicBool::new(false)),
             source: Box::new(VecSource::new(
-                voiced(&[(None, 1.0), (Some(0), 3.0), (None, 3.0), (Some(1), 3.0), (None, 1.0)]),
+                voiced(&[
+                    (None, 1.0),
+                    (Some(0), 3.0),
+                    (None, 3.0),
+                    (Some(1), 3.0),
+                    (None, 1.0),
+                ]),
                 Channel::File,
             )),
             policy: Policy::Block { max_queued: 2 },
@@ -2295,7 +2546,11 @@ fn save_audio_off_writes_no_audio_anywhere() {
         Arc::new(VecSink::default()),
     )
     .unwrap();
-    assert!(wavs_under(dir.path()).is_empty(), "{:?}", wavs_under(dir.path()));
+    assert!(
+        wavs_under(dir.path()).is_empty(),
+        "{:?}",
+        wavs_under(dir.path())
+    );
     let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
     assert!(item.audio.is_empty());
     assert!(!item.meta.extra.contains_key(archive::audio::AUDIO_KEY));
@@ -2418,7 +2673,11 @@ fn save_audio_writes_one_file_per_channel_on_one_clock() {
     let m = decode_wav(&folder.join("audio-mic.wav"));
     assert_eq!(m.len(), mic.len());
     let rem = decode_wav(&folder.join("audio-remote.wav"));
-    assert_eq!(rem.len(), 16_000 + remote.len(), "padded to the run's t = 0");
+    assert_eq!(
+        rem.len(),
+        16_000 + remote.len(),
+        "padded to the run's t = 0"
+    );
     assert!(rem[..16_000].iter().all(|&s| s == 0.0));
     assert!(remote
         .iter()
@@ -2558,12 +2817,7 @@ fn crash_recovery_repairs_and_lists_the_saved_audio() {
         "the header lags behind what reached the disk"
     );
 
-    let r = checkpoint::recover(
-        &journal,
-        Some(&archive_dir),
-        None,
-        &dir.path().join("data"),
-    );
+    let r = checkpoint::recover(&journal, Some(&archive_dir), None, &dir.path().join("data"));
     assert_eq!(r.interrupted.len(), 1);
     let item = archive::read_item(&archive_dir, &r.interrupted[0]).unwrap();
     assert!(item.interrupted);
@@ -2717,7 +2971,10 @@ fn save_audio_as_opus_writes_one_aligned_file_per_channel() {
     assert_eq!(item.audio.len(), 2);
     let files = wavs_under(dir.path());
     assert_eq!(files.len(), 2);
-    assert!(files.iter().all(|p| p.extension().unwrap() == "opus"), "{files:?}");
+    assert!(
+        files.iter().all(|p| p.extension().unwrap() == "opus"),
+        "{files:?}"
+    );
     // Much smaller than the WAV would be.
     let wav_bytes = 44 + mic.len() as u64 * 2;
     assert!(item.audio[0].bytes * 5 < wav_bytes, "{:?}", item.audio);
@@ -2727,17 +2984,30 @@ fn save_audio_as_opus_writes_one_aligned_file_per_channel() {
     assert_eq!(m.len(), mic.len());
     let (rem, done) = archive::opus::decode_file(&folder.join("audio-remote.opus")).unwrap();
     assert!(done);
-    assert_eq!(rem.len(), 16_000 + remote.len(), "padded to the run's t = 0");
+    assert_eq!(
+        rem.len(),
+        16_000 + remote.len(),
+        "padded to the run's t = 0"
+    );
     assert!(rem[..15_000].iter().all(|s| s.abs() < 0.01));
     // Aligned with the source: speech starts where it starts in the source
     // (within 1 ms — far from the encoder's 104-sample delay), mic at 0.5 s,
     // remote at 2 s (1 s late + 1 s of silence).
-    let onset = |x: &[f32], from: usize| from + x[from..].iter().position(|s| s.abs() > 0.05).unwrap();
+    let onset =
+        |x: &[f32], from: usize| from + x[from..].iter().position(|s| s.abs() > 0.05).unwrap();
     let expect_mic = onset(&mic, 0);
     assert!((8_000..8_010).contains(&expect_mic));
-    assert!(onset(&m, 4_000).abs_diff(expect_mic) <= 16, "{}", onset(&m, 4_000));
+    assert!(
+        onset(&m, 4_000).abs_diff(expect_mic) <= 16,
+        "{}",
+        onset(&m, 4_000)
+    );
     let expect_rem = 16_000 + onset(&remote, 0);
-    assert!(onset(&rem, 20_000).abs_diff(expect_rem) <= 16, "{}", onset(&rem, 20_000));
+    assert!(
+        onset(&rem, 20_000).abs_diff(expect_rem) <= 16,
+        "{}",
+        onset(&rem, 20_000)
+    );
     // The speech is there at its level (a perceptual codec doesn't keep a
     // pure tone's waveform sample for sample, so compare energy).
     let r = rms(&m[16_000..16_000 * 9]) / rms(&mic[16_000..16_000 * 9]);
@@ -2791,12 +3061,7 @@ fn crash_recovery_closes_and_lists_opus_audio() {
     let bytes = std::fs::read(&opus).unwrap();
     std::fs::write(&opus, &bytes[..bytes.len() - 7]).unwrap();
 
-    let r = checkpoint::recover(
-        &journal,
-        Some(&archive_dir),
-        None,
-        &dir.path().join("data"),
-    );
+    let r = checkpoint::recover(&journal, Some(&archive_dir), None, &dir.path().join("data"));
     assert_eq!(r.interrupted.len(), 1);
     let item = archive::read_item(&archive_dir, &r.interrupted[0]).unwrap();
     assert_eq!(archive::audio::listed(&item.meta), vec!["audio.opus"]);
@@ -2886,7 +3151,13 @@ fn system_audio_session_labels_you_and_voices_and_survives_a_lost_device() {
     let stop = Arc::new(AtomicBool::new(false));
     // The user speaks at 1–4 s and 11–14 s; the others (system audio)
     // at 5–9 s, then the loopback device disappears at 10 s.
-    let mic = voiced(&[(None, 1.0), (Some(0), 3.0), (None, 7.0), (Some(0), 3.0), (None, 2.0)]);
+    let mic = voiced(&[
+        (None, 1.0),
+        (Some(0), 3.0),
+        (None, 7.0),
+        (Some(0), 3.0),
+        (None, 2.0),
+    ]);
     let system = voiced(&[(None, 5.0), (Some(1), 4.0), (None, 7.0)]);
     let source = SystemSource::from_parts(
         Box::new(ScriptedDevice {
@@ -2940,11 +3211,18 @@ fn system_audio_session_labels_you_and_voices_and_survives_a_lost_device() {
     assert_eq!(item.meta.source, "system");
     let segs = &item.segments.segments;
     let mic: Vec<_> = segs.iter().filter(|s| s.channel == Channel::Mic).collect();
-    let sys: Vec<_> = segs.iter().filter(|s| s.channel == Channel::System).collect();
+    let sys: Vec<_> = segs
+        .iter()
+        .filter(|s| s.channel == Channel::System)
+        .collect();
     assert_eq!((mic.len(), sys.len()), (2, 1), "{segs:?}");
     // Time order across the channels, on one clock.
     assert!(segs.windows(2).all(|w| w[0].start_ms <= w[1].start_ms));
-    assert!((4_500..5_500).contains(&sys[0].start_ms), "{}", sys[0].start_ms);
+    assert!(
+        (4_500..5_500).contains(&sys[0].start_ms),
+        "{}",
+        sys[0].start_ms
+    );
     assert!(mic[1].start_ms > 10_000, "the mic went on after the loss");
     let warnings: Vec<String> = sink
         .0
@@ -2963,8 +3241,14 @@ fn system_audio_session_labels_you_and_voices_and_survives_a_lost_device() {
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].contains("system audio device stopped delivering audio at 0:10"));
     assert!(mic.iter().all(|s| s.speaker_id.as_deref() == Some("you")));
-    assert!(mic.iter().all(|s| s.embedding.is_none()), "You is never embedded");
-    assert!(sys[0].speaker_id.as_deref().is_some_and(|id| id.starts_with("voice:")));
+    assert!(
+        mic.iter().all(|s| s.embedding.is_none()),
+        "You is never embedded"
+    );
+    assert!(sys[0]
+        .speaker_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("voice:")));
     assert!(item.segments.speakers.iter().any(|s| s.id == "you"));
 }
 
@@ -3067,9 +3351,12 @@ fn system_audio_with_save_audio_keeps_both_files_aligned_through_a_realignment()
     let sink = Arc::new(VecSink::default());
     let r = run(j, &mut fake_stt(), &FakeCleaner::default(), sink.clone()).unwrap();
 
-    let warned = sink.0.lock().unwrap().iter().any(|e| {
-        matches!(e, EngineEvent::Warning(w) if w.message.contains("drifted"))
-    });
+    let warned = sink
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, EngineEvent::Warning(w) if w.message.contains("drifted")));
     assert!(warned, "the system channel was realigned");
     let archive_dir = dir.path().join("archive");
     let folder = archive_dir.join(&r.item_id);
@@ -3124,7 +3411,15 @@ fn system_audio_with_save_audio_keeps_both_files_aligned_through_a_realignment()
     for s in lines {
         let a = (s.start_ms * 16) as usize;
         let b = (s.end_ms * 16) as usize;
-        let loud = sys[a..b.min(sys.len())].iter().filter(|x| x.abs() > 0.1).count();
-        assert!(loud > (b - a) / 2, "line {}–{} ms is mostly speech", s.start_ms, s.end_ms);
+        let loud = sys[a..b.min(sys.len())]
+            .iter()
+            .filter(|x| x.abs() > 0.1)
+            .count();
+        assert!(
+            loud > (b - a) / 2,
+            "line {}–{} ms is mostly speech",
+            s.start_ms,
+            s.end_ms
+        );
     }
 }

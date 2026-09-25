@@ -573,6 +573,11 @@ fn run_inner(
         // The user's own voice becomes "You" in a single-channel recording
         // when they enrolled it (#243).
         item.edit_file(|f| tracker.label_own_voice(f, &meta.source));
+        // Who else speaks in each overlapped line, now the voices are
+        // final (#244).
+        item.edit_file(|f| {
+            crate::speakers::overlap::assign_second_speakers(f);
+        });
     }
     // People emails for the page's participants (P5); an unreadable
     // registry links nothing.
@@ -944,8 +949,8 @@ fn work(
                     voice_commands,
                     cleaner,
                 );
-                let cleanup = (crate::diagnostics::cleanup_calls() != calls)
-                    .then(|| clean_started.elapsed());
+                let cleanup =
+                    (crate::diagnostics::cleanup_calls() != calls).then(|| clean_started.elapsed());
                 crate::diagnostics::note_segment(audio.samples.len(), stt_time, cleanup, false);
                 built
             }
@@ -977,6 +982,7 @@ fn work(
                         Some((segment.start_ms, segment.end_ms)),
                         &audio.samples,
                     );
+                    segment.overlap = labelled.overlap_at(segment.start_ms);
                     if let Some(sp) = labelled.new_speaker {
                         item.add_speaker(sp);
                     }
@@ -1064,7 +1070,10 @@ pub fn build_segment(
     } else {
         raw.clone()
     };
-    let detected = transcript.language.as_deref().filter(|l| !l.trim().is_empty());
+    let detected = transcript
+        .language
+        .as_deref()
+        .filter(|l| !l.trim().is_empty());
     let text = cleaner
         .clean_detected(previous, &input, detected)
         .trim()
