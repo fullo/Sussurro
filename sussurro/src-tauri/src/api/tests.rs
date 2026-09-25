@@ -1346,5 +1346,27 @@ fn live_outlasts_the_http_timeout() {
     let (mut s, reply) = raw(r.port, &format!("GET /history HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n", r.port));
     assert_eq!(reply.status, 200);
     assert!(server_closes(&mut s));
+    // A handler slower than the timeout still delivers its answer (the
+    // timeout only ends the wait for a *next* request), and nothing else
+    // follows it.
+    let mut s = TcpStream::connect(("127.0.0.1", r.port)).unwrap();
+    write!(
+        s,
+        "POST /transcribe?ext=slow HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Length: 4\r\n\r\nRIFF",
+        r.port
+    )
+    .unwrap();
+    while r.host.0.slow_running.load(Ordering::SeqCst) == 0 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    r.host.0.release_slow.store(true, Ordering::SeqCst);
+    let reply = read_reply(&mut s);
+    assert_eq!(reply.status, 200);
+    assert_eq!(reply.json()["bytes"], 4);
+    let mut rest = Vec::new();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    let _ = s.read_to_end(&mut rest);
+    assert!(rest.is_empty(), "nothing after the answer: {:?}", String::from_utf8_lossy(&rest));
 }
 

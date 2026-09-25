@@ -283,15 +283,12 @@ impl Iterator for ClientConnection {
                                  // se we have to close
                 }
 
-                Err(ReadError::ReadIoError(ref err)) if err.kind() == ErrorKind::TimedOut => {
-                    // request timeout
-                    let writer = self.sink.next().unwrap();
-                    let response = Response::new_empty(StatusCode(408));
-                    response
-                        .raw_print(writer, HTTPVersion(1, 1), &[], false, None)
-                        .ok();
-                    return None; // closing the connection
-                }
+                // Sussurro (#223): upstream answered 408 to a timed-out head
+                // read (unreachable there: it set no timeouts). With the
+                // `Limits` timeout this is usually an idle keep-alive
+                // connection, possibly while the previous request is still
+                // being answered, so a 408 would trail that answer: close
+                // silently, as for `WouldBlock` (how macOS/Linux report it).
 
                 Err(ReadError::ExpectationFailed(ver)) => {
                     let writer = self.sink.next().unwrap();
