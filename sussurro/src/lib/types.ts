@@ -183,6 +183,10 @@ export interface Settings {
    *  acknowledged with "Don't show this again". Absent or false (a fresh or
    *  cleared settings file) = show it. */
   meeting_notice_seen?: boolean;
+  /** *Suggest names from known voices* (Settings → Privacy, #242): the
+   *  speaker panel suggests a person for an unlinked "Voice N". Absent
+   *  before 0.11 = on (the backend default). */
+  voice_suggestions?: boolean;
 }
 
 /** Saved audio file format (#247): 16-bit WAV or Ogg Opus at 24 kb/s. */
@@ -275,6 +279,14 @@ export interface VoiceStatus {
   min_documents: number;
   /** RFC 3339 time of the last build; "" when off. */
   updated: string;
+}
+
+/** `voice_suggestions` (#242): voice `speaker_id` of the open document
+ *  sounds like person `person_id`. Ids only — never a score or a vector.
+ *  Only a suggestion: nothing is linked until the user clicks Link. */
+export interface VoiceSuggestion {
+  speaker_id: string;
+  person_id: string;
 }
 
 /** Frontmatter of transcript.md. Unknown keys (Obsidian aliases…) ride along

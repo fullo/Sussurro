@@ -92,6 +92,8 @@ const settings: Settings = {
   saved_audio_format: "wav",
   // #136: `?notice=seen` skips the recording notice.
   meeting_notice_seen: params.get("notice") === "seen",
+  // #242: `?voicesugg=off` starts with voice suggestions turned off.
+  voice_suggestions: params.get("voicesugg") !== "off",
 };
 
 // `?dict=N`: a dictionary of N entries (with a few duplicates) and N/10
@@ -389,6 +391,9 @@ function mockVoice(personId: string, speechMs: number, documents: number): Voice
     updated: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
   };
 }
+
+/** "Not X" answers per item (#242): `speaker|person` keys. */
+const voiceDismissals = new Map<string, Set<string>>();
 
 function voiceOff(personId: string): VoiceStatus {
   return { ...mockVoice(personId, 0, 0), enabled: false, ready: false, updated: "" };
@@ -1495,7 +1500,33 @@ function handle(cmd: string, a: Args): unknown {
     case "voices_forget_all": {
       const n = voices.size;
       voices.clear();
+      voiceDismissals.clear();
       return n;
+    }
+    case "voice_suggestions": {
+      // Mirrors speakers::suggestions (#242), faked: the n-th unlinked
+      // "Voice n" with voice data sounds like the n-th ready profile.
+      if (settings.voice_suggestions === false) return [];
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      if (s.recording || !s.voiceOf) return [];
+      const ready = [...voices.values()]
+        .filter((v) => v.ready && people.some((p) => p.id === v.person_id))
+        .sort((x, y) => x.person_id.localeCompare(y.person_id));
+      const no = voiceDismissals.get(s.id) ?? new Set<string>();
+      return (s.speakers ?? []).flatMap((sp) => {
+        const n = /^voice:([1-9]\d*)$/.exec(sp.id);
+        const v = n ? ready[Number(n[1]) - 1] : undefined;
+        if (sp.person_id || !v || no.has(`${sp.id}|${v.person_id}`)) return [];
+        return [{ speaker_id: sp.id, person_id: v.person_id }];
+      });
+    }
+    case "voice_suggestion_dismiss": {
+      const id = String(a.id);
+      const set = voiceDismissals.get(id) ?? new Set<string>();
+      set.add(`${a.speakerId}|${a.personId}`);
+      voiceDismissals.set(id, set);
+      return null;
     }
     case "archive_update_segment":
     case "archive_delete_segment": {
@@ -1610,6 +1641,7 @@ function handle(cmd: string, a: Args): unknown {
     }
     case "archive_delete":
       items = items.filter((s) => s.id !== a.id);
+      voiceDismissals.delete(String(a.id));
       return null;
     case "archive_delete_audio": {
       // "Delete audio, keep transcript" (#141): only the audio goes.
