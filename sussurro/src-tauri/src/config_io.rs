@@ -1,7 +1,7 @@
 use crate::archive::people::Person;
 use crate::settings::{AppStyle, Settings, Snippet};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Portable subset of the settings — the parts worth carrying between machines
 /// (dictionary, voice snippets, per-app styles). Deliberately excludes
@@ -115,6 +115,20 @@ impl ImportKind {
         }
     }
 
+    pub fn export_title(self) -> &'static str {
+        match self {
+            ImportKind::Dictionary => "Export dictionary",
+            ImportKind::Snippets => "Export snippets",
+        }
+    }
+
+    pub fn export_file_name(self) -> &'static str {
+        match self {
+            ImportKind::Dictionary => "sussurro-dictionary.txt",
+            ImportKind::Snippets => "sussurro-snippets.csv",
+        }
+    }
+
     pub fn filter_name(self) -> &'static str {
         match self {
             ImportKind::Dictionary => "Text files",
@@ -223,6 +237,43 @@ pub fn check_import_caller(label: &str) -> Result<(), String> {
     } else {
         Err("import is only available from the main window".into())
     }
+}
+
+/// Largest dictionary/snippet export accepted from the webview (#99). Real
+/// lists are a few hundred KB even with thousands of entries.
+pub const MAX_EXPORT_BYTES: usize = 16 * 1024 * 1024;
+
+/// `path` with `kind`'s extension: kept when it already has it (any case),
+/// appended otherwise (a Linux save dialog may not add it).
+pub fn export_path(path: &Path, kind: ImportKind) -> PathBuf {
+    let has = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(kind.extension()));
+    if has {
+        path.to_path_buf()
+    } else {
+        let mut s = path.as_os_str().to_owned();
+        s.push(format!(".{}", kind.extension()));
+        s.into()
+    }
+}
+
+/// Write a dictionary (.txt) or snippet (.csv) export to the file the user
+/// picked in a native save dialog (#99). The text is built by the frontend
+/// in the same format the import reads, so an export can be imported back.
+/// Only `kind`'s extension is written, never through a symbolic link, and
+/// at most `MAX_EXPORT_BYTES`. Returns the path written.
+pub fn write_list_export(path: &Path, kind: ImportKind, contents: &str) -> anyhow::Result<PathBuf> {
+    if contents.len() > MAX_EXPORT_BYTES {
+        anyhow::bail!("export is too large (max 16 MB)");
+    }
+    let path = export_path(path, kind);
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        anyhow::bail!("can't write through a symbolic link, pick another file");
+    }
+    std::fs::write(&path, contents)?;
+    Ok(path)
 }
 
 /// Validate and read a picked file into the `ImportFile` returned over IPC.
@@ -407,6 +458,49 @@ mod tests {
         keys.sort();
         assert_eq!(keys, ["contents", "name"]);
         assert!(load_import_file(&csv, Dictionary).is_err());
+    }
+
+    #[test]
+    fn export_path_adds_the_kinds_extension_only_when_missing() {
+        let p = export_path(Path::new("/x/words"), Dictionary);
+        assert_eq!(p, Path::new("/x/words.txt"));
+        let p = export_path(Path::new("/x/words.TXT"), Dictionary);
+        assert_eq!(p, Path::new("/x/words.TXT"));
+        let p = export_path(Path::new("/x/snips.txt"), Snippets);
+        assert_eq!(p, Path::new("/x/snips.txt.csv"));
+    }
+
+    #[test]
+    fn list_export_writes_text_that_the_import_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let written =
+            write_list_export(&dir.path().join("snips"), Snippets, "cue,text\nfirma,\"a, b\"\n")
+                .unwrap();
+        assert_eq!(written, dir.path().join("snips.csv"));
+        assert_eq!(
+            read_import_text(&written, Snippets).unwrap(),
+            "cue,text\nfirma,\"a, b\"\n"
+        );
+    }
+
+    #[test]
+    fn list_export_enforces_the_size_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = "a".repeat(MAX_EXPORT_BYTES + 1);
+        assert!(write_list_export(&dir.path().join("big.txt"), Dictionary, &big).is_err());
+        assert!(!dir.path().join("big.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_export_refuses_to_write_through_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("elsewhere.txt");
+        std::fs::write(&target, "keep").unwrap();
+        let link = dir.path().join("words.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(write_list_export(&link, Dictionary, "new\n").is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
     }
 
     #[test]

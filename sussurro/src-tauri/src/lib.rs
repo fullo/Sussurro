@@ -199,6 +199,7 @@ pub fn run() {
             commands::export_config,
             commands::import_config,
             commands::pick_import_file,
+            commands::save_list_export,
             commands::transcribe_file,
             commands::engine_start_mic,
             commands::engine_start_link,
