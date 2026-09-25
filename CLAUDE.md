@@ -734,9 +734,10 @@ bump. Remaining before the tag (which stays with the maintainer): manual QA
 **#177** (0.7/0.8: long mic/file sessions, archive, recipes, links, privacy
 gate) and **#184** (0.9/0.10: extension on Meet/Teams/Zoom × browsers × OS,
 Meet names selector set, system audio native + virtual devices, saved
-audio/replay); the website and manual **#180**; the security follow-ups
-#215–#217; then docs/release notes (#145, `docs/releases/0.10.0.md`), the
-version bump and a build-only release run.
+audio/replay); the website and manual **#180**; then the version bump and
+a build-only release run. The security follow-ups #215–#217 are merged
+(PRs #220–#222); docs and release notes are #145
+(`docs/releases/0.10.0.md`).
 
 - **Phase 0** — spikes #106–#108 closed (Silero VAD, WeSpeaker embeddings,
   word timings). #104/#105 (browser capture, Meet names) were desk studies

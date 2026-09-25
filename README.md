@@ -429,8 +429,10 @@ token, is readable only by your user on macOS and Linux.
   when the recording started. If you switch outputs mid-call, start a new
   recording. On macOS it needs 14.2 or later, and on Linux `pulseaudio-utils`.
   The Windows loopback has not been verified on real hardware yet.
-- **Links**: video platforms need `yt-dlp`. Videos whose only audio is Opus
-  or AC-3 are refused, because no ffmpeg is bundled. Links are capped at 2 GB.
+- **Links**: video pages work only on known platforms, through `yt-dlp`.
+  Videos whose only audio is Opus or AC-3 are refused, because no ffmpeg is
+  bundled. Links are capped at 2 GB and ignore system proxy settings (so the
+  local-network check can't be bypassed).
 - **The browser extension is not in the stores yet.** Firefox loads it as a
   temporary add-on, which is removed when Firefox quits.
 - **Linux Wayland injection** goes through the XDG **RemoteDesktop portal**

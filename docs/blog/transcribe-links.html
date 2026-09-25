@@ -63,7 +63,7 @@
     <pre><code>brew install yt-dlp        # macOS (or: pipx install yt-dlp)
 winget install yt-dlp.yt-dlp   # Windows (or: scoop install yt-dlp), then restart Sussurro
 pipx install yt-dlp        # Linux (or your distro's package, which can be old)</code></pre>
-    <p>Sussurro asks yt-dlp for the audio only (an m4a stream when there is one) and runs it without a shell or a config file, one video at a time (no playlists). No ffmpeg is bundled, so a video whose only audio is Opus or AC-3 is refused with an explanation. Download it some other way and use the <a href="audio-file-transcription.html">File tab</a>.</p>
+    <p>Sussurro asks yt-dlp for the audio only (an m4a stream when there is one) and runs it without a shell or a config file, one video at a time (no playlists). yt-dlp runs only for those known sites, without its generic “any page” extractor. A web page anywhere else is refused, with a hint to link the audio or video file itself. No ffmpeg is bundled, so a video whose only audio is Opus or AC-3 is refused with an explanation. Download it some other way and use the <a href="audio-file-transcription.html">File tab</a>.</p>
 
     <div class="callout">
       <span class="k">Your responsibility</span>
@@ -73,7 +73,8 @@ pipx install yt-dlp        # Linux (or your distro's package, which can be old)<
     <h2>The rules</h2>
     <ul>
       <li>Only <code>http</code> and <code>https</code> links, with no user name or password in them (the link is saved in the item).</li>
-      <li><strong>Addresses on this computer or your local network</strong> (localhost, your router, a NAS, cloud metadata addresses) are refused unless you tick <em>Allow local network addresses</em> for that run. Every address a host resolves to, and every redirect, is checked, and the connection goes only to the addresses that passed.</li>
+      <li><strong>Addresses on this computer or your local network</strong> (localhost, your router, a NAS, cloud metadata addresses) are refused unless you tick <em>Allow local network addresses</em> for that run. Every address a host resolves to, and every redirect, is checked, and the connection goes only to the addresses that passed. yt-dlp's own connections go through the same check.</li>
+      <li>Links ignore the system's proxy settings, for both direct downloads and yt-dlp, so that the address check can't be bypassed. Behind a network that only allows a proxy, download the file another way and use the File tab.</li>
       <li>At most <strong>2 GB</strong> per link. Beyond that, download the file and use the File tab.</li>
       <li><strong>Cancel</strong> stops the download or the transcription and discards everything. Nothing stays in the archive, and a stuck yt-dlp is stopped with all its child processes. Temporary files left by a crash are swept at the next start.</li>
     </ul>
