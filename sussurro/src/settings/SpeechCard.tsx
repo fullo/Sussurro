@@ -134,7 +134,7 @@ export function ModelsFolderField({ ctl }: { ctl: Ctl }) {
       </div>
       <input
         value={settings.models_dir}
-        placeholder="F:\claude\models"
+        placeholder="Default: the app data folder"
         onChange={(e) => setSettings({ ...settings, models_dir: e.target.value })}
         onBlur={() => save(settings)}
         spellCheck={false}
