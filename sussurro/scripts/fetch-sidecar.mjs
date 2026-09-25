@@ -372,7 +372,11 @@ export async function fetchSidecar({
   for (const [inArchive, committed, outName] of licences) {
     const expected = readFileSync(join(lockDir, committed));
     const data = inArchive ? pickFile(entries, t.root + inArchive) : expected;
-    if (!data.equals(expected)) {
+    // Compare text, not bytes: a Windows checkout with core.autocrlf turns the
+    // committed copy's LF into CRLF (the .gitattributes rule prevents that, this
+    // keeps the check correct on clones made before it).
+    const eol = (b) => b.toString("utf8").replace(/\r\n/g, "\n");
+    if (eol(data) !== eol(expected)) {
       throw new Error(
         `${inArchive} in ${t.asset} differs from sidecar/${committed}: review the licence ` +
           "change, update the committed text and run `npm run licenses`",

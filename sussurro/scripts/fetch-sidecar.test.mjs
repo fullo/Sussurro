@@ -423,6 +423,26 @@ describe("fetchSidecar", () => {
     ).rejects.toThrow(/differs from sidecar/);
   });
 
+  it("accepts a committed licence checked out with CRLF line endings (Windows autocrlf)", async () => {
+    const buf = makeTarGz([
+      ["llama-b1/llama-server", "ELF"],
+      ["llama-b1/libllama.so.0", "ELF"],
+      ["llama-b1/libggml-cpu-x64.so", "ELF"],
+      ["llama-b1/LICENSE", LICENSE],
+    ]);
+    const lock = fakeLock(dir, "llama-b1-bin-ubuntu-x64.tar.gz", buf);
+    writeFileSync(join(dir, "llama.txt"), LICENSE.replace(/\n/g, "\r\n"));
+    const res = await fetchSidecar({
+      lock,
+      lockDir: dir,
+      target: "x86_64-unknown-linux-gnu",
+      outDir: join(dir, "binaries"),
+      fetchAsset: async () => buf,
+      log: quiet,
+    });
+    expect(res.skipped).toBe(false);
+  });
+
   it("handles the Windows zip layout (.exe suffix, files at the root)", async () => {
     // like the real Windows asset: no llama.cpp LICENSE inside, the
     // committed copy ships instead
