@@ -655,8 +655,8 @@ project decisions here, not in per-machine memory.**
   the trash). Vectors never reach the UI (`VoiceStatus` only), the API,
   exports, diagnostics or logs (`Debug` prints sizes). Commands:
   `voices_status`, `voice_status`, `voice_set_enabled`, `voices_rebuild`,
-  `voice_forget`, `voices_forget_all`. Overlap lines (#244) are to be
-  excluded once segments carry the flag.
+  `voice_forget`, `voices_forget_all`. Overlapped lines (#244) are
+  excluded.
 - **Voice suggestions (0.11, #242, P12)** (`speakers/suggestions.rs`,
   `src/lib/voiceSuggestions.ts`, `shell/VoiceSuggestionChip.tsx`):
   `voice_suggestions(id)` returns `{speaker_id, person_id}` only (no score)
@@ -698,6 +698,32 @@ project decisions here, not in per-machine memory.**
   again in that document; a "You" that stops being the best match goes
   back to "Voice N". The centroid is also the 0.13 own-voice cloning
   reference (not built).
+- **Overlapping speech (0.11, #244, E19 reshaped by spike #237)**
+  (`speakers/overlap.rs` pure, `speakers/segmentation.rs` model):
+  `onnx-community/pyannote-segmentation-3.0` **fp32** (`onnx/model.onnx`,
+  revision `733a93b6473d019a773298e08cefa686894b1854`, SHA-256
+  `057ee564…91ea25`, MIT/CNRS — MIT text in `licenses.json`'s downloaded
+  models) through the app's `ort`, downloaded on first use into the models
+  folder, fail-closed (`model::ensure_pinned`), 2 intra-op threads.
+  **Detection runs when lines are labelled** (the tracker: every line of a
+  clustered channel that got voice data, at the end of a run and in
+  Identify voices — `SpeakerModels { embedder, overlap }`, tests pass an
+  embedder alone = no overlap), never in Re-detect (no audio): ≤ 10 s
+  zero-padded windows, P(overlap) = sum of the 3 pair classes, frames
+  ≥ 0.5; a line with ≥ 300 ms **and** ≥ 10 % stores its spans in
+  `Segment.overlap: [{start_ms, end_ms, speaker_id?}]` (session clock,
+  additive, omitted when empty — a non-empty list is the flag).
+  **Second speaker** per span = nearest line of the same channel (≤ 60 s,
+  ties to the earlier) whose speaker differs from the line's
+  (`assign_second_speakers`): at the end of a run, in Identify voices, in
+  Re-detect and after **every** `modify_segments_with` edit. Overlapped
+  lines **stay in the clustering** (exclusion gained nothing and lost a
+  quiet speaker) and are **never split** (P2); they are left out of voice
+  profiles (`person_lines`) and, when a voice has other lines, of
+  `document_voice` (suggestions, "You"). UI: a quiet "+ Voice 3 also
+  speaking" next to the chip (`toLines(..).alsoSpeaking`, only with a
+  speaker list). Transcript.md, exports, SRT/VTT and the archive API keep
+  one speaker per line. Thresholds are AMI English — re-check on Italian.
 - **TTS text preparation (0.12, #254)** (`tts/text/`, pure, no engine,
   no dependency added): `prepare(markdown, Lang, &PrepOptions) ->
   Vec<Chunk{index, text, pause_after}>` is the only entry point #255/#256

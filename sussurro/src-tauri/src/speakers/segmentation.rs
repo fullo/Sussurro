@@ -130,7 +130,12 @@ mod tests {
     /// ```
     ///
     /// The WAV is cut into ≤ 10 s "lines" as the tracker would see them;
-    /// the spans of each are printed for a listen-check.
+    /// the spans of each are printed for a listen-check. A fixture needs no
+    /// meeting: two `say -o x.wav --file-format=WAVE
+    /// --data-format=LEI16@16000` voices (Alice, Fred) mixed with the
+    /// second starting 4 s in gave spans (3971, 9945) ms — both voices
+    /// ran 4.0–9.9 s — and a single voice gave none (2026-09-26). AMI clips
+    /// (CC-BY-4.0) work too.
     #[test]
     #[ignore = "needs the model file and a WAV with overlapping speech"]
     fn real_model_finds_overlap_in_a_wav() {

@@ -253,14 +253,24 @@ assume.
   be cloned (E13 threshold). The consent recording, its transcript, the
   nonce, the date and the app version are kept with the voice; revoking
   deletes the voice, the reference and the consent recording together.
-- **E19 — Overlap detection with pyannote segmentation through `ort`.**
-  The ungated `onnx-community/pyannote-segmentation-3.0`
-  export (MIT, 6 MB fp32) runs on plain ONNX Runtime, so it goes through
-  the existing `ort` next to WeSpeaker. Offline only, in "Re-detect":
-  10 s windows, 7-class powerset per frame (3 local speakers, pairs), an
-  overlap flag where two are active, and embeddings masked to frames with a
-  single speaker. Pinned by SHA-256 at a pinned revision (fail-closed, as
-  #90). Later upgrade to evaluate: NVIDIA Nemotron-3-Diarization
+- **E19 — Overlap detection with pyannote segmentation through `ort`**
+  (reshaped by spike #237, built in #244). The ungated
+  `onnx-community/pyannote-segmentation-3.0` export (MIT, CNRS; fp32
+  `onnx/model.onnx`, 5 986 908 bytes, revision `733a93b6…`, SHA-256
+  `057ee564…`) runs on plain ONNX Runtime, so it goes through the existing
+  `ort` next to WeSpeaker, downloaded on first use and pinned fail-closed
+  (as #90). **When lines are labelled**, not in "Re-detect" (which has
+  only the stored embeddings, no audio): at the end of a run with speakers
+  and in "Identify voices", each line of a clustered channel is cut into
+  ≤ 10 s zero-padded windows; P(overlap) per frame is the sum of the three
+  pair classes of the 7-class powerset; frames ≥ 0.5 are overlap and a
+  line with ≥ 300 ms and ≥ 10 % of it stores its spans in
+  `segments.json`. Each span gets a **second speaker** = the nearest line
+  of the same channel with another speaker (DER 17.7 → 13.4 % on AMI),
+  recomputed after "Re-detect" and every speaker edit. **Overlapped lines
+  stay in the clustering** (keeping them out gained nothing and lost a
+  quiet speaker) and **no masked embeddings** (no gain); they are kept out
+  of voice profiles only. Later upgrade to evaluate: NVIDIA Nemotron-3-Diarization
   (Sortformer v3, 23 Sep 2026, OpenMDW-1.1, up to 8 speakers), but
   `parakeet-rs` runs it on `ort` rc.13 while the app pins rc.12, and Italian
   is not among its training languages.
@@ -496,11 +506,33 @@ detection fixes the second problem and flags the first.
 | NVIDIA Nemotron-3-Diarization | OpenMDW-1.1 | ~99M | `parakeet-rs` on `ort` rc.13 | Watch; needs an `ort` bump and an Italian check |
 | DiariZen | weights CC BY-NC 4.0 | – | – | **Incompatible** |
 
-What changes for the user: "Re-detect speakers" marks lines with overlapping
-speech (a small icon, and `overlap: true` in `segments.json`), keeps them
-out of voice centroids and voice profiles, and splits a line into two
-speakers only when the overlap is a whole sentence (the rest stays one line
-with a note). Live runs are unchanged.
+*Spike #237 (8 AMI test meetings, 4.2 h): frame precision 0.87 / recall
+0.62 at θ 0.5, overlapped lines precision 0.95 / recall 0.67–0.72; int8
+and uint8 match fp32 but are no faster on arm64, so fp32 ships; ~30 s per
+hour of lines on an M1 Pro with 2 threads. Keeping overlapped lines out of
+the clustering: line confusion 4.24 → 4.12 %, and a quiet speaker lost in
+one meeting; masked embeddings: no gain. A second voice per overlap from
+the nearest neighbouring line with another voice: DER 17.7 → 13.4 %,
+missed speech in overlap halved. Thresholds are from English AMI (in-domain
+for the model): re-check on Italian and laptop mics.*
+
+What changes for the user (built in #244, the spike's shape, not the one
+first planned here): lines are checked **when they are labelled** — at the
+end of a run with speakers (live runs included, line by line on the
+worker; ~30 s per hour) and in "Identify voices" — because "Re-detect" has
+no audio. An overlapped line keeps its speaker and shows a quiet
+"+ Voice 3 also speaking" next to the chip ("overlapping speech" when no
+other line is within 60 s); `segments.json` stores the spans on the line
+(`overlap: [{start_ms, end_ms, speaker_id?}]`, omitted when none, older
+files read as none). "Re-detect" clusters overlapped lines like the others
+and then names the second speakers again from the new voices; every
+speaker edit (move a line, Identify voices, delete a line) does too.
+Overlapped lines are left out of voice profiles (4.1) and, when a voice has
+other lines, of the voice mean that suggestions and "You" match. **No line
+is split** (P2: no audio cutting; the spike found the second speaker is
+what helps). Transcript, exports, subtitles and the archive API keep one
+speaker per line: the overlap is app metadata. Items recorded before #244
+(or without the model) have no spans until they are labelled again.
 
 ### 4.4 Opus saved audio (0.11)
 
@@ -838,7 +870,10 @@ struct Consent { statement: String, nonce: String, recording: String,
                  app_version: String, date: String }
 ```
 
-Segments gain `overlap: bool` (0.11, default false, omitted when false).
+Segments gain `overlap: Vec<OverlapSpan>` (0.11, #244; `OverlapSpan {
+start_ms, end_ms, speaker_id? }` on the session clock, `speaker_id` = the
+second speaker; empty and omitted unless the line is overlapped — a
+non-empty list is the flag).
 
 ---
 
@@ -884,8 +919,10 @@ maintainer's own voice only if he provides it.
       Kokoro as baseline; one no-Python runtime per engine (`ort` or
       `llama-tts` b11146); speed, memory, licences; samples for the
       maintainer's blind listening test (P18, decided). (#236)
-- [ ] **Overlap detection**: pyannote segmentation-3.0 through `ort` on AMI
-      overlaps; cost; pinned SHA-256. (#237)
+- [x] **Overlap detection**: pyannote segmentation-3.0 through `ort` on AMI
+      overlaps; cost; pinned SHA-256. (#237) Results in 4.3 and E19: GO
+      with fp32, flag + second voice from the neighbouring line, no
+      exclusion from the clustering.
 - [x] **Opus**: crate, build on three OSes, crash safety, WebView playback
       matrix (macOS < 15.4 needs a decode path), decode for re-reading. (#238)
       Results in 4.4 and E15: libopus through `opus`/`opusic-sys`, 24 kb/s,
@@ -908,7 +945,9 @@ maintainer's own voice only if he provides it.
 - [ ] **Suggestions**: speaker panel chip, People toggle, first-use sheet,
       *Forget all voices*. (#242)
 - [ ] **"You" enrolment** (P14): read-aloud enrolment, best voice ≥ 0.45 labelled "You" in single-channel documents. (#243)
-- [ ] **Overlap-aware Re-detect** (E19). (#244)
+- [ ] **Overlap-aware speaker labels** (E19 as reshaped by #237): spans
+      found when lines are labelled, second speaker per span, recomputed by
+      Re-detect and speaker edits, overlapped lines out of profiles. (#244)
 - [ ] **Teams web names** (E20). (#245)
 - [ ] **Zoom web names** (E20). (#246)
 - [ ] **Opus writer** and *Saved audio format* setting (P16, E15). (#247)
@@ -982,7 +1021,7 @@ Track A depends on the maintainer's accounts and the stores' review times.
 | A wrong name suggested for a voice | Suggest-only (P12), margin over the runner-up, minimum confirmed speech, *Not X* per document |
 | Voiceprints leak through a synced archive | Profiles in app data only (P13); `segments.json` embeddings are anonymous per-document vectors, and *Forget all voices* can also strip them from items on request |
 | Thresholds tuned on English fail on Italian | Spike V0-1 measured both (4.1): identification holds on Italian at the same threshold; the "Voice N" clustering thresholds merge Italian speakers and should rise (0.275 → 0.35, 0.30 → 0.375); thresholds are constants with the spike's numbers in the doc comment |
-| Overlap model slows long documents | Offline only ("Re-detect"), never live; cost measured in V0-3 |
+| Overlap model slows long documents | Line by line when lines are labelled, ~30 s per hour of lines with 2 threads (#237); one model load per run, and a model that fails to load only turns the check off |
 | Opus decode missing in the WebView | V0-4: the scheme always serves decoded WAV, so no WebView ever sees Opus; WAV save setting stays |
 | A TTS licence turns out to be non-commercial | Licence of code **and** weights checked in V0-2; only permissive or CC-BY weights; `licenses.json` lists downloaded models |
 | GPL-3.0 phonemizer in-process ties the future commercial licence | Phonemizer in a separate process or a permissive one (E16) |
