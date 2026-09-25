@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>The local API — Sussurro Blog</title>
-<meta name="description" content="Script Sussurro: clean text, transcribe files and query history over loopback." />
+<meta name="description" content="Script Sussurro: clean text, transcribe files, query history and read the archive over loopback." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -17,7 +17,7 @@
 <meta property="og:site_name" content="Sussurro" />
 <meta property="og:type" content="article" />
 <meta property="og:title" content="The local API — Sussurro Blog" />
-<meta property="og:description" content="Script Sussurro: clean text, transcribe files and query history over loopback." />
+<meta property="og:description" content="Script Sussurro: clean text, transcribe files, query history and read the archive over loopback." />
 <meta property="og:url" content="https://fullo.github.io/Sussurro/blog/local-api.html" />
 <meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
 <meta property="og:image:width" content="1200" />
@@ -26,9 +26,9 @@
 <meta property="article:author" content="DarumaHQ" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="The local API — Sussurro Blog" />
-<meta name="twitter:description" content="Script Sussurro: clean text, transcribe files and query history over loopback." />
+<meta name="twitter:description" content="Script Sussurro: clean text, transcribe files, query history and read the archive over loopback." />
 <meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"The local API","description":"Script Sussurro: clean text, transcribe files and query history over loopback.","url":"https://fullo.github.io/Sussurro/blog/local-api.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-07-06","dateModified":"2026-07-06","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/local-api.html"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"The local API","description":"Script Sussurro: clean text, transcribe files, query history and read the archive over loopback.","url":"https://fullo.github.io/Sussurro/blog/local-api.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-07-06","dateModified":"2026-09-25","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/local-api.html"}</script>
 <!-- seo:end -->
 </head>
 <body>
@@ -57,7 +57,7 @@
     <p>The pipeline that powers dictation is useful outside dictation too. The local API lets any script on your machine tap into it — the same cleanup model, the same STT engine, the same history — over plain HTTP.</p>
 
     <h2>Turn it on</h2>
-    <p>It ships <strong>off by default</strong>. Enable it in <strong>Behavior → Advanced</strong>: switch on <strong>Local API</strong> (loopback only, applies at restart) and <strong>Scripting routes</strong> (the token-less <code>/clean</code>, <code>/transcribe</code> and <code>/history</code>; applies at once).</p>
+    <p>It ships <strong>off by default</strong>. Switch on <strong>Local API</strong> in <strong>Behavior → Advanced</strong> (loopback only, applies at restart), then <strong>Scripting routes</strong> in <strong>Settings → Scripting</strong> (the token-less <code>/clean</code>, <code>/transcribe</code> and <code>/history</code>; applies at once).</p>
 
     <h2>The endpoints</h2>
     <pre><code># clean up / translate a text with your current settings
@@ -69,12 +69,41 @@ curl -X POST --data-binary @meeting.mp3 "http://127.0.0.1:4525/transcribe?ext=mp
 # search your dictation history
 curl "http://127.0.0.1:4525/history?n=10&q=sussurro"</code></pre>
 
+    <h2>Reading the archive (0.11)</h2>
+    <p>From 0.11 a script can also read your whole archive — list, search, read and export items, their companion documents and your People — under <code>/archive/…</code>. It has its own switch and its own tokens: turn on <strong>Archive API</strong> in Settings → Scripting and create a token for each script, with only the scopes it needs. <strong>Read</strong> covers items, search, exports, documents and people's names; <strong>People's emails</strong> adds the emails. The token is shown once and Sussurro keeps only its SHA-256, so keep it in an environment variable:</p>
+    <pre><code>export SUSSURRO_TOKEN=sua_...        # from Settings → Scripting
+API=http://127.0.0.1:4525
+
+# search: meetings tagged "release" since September, 20 per page
+curl -G -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items" \
+  --data-urlencode "q=roadmap" -d type=meeting -d tag=release -d from=2026-09-01 -d limit=20
+
+# one item: frontmatter, text, speakers and timed lines
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items/2026/09/2026-09-24-weekly-sync"
+
+# subtitles, ready for a video editor
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" -o sync.srt \
+  "$API/archive/items/2026/09/2026-09-24-weekly-sync/export?format=srt"
+
+# the formatted document a recipe wrote
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items/2026/09/2026-09-24-weekly-sync/documents/document.md"
+
+# People: names and aliases (emails only with the People's emails scope)
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/people"</code></pre>
+    <p>Lists come in pages of up to 200 with an opaque <code>next_cursor</code> to send back; every error is JSON with a <code>code</code> (<code>unauthorized</code>, <code>insufficient_scope</code>, <code>not_found</code>, <code>rate_limited</code>…). The <a href="../manual/index.html#archive-api">manual</a> lists every route and filter. For now the archive API only reads; creating a note from text comes next.</p>
+
+    <div class="callout">
+      <span class="k">What it never gives out</span>
+      <p>Speaker embeddings, voice profiles, saved audio, file paths or anything from the app's own data folder — whatever the token. Without the <em>People's emails</em> scope, emails are left out of items and of the markdown export, and a search can't match one either, so a script can't even test whether an address is in your archive. Browsers are refused outright, extensions included, and no CORS header is ever sent. Each token has a rate limit (a burst of 60, then 10 a second), at most two archive requests run at once so the browser extension is never starved, and revoking a token applies to the very next request.</p>
+    </div>
+
     <h2>What you can build</h2>
     <ul>
       <li>A shell alias that cleans clipboard text on demand.</li>
       <li>A batch job that transcribes a folder of voice memos overnight.</li>
       <li>An editor plugin that pipes selected text through your cleanup prompt.</li>
       <li>A script that pulls the last <em>n</em> dictations into your notes.</li>
+      <li>A nightly job that copies this week's meeting minutes into your wiki, or a video pipeline that fetches the <code>.srt</code> of a transcription.</li>
     </ul>
 
     <div class="callout">

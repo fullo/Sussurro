@@ -374,11 +374,12 @@ app's config and data folders follow each OS's convention (for example
 
 ## Local API (scripting)
 
-Enable it in Behavior → Advanced: switch on **Local API** (loopback only;
-applied at restart) and **Scripting routes** (applies at once). Both are off
-on a new install. *Turn on the local API* in Settings → Browser extension
-(for pairing) never turns on the scripting routes. If you used the API
-before the switch existed, it stays on for you. Then, from any script:
+Enable it in two places: **Local API** in Behavior → Advanced (loopback
+only; applied at restart), then **Scripting routes** in Settings →
+Scripting (applies at once). Both are off on a new install. *Turn on the
+local API* in Settings → Browser extension (for pairing) never turns on the
+scripting routes. If you used the API before the switch existed, it stays
+on for you. Then, from any script:
 
 ```bash
 # clean up / translate a text with your current settings
@@ -409,6 +410,66 @@ token and accept only browser-extension origins, never a web page, and
 `/items/…` reach only the meetings the extension recorded — not your notes,
 dictations or other transcriptions. `settings.json`, which holds the pairing
 token, is readable only by your user on macOS and Linux.
+
+### Archive API (read-only)
+
+Scripts can list, search, read and export your whole archive under
+`/archive/…`, with a token of their own. Turn on **Archive API** in Settings
+→ Scripting (off by default, applies at once; the local API must be on too)
+and create a token there. It is shown once: keep it in an environment
+variable, never in the script. Scopes: **Read** (items, search, exports,
+companion documents, people's names) and **People's emails** (adds
+participants' and People's emails). In 0.11 the archive API only reads
+(creating a note from text is next).
+
+```bash
+export SUSSURRO_TOKEN=sua_...        # from Settings → Scripting
+API=http://127.0.0.1:4525
+
+# search: meetings tagged "release" since September, 20 per page
+curl -G -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items" \
+  --data-urlencode "q=roadmap" -d type=meeting -d tag=release -d from=2026-09-01 -d limit=20
+# → {"items":[{"id":"2026/09/2026-09-24-weekly-sync","title":…}],"total":42,"next_cursor":"…"}
+
+# the next page: send next_cursor back (null on the last page)
+curl -G -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items" -d limit=20 -d cursor=…
+
+# one item: frontmatter, text, speakers and timed lines (ids contain slashes)
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items/2026/09/2026-09-24-weekly-sync"
+
+# export as md, txt, srt or vtt
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" -o sync.srt \
+  "$API/archive/items/2026/09/2026-09-24-weekly-sync/export?format=srt"
+
+# companion documents (recipe output), then one of them
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items/2026/09/2026-09-24-weekly-sync/documents"
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items/2026/09/2026-09-24-weekly-sync/documents/document.md"
+
+# People: names and aliases; emails only with the People's emails scope
+curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/people"
+```
+
+`/archive/items` filters: `q` (full text), `type`, `tag`, `category` and
+`participant_key` (repeat them for "any of"), `participant` (exact name),
+`from` / `to` (`YYYY-MM-DD`), `date` (`today`, `week`, `month`, `year`,
+`older`, with `today=` your local date), `facets=true` for the Library's
+counts, `limit` (1–200, default 50) and `cursor`. Unknown parameters are a
+`400`. Every error is JSON with a stable `code` (`unauthorized`,
+`insufficient_scope`, `not_found`, `invalid_id`, `bad_cursor`,
+`rate_limited`, …).
+
+What it never gives out: speaker embeddings, voice profiles, saved audio,
+file paths or anything from the app's own data folder. Without the People's
+emails scope, emails are left out of items and of the `.md` export's
+frontmatter, and neither `q` nor `participant` can match one (so a script
+can't probe whether an address is in your archive; `q` then skips the
+participants, use `participant=` for names). Every browser request is
+refused, extensions included, and no CORS header is ever sent. Each token
+has a rate limit (a burst of 60, then 10 per second: `429` with
+`Retry-After`), pages hold at most 200 rows, answers at most 16 MiB, and at
+most two archive requests run at once (`503`), so a busy script never
+stalls the extension. Revoking a token in Settings → Scripting applies to
+the very next request.
 
 ## Removed in 0.10
 
