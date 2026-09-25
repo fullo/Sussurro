@@ -82,12 +82,11 @@ pub const MAX_SAMPLES: u64 = MAX_DATA_BYTES / 2;
 #[serde(rename_all = "lowercase")]
 pub enum AudioFormat {
     /// Mono 16-bit PCM, 16 kHz (about 115 MB per hour).
-    ///
-    /// The default until the app plays Opus everywhere (#248): P16 makes
-    /// Opus the default then, and only this attribute moves.
-    #[default]
     Wav,
-    /// Ogg Opus, mono, 24 kb/s (about 11 MB per hour).
+    /// Ogg Opus, mono, 24 kb/s (about 11 MB per hour): the default for new
+    /// installs since the app plays it everywhere (#248, P16). A settings
+    /// file from before the setting keeps WAV ([`crate::settings`]).
+    #[default]
     Opus,
 }
 
@@ -912,7 +911,8 @@ mod tests {
 
     #[test]
     fn format_setting_serializes_in_lowercase() {
-        assert_eq!(AudioFormat::default(), AudioFormat::Wav);
+        // P16 (#248): Opus for new installs.
+        assert_eq!(AudioFormat::default(), AudioFormat::Opus);
         assert_eq!(serde_json::to_value(AudioFormat::Opus).unwrap(), "opus");
         let f: AudioFormat = serde_json::from_str("\"wav\"").unwrap();
         assert_eq!(f, AudioFormat::Wav);

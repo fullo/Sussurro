@@ -109,7 +109,7 @@ fn wav_samples(path: &Path) -> Result<u64> {
         .filter(|_| audio::is_our_header(&h))
         .with_context(|| format!("{} is not a WAV written by Sussurro", path.display()))?;
     let data = u32::from_le_bytes([h[40], h[41], h[42], h[43]]) as u64;
-    if HEADER_LEN + data != len || data % 2 != 0 {
+    if HEADER_LEN + data != len || !data.is_multiple_of(2) {
         bail!(
             "{} is not a finished WAV (its header says {data} bytes of audio, the file holds {})",
             path.display(),
