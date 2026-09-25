@@ -194,7 +194,7 @@ from source: [`docs/development.md`](docs/development.md).
   (`brew install yt-dlp`, `winget install yt-dlp.yt-dlp`, `pipx install
   yt-dlp`). Sussurro finds it on your PATH or in the usual package-manager
   folders. Direct media links need nothing.
-- Chrome, Edge or Brave 116+, or Firefox 128+, for the meetings extension.
+- Chrome, Edge or Brave 116+, or Firefox 140+ (desktop; not Firefox for Android), for the meetings extension.
 - **Headphones** for calls: Sussurro does not cancel echo, so on speakers
   your microphone also records the others.
 

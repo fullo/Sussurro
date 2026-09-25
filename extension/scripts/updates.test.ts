@@ -21,8 +21,8 @@ const repoFile = (p: string) => fileURLToPath(new URL(`../../${p}`, import.meta.
 
 /** A minimal .xpi: a zip with a manifest.json. */
 const xpi = (manifest: Record<string, unknown>) => zipSync({ "manifest.json": strToU8(JSON.stringify(manifest)), "background.js": strToU8("0") });
-const firefoxXpi = (version: string, id = GECKO_ID) =>
-  xpi({ manifest_version: 3, version, browser_specific_settings: { gecko: { id, strict_min_version: "128.0" } } });
+const firefoxXpi = (version: string, id = GECKO_ID, strict_min_version = "140.0") =>
+  xpi({ manifest_version: 3, version, browser_specific_settings: { gecko: { id, strict_min_version } } });
 
 const entry = (version: string): UpdateEntry => ({ version, update_link: updateLink(version), update_hash: `sha256:${"a".repeat(64)}` });
 
@@ -104,7 +104,7 @@ describe("addUpdate", () => {
 
 describe("readXpi / entryForXpi", () => {
   it("reads the version, id and minimum Firefox from the packaged manifest", () => {
-    expect(readXpi(firefoxXpi("0.10.1"))).toEqual({ version: "0.10.1", id: GECKO_ID, strict_min_version: "128.0" });
+    expect(readXpi(firefoxXpi("0.10.1"))).toEqual({ version: "0.10.1", id: GECKO_ID, strict_min_version: "140.0" });
   });
 
   it("builds the entry with the hash of the exact bytes", () => {
@@ -113,8 +113,29 @@ describe("readXpi / entryForXpi", () => {
       version: "0.10.1",
       update_link: updateLink("0.10.1"),
       update_hash: updateHash(bytes),
-      browser_specific_settings: { gecko: { strict_min_version: "128.0" } },
+      browser_specific_settings: { gecko: { strict_min_version: "140.0" } },
     });
+  });
+
+  it("requires the .xpi's minimum Firefox to be the current manifest's (#234)", () => {
+    const current = JSON.parse(readFileSync(repoFile("extension/manifest.firefox.json"), "utf8")).browser_specific_settings.gecko
+      .strict_min_version;
+    expect(current).toBe("140.0");
+    const e = entryForXpi(firefoxXpi("0.10.1"), "0.10.1", GECKO_ID, current);
+    expect(e.browser_specific_settings).toEqual({ gecko: { strict_min_version: "140.0" } });
+    expect(() => entryForXpi(firefoxXpi("0.10.1", GECKO_ID, "128.0"), "0.10.1", GECKO_ID, current)).toThrow(
+      /requires Firefox 128\.0, but manifest\.firefox\.json says 140\.0/,
+    );
+  });
+
+  it("adds a 140 entry next to the published 0.10.0 one (128) without rewriting it", () => {
+    const published = validateManifest(JSON.parse(readFileSync(repoFile("docs/extension/updates.json"), "utf8")));
+    const v0100 = published.addons[GECKO_ID].updates.find((u) => u.version === "0.10.0");
+    expect(v0100?.browser_specific_settings).toEqual({ gecko: { strict_min_version: "128.0" } });
+    const next = addUpdate(published, entryForXpi(firefoxXpi("0.10.1"), "0.10.1", GECKO_ID, "140.0"));
+    const updates = next.addons[GECKO_ID].updates;
+    expect(updates.find((u) => u.version === "0.10.0")).toEqual(v0100);
+    expect(updates.find((u) => u.version === "0.10.1")?.browser_specific_settings).toEqual({ gecko: { strict_min_version: "140.0" } });
   });
 
   it("refuses a mismatched version or id, and non-xpi files", () => {

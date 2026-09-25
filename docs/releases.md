@@ -91,7 +91,12 @@ self-distribution: Mozilla reviews and signs it automatically, nothing is
 listed in the store — and attaches `sussurro-extension-firefox-<version>.xpi`
 to the draft release next to the zips (#228). Each submission uploads the
 sources the minified bundle is built from (see `extension/README.md` →
-*Source code for AMO review*).
+*Source code for AMO review*), and version metadata (`--amo-metadata`,
+written by `extension/scripts/amo-metadata.ts`): `extension/AMO-REVIEWER-NOTES.md`
+as the reviewers' approval notes — they explain the accepted lint warnings,
+keep them in sync with `extension/scripts/lint-policy.ts`, max 3000
+characters — and compatibility *Firefox* only, so AMO never marks the
+add-on Android-compatible (#234).
 
 Signing is skipped with a `::notice::`, never a failure, when the run is not
 for a tag, when either secret is missing, or when the version is a

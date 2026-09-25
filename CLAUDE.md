@@ -348,7 +348,9 @@ project decisions here, not in per-machine memory.**
   while such a run records. README → Privacy → *Recording meetings and
   consent* is the notice's link target — keep the anchor stable.
 - **Extension browsers (0.9, #137)**: one Chrome build for Chrome, Edge
-  and Brave, one Firefox build (≥ 128); feature parity except the
+  and Brave, one Firefox build (desktop ≥ 140 since #234 — the first
+  release that reads `data_collection_permissions`; no `gecko_android`,
+  Firefox for Android is not a target); feature parity except the
   Chrome-only tab-capture fallback, which is compiled out of the Firefox
   build (the build fails if `background.js` calls tabCapture/offscreen).
   Firefox's MV3 background is an event page (no persistent background)
