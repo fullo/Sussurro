@@ -105,7 +105,7 @@
 <p class="lead">Sussurro is a desktop app for macOS (Apple Silicon), Windows and Linux. It is free and open source (AGPL-3.0), needs no account and sends nothing anywhere on its own.</p>
 
 <h3 id="download">Download and install</h3>
-<p>Installers are on the <a href="https://github.com/fullo/Sussurro/releases/latest">GitHub releases page</a>. The same page carries the browser extension zips (see <a href="#extension-install">Meetings</a>).</p>
+<p>Installers are on the <a href="https://github.com/fullo/Sussurro/releases/latest">GitHub releases page</a>. The same page carries the browser extension (see <a href="#extension-install">Meetings</a>).</p>
 <div class="table-wrap"><table>
   <thead><tr><th>System</th><th>Files</th><th>Requirements and first launch</th></tr></thead>
   <tbody>
@@ -158,7 +158,7 @@
 <ul>
   <li><b>Shortcut</b>: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>, or <kbd>⌘</kbd>+<kbd>⇧</kbd>+<kbd>Space</kbd> on macOS. Change it in Settings → Dictation → <span class="ui">Shortcut</span>: click, press the keys, <kbd>Esc</kbd> cancels. A single letter or digit is refused; a function key alone is allowed.</li>
   <li><b>Push-to-talk</b> (on by default): hold to record, release to stop. Off: tap to start, tap again to stop. The <span class="ui">Dictate</span> button at the bottom of the rail follows the same rule.</li>
-  <li><b>The overlay</b>: a small pill at the bottom of the screen shows <em>Recording</em> and <em>Transcribing…</em>; with <span class="ui">Live preview</span> (Settings → Behavior) it also shows the words as they come. It never takes the focus.</li>
+  <li><b>The overlay</b>: a small pill at the bottom of the screen shows <em>Recording</em> and <em>Transcribing…</em>, with a level bar while recording so you can see the microphone hears you. With <span class="ui">Live preview</span> (Settings → Behavior) it also shows the words as they come: solid once the model has settled on them, faded while it may still change them, and only the last lines of a long dictation. The pasted text always comes from the final pass. Live preview is on by default, except on a Linux build that runs Whisper on the CPU, where it would slow dictation down. It never takes the focus.</li>
   <li><b>Pasting</b>: Sussurro puts the text on the clipboard, presses <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>V</kbd>, then puts back the text that was on your clipboard (images or files on the clipboard are not restored). On Wayland it first tries to type the text through the desktop's RemoteDesktop permission, leaving the clipboard alone.</li>
   <li><b>Microphone</b>: Settings → Dictation → <span class="ui">Microphone</span>, with a <span class="ui">Test</span> button and a level meter.</li>
 </ul>
@@ -167,8 +167,8 @@
   <li><b>Cleanup</b> (Settings → Cleanup): <em>None</em> (the raw transcript), <em>Light</em> (fillers, repetitions and false starts removed, grammar and punctuation fixed — the default), <em>Medium</em> (also clearer and shorter), <em>High</em> (rewritten). It runs on your cleanup LLM profile; if that server can't be reached, you get the raw transcript. See <a href="#cleanup">Cleanup</a>.</li>
   <li><b>Translate to</b> (Settings → Cleanup): dictate in one language, paste in another — even with cleanup set to None.</li>
   <li><b>Spoken commands</b> (Settings → Behavior → <span class="ui">Voice commands</span>, on by default), in English and Italian: “new line” / “a capo” / “nuova riga” for a line break, “new paragraph” / “nuovo paragrafo”, “period new line” / “punto e a capo”, “new bullet” / “bullet point” / “punto elenco” for a list item. “Scratch that” / “cancella quello” and “quote … end quote” / “apri virgolette … chiudi virgolette” are applied by the cleanup model, so they need a cleanup level above None.</li>
-  <li><b>Personal dictionary</b> (Settings → Dictionary &amp; snippets): names and jargon, used as a hint by Whisper and as preferred spellings by the cleanup model. Correcting a dictation in the history adds the new words for you.</li>
-  <li><b>Snippets</b>: dictate just a cue (“firma email”) and Sussurro pastes the text you stored for it, with no model involved.</li>
+  <li><b>Personal dictionary</b> (Settings → Dictionary &amp; snippets): names and jargon, used as a hint by Whisper and as preferred spellings by the cleanup model. Correcting a dictation in the history adds the new words for you. The list can be searched and sorted; add, edit or delete entries, select several to delete them together, and <span class="ui">Remove duplicates</span>. <span class="ui">Import .txt</span> adds one entry per line, <span class="ui">Export .txt</span> saves the list in the same format, and <span class="ui">Edit as text</span> shows it as one entry per line.</li>
+  <li><b>Snippets</b>: dictate just a cue (“firma email”) and Sussurro pastes the text you stored for it, with no model involved. The snippet table can be searched and sorted, and warns when two snippets share a cue (the first one is used). <span class="ui">Import .csv</span> and <span class="ui">Export .csv</span> use one <code>cue,text</code> per line, with the text in double quotes when it holds commas or line breaks.</li>
   <li><b>App styles</b>: a tone — and optionally an output language — per app, matched on the focused app's name.</li>
   <li><b>Streaming typing</b> (Settings → Behavior, off by default): words appear while you talk — word by word with cleanup None and no translation, otherwise sentence by sentence, each sentence cleaned before it is typed. When streaming typed something, snippets and the spoken commands are not applied to that dictation.</li>
   <li><b>Whisper mode</b> (Settings → Speech): boosts a quiet voice for dictating under your breath.</li>
@@ -374,10 +374,10 @@ participants:
 <p class="lead">The Sussurro extension records web meetings — <b>Google Meet</b>, <b>Microsoft Teams</b> and <b>Zoom in the browser</b> — and streams the audio to the Sussurro app on the same computer, which transcribes it live into a <b>Meeting</b>. It works in Chrome, Edge and Brave (116 or later) and Firefox (128 or later).</p>
 
 <h3 id="extension-install">Install</h3>
-<p>The extension is not in the browser stores yet. Each <a href="https://github.com/fullo/Sussurro/releases/latest">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and <code>sussurro-extension-firefox-&lt;version&gt;.zip</code>: use the one with the same version as your app.</p>
+<p>The extension is not in the browser stores yet. Each <a href="https://github.com/fullo/Sussurro/releases/latest">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and, for Firefox, the add-on signed by Mozilla, <code>sussurro-extension-firefox-&lt;version&gt;.xpi</code>: use the one with the same version as your app.</p>
 <ul>
   <li><b>Chrome, Edge, Brave</b>: unzip it into a folder you keep, open <code>chrome://extensions</code> (<code>edge://extensions</code>, <code>brave://extensions</code>), turn on <span class="ui">Developer mode</span>, click <span class="ui">Load unpacked</span> and pick the folder. To update, replace the folder's contents and press the reload icon on the extension's card. On Brave, if the extension can't reach the app, check <code>brave://settings/content/localhostAccess</code>.</li>
-  <li><b>Firefox</b>: open <code>about:debugging#/runtime/this-firefox</code>, click <span class="ui">Load Temporary Add-on…</span> and pick the zip. Firefox removes temporary add-ons when it quits, so load it again after a restart.</li>
+  <li><b>Firefox</b>: drag the <code>.xpi</code> onto a Firefox window (or open <code>about:addons</code>, gear menu → <span class="ui">Install Add-on From File…</span>) and confirm. It stays installed and updates itself when a new release is out. The unsigned <code>sussurro-extension-firefox-&lt;version&gt;.zip</code> is for development only: <code>about:debugging</code> loads it as a temporary add-on, removed when Firefox quits.</li>
 </ul>
 <p>If the extension has no access to a meeting site, its panel offers <span class="ui">Allow access</span>.</p>
 
@@ -580,7 +580,7 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
   <dt>A link won't transcribe</dt>
   <dd>“Links to video sites need yt-dlp”: install it (see <a href="#links">Links</a>) and try again. A link to your own network needs <span class="ui">Allow local network addresses</span>. Videos with only Opus or AC-3 audio, pages outside the supported platforms and downloads over 2 GB are refused. yt-dlp breaks when sites change: update it.</dd>
   <dt>The extension says Sussurro is not reachable</dt>
-  <dd>Check that the app is running and that Settings → Browser extension says the local API is listening — after turning it on, restart Sussurro. “Wrong token”: pair again with a fresh <span class="ui">Copy pairing code</span>. “Different versions”: install the extension from the same release as the app. On Brave, allow localhost access. On Firefox, reload the temporary add-on after a restart.</dd>
+  <dd>Check that the app is running and that Settings → Browser extension says the local API is listening — after turning it on, restart Sussurro. “Wrong token”: pair again with a fresh <span class="ui">Copy pairing code</span>. “Different versions”: install the extension from the same release as the app. On Brave, allow localhost access. On Firefox, install the signed <code>.xpi</code>: a temporary add-on is gone after a restart.</dd>
   <dt>“Open a Google Meet, Microsoft Teams or Zoom web call”</dt>
   <dd>The panel doesn't see a meeting in this tab: reload the meeting page (it was open before the extension), or click <span class="ui">Allow access</span> if offered. Zoom works only in its web client.</dd>
   <dt>Meet names are missing</dt>
@@ -622,7 +622,7 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
   <dt>Does Sussurro recognise the same person across meetings?</dt>
   <dd>Not yet. Voices are told apart within one recording; link them to People to carry names and emails over.</dd>
   <dt>Is the extension in the Chrome Web Store or Firefox Add-ons?</dt>
-  <dd>Not yet: install it from the release zips (see <a href="#extension-install">Install</a>).</dd>
+  <dd>Not yet: install it from the release files — the Chrome zip, or the Firefox <code>.xpi</code>, which Mozilla signs without listing it (see <a href="#extension-install">Install</a>).</dd>
   <dt>Can I record video?</dt>
   <dd>No — Sussurro works with audio only.</dd>
   <dt>Is it free?</dt>

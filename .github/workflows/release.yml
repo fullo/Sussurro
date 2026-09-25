@@ -2,13 +2,15 @@ name: Release
 
 # Builds signed installers for Windows / macOS / Linux and publishes a GitHub
 # release (with the updater's latest.json) whenever a v* tag is pushed; the
-# browser-extension zips are attached to the same draft release.
+# browser-extension zips are attached to the same draft release, plus the
+# Firefox add-on signed on addons.mozilla.org (unlisted) when the AMO secrets
+# are set (#228).
 #
 # Run by hand (workflow_dispatch) from a branch, it builds exactly the same
 # thing but creates no tag and no release (#210): tauri-action gets no
 # tagName/releaseName, so it only builds, and the bundles + extension zips are
-# uploaded as short-lived workflow artifacts instead. Dispatched from a tag it
-# behaves like a tag push.
+# uploaded as short-lived workflow artifacts instead, and nothing is signed on
+# AMO. Dispatched from a tag it behaves like a tag push.
 on:
   push:
     tags:
@@ -198,6 +200,57 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" extension/dist/*.zip --clobber --repo "${{ github.repository }}"
+
+      # Firefox: sign the build on addons.mozilla.org, unlisted channel
+      # (self-distribution, #228), and attach the signed .xpi. Only on a tag,
+      # only with both AMO secrets, only for a plain X.Y.Z version; any skip
+      # is a ::notice::, never a failure. Secrets can't appear in `if:`, so
+      # the gate script decides and the step below reads its output.
+      - name: Firefox signing gate
+        id: amo
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: bash extension/scripts/amo-sign-gate.sh
+
+      - name: Sign the Firefox extension (AMO unlisted) and attach the .xpi
+        if: steps.amo.outputs.sign == 'true'
+        timeout-minutes: 45
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # web-ext reads --api-key / --api-secret from these.
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          VERSION: ${{ steps.amo.outputs.version }}
+        run: |
+          xpi="sussurro-extension-firefox-$VERSION.xpi"
+          # AMO signs a version number once: a re-run after a successful
+          # signing must not submit it again.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qxF "$xpi"; then
+            echo "::notice title=Firefox signing skipped::$xpi is already attached to $GITHUB_REF_NAME."
+            exit 0
+          fi
+          # The build bundles and minifies, so AMO gets the sources it was
+          # built from (the extension + the app files it imports, the icons
+          # and the version); build steps: extension/README.md, "Source code
+          # for AMO review".
+          git archive --format=zip -o "$RUNNER_TEMP/sussurro-extension-source-$VERSION.zip" HEAD \
+            LICENSE extension sussurro/package.json sussurro/src \
+            sussurro/src-tauri/icons/32x32.png sussurro/src-tauri/icons/64x64.png sussurro/src-tauri/icons/128x128.png
+          cd extension
+          npx web-ext sign --channel=unlisted --source-dir dist/firefox \
+            --artifacts-dir "$RUNNER_TEMP/signed" \
+            --upload-source-code "$RUNNER_TEMP/sussurro-extension-source-$VERSION.zip" \
+            --approval-timeout 2400000
+          shopt -s nullglob
+          signed=("$RUNNER_TEMP"/signed/*.xpi)
+          if [ "${#signed[@]}" -ne 1 ]; then
+            echo "::error::expected one signed .xpi, got ${#signed[@]}"
+            exit 1
+          fi
+          mv "${signed[0]}" "dist/$xpi"
+          gh release upload "$GITHUB_REF_NAME" "dist/$xpi" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "::notice title=Firefox extension signed::$xpi attached to $GITHUB_REF_NAME. After publishing the release: cd extension && npm run update-manifest -- $VERSION, then merge docs/extension/updates.json."
 
       - name: Upload extension zips (build-only run)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}

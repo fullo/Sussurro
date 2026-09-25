@@ -295,6 +295,8 @@ check there (#184).
 | `src/options/`, `options.html` | options page: pairing with the app, Test connection (#127), recording notice reset (#136), About with the third-party licences (#138) |
 | `src/shared/` | helpers shared by the entry points (`pairing.ts`: storage keys and URLs; `connection.ts`: the connection test) |
 | `scripts/build.ts` | the build: pages + scripts + manifest + icons + zip |
+| `scripts/amo-sign-gate.sh` | release workflow: whether to sign the Firefox build on AMO (#228) |
+| `scripts/update-manifest.ts`, `scripts/updates.ts` | adds a released version to Firefox's self-hosted update manifest (`docs/extension/updates.json`) |
 
 Permissions stay minimal: `storage` (plus, on Chrome, `sidePanel` and the
 tab-capture fallback's `tabCapture` and `offscreen`), and host access only
@@ -325,7 +327,7 @@ npm run build            # both
 
 npm run typecheck        # tsc
 npm test                 # vitest (pure helpers, manifest checks)
-npm run lint             # web-ext lint on dist/firefox (run after build:firefox)
+npm run lint             # web-ext lint --self-hosted on dist/firefox (run after build:firefox)
 ```
 
 CI (`.github/workflows/test.yml`, `extension` job) runs all of the above,
@@ -374,10 +376,11 @@ npm run test:e2e -- firefox edge brave    # a choice
 HEADED=1 npm run test:e2e -- chromium     # watch it
 ```
 
-Temporary profiles go under `$E2E_TMPDIR` (default: the OS temp folder). The
-release workflow attaches both zips to the GitHub release.
+Temporary profiles go under `$E2E_TMPDIR` (default: the OS temp folder).
 
-`web-ext lint` passes with 0 errors and four expected warnings:
+`web-ext lint` runs with `--self-hosted`: the add-on is distributed outside
+AMO's listing with its own `update_url`, which listed-mode lint rejects
+(`MANIFEST_UPDATE_URL`). It passes with 0 errors and four expected warnings:
 
 - `UNSAFE_VAR_ASSIGNMENT` ×2 (`assets/page-*.js`): React DOM's own
   `innerHTML` writes for `dangerouslySetInnerHTML`,
@@ -388,6 +391,61 @@ release workflow attaches both zips to the GitHub release.
   stays 128 (MAIN-world content scripts, plan decision E4).
 - `KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION`: the same key on
   Firefox for Android (142). Android is not a target: it has no sidebar.
+
+## Releases, signing and updates (#228)
+
+The release workflow attaches both zips to the GitHub release. On a tag,
+with the `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` repository secrets set, it
+also signs the Firefox build on addons.mozilla.org through the **unlisted**
+channel (self-distribution: AMO signs it but does not list it) and attaches
+`sussurro-extension-firefox-<version>.xpi`, which installs permanently in
+release Firefox. Without the secrets, on a build-only run or for a
+pre-release version, signing is skipped with a notice
+(`scripts/amo-sign-gate.sh`). Maintainer setup: `docs/releases.md` →
+*Firefox extension signing and updates*.
+
+- **The gecko id `sussurro@darumahq.it` must never change**: AMO ties the
+  add-on and every signed version to it, and installed copies update only
+  within the same id.
+- AMO signs a version number once. A re-run of the job skips a version whose
+  `.xpi` is already on the release; a version whose submission failed
+  after upload needs a version bump, or the signed file downloaded from
+  AMO's Developer Hub and attached by hand.
+- **Updates**: `browser_specific_settings.gecko.update_url` points at
+  `https://fullo.github.io/Sussurro/extension/updates.json`, which GitHub
+  Pages serves from `docs/extension/updates.json` on `main`. After
+  **publishing** a release, add it:
+
+  ```bash
+  cd extension && npm ci
+  npm run update-manifest -- 0.10.1   # downloads the release's .xpi, checks it, writes the entry
+  # from a local copy: npm run update-manifest -- 0.10.1 path/to/sussurro-extension-firefox-0.10.1.xpi
+  ```
+
+  It checks the file's version and gecko id and writes `version`,
+  `update_link` (the release asset) and `update_hash` (`sha256:` of the
+  signed file) into `docs/extension/updates.json`; commit it on a branch
+  and merge. Installed copies pick it up on their next update check
+  (about once a day). If the add-on is ever listed on AMO instead,
+  `update_url` must go (AMO refuses it for listed add-ons).
+
+### Source code for AMO review
+
+The shipped scripts are bundled and minified by Vite, so every AMO
+submission carries the sources they are built from: an archive of
+`LICENSE`, `extension/`, `sussurro/package.json` (the version),
+`sussurro/src/` (the transcript components, pairing code and recording
+notice the extension imports) and the three icons in
+`sussurro/src-tauri/icons/`. To rebuild the submitted add-on from it
+(Node.js ≥ 24 with npm, any OS):
+
+```bash
+unzip sussurro-extension-source-<version>.zip -d sussurro && cd sussurro/extension
+npm ci
+npm run build:firefox      # → dist/firefox/, the directory that was signed
+```
+
+The build is deterministic: the same sources give byte-identical files.
 
 ## Load it unpacked
 
@@ -408,7 +466,8 @@ After a rebuild, press the reload icon on the extension's card.
 3. **Load Temporary Add-on…** → pick `extension/dist/firefox/manifest.json`.
 4. Click the Sussurro toolbar button to toggle the sidebar.
 
-A temporary add-on is removed when Firefox quits. In Firefox, MV3 host
+A temporary add-on is removed when Firefox quits: it is for development only;
+users install the signed `.xpi` from the release. In Firefox, MV3 host
 permissions can be granted per site: if a meeting page is not picked up,
 allow it under the extension's **Permissions** tab in `about:addons`.
 

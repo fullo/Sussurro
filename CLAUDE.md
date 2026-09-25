@@ -573,6 +573,22 @@ project decisions here, not in per-machine memory.**
   archives + `.sig`) and extension zips become 3-day workflow artifacts; no
   `latest.json` is produced. Dispatching on a tag ref behaves like a tag push.
   A full run costs the same Actions minutes as a release.
+- **Firefox extension signing (#228)**: on a tag, with the repo secrets
+  `AMO_JWT_ISSUER` + `AMO_JWT_SECRET` (AMO API credentials), the release
+  workflow signs the Firefox build on addons.mozilla.org, **unlisted
+  channel** (`web-ext sign`, sources uploaded for the minified bundle), and
+  attaches `sussurro-extension-firefox-<version>.xpi` to the draft.
+  `extension/scripts/amo-sign-gate.sh` skips with a notice (never fails)
+  off a tag, without the secrets or for a pre-release version; a build-only
+  run never signs. Gecko id `sussurro@darumahq.it` is permanent (AMO ties
+  the add-on to it); AMO signs a version number once. **Updates are
+  self-hosted**: `gecko.update_url` = `https://fullo.github.io/Sussurro/extension/updates.json`
+  (Pages serves `docs/` from `main`); after publishing a release the
+  maintainer runs `cd extension && npm run update-manifest -- X.Y.Z` (fetches
+  the published `.xpi`, writes version/link/`sha256` into
+  `docs/extension/updates.json`) and merges it. `web-ext lint` runs with
+  `--self-hosted` (listed-mode lint rejects `update_url`). Setup steps:
+  `docs/releases.md`.
 - Never force-move an existing release tag; bump the patch version instead
   (version lives in `sussurro/package.json`, `sussurro/src-tauri/tauri.conf.json`,
   `sussurro/src-tauri/Cargo.toml` + `Cargo.lock`).

@@ -5,6 +5,16 @@ pub mod remote;
 pub mod sidecar;
 pub mod whisper;
 
+/// Whisper runs on the GPU in this build: Metal on macOS, Vulkan on Windows
+/// and on Linux built with `linux-vulkan`. The default Linux build is
+/// CPU-only, where re-transcribing for the live preview competes with the
+/// dictation itself — so the preview starts off there (#98).
+pub const WHISPER_GPU: bool = cfg!(any(
+    target_os = "macos",
+    target_os = "windows",
+    feature = "linux-vulkan"
+));
+
 /// The loaded engine, whichever it is. Kept in AppState behind a Mutex.
 pub enum AnyTranscriber {
     Whisper(whisper::Transcriber),
