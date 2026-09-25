@@ -105,6 +105,8 @@ describe("labels and sources", () => {
   it("names where a speaker comes from", () => {
     expect(speakerSource("you")).toBe("mic channel");
     expect(speakerSource("meet:Anna Rossi")).toBe("from Meet");
+    expect(speakerSource("teams:Anna Rossi")).toBe("from Teams");
+    expect(speakerSource("zoom:Anna Rossi")).toBe("from Zoom");
     expect(speakerSource("voice:3")).toBe("by voice");
     expect(speakerSource("other")).toBe("");
     expect(isVoice("voice:12")).toBe(true);

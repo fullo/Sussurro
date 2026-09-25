@@ -393,7 +393,8 @@ export interface Segment {
   overlap?: { start_ms: number; end_ms: number; speaker_id?: string }[];
 }
 
-/** A speaker as known to one document (#130): `you`, `meet:<name>` or
+/** A speaker as known to one document (#130): `you`, a page name
+ *  (`meet:<name>`, `teams:<name>`, `zoom:<name>`, #131/#245/#246) or
  *  `voice:<n>`, with this document's label and colour. */
 export interface DocSpeaker {
   id: string;

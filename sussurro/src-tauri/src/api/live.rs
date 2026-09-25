@@ -48,7 +48,7 @@ use super::Host;
 use crate::archive::meeting::{EventsWriter, MeetingEvent};
 use crate::engine::{EngineEvent, EngineSink};
 use crate::sources::browser::{BrowserSource, ChannelMux, Chunk};
-use crate::speakers::names::{AttributionParams, SharedNames};
+use crate::speakers::names::SharedNames;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
@@ -434,7 +434,8 @@ impl<'a> Conn<'a> {
                 let mux = ChannelMux::new(start.rate);
                 let archive = self.host.archive_dir().ok();
                 let sink: Arc<dyn EngineSink> = Arc::new(ChannelSink(Mutex::new(events_tx)));
-                let names = SharedNames::new(AttributionParams::default());
+                // The platform picks the names' prefix and the page's lags.
+                let names = SharedNames::for_platform(&start.platform);
                 let started = (self.clock)();
                 match self.host.start_meeting(MeetingStart {
                     start,
@@ -664,8 +665,12 @@ impl<'a> Conn<'a> {
         } else if let Some(n) = doc::voice_number(id) {
             doc::voice_color(n)
         } else {
-            let k = self.announced.iter().filter(|a| doc::is_meet(a)).count();
-            doc::meet_speaker(&label, k).color
+            let k = self
+                .announced
+                .iter()
+                .filter(|a| doc::is_page_name(a))
+                .count();
+            doc::page_name_color(k)
         };
         self.announced.push(id.to_string());
         Some(ServerMessage::Speaker {
