@@ -53,6 +53,7 @@
   </header>
 
   <div class="prose">
+    <div class="callout"><span class="k">Updated for 0.10</span><p>Since 0.10 release builds also bundle a pinned <code>llama-server</code> (<code>npm run sidecar</code>, then <code>--config src-tauri/tauri.sidecar.conf.json</code>), and the browser extension builds separately in <code>extension/</code>. A local <code>npm run tauri build</code> needs the updater signing key, or <code>--config '{"bundle":{"createUpdaterArtifacts":false}}'</code>. The current steps are in <a href="https://github.com/fullo/Sussurro/blob/main/docs/development.md">docs/development.md</a>.</p></div>
     <p>Most people should just grab an installer from the <a href="https://github.com/fullo/Sussurro/releases">releases page</a>. But if you want to build it yourself — to hack on it, or to compile the optional Linux GPU variant — here's the map. The authoritative, always-current guides live in the repo under <code>docs/compile/</code>; this is the overview.</p>
 
     <h2>Common toolchain</h2>
