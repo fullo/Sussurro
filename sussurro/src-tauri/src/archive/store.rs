@@ -327,6 +327,31 @@ pub(super) fn read_segments(dir: &Path) -> Result<SegmentsFile> {
     }
 }
 
+/// What voice profiles (#241) need of the item at `dir`: its frontmatter
+/// `source` and its segments — or `None` when no speaker of it is linked
+/// to a person (checked on the raw bytes first, so a scan of the whole
+/// archive parses only the documents that can contribute).
+pub(crate) fn read_linked_segments(dir: &Path) -> Result<Option<(String, SegmentsFile)>> {
+    let path = dir.join(META_DIR).join(SEGMENTS_FILE);
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    if !bytes.windows(11).any(|w| w == b"\"person_id\"") {
+        return Ok(None);
+    }
+    let segments: SegmentsFile =
+        serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))?;
+    if segments.speakers.iter().all(|s| s.person_id.is_none()) {
+        return Ok(None);
+    }
+    let doc = std::fs::read(transcript_path(dir))
+        .with_context(|| format!("reading {}", transcript_path(dir).display()))?;
+    let (meta, _) = frontmatter::parse(&String::from_utf8_lossy(&doc))?;
+    Ok(Some((meta.source, segments)))
+}
+
 pub(super) fn write_segments(dir: &Path, segments: &SegmentsFile) -> Result<()> {
     let meta_dir = dir.join(META_DIR);
     std::fs::create_dir_all(&meta_dir)?;
@@ -341,7 +366,7 @@ pub(super) fn write_segments(dir: &Path, segments: &SegmentsFile) -> Result<()> 
 /// Folder of an existing item: the id must be valid, confined, and point at a
 /// folder holding a `transcript.md` (so an id like `2026` can never address a
 /// whole year of items).
-pub(super) fn existing_item_dir(archive: &Path, id: &str) -> Result<PathBuf> {
+pub(crate) fn existing_item_dir(archive: &Path, id: &str) -> Result<PathBuf> {
     let dir = item_dir(archive, id)?;
     if !transcript_path(&dir).is_file() {
         bail!("no archive item '{id}'");

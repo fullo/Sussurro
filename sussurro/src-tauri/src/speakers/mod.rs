@@ -13,6 +13,10 @@
 //! - [`doc`]: a document's speakers — move a line, rename, "Re-detect"
 //! - [`names`]: names from the meeting page (layer 2, #131): the page's
 //!   speaker timeline and majority-overlap attribution of remote lines
+//! - [`profiles`]: voice profiles of People (0.11, #241): enrolment from
+//!   confirmed lines and suggestion matching (pure)
+//! - [`voices`]: the profile files in `<app data>/voices/` — never in the
+//!   archive (P13)
 
 pub mod cluster;
 pub mod doc;
@@ -20,7 +24,9 @@ pub mod fbank;
 pub mod map;
 pub mod model;
 pub mod names;
+pub mod profiles;
 pub mod tracker;
+pub mod voices;
 
 pub use tracker::{SpeakerOptions, Tracker};
 
