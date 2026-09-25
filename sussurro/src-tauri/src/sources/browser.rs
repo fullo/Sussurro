@@ -6,9 +6,13 @@
 //! - [`ChannelMux`] (pure): per channel, resamples to 16 kHz mono with the
 //!   equivalence-tested [`StreamResampler`], places the audio on the run's
 //!   clock, fills lost frames (`seq` gaps) with silence and drops repeated
-//!   ones. A channel that starts late (the remote track arrives when the
-//!   call connects) begins at the session's current position, so both
-//!   channels share one timeline.
+//!   ones. The silence is bounded twice (#217): at most [`MAX_GAP_SAMPLES`]
+//!   per gap, and per channel at most the wall-clock time since the session
+//!   started plus [`SILENCE_GRACE_SAMPLES`] in total, so a page that jumps
+//!   `seq` cannot turn a few bytes into minutes of (saved) audio. A
+//!   channel that starts late (the remote track arrives when the call
+//!   connects) begins at the session's current position, so both channels
+//!   share one timeline.
 //! - [`BrowserSource`]: the engine's [`Source`], fed by the WebSocket thread
 //!   through a bounded channel; it ends when the sender is dropped (`stop`,
 //!   or the extension went away) or the run is cancelled.
@@ -25,6 +29,10 @@ const RATE: u64 = 16_000;
 /// Longest silence inserted for one `seq` gap: a client bug (or a jump of
 /// billions) must not stall the run on hours of zeros.
 pub const MAX_GAP_SAMPLES: u64 = 60 * RATE;
+/// Silence a channel may have inserted beyond the session's wall-clock
+/// time: the extension sends up to ~30 s of audio it buffered while
+/// (re)connecting in one burst right after `start`, gaps included.
+pub const SILENCE_GRACE_SAMPLES: u64 = 30 * RATE;
 /// Silence goes to the engine in frames of at most this many samples.
 const SILENCE_FRAME: u64 = RATE;
 /// Chunks buffered between the WebSocket thread and the engine before the
@@ -69,6 +77,8 @@ struct Lane {
     pos: u64,
     /// Input samples in the last frame (the size of a lost frame).
     last_len: u64,
+    /// Silence inserted for `seq` gaps so far, in output samples.
+    silence: u64,
 }
 
 /// Per-channel resampling and alignment. Pure.
@@ -101,8 +111,10 @@ impl ChannelMux {
         out.min(u64::MAX as u128) as u64
     }
 
-    /// Push one mono frame (`pcm` at the `start` rate) of `channel`.
-    pub fn push(&mut self, channel: Channel, seq: u32, pcm: &[f32]) -> Pushed {
+    /// Push one mono frame (`pcm` at the `start` rate) of `channel`;
+    /// `elapsed` is the wall-clock time since the session started (it bounds
+    /// the silence gaps may insert).
+    pub fn push(&mut self, channel: Channel, seq: u32, pcm: &[f32], elapsed: Duration) -> Pushed {
         let mut out = Pushed::default();
         let i = match self.lanes.iter().position(|l| l.channel == channel) {
             Some(i) => i,
@@ -115,6 +127,7 @@ impl ChannelMux {
                     next_seq: seq,
                     pos,
                     last_len: pcm.len() as u64,
+                    silence: 0,
                 });
                 self.lanes.len() - 1
             }
@@ -126,9 +139,11 @@ impl ChannelMux {
         }
         if seq > expected {
             let lost = (seq - expected) as u64;
+            let budget = silence_budget(elapsed).saturating_sub(self.lanes[i].silence);
             let len = self
                 .to_output(lost.saturating_mul(self.lanes[i].last_len))
-                .min(MAX_GAP_SAMPLES);
+                .min(MAX_GAP_SAMPLES)
+                .min(budget);
             out.lost = lost;
             if len > 0 {
                 let lane = &mut self.lanes[i];
@@ -138,6 +153,7 @@ impl ChannelMux {
                     len,
                 });
                 lane.pos += len;
+                lane.silence += len;
             }
         }
         let lane = &mut self.lanes[i];
@@ -175,6 +191,12 @@ impl ChannelMux {
         }
         out
     }
+}
+
+/// Total silence one channel may insert `elapsed` into the session.
+fn silence_budget(elapsed: Duration) -> u64 {
+    let wall = elapsed.as_millis().saturating_mul(RATE as u128) / 1000;
+    (wall.min(u64::MAX as u128) as u64).saturating_add(SILENCE_GRACE_SAMPLES)
 }
 
 /// The engine side of a browser session.
@@ -256,6 +278,9 @@ impl Source for BrowserSource {
 mod tests {
     use super::*;
 
+    const T0: Duration = Duration::ZERO;
+    const HOUR: Duration = Duration::from_secs(3600);
+
     fn audio_len(p: &Pushed) -> usize {
         p.chunks
             .iter()
@@ -277,7 +302,7 @@ mod tests {
         let mut remote_start = None;
         for seq in 0..100 {
             for (ch, total) in [(Channel::Mic, &mut mic), (Channel::Remote, &mut remote)] {
-                let p = mux.push(ch, seq, &frame);
+                let p = mux.push(ch, seq, &frame, T0);
                 for c in &p.chunks {
                     let Chunk::Audio(f) = c else { panic!("no gap here") };
                     assert_eq!(f.channel, ch);
@@ -311,7 +336,7 @@ mod tests {
         let mut mux = ChannelMux::new(44_100);
         let mut streamed = Vec::new();
         for (seq, chunk) in input.chunks(441).enumerate() {
-            for c in mux.push(Channel::Remote, seq as u32, chunk).chunks {
+            for c in mux.push(Channel::Remote, seq as u32, chunk, T0).chunks {
                 let Chunk::Audio(f) = c else { panic!() };
                 streamed.extend(f.samples);
             }
@@ -327,9 +352,9 @@ mod tests {
     fn seq_gaps_become_silence_and_repeats_are_dropped() {
         let mut mux = ChannelMux::new(16_000);
         let frame = vec![0.2f32; 320]; // 20 ms
-        assert_eq!(audio_len(&mux.push(Channel::Mic, 0, &frame)), 320);
+        assert_eq!(audio_len(&mux.push(Channel::Mic, 0, &frame, HOUR)), 320);
         // Frames 1 and 2 were lost: 640 samples of silence, then the frame.
-        let p = mux.push(Channel::Mic, 3, &frame);
+        let p = mux.push(Channel::Mic, 3, &frame, HOUR);
         assert_eq!(p.lost, 2);
         assert_eq!(
             p.chunks[0],
@@ -342,27 +367,68 @@ mod tests {
         let Chunk::Audio(f) = &p.chunks[1] else { panic!() };
         assert_eq!(f.start, 960);
         // A repeat (or an older frame) is dropped without moving the clock.
-        let p = mux.push(Channel::Mic, 3, &frame);
+        let p = mux.push(Channel::Mic, 3, &frame, HOUR);
         assert!(p.duplicate && p.chunks.is_empty());
-        assert!(mux.push(Channel::Mic, 1, &frame).duplicate);
+        assert!(mux.push(Channel::Mic, 1, &frame, HOUR).duplicate);
         assert_eq!(mux.position(), 1_280);
         // A huge jump is capped.
-        let p = mux.push(Channel::Mic, u32::MAX, &frame);
+        let p = mux.push(Channel::Mic, u32::MAX, &frame, HOUR);
         assert_eq!(p.lost, u32::MAX as u64 - 4);
         assert!(matches!(p.chunks[0], Chunk::Silence { len, .. } if len == MAX_GAP_SAMPLES));
+    }
+
+    #[test]
+    fn inserted_silence_is_bounded_by_the_wall_clock() {
+        let mut mux = ChannelMux::new(16_000);
+        let frame = vec![0.2f32; 320]; // 20 ms
+        let silence = |p: &Pushed| -> u64 {
+            p.chunks
+                .iter()
+                .map(|c| match c {
+                    Chunk::Silence { len, .. } => *len,
+                    _ => 0,
+                })
+                .sum()
+        };
+        mux.push(Channel::Remote, 0, &frame, T0);
+        // At the start only the grace is available: one 60 s gap is cut to
+        // 30 s, and nothing more fits.
+        let p = mux.push(Channel::Remote, 10_000, &frame, T0);
+        assert_eq!(silence(&p), SILENCE_GRACE_SAMPLES);
+        let p = mux.push(Channel::Remote, 20_000, &frame, T0);
+        assert_eq!((p.lost, silence(&p)), (9_999, 0), "counted, not filled");
+        // Ten seconds later, ten more seconds of silence are allowed…
+        let p = mux.push(Channel::Remote, 30_000, &frame, Duration::from_secs(10));
+        assert_eq!(silence(&p), 10 * 16_000);
+        // …and a stream of 5-byte jumps adds nothing past the budget.
+        let mut total = 0;
+        for k in 1..1_000u32 {
+            total += silence(&mux.push(Channel::Remote, 30_000 + k * 1_000_000, &[], Duration::from_secs(10)));
+        }
+        assert_eq!(total, 0);
+        // The budget is per channel, and the per-gap cap still applies.
+        mux.push(Channel::Mic, 0, &frame, HOUR);
+        let p = mux.push(Channel::Mic, 1_000_000, &frame, HOUR);
+        assert_eq!(silence(&p), MAX_GAP_SAMPLES);
+        // Real audio is never cut.
+        let before = mux.position();
+        let p = mux.push(Channel::Remote, 1_000_000_000, &frame, Duration::from_secs(10));
+        assert_eq!(silence(&p), 0);
+        assert_eq!(audio_len(&p), 320);
+        assert!(mux.position() >= before);
     }
 
     #[test]
     fn a_late_channel_joins_at_the_session_position() {
         let mut mux = ChannelMux::new(16_000);
         for seq in 0..50 {
-            mux.push(Channel::Mic, seq, &[0.0; 320]); // 1 s of mic
+            mux.push(Channel::Mic, seq, &[0.0; 320], T0); // 1 s of mic
         }
-        let p = mux.push(Channel::Remote, 7, &[0.5; 320]);
+        let p = mux.push(Channel::Remote, 7, &[0.5; 320], T0);
         assert_eq!(p.lost, 0, "the first seq of a channel is its start");
         let Chunk::Audio(f) = &p.chunks[0] else { panic!() };
         assert_eq!((f.channel, f.start), (Channel::Remote, 16_000));
-        assert_eq!(mux.push(Channel::Remote, 8, &[0.5; 320]).lost, 0);
+        assert_eq!(mux.push(Channel::Remote, 8, &[0.5; 320], T0).lost, 0);
     }
 
     #[test]

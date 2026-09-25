@@ -9,7 +9,11 @@
 //! - **Video platforms** ([`ytdlp`]): `yt-dlp` found on PATH (or in the
 //!   usual Homebrew / winget / scoop folders), not bundled (E10), asked for
 //!   the m4a audio track so symphonia decodes it without ffmpeg. It is run
-//!   with an argument vector, never through a shell.
+//!   with an argument vector, never through a shell, and **only for the
+//!   known video platforms** ([`PLATFORM_HOSTS`], [`yt_dlp_allowed`]) — a
+//!   pasted link to a platform, or a direct link on a platform host that
+//!   turns out to be a web page. Any other web page is refused, never
+//!   handed to yt-dlp's generic extractor.
 //!
 //! **Which addresses a link may reach.** Only `http` and `https`, no user
 //! name or password in the link (it is saved in the item's `source`). Hosts
@@ -17,9 +21,22 @@
 //! (cloud metadata), CGNAT, unique-local IPv6, `localhost` — are refused
 //! unless the user ticks *Allow local network addresses* for that run: a
 //! pasted link must not make Sussurro probe the router or a local service.
-//! The check covers IP literals, every address the host name resolves to
-//! and every redirect hop, and the connection is pinned to the addresses
-//! that were checked (no DNS rebinding between check and connect).
+//! [`resolve_checked`] covers IP literals and every address the host name
+//! resolves to, and the connection is pinned to the addresses that were
+//! checked (no DNS rebinding between check and connect):
+//!
+//! - direct downloads check every redirect hop themselves, with a client
+//!   that ignores the system proxy (`HTTP(S)_PROXY` would otherwise take
+//!   the connection past the pinning);
+//! - yt-dlp does its own networking (it follows redirects, calls platform
+//!   APIs and fetches media from CDNs), so the check on the pasted link
+//!   alone would not cover it: every connection it makes goes through the
+//!   in-process [`proxy::GuardProxy`], which applies the same check and
+//!   pinning to each host it is asked for (#216). The generic extractor is
+//!   excluded too (`--use-extractors default,-generic`), so a platform
+//!   page's embedded or `og:video` URLs are never followed blindly.
+//!   Residual: yt-dlp connects to whatever *public* hosts a platform's
+//!   extractor names — the same trust as opening the video in a browser.
 //!
 //! **Temporary files** live in `<app data>/link-downloads/`, never in the
 //! archive, named `link-<pid>-<session>.<ext>` ([`TempDownload`]). They are
@@ -28,6 +45,7 @@
 //! engine's mic spools.
 
 pub mod direct;
+pub mod proxy;
 pub mod ytdlp;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -52,8 +70,8 @@ pub const TEMP_PREFIX: &str = "link-";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkKind {
-    /// An audio or video file (or any other page: a web page falls back to
-    /// yt-dlp when it is installed).
+    /// An audio or video file, or any other link: fetched directly (a web
+    /// page on a known video platform falls back to yt-dlp).
     Direct,
     /// A known video platform: through yt-dlp.
     Platform,
@@ -101,9 +119,9 @@ pub fn validate_url(input: &str) -> Result<Url> {
 }
 
 /// Video platforms handled through yt-dlp (a host or any subdomain of it).
-/// Other sites work too: a page that is not a media file falls back to
-/// yt-dlp when it is installed.
-const PLATFORM_HOSTS: &[&str] = &[
+/// The only sites yt-dlp is ever run for (#216): a web page elsewhere is
+/// refused.
+pub const PLATFORM_HOSTS: &[&str] = &[
     "youtube.com",
     "youtu.be",
     "youtube-nocookie.com",
@@ -138,6 +156,12 @@ fn is_platform_host(host: &str) -> bool {
     PLATFORM_HOSTS
         .iter()
         .any(|d| host == *d || host.ends_with(&format!(".{d}")))
+}
+
+/// Whether yt-dlp may be run for `url`: its host is a known video platform
+/// ([`PLATFORM_HOSTS`]). Pure.
+pub fn yt_dlp_allowed(url: &Url) -> bool {
+    url.host_str().is_some_and(is_platform_host)
 }
 
 /// The last path segment's extension, lowercase, if it looks like one.
@@ -585,10 +609,21 @@ pub struct Fetched {
     pub via: Via,
 }
 
+/// The error for a web page that is not on a known video platform.
+fn not_a_platform_page(url: &Url) -> anyhow::Error {
+    anyhow!(
+        "the link opens a web page on {}, not an audio or video file. Sussurro fetches videos \
+         from web pages only on known video sites (YouTube, Vimeo, SoundCloud, …); for this \
+         page, link the audio or video file itself",
+        url.host_str().unwrap_or("the site")
+    )
+}
+
 /// Fetch `link` into `dest`: a direct download, or yt-dlp for a video
-/// platform — and for a direct link that turns out to be a web page, when
-/// yt-dlp is installed. `find_yt_dlp` locates the binary ([`ytdlp::find`]
-/// in the app); `progress` hears which way the download goes and how far.
+/// platform — and for a direct link on a platform host that turns out to
+/// be a web page, when yt-dlp is installed. Other web pages are refused
+/// (#216). `find_yt_dlp` locates the binary ([`ytdlp::find`] in the app);
+/// `progress` hears which way the download goes and how far.
 pub fn fetch(
     link: &Link,
     allow_local: bool,
@@ -599,12 +634,22 @@ pub fn fetch(
     progress: &mut dyn FnMut(Via, &Progress),
 ) -> Result<Fetched> {
     let with_yt_dlp = |bin: PathBuf, progress: &mut dyn FnMut(Via, &Progress)| {
-        // yt-dlp does its own networking: check the host here first.
+        if !yt_dlp_allowed(&link.url) {
+            return Err(not_a_platform_page(&link.url));
+        }
+        // A fast, clear refusal before starting it; the guard proxy then
+        // checks every connection it makes.
         resolve_checked(&link.url, allow_local)?;
         progress(Via::YtDlp, &Progress::default());
-        let f = ytdlp::download(&bin, &link.url, max_bytes, dest, cancel, &mut |p| {
-            progress(Via::YtDlp, p)
-        })?;
+        let f = ytdlp::download(
+            &bin,
+            &link.url,
+            allow_local,
+            max_bytes,
+            dest,
+            cancel,
+            &mut |p| progress(Via::YtDlp, p),
+        )?;
         Ok(Fetched {
             path: f.path,
             title: f.title,
@@ -626,6 +671,9 @@ pub fn fetch(
                     title: None,
                     via: Via::Direct,
                 }),
+                Err(e) if e.is::<direct::WebPage>() && !yt_dlp_allowed(&link.url) => {
+                    Err(not_a_platform_page(&link.url))
+                }
                 Err(e) if e.is::<direct::WebPage>() => match find_yt_dlp() {
                     Some(bin) => with_yt_dlp(bin, progress),
                     None => Err(anyhow!(
@@ -690,7 +738,7 @@ mod tests {
         assert_eq!(kind("https://example.com/talk.M4A?sig=1"), LinkKind::Direct);
         // A media file on a platform host is still a file.
         assert_eq!(kind("https://x.com/media/clip.mp4"), LinkKind::Direct);
-        // Unknown pages are tried directly (a web page falls back to yt-dlp).
+        // Unknown pages are tried directly (a web page there is refused).
         assert_eq!(kind("https://example.com/episodes/12"), LinkKind::Direct);
         // Look-alike hosts are not platforms.
         assert_eq!(kind("https://notyoutube.com/watch?v=x"), LinkKind::Direct);
@@ -698,6 +746,66 @@ mod tests {
             kind("https://youtube.com.evil.example/watch"),
             LinkKind::Direct
         );
+    }
+
+    #[test]
+    fn yt_dlp_runs_only_for_known_platform_hosts() {
+        for ok in [
+            "https://www.youtube.com/watch?v=x",
+            "https://youtu.be/x",
+            "https://player.vimeo.com/video/1",
+            "https://x.com/media/clip.mp4",
+            "https://SoundCloud.com./a/b",
+        ] {
+            assert!(yt_dlp_allowed(&url(ok)), "{ok}");
+        }
+        for no in [
+            "https://example.com/episodes/12",
+            "https://notyoutube.com/watch?v=x",
+            "https://youtube.com.evil.example/watch",
+            "http://192.168.1.10/video",
+            "http://localhost/watch?v=x",
+            "http://169.254.169.254/latest/meta-data",
+        ] {
+            assert!(!yt_dlp_allowed(&url(no)), "{no}");
+        }
+    }
+
+    /// #216: a web page that is not on a video platform never reaches
+    /// yt-dlp (and its generic extractor), even when it is installed.
+    #[test]
+    fn a_web_page_elsewhere_is_refused_without_running_yt_dlp() {
+        use crate::sources::url::direct::tests::serve;
+        let srv = serve(vec![(
+            "/page",
+            (
+                200,
+                vec![("Content-Type", "text/html".into())],
+                b"<html><video src=\"http://192.168.1.1/x.mp4\"></video></html>".to_vec(),
+            ),
+        )]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = TempDownload::create(dir.path(), 7).unwrap();
+        let link = parse_link(&format!("{}/page", srv.base)).unwrap();
+        assert_eq!(link.kind, LinkKind::Direct);
+        let asked = std::cell::Cell::new(false);
+        let find = || {
+            asked.set(true);
+            Some(PathBuf::from("/nonexistent/yt-dlp"))
+        };
+        let e = fetch(
+            &link,
+            true,
+            MAX_DOWNLOAD_BYTES,
+            &dest,
+            &std::sync::atomic::AtomicBool::new(false),
+            &find,
+            &mut |_, _| {},
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("known video sites"), "{e}");
+        assert!(!asked.get(), "yt-dlp was not even looked for");
     }
 
     #[test]

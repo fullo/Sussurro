@@ -4,7 +4,20 @@
 //! symphonia decodes it without ffmpeg), no playlists, written to the run's
 //! temporary file. Its progress is parsed from its output; a cancel kills
 //! it (its whole process group / tree).
+//!
+//! **Network (#216)** — yt-dlp does its own networking, so the link rules
+//! are enforced on it from outside: it runs only for known video platforms
+//! ([`super::yt_dlp_allowed`]), with the generic extractor excluded
+//! (`--use-extractors default,-generic`: no embedded `<video src>` /
+//! `og:video` URLs scraped from arbitrary pages), and every connection it
+//! makes goes through the in-process [`GuardProxy`] (`--proxy`), which
+//! resolves, checks and pins each host exactly like a direct download.
+//! Native downloaders only (`--downloader native`: no ffmpeg or aria2c
+//! with networking of their own), and the proxy variables of the
+//! environment are removed. A yt-dlp too old for `--use-extractors`
+//! (added in 2022.08) is retried without it — still behind the proxy.
 
+use super::proxy::GuardProxy;
 use super::{Progress, TempDownload};
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::Url;
@@ -25,6 +38,22 @@ pub const BINARY: &str = if cfg!(windows) {
 };
 /// The format asked for: the m4a audio track, else the best audio-only one.
 pub const FORMAT: &str = "bestaudio[ext=m4a]/bestaudio";
+/// Every extractor but the generic one, which scrapes any page for media
+/// URLs (embedded ones included).
+pub const EXTRACTORS: &str = "default,-generic";
+/// Environment variables that would point yt-dlp at another proxy.
+const PROXY_VARS: &[&str] = &[
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+];
+/// What an old yt-dlp says about an option it doesn't know.
+const UNKNOWN_EXTRACTORS_OPTION: &str = "no such option: --use-extractors";
 
 /// Markers of the lines Sussurro asks yt-dlp to print.
 const TITLE_MARK: &str = "sussurro-title ";
@@ -155,13 +184,34 @@ pub fn missing_error() -> anyhow::Error {
 
 // ---- invocation ----------------------------------------------------------------
 
+/// How yt-dlp reaches the network (#216).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetArgs {
+    /// The guard proxy's URL (`--proxy`).
+    pub proxy: String,
+    /// `--use-extractors default,-generic`; off only for a yt-dlp too old
+    /// to know the option.
+    pub restrict_extractors: bool,
+}
+
 /// The argument vector (no shell is ever involved): audio only, no
 /// playlist, the user's yt-dlp config ignored (it could add conversions
-/// needing ffmpeg), machine-readable progress, title and output path. The
-/// link comes last, after `--`, so it can never be read as an option.
-pub fn build_args(url: &Url, output_template: &Path, max_bytes: u64) -> Vec<OsString> {
+/// needing ffmpeg, a proxy or cookies), every connection through `net`'s
+/// proxy, no generic extractor, native downloaders only, machine-readable
+/// progress, title and output path. The link comes last, after `--`, so it
+/// can never be read as an option. Pure.
+pub fn build_args(
+    url: &Url,
+    output_template: &Path,
+    max_bytes: u64,
+    net: &NetArgs,
+) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "--ignore-config",
+        "--proxy",
+        &net.proxy,
+        "--downloader",
+        "native",
         "--no-playlist",
         "--no-simulate",
         "--newline",
@@ -182,11 +232,15 @@ pub fn build_args(url: &Url, output_template: &Path, max_bytes: u64) -> Vec<OsSt
         &format!("before_dl:{FORMAT_MARK}%(ext)s %(acodec)s"),
         "--print",
         &format!("after_move:{FILE_MARK}%(filepath)s"),
-        "-o",
     ]
     .iter()
     .map(OsString::from)
     .collect();
+    if net.restrict_extractors {
+        args.push("--use-extractors".into());
+        args.push(EXTRACTORS.into());
+    }
+    args.push("-o".into());
     args.push(output_template.as_os_str().to_owned());
     args.push("--".into());
     args.push(url.as_str().into());
@@ -344,6 +398,9 @@ pub struct Fetched {
 
 fn command(bin: &Path) -> Command {
     let mut cmd = Command::new(bin);
+    for var in PROXY_VARS {
+        cmd.env_remove(var);
+    }
     cmd.stdin(Stdio::null())
         // Titles in UTF-8 whatever the console code page (Windows).
         .env("PYTHONUTF8", "1")
@@ -447,18 +504,65 @@ pub fn version(bin: &Path, timeout: Duration) -> Result<String> {
     Ok(v)
 }
 
-/// Download the audio of `url` with yt-dlp `bin` into `dest`. Blocks until
-/// yt-dlp exits; `cancel` kills it (checked every 100 ms).
+/// Download the audio of `url` with yt-dlp `bin` into `dest`, every
+/// connection through a [`GuardProxy`] applying the link rules
+/// (`allow_local` = the run's *Allow local network addresses*). Blocks
+/// until yt-dlp exits; `cancel` kills it (checked every 100 ms).
 pub fn download(
     bin: &Path,
     url: &Url,
+    allow_local: bool,
     max_bytes: u64,
     dest: &TempDownload,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(&Progress),
 ) -> Result<Fetched> {
+    let guard = GuardProxy::start(allow_local)?;
+    let mut net = NetArgs {
+        proxy: guard.url(),
+        restrict_extractors: true,
+    };
+    loop {
+        let args = build_args(url, &dest.template(), max_bytes, &net);
+        match run(bin, args, max_bytes, dest, cancel, progress)? {
+            RunEnd::Done(f) => return Ok(f),
+            RunEnd::Failed { tail, .. }
+                if net.restrict_extractors
+                    && tail.iter().any(|l| l.contains(UNKNOWN_EXTRACTORS_OPTION)) =>
+            {
+                eprintln!(
+                    "yt-dlp is too old for --use-extractors (2022.08+): retrying without it, \
+                     still behind the address guard — please update yt-dlp"
+                );
+                net.restrict_extractors = false;
+            }
+            RunEnd::Failed { tail, status } => {
+                if let Some(why) = guard.last_refusal() {
+                    bail!("yt-dlp was sent to an address Sussurro refused: {why}");
+                }
+                bail!("{}", failure_message(&tail, &status));
+            }
+        }
+    }
+}
+
+/// How one yt-dlp run ended.
+enum RunEnd {
+    Done(Fetched),
+    /// A non-zero exit: its last stderr lines and exit status.
+    Failed { tail: Vec<String>, status: String },
+}
+
+fn run(
+    bin: &Path,
+    args: Vec<OsString>,
+    max_bytes: u64,
+    dest: &TempDownload,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(&Progress),
+) -> Result<RunEnd> {
     let mut child = command(bin)
-        .args(build_args(url, &dest.template(), max_bytes))
+        .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -484,7 +588,7 @@ pub fn download(
 
     let mut state = Progress::default();
     let mut file: Option<PathBuf> = None;
-    let abort = |child: &mut Child, e: anyhow::Error| -> Result<Fetched> {
+    let abort = |child: &mut Child, e: anyhow::Error| -> Result<RunEnd> {
         kill_tree(child);
         Err(e)
     };
@@ -536,7 +640,10 @@ pub fn download(
     let _ = err_thread.join();
     if !status.success() {
         let tail = tail.lock().unwrap().clone();
-        bail!("{}", failure_message(&tail, &status.to_string()));
+        return Ok(RunEnd::Failed {
+            tail,
+            status: status.to_string(),
+        });
     }
     // The printed path, if it is ours; else the finished file on disk.
     let path = file
@@ -551,10 +658,10 @@ pub fn download(
             })
         })
         .ok_or_else(|| anyhow!("yt-dlp finished but produced no audio file"))?;
-    Ok(Fetched {
+    Ok(RunEnd::Done(Fetched {
         path,
         title: state.title,
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -565,7 +672,11 @@ mod tests {
     fn args_are_a_vector_with_the_link_last_after_a_separator() {
         let url = Url::parse("https://www.youtube.com/watch?v=abc&list=PL1;rm -rf ~").unwrap();
         let out = Path::new("/data/link-downloads/link-1-2.%(ext)s");
-        let args = build_args(&url, out, 1000);
+        let net = NetArgs {
+            proxy: "http://127.0.0.1:4321".into(),
+            restrict_extractors: true,
+        };
+        let args = build_args(&url, out, 1000, &net);
         let s: Vec<String> = args
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
@@ -591,6 +702,43 @@ mod tests {
             !s.iter().any(|a| a == "-x" || a.contains("ffmpeg")),
             "no conversion"
         );
+        // #216: every connection through the guard, no generic extractor,
+        // native downloaders only.
+        assert_eq!(after("--proxy"), "http://127.0.0.1:4321");
+        assert_eq!(after("--use-extractors"), "default,-generic");
+        assert_eq!(after("--downloader"), "native");
+        assert_eq!(
+            s.iter().filter(|a| *a == "--proxy").count(),
+            1,
+            "one proxy"
+        );
+        // A yt-dlp too old for `--use-extractors`: the rest is unchanged.
+        let old = build_args(
+            &url,
+            out,
+            1000,
+            &NetArgs {
+                restrict_extractors: false,
+                ..net
+            },
+        );
+        let without: Vec<&OsString> = args
+            .iter()
+            .filter(|a| *a != "--use-extractors" && *a != EXTRACTORS)
+            .collect();
+        assert_eq!(old.iter().collect::<Vec<_>>(), without);
+        assert!(old.iter().any(|a| a == "--proxy"));
+    }
+
+    #[test]
+    fn yt_dlp_never_inherits_proxy_variables() {
+        let cmd = command(Path::new("/bin/yt-dlp"));
+        for var in PROXY_VARS {
+            assert!(
+                cmd.get_envs().any(|(k, v)| k == OsStr::new(var) && v.is_none()),
+                "{var} is removed"
+            );
+        }
     }
 
     #[test]
@@ -769,7 +917,11 @@ sussurro-file /data/link-downloads/link-1-2.m4a
         use super::*;
 
         /// Writes `$SRC` to the `-o` template with extension `wav`.
+        /// Its arguments are appended to `$ROOT/args`, one per line, after
+        /// a `run` line.
         const FAKE_OK: &str = r#"#!/bin/sh
+echo run >> "$ROOT/args"
+for a in "$@"; do printf '%s\n' "$a" >> "$ROOT/args"; done
 out=""; prev=""; last=""
 for a in "$@"; do
   if [ "$prev" = "-o" ]; then out="$a"; fi
@@ -809,7 +961,7 @@ echo "sussurro-file $file"
             let mut seen = Vec::new();
             let url = Url::parse("https://www.youtube.com/watch?v=abc").unwrap();
             let r = retry_text_file_busy(|| {
-                download(&bin, &url, 1 << 30, &dest, &cancel, &mut |p| {
+                download(&bin, &url, false, 1 << 30, &dest, &cancel, &mut |p| {
                     seen.push(p.clone());
                     if cancel_on_progress {
                         cancel.store(true, Ordering::Relaxed);
@@ -874,11 +1026,41 @@ echo "sussurro-file $file"
             assert_eq!(seen.last().unwrap().downloaded, 20);
             assert_eq!(seen.last().unwrap().total, Some(20));
             assert!(crate::sources::file::FileSource::open(&f.path).is_ok());
+            // Pointed at the guard proxy, which was listening during the run.
+            let args = std::fs::read_to_string(_root.path().join("args")).unwrap();
+            let args: Vec<&str> = args.lines().collect();
+            let after = |f: &str| args[args.iter().position(|a| *a == f).unwrap() + 1];
+            assert!(after("--proxy").starts_with("http://127.0.0.1:"));
+            assert_eq!(after("--use-extractors"), EXTRACTORS);
+            assert_eq!(args.iter().filter(|a| **a == "run").count(), 1);
             let v = fake_bin(_root.path(), "#!/bin/sh\necho 2025.09.26\n");
             assert_eq!(
                 retry_text_file_busy(|| version(&v, Duration::from_secs(30))).unwrap(),
                 "2025.09.26"
             );
+        }
+
+        #[test]
+        fn an_old_yt_dlp_is_retried_without_use_extractors_but_behind_the_guard() {
+            // optparse's answer to an unknown option, as yt-dlp < 2022.08
+            // prints it.
+            let script = FAKE_OK.replacen(
+                "echo run >> \"$ROOT/args\"\n",
+                "echo run >> \"$ROOT/args\"\nfor a in \"$@\"; do if [ \"$a\" = --use-extractors ]; then \
+                 echo 'Usage: yt-dlp [OPTIONS] URL [URL...]' >&2; \
+                 echo 'yt-dlp: error: no such option: --use-extractors' >&2; exit 2; fi; done\n",
+                1,
+            );
+            let (r, _, _, root) = run(&script, false);
+            assert!(r.is_ok(), "{r:?}");
+            let args = std::fs::read_to_string(root.path().join("args")).unwrap();
+            assert_eq!(args.lines().filter(|l| *l == "run").count(), 2, "{args}");
+            // The first run stopped at the option check; the second one's
+            // arguments are recorded.
+            let runs: Vec<&str> = args.split("run\n").filter(|r| !r.is_empty()).collect();
+            assert_eq!(runs.len(), 1);
+            assert!(!runs[0].contains("--use-extractors"));
+            assert!(runs[0].contains("--proxy\nhttp://127.0.0.1:"), "{}", runs[0]);
         }
 
         #[test]
@@ -949,6 +1131,7 @@ echo "sussurro-file $file"
         let f = download(
             &bin,
             &Url::parse(&url).unwrap(),
+            false,
             super::super::MAX_DOWNLOAD_BYTES,
             &dest,
             &AtomicBool::new(false),

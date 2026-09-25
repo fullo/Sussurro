@@ -301,8 +301,16 @@ Ollama on this machine. An LLM profile whose server is not on this machine
 mark *external* by hand) is **external**: text sent to it leaves your
 computer. Sussurro never falls back from a local profile to an external one.
 The built-in *Local (bundled)* profile is always local: Sussurro's own
-`llama-server`, reachable only from this computer, which can't be pointed
-elsewhere.
+`llama-server`, which it can't be pointed away from. That server (and the
+Qwen3-ASR one) is reachable only by Sussurro: a Unix socket in a private
+folder on macOS and Linux, a loopback port checked to belong to it on
+Windows, and a random key per start that every request must carry.
+
+**Links** (New → Link) never reach this computer or your local network
+unless you tick *Allow local network addresses* for that run — checked on
+every address a host resolves to and every redirect. yt-dlp is used only for
+known video sites (YouTube, Vimeo, SoundCloud…), without its generic "any
+page" extractor, and every connection it makes goes through the same check.
 
 - **Recipes and Ask questions** on an external profile show a confirmation
   **every time**: which document, roughly how much text (characters and
@@ -495,8 +503,9 @@ The installers include one prebuilt program that Sussurro does not compile:
 `b11146` — Metal on macOS, Vulkan on Windows, CPU on Linux) with its shared
 libraries in `llama-server-libs/`. It runs the optional extra speech
 engines (Qwen3-ASR) and the optional *Local (bundled)* LLM profile (Qwen3
-1.7B), each as its own local process bound to `127.0.0.1`, only when you
-choose them; their models download when you pick them. The release and the SHA-256 of
+1.7B), each as its own local process that only Sussurro can reach (see
+[Privacy](#privacy)), only when you choose them; their models download when
+you pick them. The release and the SHA-256 of
 every upstream archive are committed in
 [`sussurro/src-tauri/sidecar/llama-server.lock.json`](sussurro/src-tauri/sidecar/llama-server.lock.json),
 and the build refuses any file that doesn't match. The Windows build also

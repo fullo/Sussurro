@@ -30,6 +30,10 @@ export interface Channel {
 
 export interface LiveSession {
   origin: string;
+  /** How the connection authenticated (#217): `?token=` or `auth` first. */
+  auth: "url" | "message" | null;
+  /** The upgrade's URL had a token in it. */
+  tokenInUrl: boolean;
   start: Record<string, unknown> | null;
   controls: Record<string, unknown>[];
   channels: Map<number, Channel>;
@@ -91,7 +95,7 @@ export async function startServer(token: string, opts: ServerOptions = {}) {
       }
       if (req.headers.authorization !== `Bearer ${token}`) return void res.writeHead(401, cors).end();
       const json = (status: number, body: object) => void res.writeHead(status, { ...cors, "Content-Type": "application/json" }).end(JSON.stringify(body));
-      if (!item) return json(200, { app: "e2e", protocol: 2, protocol_min: 1, subtitles: "on_request" });
+      if (!item) return json(200, { app: "e2e", protocol: 2, protocol_min: 1, subtitles: "on_request", live_auth: "message" });
       const [, id, action] = item;
       items.push({ method: req.method ?? "", path: url.pathname, format: url.searchParams.get("format") });
       if (!/^e2e-\d+$/.test(decodeURIComponent(id))) return json(404, { error: "no such item" });
@@ -126,19 +130,40 @@ export async function startServer(token: string, opts: ServerOptions = {}) {
       return;
     }
     if (url.pathname !== "/live") return reject(socket, 404);
-    // The app's checks (sussurro/src-tauri/src/api/auth.rs): extension
-    // origin first, then the token.
+    // The app's checks (sussurro/src-tauri/src/api/live.rs `authorize`):
+    // extension origin first, then the URL's token — or none, and then
+    // `auth {token}` as the first message within 2 s (#217).
     if (!isExtensionOrigin(req.headers.origin)) return reject(socket, 403);
-    if (url.searchParams.get("token") !== token) return reject(socket, 401);
-    wss.handleUpgrade(req, socket, head, (ws) => onLive(ws, req.headers.origin!));
+    const inUrl = url.searchParams.get("token");
+    if (inUrl !== null && inUrl !== token) return reject(socket, 401);
+    wss.handleUpgrade(req, socket, head, (ws) => onLive(ws, req.headers.origin!, inUrl !== null));
   });
 
-  function onLive(ws: WebSocket, origin: string) {
-    const s: LiveSession = { origin, start: null, controls: [], channels: new Map(), badFrames: 0, stopped: false, closed: false };
+  function onLive(ws: WebSocket, origin: string, tokenInUrl: boolean) {
+    const s: LiveSession = { origin, auth: tokenInUrl ? "url" : null, tokenInUrl, start: null, controls: [], channels: new Map(), badFrames: 0, stopped: false, closed: false };
     sessions.push(s);
     const reply = (m: object) => ws.send(JSON.stringify({ type: "status", ...m }));
-    reply({ state: "ready", protocol: 2, app: "e2e" });
+    const refuse = (message: string) => {
+      reply({ state: "error", message });
+      ws.close(1008, "unauthorized");
+    };
+    const deadline = tokenInUrl ? undefined : setTimeout(() => s.auth === null && refuse("authentication timed out"), 2000);
+    if (tokenInUrl) reply({ state: "ready", protocol: 2, app: "e2e" });
     ws.on("message", (data, isBinary) => {
+      if (s.auth === null) {
+        let m: { type?: unknown; token?: unknown } = {};
+        try {
+          m = isBinary ? {} : JSON.parse(data.toString());
+        } catch {
+          /* not JSON: refused below */
+        }
+        clearTimeout(deadline);
+        if (m.type !== "auth") return refuse("authentication required");
+        if (m.token !== token) return refuse("wrong extension token");
+        s.auth = "message";
+        reply({ state: "ready", protocol: 2, app: "e2e" });
+        return;
+      }
       if (!isBinary) {
         const m = JSON.parse(data.toString());
         s.controls.push(m);
@@ -190,7 +215,10 @@ export async function startServer(token: string, opts: ServerOptions = {}) {
       c.tail.push(f.pcm);
       if (c.tail.length > 2) c.tail.shift();
     });
-    ws.on("close", () => (s.closed = true));
+    ws.on("close", () => {
+      s.closed = true;
+      clearTimeout(deadline);
+    });
   }
 
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));

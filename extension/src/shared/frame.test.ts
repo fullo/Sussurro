@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { CHANNEL, FRAME_HEADER, SeqCounter, decodeFrame, encodeFrame, floatToPcm16, rms16, toPcm16 } from "./frame";
+import { CHANNEL, FRAME_HEADER, MAX_SKIP_FRAMES, SeqCounter, decodeFrame, encodeFrame, floatToPcm16, rms16, toPcm16 } from "./frame";
 
 const protocolRs = readFileSync(fileURLToPath(new URL("../../../sussurro/src-tauri/src/api/protocol.rs", import.meta.url)), "utf8");
 
@@ -69,6 +69,13 @@ describe("SeqCounter", () => {
     expect(c.take(0, "page", 8)).toBe(3); // 6 and 7 never arrived
     c.skip(0, 2);
     expect(c.take(0, "page", 9)).toBe(6);
+  });
+
+  it("caps what one jump of the page's counter can skip (#217)", () => {
+    const c = new SeqCounter();
+    c.take(0, "page", 0);
+    expect(c.take(0, "page", 2 ** 40)).toBe(1 + MAX_SKIP_FRAMES);
+    expect(c.take(0, "page", 2 ** 40 + 1)).toBe(2 + MAX_SKIP_FRAMES);
   });
 
   it("keeps counting when the remote channel moves to another producer", () => {

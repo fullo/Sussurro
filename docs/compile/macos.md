@@ -60,10 +60,12 @@ and removing Gatekeeper's flag from inside the app is not something an
 ad-hoc-signed app should do behind the user's back — the manual step stays
 the user's choice.
 
-The sidecar runs only while the Qwen3-ASR engine is loaded, on a random
-`127.0.0.1` port; it stops with the idle model unload (15 min), an engine
-change and on quit. macOS has no way to tie a child to its parent's life,
-so if Sussurro itself crashes or is force-quit while the engine is loaded,
+The sidecar runs only while the Qwen3-ASR engine is loaded (or, as a
+second process, while the bundled LLM is in use), listening on a Unix
+socket in a private 0700 folder under the app's data folder and requiring
+a random key per start (#216); it stops with the idle unload (15 min), an
+engine change and on quit. macOS has no way to tie a child to its parent's
+life, so if Sussurro itself crashes or is force-quit while it runs,
 `sussurro-llama-server` can stay behind: quit it from Activity Monitor.
 
 ## Runtime notes

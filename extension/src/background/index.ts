@@ -1,8 +1,9 @@
 /* Background worker (Chrome: service worker, Firefox: event page) — #128.
  *
  * Owns, per tab, the capture session (session.ts) and the WebSocket to the
- * app's `/live` (ws://127.0.0.1:<port>/live?token=…, port and token from
- * the pairing in `storage.local`). It:
+ * app's `/live` (ws://127.0.0.1:<port>/live, port and token from the
+ * pairing, pairing.ts; the token goes as the socket's first message when
+ * the app supports it, else as `?token=`). It:
  *
  * - checks the app with `GET /app/version` before starting and before each
  *   reconnect ("app not running", bad token, app too old, other protocol);
@@ -16,6 +17,11 @@
  * - relays the Meet page's speaker events (#131) on the connection's
  *   audio clock, and replays what the page already said to a new
  *   connection (shared/speakerEvents.ts);
+ * - caps what the meeting page sends (#217): speaker events per second,
+ *   audio blocks checked (counter, size), repeated participant lists
+ *   dropped (shared/ratelimit.ts, shared/speakerEvents.ts);
+ * - (Chrome) keeps `storage.local` away from content scripts where the
+ *   browser allows it (Chrome ≥ 140; the pairing itself is not there);
  * - (Chrome) falls back to `tabCapture` through an offscreen document for
  *   the remote channel when the page shows no remote audio at all;
  * - keeps each tab's live transcript (the app's `segment` / `speaker` /
@@ -26,7 +32,9 @@
  * Nothing is captured before an explicit Start. */
 import browser, { type Runtime } from "webextension-polyfill";
 import { CHANNEL, SeqCounter, encodeFrame, type ChannelByte } from "../shared/frame";
-import { getPairing, liveUrl, onPairingChanged } from "../shared/pairing";
+import { getPairing, liveAuth, liveUrl, onPairingChanged } from "../shared/pairing";
+import { restrictToTrustedContexts } from "../shared/secureStore";
+import { BACKGROUND_EVENTS, MAX_BLOCK_BYTES, RateLimiter, pageSeq } from "../shared/ratelimit";
 import { testConnection } from "../shared/connection";
 import { toAppCheck, type AppCheck } from "../shared/appcheck";
 import { decodePayload, makeProbe, type TransportMode } from "../shared/transport";
@@ -35,6 +43,13 @@ import type { Platform } from "../shared/platform";
 import { applyLive, initialTranscript, parseAppMessage, type LiveAction, type LiveTranscript } from "../shared/live";
 import { holdsBackground, initialSession, isCapturing, shouldTabCapture, step, type Effect, type SessionEvent, type Session } from "./session";
 import { SpeakerRelay, sanitizePageSpeaker } from "../shared/speakerEvents";
+
+// ---- storage.local: trusted contexts only (Chrome ≥ 140, #217) ------------------
+
+// It holds no secret any more (the pairing is in the secure store), but no
+// content script needs it either. Chrome forgets the setting when the
+// browser restarts: every start of the background sets it again.
+if (__BROWSER__ === "chrome") void restrictToTrustedContexts(chrome?.storage?.local);
 
 // ---- toolbar button → panel ----------------------------------------------------
 
@@ -91,6 +106,8 @@ interface Tab {
   removed: boolean;
   /** Meet names (#131): the page's speaker state and clock mapping. */
   speakers: SpeakerRelay;
+  /** Speaker events from the page per second (#217). */
+  speakerRate: RateLimiter;
   /** What the side panel shows (#129). */
   transcript: LiveTranscript;
 }
@@ -120,6 +137,7 @@ function tabState(tabId: number): Tab {
       tabCaptureTried: false,
       removed: false,
       speakers: new SpeakerRelay(),
+      speakerRate: new RateLimiter(BACKGROUND_EVENTS.burst, BACKGROUND_EVENTS.perSec),
       transcript: initialTranscript(EPOCH),
     };
     tabs.set(tabId, t);
@@ -234,9 +252,12 @@ async function connect(t: Tab) {
     return;
   }
   closeSocket(t);
+  // An app that takes the token as the first message (#217) never sees it
+  // in the URL, which Chrome logs when a connection fails.
+  const firstMessage = lastCheck?.result.ok === true && lastCheck.result.liveAuth === "message";
   let ws: WebSocket;
   try {
-    ws = new WebSocket(liveUrl(pairing));
+    ws = new WebSocket(liveUrl(pairing, firstMessage));
   } catch {
     dispatch(t, { type: "ws-closed" });
     return;
@@ -244,7 +265,11 @@ async function connect(t: Tab) {
   ws.binaryType = "arraybuffer";
   t.ws = ws;
   const mine = () => t.ws === ws;
-  ws.onopen = () => mine() && dispatch(t, { type: "ws-open" });
+  ws.onopen = () => {
+    if (!mine()) return;
+    if (firstMessage) ws.send(liveAuth(pairing));
+    dispatch(t, { type: "ws-open" });
+  };
   ws.onmessage = (e) => {
     if (!mine() || typeof e.data !== "string") return;
     let msg: Record<string, unknown>;
@@ -402,6 +427,7 @@ function onPagePort(port: Runtime.Port) {
     const m = raw as ToBackground;
     switch (m.type) {
       case "armed":
+        if (!Number.isFinite(m.rate) || m.rate <= 0) return;
         t.page = { title: m.title, url: m.url, platform: m.platform };
         t.transport = m.transport;
         dispatch(t, { type: "armed", rate: m.rate });
@@ -417,18 +443,24 @@ function onPagePort(port: Runtime.Port) {
       case "speaker": {
         // Meet names (#131): kept per tab, sent on the connection's clock.
         const msg = sanitizePageSpeaker(m.msg);
-        if (!msg || !acceptsAudio(t)) return;
+        if (!msg || !acceptsAudio(t) || !t.speakerRate.allow()) return;
         const live = t.session.phase === "live" && t.ws?.readyState === WebSocket.OPEN;
         for (const w of t.speakers.page(msg, live)) sendText(t, w);
         if (msg.type === "observer_health") void broadcastState(t);
         return;
       }
       case "pcm": {
-        if (!acceptsAudio(t)) return;
-        const mic = m.mic !== undefined ? decodePayload(m.mic) : null;
-        const remote = m.remote !== undefined ? decodePayload(m.remote) : null;
-        if (mic) sendFrame(t, { ch: CHANNEL.mic, producer: "page", pseq: m.seq, buf: mic });
-        if (remote && t.tabCapture !== "on") sendFrame(t, { ch: CHANNEL.remote, producer: "page", pseq: m.seq, buf: remote });
+        const pseq = pageSeq(m.seq);
+        if (!acceptsAudio(t) || pseq === null) return;
+        const block = (p: typeof m.mic) => {
+          if (typeof p === "string" && p.length > MAX_BLOCK_BYTES * 2) return null;
+          const b = p !== undefined ? decodePayload(p) : null;
+          return b && b.byteLength <= MAX_BLOCK_BYTES && b.byteLength % 2 === 0 ? b : null;
+        };
+        const mic = block(m.mic);
+        const remote = block(m.remote);
+        if (mic) sendFrame(t, { ch: CHANNEL.mic, producer: "page", pseq, buf: mic });
+        if (remote && t.tabCapture !== "on") sendFrame(t, { ch: CHANNEL.remote, producer: "page", pseq, buf: remote });
         return;
       }
     }

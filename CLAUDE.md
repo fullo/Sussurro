@@ -87,7 +87,17 @@ project decisions here, not in per-machine memory.**
   and swept at startup. Video platforms: `yt-dlp` found on PATH or the
   Homebrew/winget/scoop/pip folders (E10, not bundled), argument vector
   only, `bestaudio[ext=m4a]/bestaudio`, `--ignore-config --no-playlist`;
-  opus-only videos are refused (no ffmpeg bundled).
+  opus-only videos are refused (no ffmpeg bundled). **yt-dlp hardening
+  (#216)**: it runs **only for `PLATFORM_HOSTS`** (a web page elsewhere is
+  refused, never handed to the generic extractor), with `--use-extractors
+  default,-generic` (a yt-dlp < 2022.08 that rejects the option is retried
+  without it), `--downloader native`, proxy env vars removed, and
+  `--proxy` pointing at an in-process loopback HTTP proxy
+  (`sources/url/proxy.rs`: CONNECT + absolute-form http, std only) that
+  runs `resolve_checked` on every host yt-dlp asks for and connects only to
+  the checked addresses. The direct client uses `.no_proxy()` (a system
+  proxy would bypass the pinning). Residual: yt-dlp still reaches whatever
+  *public* hosts a platform extractor names.
 - **Privacy gate for external LLM profiles (0.8, #122)**: enforced in the
   backend, never only in the UI. Recipes/questions on an external profile
   need a one-time consent token (`prepare_external_run`, bound to item +
@@ -134,7 +144,10 @@ project decisions here, not in per-machine memory.**
   (`GET /app/version`, `WS /live`, `POST /items/{id}/open`,
   `GET /items/{id}/export`) exist whenever the local API runs and need
   `Settings.extension_token` — `Authorization: Bearer` on
-  HTTP, `?token=` plus an extension `Origin` on the WebSocket; web-page
+  HTTP, an extension `Origin` plus `?token=` or (#217, preferred; the app
+  reports `live_auth: "message"`) `auth {token}` as the first message
+  within 2 s on the WebSocket — the upgraded stream can't time out a
+  read, so the deadline is checked when that message arrives; web-page
   origins are refused even with the token; CORS only for
   `chrome-extension://` / `moz-extension://`. `/clean`, `/transcribe`,
   `/history` stay token-less and CORS-less, behind their own switch (see
@@ -146,6 +159,17 @@ project decisions here, not in per-machine memory.**
   A meeting is a two-channel engine run (`mic`, `remote`) into a `meeting`
   item, `source: browser:<host>`; page events go to
   `.sussurro/meeting-events.jsonl` for attribution (#131).
+  **Page input is untrusted (#217)**: a page script or XSS drives the
+  MAIN-world port during capture, so it is capped at every hop — ISOLATED
+  relay and background (`extension/src/shared/ratelimit.ts`), and the app
+  per connection (`api/live.rs`: 400 burst / 20 per s, 100k page events
+  and 8 MB of participant lists per meeting, repeated identical
+  `participants` dropped); `seq` gaps insert at most the wall clock since
+  start plus 30 s of silence per channel (and 60 s per gap); the name
+  timeline keeps ≤ 1000 speakers, ≤ 500 participants, ≤ 20k intervals
+  (oldest half ages out; the end-of-run pass leaves older lines alone).
+  The events file stays open while recording and is closed at the end of
+  the audio (Windows can't rename a folder with an open file).
 - **Local API hardening (#215)** (`api/guard.rs`, security notes at
   `api::spawn`): on **every** route, first `Host` must be
   `127.0.0.1:<port>`/`localhost:<port>` (DNS rebinding), then a request
@@ -231,8 +255,15 @@ project decisions here, not in per-machine memory.**
 - **Extension pairing (0.9, #127)**: the pairing code is
   `sussurro:<port>:<token>`, defined once in `sussurro/src/lib/pairingCode.ts`
   and imported by the extension as `@sussurro/pairing`. The extension keeps
-  it in `storage.local` under `port` / `token`, only through
-  `extension/src/shared/pairing.ts` (also `PROTOCOL_VERSION`, `liveUrl`).
+  it under `port` / `token` in **its own origin's IndexedDB** (#217:
+  content scripts in meeting pages can read `storage.local` — Firefox has
+  no `setAccessLevel`, Chrome restricts `local` only from 140 — but not the
+  extension's IndexedDB), only through `extension/src/shared/pairing.ts`
+  (also `PROTOCOL_VERSION`, `liveUrl`); a pairing left in `storage.local`
+  by an older version is moved on the next read. Chrome ≥ 140 also gets
+  `storage.local.setAccessLevel(TRUSTED_CONTEXTS)` at every background
+  start. Content scripts must never import the pairing (a unit test
+  checks).
   Settings → Browser extension never shows the token (Copy puts the code on
   the clipboard) and reads `local_api_status` (the API's settings apply at
   startup) to say when a restart is needed.
@@ -386,8 +417,18 @@ project decisions here, not in per-machine memory.**
   Windows install). Crash of Sussurro: Windows kill-on-close job object,
   Linux `PR_SET_PDEATHSIG` (spawned from one long-lived thread — the signal
   follows the spawning *thread*), macOS nothing (documented). Spawned
-  without a shell on a random port, `--host 127.0.0.1`, `-ngl 99 -c 4096
-  -np 1 --cache-ram 0 --no-webui` (#109's settings). Requests ≤ 30 s: longer
+  without a shell, `-ngl 99 -c 4096 -np 1 --cache-ram 0 --no-webui`
+  (#109's settings) `--no-slots`. **Who can reach it (#216,
+  `stt/remote/endpoint.rs`)**: macOS/Linux `--host <dir>/llama.sock`, a
+  Unix socket in a fresh 0700 per-run folder under `<app data>/sidecar/`
+  (the temp dir if the path exceeds 100 bytes; removed on stop, dead runs
+  swept) — never a TCP port there; Windows `--host 127.0.0.1` on a random
+  port and, after `/health`, the listener's owning PID
+  (`GetExtendedTcpTable`, windows-sys IpHelper) must be the child's. Every
+  spawn gets a random key in `LLAMA_API_KEY` (env, not `--api-key`: argv
+  is world-readable), sent as a bearer token; inherited `LLAMA_*` vars are
+  dropped. `/health` stays public, so the key does not authenticate the
+  server — the socket/owner check does. Requests ≤ 30 s: longer
   hotkey dictations are cut with `stt::pauses` (#194) into ≤ 28 s pieces.
   Output: text after the last `<asr_text>`, `<|…|>` tokens removed,
   language name → ISO code. The app never strips macOS quarantine (manual
@@ -406,7 +447,9 @@ project decisions here, not in per-machine memory.**
   model anyway (same RAM ~1.9 GB footprint for both, same start-up), and
   would add grandchildren PDEATHSIG doesn't cover plus one lifecycle for
   two idle rules — measurements in the module docs. Same `Sidecar` code
-  (`SidecarRole::Chat`): loopback, no shell, crash restart + one retry,
+  (`SidecarRole::Chat`): private socket / owner-checked port + per-spawn
+  key (#216; `with_server` hands out a `SidecarAccess`), no shell, crash
+  restart + one retry,
   `kill_all`/exit guard; idle stop after 15 min on the setup idle thread;
   a dictation on this profile pre-starts it. Builds with the sidecar add
   the profile at startup and in `set_settings` but **never select it**;

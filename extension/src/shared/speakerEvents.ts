@@ -111,6 +111,18 @@ export function perfToFrame(at: number, anchor: { seq: number; at: number } | nu
 
 /** Most page messages held while the connection's clock is not known yet. */
 export const MAX_PENDING = 256;
+/** Distinct speaker ids kept per tab (the app follows at most 1000,
+ *  `MAX_SPEAKER_KEYS`): a page inventing ids can't grow the state. */
+export const MAX_SPEAKER_IDS = 1000;
+
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** `map.set(k, v)` unless `k` is new and the map is full. */
+function setBounded<V>(map: Map<string, V>, k: string, v: V): boolean {
+  if (!map.has(k) && map.size >= MAX_SPEAKER_IDS) return false;
+  map.set(k, v);
+  return true;
+}
 
 /**
  * Per-tab relay in the background (#131): keeps the page's speaker state,
@@ -158,19 +170,21 @@ export class SpeakerRelay {
   }
 
   /** A message from the page. `live`: a connection is open (else only the
-   *  state is kept). Returns what to send now. */
+   *  state is kept). Returns what to send now: nothing for a speaker past
+   *  [`MAX_SPEAKER_IDS`] or a participant list equal to the last (#217). */
   page(m: PageSpeakerMsg, live: boolean): WireSpeakerMsg[] {
     switch (m.type) {
       case "speaker_active":
-        this.active.set(m.id, { name: m.name, source: m.source });
+        if (!setBounded(this.active, m.id, { name: m.name, source: m.source })) return [];
         break;
       case "speaker_idle":
         this.active.delete(m.id);
         break;
       case "speaker_name":
-        this.names.set(m.id, m.name);
+        if (!setBounded(this.names, m.id, m.name)) return [];
         break;
       case "participants":
+        if (this.participants && sameList(this.participants, m.names)) return [];
         this.participants = [...m.names];
         break;
       case "observer_health":
