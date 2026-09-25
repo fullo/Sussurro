@@ -365,7 +365,18 @@ art. 9), so this works only under these rules:
   stops counting.
 - **Suggestions only.** A match needs enough confirmed speech (at least
   60 seconds from at least 2 documents) and a clear lead over everyone
-  else; nothing is ever linked without your click.
+  else; nothing is ever linked without your click. In the speaker panel an
+  unlinked Voice N shows *Sounds like Anna · Link · Not Anna*: *Link* works
+  like any link (participant and email included), *Not Anna* hides that
+  suggestion for that voice in that document and is remembered (in
+  `voice_dismissals.json` in the app's data folder, ids only). Suggestions
+  also appear for items you open later from the Library. Settings →
+  Privacy → *Suggest names from known voices* turns them all off without
+  deleting any profile.
+- **You can see where each profile stands**: People → a person shows the
+  seconds of confirmed speech, the documents they come from and whether
+  the profile is ready to make suggestions. Turning *Recognise this voice*
+  on first shows what is stored, where, and how to delete it.
 - **Stays on this computer.** The profile is one averaged voiceprint per
   person in the app's data folder (`voices/<person id>.json`, readable only
   by you on macOS and Linux) — never in the archive, so it doesn't travel
@@ -376,7 +387,7 @@ art. 9), so this works only under these rules:
 - **Forget it at any time**: *Forget this voice* (or turning recognition
   off) on the person, *Forget all voices* in Settings → Privacy. Deleting a
   person forgets their voice. Forgetting deletes the file; it doesn't go to
-  the trash.
+  the trash. *Forget all voices* also clears every *Not X* answer.
 
 Tell people before you let Sussurro learn their voice. Keeping voiceprints
 of friends and family for your own private use is generally a different
@@ -400,6 +411,7 @@ account:
 | Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
 | Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
 | Voice profiles of people with *Recognise this voice* on (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
+| *Not X* answers to voice suggestions (0.11) | `voice_dismissals.json` in the app's data folder (ids only; readable only by you on macOS and Linux) |
 
 *Delete…* and *Delete audio…* move files to the OS trash (forgetting a voice
 deletes its profile outright). The

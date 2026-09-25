@@ -638,8 +638,25 @@ project decisions here, not in per-machine memory.**
   exports, diagnostics or logs (`Debug` prints sizes). Commands:
   `voices_status`, `voice_status`, `voice_set_enabled`, `voices_rebuild`,
   `voice_forget`, `voices_forget_all`. Overlap lines (#244) are to be
-  excluded once segments carry the flag. Suggestions UI is #242, "You"
-  #243.
+  excluded once segments carry the flag. "You" is #243.
+- **Voice suggestions (0.11, #242, P12)** (`speakers/suggestions.rs`,
+  `src/lib/voiceSuggestions.ts`, `shell/VoiceSuggestionChip.tsx`):
+  `voice_suggestions(id)` returns `{speaker_id, person_id}` only (no score)
+  for unlinked **`voice:N`** speakers (never "You" or `meet:` names) of a
+  non-recording item, from ready profiles of people still in People; a
+  dismissed best match gives **no** suggestion (never the runner-up). The
+  panel chip *Sounds like X · Link · Not X*: Link = the normal
+  `archive_link_speaker` path; *Not X* (`voice_suggestion_dismiss`) is kept
+  per item + voice + person in `<app data>/voice_dismissals.json` (0600,
+  ids only, never in the archive), dropped on item delete and by *Forget
+  all voices*. The UI refetches on any change of speakers/links, voice data
+  or People (so after runs, Re-detect, and for items opened later).
+  `Settings.voice_suggestions` (default on) hides all suggestions and keeps
+  the profiles. People → person: *Recognise this voice* (turning on shows a
+  first-use sheet — what, where, delete, tell the person), status line,
+  *Forget this voice*; Settings → **Privacy** → Voices: the switch, *Forget
+  all voices* with confirmation, GDPR note. Not built: stripping per-line
+  embeddings from items on request (optional in the issue).
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at
