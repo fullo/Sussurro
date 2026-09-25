@@ -267,6 +267,8 @@ pub fn run() {
             commands::voices_rebuild,
             commands::voice_forget,
             commands::voices_forget_all,
+            commands::voice_suggestions,
+            commands::voice_suggestion_dismiss,
             commands::archive_export,
             commands::archive_subtitles_status,
             commands::archive_create_subtitles,

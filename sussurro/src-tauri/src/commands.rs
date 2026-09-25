@@ -1758,6 +1758,7 @@ pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<()
     let journal = crate::engine::session::journal_path(&state);
     let sources = crate::engine::session::source_files_path(&state);
     let voices = voice_store(&state);
+    let dismissals = voice_dismissals(&state);
     blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         archive::delete_item(&dir, &id)?;
@@ -1765,6 +1766,10 @@ pub async fn archive_delete(state: State<'_, AppState>, id: String) -> Result<()
         // Its original file's path is a local detail: forget it too (#134).
         if let Err(e) = crate::engine::source_files::forget(&sources, &dir, &id) {
             eprintln!("archive: original file of {id} not forgotten ({e:#})");
+        }
+        // And its "Not X" answers (#242).
+        if let Err(e) = dismissals.forget_item(&id) {
+            eprintln!("voices: dismissals of {id} not forgotten ({e:#})");
         }
         // Its lines leave the voice profiles they were part of (#241).
         update_voices_later(voices, dir, id);
@@ -2096,7 +2101,56 @@ pub async fn voice_forget(state: State<'_, AppState>, person_id: String) -> Resu
 #[tauri::command]
 pub async fn voices_forget_all(state: State<'_, AppState>) -> Result<usize, String> {
     let store = voice_store(&state);
-    blocking(move || store.forget_all()).await
+    let dismissals = voice_dismissals(&state);
+    blocking(move || {
+        let n = store.forget_all()?;
+        // The "Not X" answers are about voices too (#242).
+        dismissals.clear()?;
+        Ok(n)
+    })
+    .await
+}
+
+// ---- Voice suggestions (0.11, #242; P12) ----
+
+use crate::speakers::suggestions::{Dismissals, VoiceSuggestion, DISMISSALS_FILE};
+
+/// The *Not X* answers in the app data dir (next to the profiles).
+fn voice_dismissals(state: &AppState) -> Dismissals {
+    Dismissals::at(state.paths.history_file.with_file_name(DISMISSALS_FILE))
+}
+
+/// Speaker panel: who the unlinked "Voice N" of item `id` sound like
+/// (ids only). Empty with *Suggest names from known voices* off, while the
+/// item records, or without a ready profile. Never links anything.
+#[tauri::command]
+pub async fn voice_suggestions(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<VoiceSuggestion>, String> {
+    if !state.settings.lock().unwrap().voice_suggestions {
+        return Ok(Vec::new());
+    }
+    let (dir, _) = archive_paths(&state)?;
+    let store = voice_store(&state);
+    let dismissals = voice_dismissals(&state);
+    blocking(move || {
+        crate::speakers::suggestions::item_suggestions(&dir, &store, &dismissals, &id)
+    })
+    .await
+}
+
+/// Speaker panel: *Not X* — remember that `person_id` is not voice
+/// `speaker_id` of item `id` (this document only).
+#[tauri::command]
+pub async fn voice_suggestion_dismiss(
+    state: State<'_, AppState>,
+    id: String,
+    speaker_id: String,
+    person_id: String,
+) -> Result<(), String> {
+    let dismissals = voice_dismissals(&state);
+    blocking(move || dismissals.dismiss(&id, &speaker_id, &person_id)).await
 }
 
 // ---- Recipes (0.8, #120): prompts that write companion documents ----

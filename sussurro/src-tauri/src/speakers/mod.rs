@@ -17,6 +17,8 @@
 //!   confirmed lines and suggestion matching (pure)
 //! - [`voices`]: the profile files in `<app data>/voices/` — never in the
 //!   archive (P13)
+//! - [`suggestions`]: "Voice N sounds like Anna" for an open document and
+//!   the per-document *Not Anna* answers (0.11, #242)
 
 pub mod cluster;
 pub mod doc;
@@ -25,6 +27,7 @@ pub mod map;
 pub mod model;
 pub mod names;
 pub mod profiles;
+pub mod suggestions;
 pub mod tracker;
 pub mod voices;
 

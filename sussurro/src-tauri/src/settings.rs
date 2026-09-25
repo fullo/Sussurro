@@ -234,6 +234,12 @@ pub struct Settings {
     /// fresh or cleared settings file) shows it again, and so does
     /// Settings → Browser extension → "Show the notice again".
     pub meeting_notice_seen: bool,
+    /// *Suggest names from known voices* (Settings → Privacy, #242, P12):
+    /// the speaker panel suggests a person for an unlinked "Voice N" whose
+    /// voice matches a ready voice profile. On by default — profiles exist
+    /// only for people the user turned *Recognise this voice* on for; off
+    /// stops every suggestion without deleting a profile.
+    pub voice_suggestions: bool,
 }
 
 impl Default for Settings {
@@ -279,6 +285,7 @@ impl Default for Settings {
             save_audio: false,
             saved_audio_format: crate::archive::audio::AudioFormat::default(),
             meeting_notice_seen: false,
+            voice_suggestions: true,
         }
     }
 }
@@ -1059,6 +1066,19 @@ mod tests {
         assert!(seen.meeting_notice_seen);
         let back: Settings = serde_json::from_str(&serde_json::to_string(&seen).unwrap()).unwrap();
         assert!(back.meeting_notice_seen, "round-trips through settings.json");
+    }
+
+    /// #242: voice suggestions are on unless turned off; a settings file
+    /// from before 0.11 (no key) has them on.
+    #[test]
+    fn voice_suggestions_default_to_on_and_round_trip() {
+        assert!(Settings::default().voice_suggestions);
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert!(old.voice_suggestions);
+        let off: Settings = serde_json::from_str(r#"{"voice_suggestions":false}"#).unwrap();
+        assert!(!off.voice_suggestions);
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+        assert!(!back.voice_suggestions, "round-trips through settings.json");
     }
 
     /// A settings.json exactly as 0.6.3 writes it (every field, pretty
