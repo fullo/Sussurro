@@ -306,6 +306,14 @@ impl BundledLlm {
     pub fn is_running(&self) -> bool {
         self.lock().sidecar.as_ref().is_some_and(Sidecar::is_running)
     }
+
+    /// The running server's process id, without waiting: `None` when it
+    /// is not running — or is starting right now (the lock is held for the
+    /// whole start). For diagnostics (#101).
+    pub fn try_pid(&self) -> Option<u32> {
+        let g = self.inner.try_lock().ok()?;
+        g.sidecar.as_ref().filter(|s| s.is_running()).and_then(Sidecar::pid)
+    }
 }
 
 /// The app's bundled LLM server.

@@ -4,6 +4,7 @@ pub mod audio;
 pub mod cleanup;
 pub mod commands;
 pub mod config_io;
+pub mod diagnostics;
 pub mod engine;
 pub mod history;
 pub mod hotkey;
@@ -80,6 +81,9 @@ pub fn run() {
             // restart, the updater's Windows install): no sidecar outlives
             // the app (#117).
             app.resources_table().add(stt::remote::ExitGuard);
+            // whisper.cpp's log keeps going to stderr; its backend lines are
+            // kept for Settings → Diagnostics (#101).
+            diagnostics::backend::install_whisper_log_capture();
             let paths = AppPaths::from_app(handle);
             let (mut settings, migrated) = Settings::load_migrating(&paths.settings_file);
             // Profile API keys live in the OS credential store (#159): read
@@ -212,6 +216,7 @@ pub fn run() {
             commands::get_default_prompts,
             commands::ollama_status,
             commands::diagnostics,
+            commands::diagnostics_snapshot,
             commands::credential_store_status,
             commands::pull_ollama_model,
             commands::translate_entry,

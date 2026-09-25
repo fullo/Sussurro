@@ -40,7 +40,7 @@ chrono = "0.4.45"
 cpal = "0.16"
 enigo = "0.6.1"
 arboard = "3.6.1"
-whisper-rs = "0.16.0"
+whisper-rs = { version = "0.16.0", features = ["raw-api"] }
 tauri-plugin-global-shortcut = "2.3.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
 tauri-plugin-autostart = "2.5.1"
@@ -87,7 +87,7 @@ whisper-rs = { version = "0.16.0", features = ["vulkan"] }
 # Qwen3-ASR sidecar (#117): a kill-on-close job object so llama-server never
 # outlives the app (JobObjects; CreateJobObjectW takes Security's attributes).
 # #216: the owner of the sidecar's loopback port (IpHelper GetExtendedTcpTable).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_Security", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_ProcessStatus", "Win32_Security", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock"] }
 # Windows Credential Manager for the profile API keys (#159).
 windows-native-keyring-store = { version = "1", default-features = false }
 

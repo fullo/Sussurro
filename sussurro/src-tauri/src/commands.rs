@@ -919,11 +919,39 @@ pub async fn ollama_status(state: State<'_, AppState>) -> Result<OllamaStatus, S
     .map_err(|e| e.to_string())?
 }
 
-/// Human-readable environment report for bug reports — the footer's
-/// "Copy diagnostics" button puts this on the clipboard. Configuration only:
-/// no history content, no dictionary words, no snippet texts.
+/// Live numbers for Settings → Diagnostics (#101): timings, engine and
+/// backend, memory, CPU, sidecars, backlog. The panel polls it about once a
+/// second while open. Never waits for a busy model.
+#[tauri::command]
+pub async fn diagnostics_snapshot(
+    app: AppHandle,
+) -> Result<crate::diagnostics::Snapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app.state::<AppState>();
+        crate::diagnostics::snapshot(&app, &state)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Human-readable environment report for bug reports — the "Copy
+/// diagnostics" buttons put this on the clipboard. Configuration and
+/// numbers only: no history content, no dictionary words, no snippet
+/// texts, no keys; the home folder and account name are redacted (#101).
 #[tauri::command]
 pub async fn diagnostics(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let live = {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            use tauri::Manager;
+            let state = app.state::<AppState>();
+            crate::diagnostics::snapshot(&app, &state)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+    let home = state.paths.home_dir.clone();
     let settings = state.settings.lock().unwrap().clone();
     let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
     let bundled = format!(
@@ -1034,7 +1062,8 @@ pub async fn diagnostics(app: AppHandle, state: State<'_, AppState>) -> Result<S
             settings.api_port,
             if settings.api_scripting { "on" } else { "off" }
         );
-        Ok(r)
+        r.push_str(&crate::diagnostics::report::live_section(&live));
+        Ok(crate::diagnostics::report::redact_home(&r, home.as_deref()))
     })
     .await
     .map_err(|e| e.to_string())?
