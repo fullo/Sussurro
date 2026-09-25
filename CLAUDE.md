@@ -538,6 +538,26 @@ project decisions here, not in per-machine memory.**
   the transcript (`TranscriptView.selectedId`), and the Audio tab's player
   seeks there (no autoplay). Keyboard: the SVG is one listbox, arrows walk
   lines in time order.
+- **Calendar attendees from ICS (0.11, #252, P22/E21)** (`calendar/`):
+  a hand-written strict iCalendar reader (no ICS crate) behind the
+  `CalendarSource` trait; TZIDs via `chrono-tz` (IANA, also behind a
+  `/mozilla.org/…` prefix), else the file's own `VTIMEZONE`, else common
+  Windows names; floating/unknown zones and all-day dates at the meeting's
+  own UTC offset (the item's `date`). RRULE expanded only near the day asked
+  (DAILY…YEARLY, BYDAY ordinals, BYMONTHDAY, BYMONTH, BYSETPOS, WKST, COUNT,
+  UNTIL; anything else → first date only + a note), with EXDATE, RDATE and
+  RECURRENCE-ID overrides. Matching: events overlapping the recording ±
+  15 min first, else that day's events. Attendee plan: *add*, *complete a
+  missing email* (offered, never ticked by default — the user may have
+  removed it), *listed* (never replaced); then the usual People linking;
+  People entries only suggested. Rooms/resources dropped. The **private ICS
+  link is a secret**: only in the OS credential store (account
+  `calendar:ics-link`), no clear-text fallback (no store → import the file),
+  never in settings/exports/logs; UI sees only its host. Fetched with the URL
+  source's shared client (`direct::get_checked`/`fetch_bytes`: address
+  rules on every hop, pinning, no proxy, 20 MB cap); local hosts always
+  refused (no "allow local" for calendars). The `.ics` picker opens from
+  Rust with the list import's file guards.
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at
