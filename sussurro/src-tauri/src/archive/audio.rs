@@ -158,6 +158,19 @@ pub(crate) fn header(data_bytes: u32) -> [u8; HEADER_LEN as usize] {
     h
 }
 
+/// Whether `h` is the canonical header [`WavWriter`] writes (mono 16-bit
+/// 16 kHz PCM, `data` right after `fmt `), whatever its sizes say.
+pub(crate) fn is_our_header(h: &[u8; HEADER_LEN as usize]) -> bool {
+    &h[0..4] == b"RIFF"
+        && &h[8..16] == b"WAVEfmt "
+        && h[16..20] == 16u32.to_le_bytes()
+        && h[20..22] == 1u16.to_le_bytes()
+        && h[22..24] == 1u16.to_le_bytes()
+        && h[24..28] == RATE.to_le_bytes()
+        && h[34..36] == 16u16.to_le_bytes()
+        && &h[36..40] == b"data"
+}
+
 /// Write the two size fields of a canonical header in place.
 fn patch_sizes(file: &mut File, data_bytes: u64) -> std::io::Result<()> {
     let data = u32::try_from(data_bytes).unwrap_or(u32::MAX);
@@ -399,15 +412,7 @@ pub fn repair(path: &Path) -> Result<u64> {
     }
     let mut h = [0u8; HEADER_LEN as usize];
     file.read_exact(&mut h)?;
-    let ours = &h[0..4] == b"RIFF"
-        && &h[8..16] == b"WAVEfmt "
-        && h[16..20] == 16u32.to_le_bytes()
-        && h[20..22] == 1u16.to_le_bytes()
-        && h[22..24] == 1u16.to_le_bytes()
-        && h[24..28] == RATE.to_le_bytes()
-        && h[34..36] == 16u16.to_le_bytes()
-        && &h[36..40] == b"data";
-    if !ours {
+    if !is_our_header(&h) {
         bail!("{} is not a WAV written by Sussurro", path.display());
     }
     let data = ((len - HEADER_LEN) & !1).min(MAX_DATA_BYTES);

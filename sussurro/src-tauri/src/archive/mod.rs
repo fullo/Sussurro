@@ -5,7 +5,9 @@
 //! - [`paths`]: location, folder naming, id validation and confinement
 //! - [`types`]: frontmatter and `segments.json` data model
 //! - [`audio`]: saved audio, one file per channel, written incrementally (#141)
-//! - [`opus`]: the Ogg Opus writer and crash repair of saved audio (#247)
+//! - [`opus`]: the Ogg Opus writer, crash repair and reader of saved audio
+//!   (#247, #248)
+//! - [`compress`]: *Compress audio*, saved WAV files to Opus (#248)
 //! - [`companion`]: recipe output next to the transcript (`document.md`, #120)
 //! - [`export`]: `.md`/`.txt`/`.srt`/`.vtt` exports and `transcript.srt` (#133)
 //! - [`external`]: what was sent to an external LLM host, per item (#122)
@@ -21,6 +23,7 @@
 
 pub mod audio;
 pub mod companion;
+pub mod compress;
 pub mod export;
 pub mod external;
 pub mod facets;
