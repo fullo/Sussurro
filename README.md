@@ -275,8 +275,11 @@ kept only if you ask for it.
 
 ## Local API (scripting)
 
-Enable it in Behavior → Advanced (off by default; loopback only; applied at
-restart). Then, from any script:
+Enable it in Behavior → Advanced: switch on **Local API** (loopback only;
+applied at restart) and **Scripting routes** (applies at once). Both are off
+on a new install; pairing the browser extension turns on the local API but
+not the scripting routes. If you used the API before the switch existed, it
+stays on for you. Then, from any script:
 
 ```bash
 # clean up / translate a text with your current settings
@@ -290,11 +293,21 @@ curl "http://127.0.0.1:4525/history?n=10&q=sussurro"
 ```
 
 Loopback-only means no network exposure, but any process on your machine can
-call it — that's why it ships disabled.
+call the scripting routes without a token — that's why they ship disabled.
+Web pages can't use them: every route accepts only `Host: 127.0.0.1:<port>`
+or `localhost:<port>` (so a site that points its own name at your machine —
+DNS rebinding — is refused), and any request carrying a browser `Origin`
+other than a browser extension's is refused. Bodies are capped (1 MiB for
+`/clean`, 200 MiB for `/transcribe`, `413` beyond); at most two
+`/clean`/`/transcribe` requests run at once (`503` with `Retry-After`
+otherwise), so a long transcription never stalls the extension.
 
 The same API serves the [browser extension](#browser-extension-meetings):
 its routes (`/app/version`, `/live`, `/items/…`) always need the pairing
-token and accept only browser-extension origins, never a web page.
+token and accept only browser-extension origins, never a web page, and
+`/items/…` reach only the meetings the extension recorded — not your notes,
+dictations or other transcriptions. `settings.json`, which holds the pairing
+token, is readable only by your user on macOS and Linux.
 
 ## Roadmap
 
