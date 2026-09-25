@@ -37,6 +37,7 @@ export function DocumentPane({
   onChanged,
   onDeleted,
   onOpenSettings,
+  onOpenModels,
 }: {
   ctl: Ctl;
   id: string;
@@ -44,6 +45,8 @@ export function DocumentPane({
   onChanged: () => void;
   onDeleted: () => void;
   onOpenSettings?: (s: SectionId) => void;
+  /** Models → Voices, where read-aloud voices are downloaded (#256). */
+  onOpenModels?: () => void;
 }) {
   const [item, setItem] = useState<Item | null>(null);
   /** "Add attendees from calendar…" panel (#252). */
@@ -293,7 +296,7 @@ export function DocumentPane({
           >
             {t === "transcript" ? "Transcript" : t === "document" ? "Document" : "Audio"}
             {t === "document" && docCount ? <small className="doc-tab-n">{docCount}</small> : null}
-            {t === "audio" && (item.audio?.length ?? 0) > 0 ? (
+            {t === "audio" && (item.audio?.length ?? 0) + (item.speech?.length ?? 0) > 0 ? (
               <small className="doc-tab-n" aria-label="(saved)">♪</small>
             ) : null}
           </button>
@@ -361,7 +364,17 @@ export function DocumentPane({
       />
 
       {tab === "audio" ? (
-        <AudioTab item={item} speakers={docSpeakers && docSpeakers.length > 0 ? docSpeakers : undefined} seek={picked} />
+        <AudioTab
+          item={item}
+          speakers={docSpeakers && docSpeakers.length > 0 ? docSpeakers : undefined}
+          seek={picked}
+          ctl={ctl}
+          onChanged={() => {
+            load();
+            onChanged();
+          }}
+          onOpenModels={onOpenModels}
+        />
       ) : tab === "document" ? (
         <DocumentTab
           ctl={ctl}

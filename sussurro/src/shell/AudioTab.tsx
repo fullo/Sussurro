@@ -19,6 +19,8 @@ import {
 } from "../lib/replay";
 import { ReplayPlayer } from "../lib/replayPlayer";
 import type { Item } from "../lib/types";
+import type { Ctl } from "../hooks/useAppController";
+import { ReadAloudSection } from "./ReadAloudSection";
 
 /* The document pane's Audio tab (0.10, #142): a player for the item's saved
    audio (#141) with "Play only: <speaker>", and the transcript lit as it
@@ -39,11 +41,28 @@ export interface AudioSeek {
   n: number;
 }
 
-export function AudioTab({ item, speakers, seek }: { item: Item; speakers?: TranscriptSpeaker[]; seek?: AudioSeek | null }) {
+export function AudioTab({
+  item,
+  speakers,
+  seek,
+  ctl,
+  onChanged,
+  onOpenModels,
+}: {
+  item: Item;
+  speakers?: TranscriptSpeaker[];
+  seek?: AudioSeek | null;
+  /** With it, the tab also shows generated speech (read aloud, #256). */
+  ctl?: Ctl;
+  onChanged?: () => void;
+  onOpenModels?: () => void;
+}) {
   const files = (item.audio ?? []).map((f) => f.name);
+  const speech = ctl ? <ReadAloudSection ctl={ctl} item={item} onChanged={onChanged} onOpenModels={onOpenModels} /> : null;
   if (item.recording) {
     return (
       <div className="doc-scroll">
+        {speech}
         <div className="au-empty">
           <p>
             <strong>Recording.</strong> The player opens when the session ends
@@ -56,9 +75,10 @@ export function AudioTab({ item, speakers, seek }: { item: Item; speakers?: Tran
   if (files.length === 0) {
     return (
       <div className="doc-scroll">
+        {speech}
         <div className="au-empty">
           <p>
-            <strong>No audio saved for this item.</strong> Sussurro keeps only the transcript unless you ask for the
+            <strong>No recorded audio for this item.</strong> Sussurro keeps only the transcript unless you ask for the
             audio, so there is nothing to play back here.
           </p>
           <p className="sh-muted">
@@ -71,7 +91,15 @@ export function AudioTab({ item, speakers, seek }: { item: Item; speakers?: Tran
     );
   }
   // Remount on another item or other files (Delete audio, a recovered item).
-  return <Player key={`${item.id}|${files.join(",")}`} item={item} files={files} speakers={speakers} seek={seek ?? null} />;
+  const player = <Player key={`${item.id}|${files.join(",")}`} item={item} files={files} speakers={speakers} seek={seek ?? null} />;
+  if (!speech) return player;
+  return (
+    <div className="au-with-speech">
+      <div className="au-speech-slot">{speech}</div>
+      <h3 className="au-recorded-head">Recorded audio</h3>
+      {player}
+    </div>
+  );
 }
 
 /** Whether a key event belongs to the focused control rather than to the
