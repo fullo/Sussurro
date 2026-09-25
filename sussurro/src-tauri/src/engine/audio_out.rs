@@ -1,12 +1,14 @@
 //! Saved audio on the engine's output side (#141, P9: only on request).
 //!
 //! When a run saves audio, the ingest thread hands every source frame to an
-//! [`AudioOut`] as it arrives, before segmentation: one incremental WAV per
-//! logical channel ([`crate::archive::audio`] has the layout, the header
-//! patching and the crash repair). Nothing is buffered here beyond each
-//! writer's 64 KB, so memory stays flat however long the session; the
-//! headers are patched every 10 s of audio, next to the segment
-//! checkpoints the worker writes, and once more when the run ends.
+//! [`AudioOut`] as it arrives, before segmentation: one incremental file per
+//! logical channel, WAV or Ogg Opus as the run's [`AudioFormat`] says
+//! ([`crate::archive::audio`] has the layout and the crash repair,
+//! [`crate::archive::opus`] the Opus stream). Nothing is buffered here
+//! beyond each writer's 64 KB (plus one Opus page), so memory stays flat
+//! however long the session; a WAV header is patched every 10 s of audio
+//! and an Opus page is flushed every second, and both are closed when the
+//! run ends.
 //!
 //! Frames of a channel are contiguous on the run's clock, and a channel
 //! may start late; a gap (or a late start) is filled with silence and an
@@ -18,14 +20,14 @@
 //! waiting for, and it goes on. When a run does not save audio, no
 //! [`AudioOut`] exists at all.
 
-use crate::archive::audio::{self, WavWriter};
+use crate::archive::audio::{self, AudioFormat, AudioWriter};
 use crate::archive::Channel;
 use crate::sources::Frame;
 use std::path::{Path, PathBuf};
 
 struct ChannelOut {
     channel: Channel,
-    writer: WavWriter,
+    writer: AudioWriter,
     /// Writing failed once: this channel is not saved any further.
     failed: bool,
     /// The size cap was reported.
@@ -35,6 +37,8 @@ struct ChannelOut {
 /// The run's audio files, one per channel, in the item folder.
 pub struct AudioOut {
     dir: PathBuf,
+    format: AudioFormat,
+    /// Per-file duration cap, in samples.
     cap: u64,
     channels: Vec<ChannelOut>,
     /// Channels whose file could not be created: not retried per frame.
@@ -42,15 +46,17 @@ pub struct AudioOut {
 }
 
 impl AudioOut {
-    /// Audio saved into the item folder `dir`.
-    pub fn new(dir: &Path) -> Self {
-        Self::with_cap(dir, audio::MAX_DATA_BYTES)
+    /// Audio saved into the item folder `dir`, in `format`.
+    pub fn new(dir: &Path, format: AudioFormat) -> Self {
+        Self::with_cap(dir, format, audio::MAX_SAMPLES)
     }
 
-    /// [`Self::new`] with a smaller per-file cap (tests).
-    pub fn with_cap(dir: &Path, cap: u64) -> Self {
+    /// [`Self::new`] with a smaller per-file duration cap, in samples
+    /// (tests).
+    pub fn with_cap(dir: &Path, format: AudioFormat, cap: u64) -> Self {
         Self {
             dir: dir.to_path_buf(),
+            format,
             cap,
             channels: Vec::new(),
             refused: Vec::new(),
@@ -74,8 +80,10 @@ impl AudioOut {
         {
             Some(i) => i,
             None => {
-                let path = self.dir.join(audio::channel_file_name(frame.channel));
-                match WavWriter::create_capped(&path, self.cap) {
+                let path = self
+                    .dir
+                    .join(audio::channel_file_name(frame.channel, self.format));
+                match AudioWriter::create(&path, self.format, self.cap) {
                     Ok(writer) => {
                         self.channels.push(ChannelOut {
                             channel: frame.channel,
@@ -115,15 +123,15 @@ impl AudioOut {
         } else if out.writer.is_full() && !out.full_logged {
             out.full_logged = true;
             eprintln!(
-                "engine: {} reached the WAV size limit; the rest of this channel is transcribed but not saved",
+                "engine: {} reached the saved audio size limit; the rest of this channel is transcribed but not saved",
                 out.writer.path().display()
             );
         }
     }
 
-    /// Patch every header one last time and flush to disk, then give a
-    /// single-channel run its `audio.wav` name. Returns the files now in
-    /// the item folder, for the frontmatter.
+    /// Close every file (last WAV header, end of the Opus stream) and flush
+    /// to disk, then give a single-channel run its `audio.<ext>` name.
+    /// Returns the files now in the item folder, for the frontmatter.
     pub fn finish(self) -> Vec<String> {
         for out in self.channels {
             let path = out.writer.path().to_path_buf();
@@ -132,7 +140,7 @@ impl AudioOut {
                     "engine: finishing {} failed ({e:#}); repairing",
                     path.display()
                 );
-                if let Err(e) = audio::repair(&path) {
+                if let Err(e) = audio::repair_any(&path) {
                     eprintln!("engine: {} left as is ({e:#})", path.display());
                 }
             }

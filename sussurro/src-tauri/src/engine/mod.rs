@@ -302,6 +302,9 @@ pub struct Job {
     /// Save the run's audio in the item folder (#141, P9): `audio.wav`, or
     /// one file per channel. `false` (the default) writes no audio at all.
     pub save_audio: bool,
+    /// The format of the saved audio (#247): the *Saved audio format*
+    /// setting when the run starts. Ignored without `save_audio`.
+    pub audio_format: archive::audio::AudioFormat,
 }
 
 /// A [`Cleaner`] whose first call records the run's external send in the
@@ -455,6 +458,7 @@ fn run_inner(
         mut speakers,
         write_subtitles,
         save_audio,
+        audio_format,
     } = job;
     let reindex = |id: &str| {
         if let Some(db) = &index_db {
@@ -477,7 +481,7 @@ fn run_inner(
     // Saved audio (#141): only when asked, written into the item folder.
     let audio = if save_audio {
         match archive::paths::item_dir(&archive_dir, item.id()) {
-            Ok(dir) => Some(audio_out::AudioOut::new(&dir)),
+            Ok(dir) => Some(audio_out::AudioOut::new(&dir, audio_format)),
             Err(e) => {
                 eprintln!("engine: the audio of {} is not saved ({e:#})", item.id());
                 None

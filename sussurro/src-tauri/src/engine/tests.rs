@@ -169,6 +169,7 @@ fn job(dir: &std::path::Path, audio: Vec<f32>, policy: Policy) -> Job {
         speakers: None,
         write_subtitles: false,
         save_audio: false,
+        audio_format: crate::archive::audio::AudioFormat::Wav,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: "file:test.wav".into(),
@@ -1134,6 +1135,7 @@ fn engine_end_to_end_with_a_real_model() {
         speakers: None,
         write_subtitles: false,
         save_audio: false,
+        audio_format: crate::archive::audio::AudioFormat::Wav,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(&input),
@@ -1230,6 +1232,7 @@ fn engine_long_file_streams_with_bounded_memory() {
         speakers: None,
         write_subtitles: false,
         save_audio: false,
+        audio_format: crate::archive::audio::AudioFormat::Wav,
         meta: ItemMeta {
             item_type: ItemType::Transcription,
             source: crate::sources::file::source_label(path),
@@ -2203,7 +2206,7 @@ fn wavs_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         let p = e.path();
         if p.is_dir() {
             out.extend(wavs_under(&p));
-        } else if p.extension().is_some_and(|x| x == "wav") {
+        } else if p.extension().is_some_and(|x| x == "wav" || x == "opus") {
             out.push(p);
         }
     }
@@ -2527,7 +2530,7 @@ fn crash_recovery_repairs_and_lists_the_saved_audio() {
     };
     let mut live = checkpoint::LiveItem::begin(&archive_dir, &meta, Some(&journal)).unwrap();
     let folder = archive_dir.join(live.id());
-    let mut out = audio_out::AudioOut::new(&folder);
+    let mut out = audio_out::AudioOut::new(&folder, archive::audio::AudioFormat::Wav);
     let mut clock = crate::sources::Clock::default();
     // 13 s: the header is patched at 10 s, the next 3 s overflow the
     // 64 KB buffer, so part of them reaches the disk unpatched.
@@ -2648,13 +2651,162 @@ fn a_full_audio_file_stops_saving_and_stays_valid() {
     let dir = tempfile::tempdir().unwrap();
     let folder = dir.path().join("item");
     std::fs::create_dir_all(&folder).unwrap();
-    let mut out = audio_out::AudioOut::with_cap(&folder, 32_000);
+    let mut out = audio_out::AudioOut::with_cap(&folder, archive::audio::AudioFormat::Wav, 16_000);
     let mut clock = crate::sources::Clock::default();
     for _ in 0..10 {
         out.push(&clock.stamp(Channel::File, vec![0.1; 4_000]));
     }
     assert_eq!(out.finish(), vec!["audio.wav"]);
     assert_eq!(decode_wav(&folder.join("audio.wav")).len(), 16_000);
+}
+
+/// The same cap for Opus (a duration, as for WAV).
+#[test]
+fn a_full_opus_file_stops_saving_and_stays_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("item");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut out = audio_out::AudioOut::with_cap(&folder, archive::audio::AudioFormat::Opus, 16_000);
+    let mut clock = crate::sources::Clock::default();
+    for _ in 0..10 {
+        out.push(&clock.stamp(Channel::File, vec![0.1; 4_000]));
+    }
+    assert_eq!(out.finish(), vec!["audio.opus"]);
+    let (pcm, complete) = archive::opus::decode_file(&folder.join("audio.opus")).unwrap();
+    assert!(complete);
+    assert_eq!(pcm.len(), 16_000);
+}
+
+fn rms(x: &[f32]) -> f32 {
+    (x.iter().map(|s| s * s).sum::<f32>() / x.len().max(1) as f32).sqrt()
+}
+
+/// #247: with the *Saved audio format* set to Opus, a meeting saves one
+/// Ogg Opus file per channel (no WAV), listed in the frontmatter, both on
+/// the run's clock: exact lengths, the late channel padded, and speech at
+/// the same sample positions as the source (no pre-skip offset).
+#[test]
+fn save_audio_as_opus_writes_one_aligned_file_per_channel() {
+    let dir = tempfile::tempdir().unwrap();
+    let mic = bursts(&[(false, 0.5), (true, 12.0), (false, 3.0)]);
+    let remote = bursts(&[(false, 1.0), (true, 2.0), (false, 11.5)]);
+    let mut j = job(dir.path(), Vec::new(), Policy::Spill { max_in_ram: 4 });
+    j.source = Box::new(TwoChannels {
+        mic: VecSource::new(mic.clone(), Channel::Mic),
+        remote: VecSource::new(remote.clone(), Channel::Remote),
+        remote_offset: 16_000,
+        turn: false,
+    });
+    j.meta.item_type = ItemType::Meeting;
+    j.save_audio = true;
+    j.audio_format = archive::audio::AudioFormat::Opus;
+    let r = run(
+        j,
+        &mut fake_stt(),
+        &FakeCleaner::default(),
+        Arc::new(VecSink::default()),
+    )
+    .unwrap();
+    let folder = dir.path().join("archive").join(&r.item_id);
+    let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
+    assert_eq!(
+        archive::audio::listed(&item.meta),
+        vec!["audio-mic.opus", "audio-remote.opus"],
+        "the frontmatter records the files, hence the format"
+    );
+    assert_eq!(item.audio.len(), 2);
+    let files = wavs_under(dir.path());
+    assert_eq!(files.len(), 2);
+    assert!(files.iter().all(|p| p.extension().unwrap() == "opus"), "{files:?}");
+    // Much smaller than the WAV would be.
+    let wav_bytes = 44 + mic.len() as u64 * 2;
+    assert!(item.audio[0].bytes * 5 < wav_bytes, "{:?}", item.audio);
+
+    let (m, done) = archive::opus::decode_file(&folder.join("audio-mic.opus")).unwrap();
+    assert!(done);
+    assert_eq!(m.len(), mic.len());
+    let (rem, done) = archive::opus::decode_file(&folder.join("audio-remote.opus")).unwrap();
+    assert!(done);
+    assert_eq!(rem.len(), 16_000 + remote.len(), "padded to the run's t = 0");
+    assert!(rem[..15_000].iter().all(|s| s.abs() < 0.01));
+    // Aligned with the source: speech starts where it starts in the source
+    // (within 1 ms — far from the encoder's 104-sample delay), mic at 0.5 s,
+    // remote at 2 s (1 s late + 1 s of silence).
+    let onset = |x: &[f32], from: usize| from + x[from..].iter().position(|s| s.abs() > 0.05).unwrap();
+    let expect_mic = onset(&mic, 0);
+    assert!((8_000..8_010).contains(&expect_mic));
+    assert!(onset(&m, 4_000).abs_diff(expect_mic) <= 16, "{}", onset(&m, 4_000));
+    let expect_rem = 16_000 + onset(&remote, 0);
+    assert!(onset(&rem, 20_000).abs_diff(expect_rem) <= 16, "{}", onset(&rem, 20_000));
+    // The speech is there at its level (a perceptual codec doesn't keep a
+    // pure tone's waveform sample for sample, so compare energy).
+    let r = rms(&m[16_000..16_000 * 9]) / rms(&mic[16_000..16_000 * 9]);
+    assert!((0.8..1.25).contains(&r), "{r}");
+    // The remote line's start is where its speech is in its file.
+    let line = item
+        .segments
+        .segments
+        .iter()
+        .find(|s| s.channel == Channel::Remote)
+        .unwrap();
+    let at = (line.start_ms * 16) as usize;
+    assert!(rem[at..at + 16_000].iter().any(|s| s.abs() > 0.1));
+}
+
+/// #153 + #247: a crash leaves Opus files with no end-of-stream page and a
+/// torn last page; the startup recovery closes them, names a lone channel
+/// `audio.opus` and lists it on the interrupted item.
+#[test]
+fn crash_recovery_closes_and_lists_opus_audio() {
+    let dir = tempfile::tempdir().unwrap();
+    let archive_dir = dir.path().join("archive");
+    let journal = dir.path().join(checkpoint::JOURNAL_FILE);
+    let meta = ItemMeta {
+        item_type: ItemType::Note,
+        title: "Crash".into(),
+        date: "2026-09-24T10:00:00+02:00".into(),
+        source: "mic".into(),
+        ..Default::default()
+    };
+    let mut live = checkpoint::LiveItem::begin(&archive_dir, &meta, Some(&journal)).unwrap();
+    let folder = archive_dir.join(live.id());
+    let mut out = audio_out::AudioOut::new(&folder, archive::audio::AudioFormat::Opus);
+    let mut clock = crate::sources::Clock::default();
+    let speech = bursts(&[(true, 6.5)]);
+    for chunk in speech.chunks(4_000) {
+        out.push(&clock.stamp(Channel::Mic, chunk.to_vec()));
+    }
+    live.push(Segment {
+        id: 0,
+        start_ms: 0,
+        end_ms: 6_000,
+        raw: "ciao".into(),
+        text: "Ciao.".into(),
+        ..Default::default()
+    });
+    // The process dies mid-write: the last page on disk is torn.
+    std::mem::forget(out);
+    drop(live);
+    let opus = folder.join("audio-mic.opus");
+    let bytes = std::fs::read(&opus).unwrap();
+    std::fs::write(&opus, &bytes[..bytes.len() - 7]).unwrap();
+
+    let r = checkpoint::recover(
+        &journal,
+        Some(&archive_dir),
+        None,
+        &dir.path().join("data"),
+    );
+    assert_eq!(r.interrupted.len(), 1);
+    let item = archive::read_item(&archive_dir, &r.interrupted[0]).unwrap();
+    assert_eq!(archive::audio::listed(&item.meta), vec!["audio.opus"]);
+    assert!(!opus.exists());
+    let (pcm, complete) = archive::opus::decode_file(&folder.join("audio.opus")).unwrap();
+    assert!(complete, "the stream is closed");
+    // Whole seconds up to the torn one (5 s) minus the encoder lookahead.
+    assert_eq!(pcm.len(), (5 * 48_000 - 312) / 3);
+    let r = rms(&pcm[8_000..72_000]) / rms(&speech[8_000..72_000]);
+    assert!((0.8..1.25).contains(&r), "{r}");
 }
 
 /// A device replaying 16 kHz audio in real (fake) time: by wall time `now`

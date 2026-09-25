@@ -223,6 +223,12 @@ pub struct Settings {
     /// request, so this is off by default. Also applies to runs started
     /// without a New screen (a browser meeting from the extension).
     pub save_audio: bool,
+    /// *Saved audio format* (#247, P16): WAV or Ogg Opus for the audio a run
+    /// saves from now on; items saved earlier keep their files. A settings
+    /// file without the key takes the default ([`AudioFormat::default`]).
+    ///
+    /// [`AudioFormat::default`]: crate::archive::audio::AudioFormat
+    pub saved_audio_format: crate::archive::audio::AudioFormat,
     /// The notice before the first recording of other people (#136) was
     /// acknowledged with "Don't show this again". Per install; false (a
     /// fresh or cleared settings file) shows it again, and so does
@@ -271,6 +277,7 @@ impl Default for Settings {
             extension_token: String::new(),
             subtitles: SubtitlesMode::OnRequest,
             save_audio: false,
+            saved_audio_format: crate::archive::audio::AudioFormat::default(),
             meeting_notice_seen: false,
         }
     }
@@ -845,6 +852,22 @@ mod tests {
         assert!(!old.save_audio);
         let on: Settings = serde_json::from_str(r#"{"save_audio":true}"#).unwrap();
         assert!(on.save_audio);
+    }
+
+    /// #247: the saved audio format is a setting; a settings file written
+    /// before it existed takes the default, and the choice round-trips.
+    #[test]
+    fn saved_audio_format_setting() {
+        use crate::archive::audio::AudioFormat;
+        let old: Settings = serde_json::from_str(r#"{"save_audio":true}"#).unwrap();
+        assert_eq!(old.saved_audio_format, AudioFormat::default());
+        assert_eq!(Settings::default().saved_audio_format, AudioFormat::default());
+        let opus: Settings = serde_json::from_str(r#"{"saved_audio_format":"opus"}"#).unwrap();
+        assert_eq!(opus.saved_audio_format, AudioFormat::Opus);
+        let json = serde_json::to_value(&opus).unwrap();
+        assert_eq!(json["saved_audio_format"], "opus");
+        let back: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(back.saved_audio_format, AudioFormat::Opus);
     }
 
     /// #115: the workspace is the only UI. A settings file from the preview

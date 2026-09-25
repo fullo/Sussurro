@@ -604,6 +604,7 @@ where
             speakers,
             write_subtitles: settings.subtitles == crate::settings::SubtitlesMode::Always,
             save_audio: req.options.saves_audio(&global),
+            audio_format: global.saved_audio_format,
             meta: start_meta(
                 &settings,
                 req.item_type,
