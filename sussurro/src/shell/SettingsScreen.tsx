@@ -4,7 +4,8 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Card, Switch, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, fmtCount } from "../lib/format";
-import type { SubtitlesMode } from "../lib/types";
+import { AUDIO_MB_PER_HOUR, savedAudioFormat } from "../lib/audio";
+import type { SavedAudioFormat, SubtitlesMode } from "../lib/types";
 import { BehaviorCard } from "../settings/BehaviorCard";
 import { CalendarCard } from "../settings/CalendarCard";
 import { CleanupCard } from "../settings/CleanupCard";
@@ -184,13 +185,27 @@ function ArchiveCard({ ctl }: { ctl: Ctl }) {
       </div>
       <div className="field">
         <div className="field-label">
-          <span>Save audio <Tip text="Preselects Save audio in New for recordings, files and links (and for meetings from the browser extension). The audio is saved as audio.wav in each item's folder, inside the archive folder above — so it syncs wherever that folder syncs (iCloud Drive, OneDrive…). About 115 MB per hour. Off by default: audio is saved only when you ask." /></span>
+          <span>Save audio <Tip text="Preselects Save audio in New for recordings, files and links (and for meetings from the browser extension). The audio is saved in each item's folder (audio.wav or audio.opus, see Saved audio format), inside the archive folder above — so it syncs wherever that folder syncs (iCloud Drive, OneDrive…). Off by default: audio is saved only when you ask." /></span>
           <small>{settings.save_audio ? "every new item keeps its audio" : "only when ticked in New"}</small>
         </div>
         <Switch
           checked={!!settings.save_audio}
           onChange={(v) => save({ ...settings, save_audio: v })}
         />
+      </div>
+      <div className="field">
+        <div className="field-label">
+          <span>Saved audio format <Tip text="Opus is about 10× smaller than WAV (about 11 MB per hour instead of 115 MB) with no difference for transcription or voice labels. Applies to audio saved from now on; items saved earlier keep their files. Playing Opus in the Audio tab needs Windows, or macOS 15.4 or later, for now." /></span>
+          <small>about {AUDIO_MB_PER_HOUR[savedAudioFormat(settings)]} MB per hour of audio</small>
+        </div>
+        <select
+          value={savedAudioFormat(settings)}
+          onChange={(e) => save({ ...settings, saved_audio_format: e.target.value as SavedAudioFormat })}
+          aria-label="Saved audio format"
+        >
+          <option value="wav">WAV (uncompressed)</option>
+          <option value="opus">Opus (compressed, 10× smaller)</option>
+        </select>
       </div>
       <div className="field">
         <div className="field-label">

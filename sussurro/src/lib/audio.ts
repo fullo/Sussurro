@@ -1,5 +1,5 @@
 import { formatBytes } from "./format";
-import type { AudioFile, Item, ItemSummary } from "./types";
+import type { AudioFile, Item, ItemSummary, SavedAudioFormat, Settings } from "./types";
 
 /** Saved audio (#141), pure helpers for the document pane and the Library. */
 
@@ -8,10 +8,19 @@ export function audioBytes(item: Pick<Item, "audio">): number {
   return (item.audio ?? []).reduce((sum, f) => sum + (f.bytes || 0), 0);
 }
 
-/** Which channel a file holds, for display: `audio-remote.wav` → "remote";
- *  the single-channel `audio.wav` → "". */
+/** The format new runs save their audio in (#247); settings from before
+ *  0.11 have no key and get the backend's default, WAV. */
+export function savedAudioFormat(settings: Pick<Settings, "saved_audio_format">): SavedAudioFormat {
+  return settings.saved_audio_format === "opus" ? "opus" : "wav";
+}
+
+/** Approximate size of one hour of saved audio, for the settings text. */
+export const AUDIO_MB_PER_HOUR: Record<SavedAudioFormat, number> = { wav: 115, opus: 11 };
+
+/** Which channel a file holds, for display: `audio-remote.wav` (or
+ *  `.opus`) → "remote"; the single-channel `audio.wav` → "". */
 export function audioChannel(file: AudioFile): string {
-  const m = /^audio-([a-z]+)\.wav$/.exec(file.name);
+  const m = /^audio-([a-z]+)\.(?:wav|opus)$/.exec(file.name);
   if (!m) return "";
   return ({ mic: "You (microphone)", remote: "Others (remote)", system: "System audio", file: "File" } as Record<string, string>)[m[1]] ?? m[1];
 }

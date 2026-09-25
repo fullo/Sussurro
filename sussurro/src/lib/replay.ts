@@ -30,15 +30,17 @@ export const MERGE_GAP_MS = 250;
 /** Segment fields the replay needs. */
 export type ReplaySegment = Pick<Segment, "id" | "start_ms" | "end_ms" | "channel" | "speaker_id" | "text" | "stt_error" | "words">;
 
-/** The file a segment's audio is in: `audio.wav` for a single-channel item
- *  (whatever the segment's channel), else `audio-<channel>.wav`. A lone
- *  file of another name (a channel file not renamed, #141) serves every
- *  segment. null = that channel was not saved. Pure. */
+/** The file a segment's audio is in: `audio.wav` (or `audio.opus`, #247)
+ *  for a single-channel item (whatever the segment's channel), else
+ *  `audio-<channel>.wav` / `.opus`. A lone file of another name (a channel
+ *  file not renamed, #141) serves every segment. null = that channel was
+ *  not saved. Pure. */
 export function channelFile(channel: Segment["channel"], files: string[]): string | null {
   if (files.length === 0) return null;
-  if (files.includes("audio.wav")) return "audio.wav";
-  const own = `audio-${channel ?? "mic"}.wav`;
-  if (files.includes(own)) return own;
+  const single = files.find((f) => f === "audio.wav" || f === "audio.opus");
+  if (single) return single;
+  const own = files.find((f) => f === `audio-${channel ?? "mic"}.wav` || f === `audio-${channel ?? "mic"}.opus`);
+  if (own) return own;
   return files.length === 1 ? files[0] : null;
 }
 

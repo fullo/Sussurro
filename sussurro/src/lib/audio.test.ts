@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { audioBadge, audioBytes, audioChannel, audioLabel } from "./audio";
+import { audioBadge, audioBytes, audioChannel, audioLabel, savedAudioFormat } from "./audio";
 import { formatBytes } from "./format";
 import { saveAudioChoice } from "./runOptions";
 import type { Settings } from "./types";
@@ -25,6 +25,14 @@ describe("saved audio (#141)", () => {
     expect(audioChannel({ name: "audio-mic.wav", bytes: 0 })).toBe("You (microphone)");
     expect(audioChannel({ name: "audio-remote.wav", bytes: 0 })).toBe("Others (remote)");
     expect(audioChannel({ name: "audio-system.wav", bytes: 0 })).toBe("System audio");
+    expect(audioChannel({ name: "audio.opus", bytes: 0 })).toBe("");
+    expect(audioChannel({ name: "audio-remote.opus", bytes: 0 })).toBe("Others (remote)");
+  });
+
+  it("reads the saved audio format, WAV when absent (#247)", () => {
+    expect(savedAudioFormat({})).toBe("wav");
+    expect(savedAudioFormat({ saved_audio_format: "wav" })).toBe("wav");
+    expect(savedAudioFormat({ saved_audio_format: "opus" })).toBe("opus");
   });
 
   it("marks Library rows with audio only", () => {

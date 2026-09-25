@@ -42,6 +42,14 @@ describe("channelFile", () => {
 
   it("uses a lone channel file for everything, and nothing without files", () => {
     expect(channelFile("remote", ["audio-mic.wav"])).toBe("audio-mic.wav");
+  });
+
+  it("finds Opus files the same way (#247)", () => {
+    expect(channelFile("mic", ["audio.opus"])).toBe("audio.opus");
+    const files = ["audio-mic.opus", "audio-remote.opus"];
+    expect(channelFile("remote", files)).toBe("audio-remote.opus");
+    expect(channelFile(undefined, files)).toBe("audio-mic.opus");
+    expect(channelFile("system", files)).toBeNull();
     expect(channelFile("mic", [])).toBeNull();
   });
 });
