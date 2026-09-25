@@ -30,6 +30,9 @@ pub const IDLE_UNLOAD: Duration = Duration::from_secs(5 * 60);
 pub const PREVIEW_DIR: &str = "tts-preview";
 /// Scheme path prefix of preview files (`sussurro-audio:`).
 pub const PREVIEW_PREFIX: &str = "tts-preview/";
+/// File name prefix of the temporary *Listen* files of read aloud (#256),
+/// kept in [`PREVIEW_DIR`] next to the previews.
+pub const LISTEN_PREFIX: &str = "listen-";
 /// Longest preview text accepted from the UI.
 pub const MAX_PREVIEW_CHARS: usize = 400;
 
@@ -58,6 +61,9 @@ pub fn global() -> &'static Service {
         preview_seq: Mutex::new(0),
     })
 }
+
+/// The engine's name, as the UI and the synthetic-speech marks give it.
+pub const ENGINE_NAME: &str = "Pocket TTS";
 
 /// A voice as the UI lists it.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -168,7 +174,7 @@ impl Service {
             .and_then(|g| g.as_ref().map(|l| l.lang.to_string()));
         TtsStatus {
             enabled,
-            engine: "Pocket TTS".into(),
+            engine: ENGINE_NAME.into(),
             licence: catalog::MODEL_LICENCE.into(),
             attribution: catalog::ATTRIBUTION.into(),
             languages,
@@ -320,9 +326,18 @@ impl Service {
                 })?;
                 Ok((e.sample_rate(), audio))
             })?;
+        // P21: every generated file passes the marking hook (#257 adds the
+        // watermark there); the WAV itself carries the synthetic comment.
+        let mut audio = audio;
+        super::marking::Marker::new(super::marking::Provenance {
+            engine: ENGINE_NAME.into(),
+            voice: voice_id.into(),
+            language: lang.code.into(),
+        })
+        .process(&mut audio, rate);
         std::fs::create_dir_all(preview_dir)
             .with_context(|| format!("creating {}", preview_dir.display()))?;
-        clear_previews(preview_dir);
+        clear_prefix(preview_dir, "preview-");
         let n = {
             let mut seq = self.preview_seq.lock().unwrap();
             *seq += 1;
@@ -334,26 +349,39 @@ impl Service {
     }
 }
 
-/// Delete every preview file (at startup, when the module is turned off,
-/// before a new preview).
+/// Delete every temporary file of the module — previews and read-aloud
+/// *Listen* files (at startup, when the module is turned off).
 pub fn clear_previews(preview_dir: &Path) {
+    clear_prefix(preview_dir, "preview-");
+    clear_prefix(preview_dir, LISTEN_PREFIX);
+}
+
+/// Delete the temporary files whose name starts with `prefix` (a preview
+/// before the next preview, a *Listen* file before the next or when the
+/// document closes, #256).
+pub fn clear_prefix(preview_dir: &Path, prefix: &str) {
     let Ok(rd) = std::fs::read_dir(preview_dir) else {
         return;
     };
     for e in rd.flatten() {
         let name = e.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with("preview-") && (name.ends_with(".wav") || name.ends_with(".part")) {
+        let temp = name.ends_with(".wav") || name.ends_with(".opus") || name.ends_with(".part");
+        if name.starts_with(prefix) && temp {
             let _ = std::fs::remove_file(e.path());
         }
     }
 }
 
-/// A `sussurro-audio:` path (decoded, no leading `/`) that names a preview
-/// file → its file name. Only `tts-preview/preview-<digits>.wav`. Pure.
+/// A `sussurro-audio:` path (decoded, no leading `/`) that names a
+/// temporary file → its file name: `tts-preview/preview-<digits>.wav` or a
+/// read-aloud `tts-preview/listen-<digits>.opus` (#256). Pure.
 pub fn preview_file_name(path: &str) -> Option<&str> {
     let name = path.strip_prefix(PREVIEW_PREFIX)?;
-    let digits = name.strip_prefix("preview-")?.strip_suffix(".wav")?;
+    let digits = name
+        .strip_prefix("preview-")
+        .and_then(|n| n.strip_suffix(".wav"))
+        .or_else(|| name.strip_prefix(LISTEN_PREFIX)?.strip_suffix(".opus"))?;
     (!digits.is_empty() && digits.len() <= 12 && digits.bytes().all(|b| b.is_ascii_digit()))
         .then_some(name)
 }
@@ -438,9 +466,16 @@ mod tests {
             preview_file_name("tts-preview/preview-3.wav"),
             Some("preview-3.wav")
         );
+        assert_eq!(
+            preview_file_name("tts-preview/listen-12.opus"),
+            Some("listen-12.opus")
+        );
         for bad in [
             "tts-preview/preview-.wav",
             "tts-preview/preview-3.opus",
+            "tts-preview/listen-3.wav",
+            "tts-preview/listen-.opus",
+            "tts-preview/listen-3.opus.part",
             "tts-preview/../settings.json",
             "tts-preview/preview-3.wav/x",
             "tts-preview/preview-1a.wav",
@@ -455,9 +490,11 @@ mod tests {
     #[test]
     fn old_previews_are_cleared_and_nothing_else() {
         let dir = tempfile::tempdir().unwrap();
-        for f in ["preview-1.wav", "preview-2.wav.part", "keep.txt"] {
+        for f in ["preview-1.wav", "preview-2.wav.part", "listen-1.opus", "keep.txt"] {
             std::fs::write(dir.path().join(f), b"x").unwrap();
         }
+        clear_prefix(dir.path(), "preview-");
+        assert!(dir.path().join("listen-1.opus").exists(), "a preview leaves Listen files");
         clear_previews(dir.path());
         let left: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()

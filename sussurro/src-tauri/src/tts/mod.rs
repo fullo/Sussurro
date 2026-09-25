@@ -20,6 +20,7 @@ pub mod engine;
 pub mod marking;
 pub mod models;
 pub mod pocket;
+pub mod read_aloud;
 pub mod resample;
 pub mod service;
 pub mod text;

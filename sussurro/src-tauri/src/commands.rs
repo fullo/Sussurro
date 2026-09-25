@@ -3091,6 +3091,9 @@ pub async fn tts_delete(
         if service.is_downloading() {
             anyhow::bail!("a read-aloud download is running — cancel it first");
         }
+        if crate::tts::read_aloud::jobs().is_running() {
+            anyhow::bail!("a document is being read aloud — cancel it first");
+        }
         service.unload();
         match language {
             None => crate::tts::models::delete_all(&dir),
@@ -3135,11 +3138,114 @@ pub async fn tts_preview(
     .await
 }
 
-/// Read aloud was turned off (P24): cancel a download, drop the engine and
-/// the preview files. Off the calling thread (a render may hold the engine).
+/// *Read aloud* an item's transcript (or its companion `document`) in
+/// `language` (default: the item's) with the voice picked for it (#256):
+/// `save` writes `speech*.opus` next to the item, else a temporary *Listen*
+/// file whose `sussurro-audio:` path is returned. Only while the module is
+/// on (P24), never on a live item, one job at a time; progress goes out as
+/// `read-aloud-progress` (null when the job ends). Never downloads: a
+/// missing model or voice is an error pointing to Models → Voices.
+#[tauri::command]
+pub async fn read_aloud_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    document: Option<String>,
+    language: Option<String>,
+    save: bool,
+) -> Result<crate::tts::read_aloud::Outcome, String> {
+    use crate::tts::read_aloud::{self, PocketSpeaker, Request, Target};
+    use tauri::Emitter;
+    let (models, voices) = tts_on(&state)?;
+    let (archive, _) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
+    let listen_dir = tts_preview_dir(&app)?;
+    let emitter = app.clone();
+    let result = blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &archive, &id)?;
+        let speaker = PocketSpeaker {
+            service: crate::tts::service::global(),
+            models_dir: &models,
+            options: crate::tts::pocket::PocketOptions::default(),
+        };
+        let target = if save {
+            Target::Save
+        } else {
+            Target::Listen { dir: &listen_dir }
+        };
+        let req = Request {
+            archive: &archive,
+            id: &id,
+            document: document.as_deref(),
+            language: language.as_deref(),
+            voices: &voices,
+            target,
+        };
+        let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        read_aloud::run(read_aloud::jobs(), &speaker, &req, &mut |s| {
+            if s.done == 0 || s.done == s.total || last.elapsed() >= std::time::Duration::from_millis(250) {
+                last = std::time::Instant::now();
+                let _ = emitter.emit("read-aloud-progress", s);
+            }
+        })
+    })
+    .await;
+    let _ = app.emit("read-aloud-progress", Option::<()>::None);
+    result
+}
+
+/// Stop the read-aloud job in progress (nothing is kept). False when none
+/// runs.
+#[tauri::command]
+pub fn read_aloud_cancel() -> bool {
+    crate::tts::read_aloud::jobs().cancel()
+}
+
+/// The read-aloud job in progress, if any (a document pane opened while it
+/// runs shows its progress).
+#[tauri::command]
+pub fn read_aloud_job() -> Option<crate::tts::read_aloud::JobStatus> {
+    crate::tts::read_aloud::jobs().current()
+}
+
+/// The generated speech files of an item and whether each is out of date.
+/// Works while the module is off: the files are still the user's.
+#[tauri::command]
+pub async fn read_aloud_files(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<crate::tts::read_aloud::SpeechStatus>, String> {
+    let (archive, _) = archive_paths(&state)?;
+    blocking(move || crate::tts::read_aloud::statuses(&archive, &id)).await
+}
+
+/// Delete a generated speech file of an item (to the OS trash). Works while
+/// the module is off.
+#[tauri::command]
+pub async fn read_aloud_delete(
+    state: State<'_, AppState>,
+    id: String,
+    file: String,
+) -> Result<(), String> {
+    let (archive, _) = archive_paths(&state)?;
+    blocking(move || crate::tts::read_aloud::delete(crate::tts::read_aloud::jobs(), &archive, &id, &file)).await
+}
+
+/// Delete the temporary *Listen* files (the document closed).
+#[tauri::command]
+pub fn read_aloud_discard(app: AppHandle) {
+    if let Ok(dir) = tts_preview_dir(&app) {
+        crate::tts::read_aloud::discard_listens(crate::tts::read_aloud::jobs(), &dir);
+    }
+}
+
+/// Read aloud was turned off (P24): cancel a download and a read-aloud job,
+/// drop the engine and the temporary files. Off the calling thread (a
+/// render may hold the engine).
 pub fn tts_turned_off(app: &AppHandle) {
     let service = crate::tts::service::global();
     service.cancel_download();
+    crate::tts::read_aloud::jobs().cancel();
     let previews = tts_preview_dir(app).ok();
     std::thread::spawn(move || {
         service.unload();
