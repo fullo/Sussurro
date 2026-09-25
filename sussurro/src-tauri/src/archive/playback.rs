@@ -29,29 +29,45 @@
 //! else. The CSP gains exactly one directive for it:
 //! `media-src sussurro-audio: http://sussurro-audio.localhost` (#91 stays
 //! otherwise untouched: scripts, styles, connections and images unchanged).
+//!
+//! **Opus is served as WAV** (#248, E15): the WebView never sees Ogg Opus
+//! (macOS before 15.4 can't play it, and 15.4+ only estimates its
+//! duration). An `.opus` file is answered as a *virtual* WAV — the 44-byte
+//! header of its exact decoded length, then 16-bit PCM — and a byte range
+//! maps to a sample range that [`OpusReader`] decodes from its page index.
+//! A reader is kept per file ([`OPUS_CACHE`], a few entries, the file
+//! closed between requests), so the element's consecutive ranges decode on
+//! from where the last one stopped (bit-exact, about 50 ms per 1 MiB); a
+//! jump restarts 200 ms before the target. Every item plays through the
+//! same `audio/wav` path with an exact duration and sample-exact seeks.
+//!
+//! **Without a `Range` header** a request gets the whole resource (`200`),
+//! up to [`MAX_WHOLE`] bytes; a bigger one is refused (`413`) rather than
+//! answered with part of it: the webview's scheme API takes whole bodies
+//! only, so a stream isn't possible, and media elements send ranges (a
+//! `206` to a request without one, what this answered before, made WebKit
+//! stop playing after the first MiB).
 
-use super::audio::is_audio_file_name;
+use super::audio::{is_audio_file_name, AudioFormat};
+use super::opus::OpusReader;
 use anyhow::{bail, Context, Result};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 /// The URI scheme of saved audio.
 pub const SCHEME: &str = "sussurro-audio";
-/// Largest body of one response. An open-ended range (`bytes=0-`, what
-/// media elements send) gets this much; the element asks for the rest as it
-/// plays. 1 MiB is about 33 s of 16 kHz 16-bit mono.
+/// Largest body of one ranged response. An open-ended range (`bytes=0-`,
+/// what media elements send) gets this much; the element asks for the rest
+/// as it plays. 1 MiB is about 33 s of 16 kHz 16-bit mono.
 pub const MAX_CHUNK: u64 = 1024 * 1024;
-
-/// The media type of a saved audio file, by its extension. An Opus file
-/// (#247) is served as it is, `audio/ogg`, which WebView2 and WebKit from
-/// macOS 15.4 play; the scheme will serve it decoded as WAV everywhere
-/// with #248 (E15).
-fn content_type(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("opus") => "audio/ogg",
-        _ => "audio/wav",
-    }
-}
+/// Largest resource sent whole to a request without a `Range` header:
+/// 128 MiB, a WAV of about 70 minutes (see the module docs).
+pub const MAX_WHOLE: u64 = 128 * 1024 * 1024;
+/// Every response is a WAV, including decoded Opus.
+const CONTENT_TYPE: &str = "audio/wav";
+/// Opus readers kept between requests: two channels of two items.
+const OPUS_CACHE_SIZE: usize = 4;
 
 /// Decode `%XX` escapes (UTF-8). `+` is kept as is (a path, not a form).
 /// Refuses malformed escapes, invalid UTF-8 and NUL. Pure.
@@ -214,45 +230,51 @@ fn read_span(path: &Path, start: u64, len: u64) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Serve the file at `path` for a request with `range` (the `Range`
-/// header). `head`: headers only. A request without a usable range gets the
-/// whole file when it fits in [`MAX_CHUNK`], else its first chunk as a 206
-/// (a media element always sends a range; this only bounds the memory of a
-/// stray plain GET).
-pub fn serve_file(path: &Path, range: Option<&str>, head: bool) -> Reply {
-    let len = match std::fs::metadata(path) {
-        Ok(m) => m.len(),
-        Err(_) => return Reply::error(404, "not found"),
-    };
-    let (status, start, end) = match parse_range(range, len) {
+/// Answer a request with `range` (the `Range` header) on a resource of
+/// `len` bytes whose bytes `read(start, count)` returns. `head`: headers
+/// only. Without a usable range: the whole resource up to [`MAX_WHOLE`],
+/// else 413 (see the module docs).
+fn serve(
+    len: u64,
+    range: Option<&str>,
+    head: bool,
+    read: impl FnOnce(u64, u64) -> Result<Vec<u8>>,
+) -> Reply {
+    let (status, start, count) = match parse_range(range, len) {
         RangeAsk::Unsatisfiable => {
             let mut r = Reply::error(416, "range not satisfiable");
             r.headers.push(("Content-Range", format!("bytes */{len}")));
             r.headers.push(("Accept-Ranges", "bytes".into()));
             return r;
         }
-        RangeAsk::Whole if len == 0 => (200, 0, 0),
-        RangeAsk::Whole if len <= MAX_CHUNK => (200, 0, len - 1),
-        RangeAsk::Whole => (206, 0, MAX_CHUNK - 1),
-        RangeAsk::Part { start, end } => (206, start, end),
+        RangeAsk::Whole if len > MAX_WHOLE && !head => {
+            let mut r = Reply::error(413, "too large to send whole: ask for byte ranges");
+            r.headers.push(("Accept-Ranges", "bytes".into()));
+            return r;
+        }
+        RangeAsk::Whole => (200, 0, len),
+        RangeAsk::Part { start, end } => (206, start, end - start + 1),
     };
-    let count = if len == 0 { 0 } else { end - start + 1 };
     let body = if head || count == 0 {
         Vec::new()
     } else {
-        match read_span(path, start, count) {
+        match read(start, count) {
             Ok(b) => b,
-            Err(_) => return Reply::error(500, "read failed"),
+            Err(e) => {
+                eprintln!("audio: read failed ({e:#})");
+                return Reply::error(500, "read failed");
+            }
         }
     };
-    // The file may have shrunk since `metadata` (Delete audio racing a
-    // request): describe what was actually read.
+    // The file may have shrunk since its length was taken (Delete audio
+    // racing a request): describe what was actually read.
     let sent = if head { count } else { body.len() as u64 };
     let mut headers = vec![
-        ("Content-Type", content_type(path).to_string()),
+        ("Content-Type", CONTENT_TYPE.to_string()),
         ("Accept-Ranges", "bytes".to_string()),
         ("Content-Length", sent.to_string()),
-        // A file can still change (a session writing it, Delete audio).
+        // A file can still change (a session writing it, Delete audio,
+        // Compress audio).
         ("Cache-Control", "no-cache".to_string()),
         ("X-Content-Type-Options", "nosniff".to_string()),
     ];
@@ -265,6 +287,131 @@ pub fn serve_file(path: &Path, range: Option<&str>, head: bool) -> Reply {
         headers,
         body,
     }
+}
+
+/// Serve the saved audio file at `path` (a WAV as it is, an Opus file as a
+/// decoded WAV) for a request with `range`; `head`: headers only.
+pub fn serve_file(path: &Path, range: Option<&str>, head: bool) -> Reply {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if AudioFormat::of_name(name) == Some(AudioFormat::Opus) {
+        return serve_opus(path, range, head);
+    }
+    let len = match std::fs::metadata(path) {
+        Ok(m) => m.len(),
+        Err(_) => return Reply::error(404, "not found"),
+    };
+    serve(len, range, head, |start, count| {
+        Ok(read_span(path, start, count)?)
+    })
+}
+
+// ---- Opus as a virtual WAV ---------------------------------------------------
+
+/// An Opus file read as a WAV: its reader and what the file was when the
+/// reader indexed it (a file still being written, or replaced, is
+/// re-indexed).
+struct OpusWav {
+    reader: OpusReader,
+    stamp: (u64, Option<std::time::SystemTime>),
+}
+
+impl OpusWav {
+    /// Samples of the virtual WAV (a WAV's 32-bit sizes cap them, as the
+    /// writers do).
+    fn samples(&self) -> u64 {
+        self.reader.total_samples().min(super::audio::MAX_SAMPLES)
+    }
+
+    fn len(&self) -> u64 {
+        super::audio::HEADER_LEN + self.samples() * 2
+    }
+
+    /// Bytes `start..start + count` of the virtual WAV; the file is closed
+    /// again however the read ends.
+    fn read(&mut self, start: u64, count: u64) -> Result<Vec<u8>> {
+        let out = self.read_open(start, count);
+        self.reader.close();
+        out
+    }
+
+    fn read_open(&mut self, start: u64, count: u64) -> Result<Vec<u8>> {
+        let header_len = super::audio::HEADER_LEN;
+        let end = (start + count).min(self.len());
+        let mut out = Vec::with_capacity((end - start.min(end)) as usize);
+        if start < header_len {
+            let header = super::audio::header((self.samples() * 2) as u32);
+            out.extend_from_slice(&header[start as usize..end.min(header_len) as usize]);
+        }
+        if end > header_len {
+            // Data bytes d0..d1 are samples d0 / 2 up to (d1 + 1) / 2.
+            let (d0, d1) = (start.max(header_len) - header_len, end - header_len);
+            let (s0, s1) = (d0 / 2, d1.div_ceil(2));
+            self.reader.seek(s0)?;
+            let mut samples = Vec::with_capacity((s1 - s0) as usize);
+            self.reader.read(&mut samples, (s1 - s0) as usize)?;
+            let skip = (d0 - s0 * 2) as usize;
+            let mut pcm = Vec::with_capacity(samples.len() * 2);
+            for s in samples {
+                pcm.extend_from_slice(&super::audio::to_i16(s).to_le_bytes());
+            }
+            let take = ((d1 - d0) as usize).min(pcm.len().saturating_sub(skip));
+            out.extend_from_slice(&pcm[skip..skip + take]);
+        }
+        Ok(out)
+    }
+}
+
+/// Opus readers by file, most recently used last (see the module docs).
+static OPUS_CACHE: Mutex<Vec<(PathBuf, Arc<Mutex<OpusWav>>)>> = Mutex::new(Vec::new());
+
+fn file_stamp(path: &Path) -> std::io::Result<(u64, Option<std::time::SystemTime>)> {
+    let meta = std::fs::metadata(path)?;
+    Ok((meta.len(), meta.modified().ok()))
+}
+
+/// The cached reader of `path`, or a new one (indexing the file) when there
+/// is none or the file changed since.
+fn opus_wav(path: &Path) -> Result<Arc<Mutex<OpusWav>>> {
+    let stamp = file_stamp(path)?;
+    {
+        let mut cache = OPUS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = cache.iter().position(|(p, _)| p == path) {
+            let (p, entry) = cache.remove(i);
+            let fresh = entry.lock().map(|w| w.stamp == stamp).unwrap_or(false);
+            if fresh {
+                cache.push((p, entry.clone()));
+                return Ok(entry);
+            }
+        }
+    }
+    let entry = Arc::new(Mutex::new(OpusWav {
+        reader: OpusReader::open(path)?,
+        stamp,
+    }));
+    let mut cache = OPUS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    cache.retain(|(p, _)| p != path);
+    if cache.len() >= OPUS_CACHE_SIZE {
+        cache.remove(0);
+    }
+    cache.push((path.to_path_buf(), entry.clone()));
+    Ok(entry)
+}
+
+/// Serve an Opus file as a decoded 16-bit WAV (see the module docs).
+fn serve_opus(path: &Path, range: Option<&str>, head: bool) -> Reply {
+    if !path.is_file() {
+        return Reply::error(404, "not found");
+    }
+    let entry = match opus_wav(path) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("audio: can't read {} ({e:#})", path.display());
+            return Reply::error(500, "cannot decode this audio file");
+        }
+    };
+    let mut wav = entry.lock().unwrap_or_else(|e| e.into_inner());
+    let len = wav.len();
+    serve(len, range, head, |start, count| wav.read(start, count))
 }
 
 /// Answer one request of the scheme: `method` (GET/HEAD), the URL `path`,
@@ -448,9 +595,6 @@ mod tests {
         assert_eq!(r.header("Content-Length"), Some("100"));
         assert_eq!(r.header("Content-Type"), Some("audio/wav"));
         assert_eq!(r.header("Accept-Ranges"), Some("bytes"));
-        let opus = file_of(tmp.path(), "audio.opus", 10);
-        let r = serve_file(&opus, Some("bytes=0-1"), false);
-        assert_eq!(r.header("Content-Type"), Some("audio/ogg"));
 
         // The probe WebKit sends first.
         let r = serve_file(&p, Some("bytes=0-1"), false);
@@ -481,18 +625,22 @@ mod tests {
     }
 
     #[test]
-    fn a_big_file_is_never_read_whole() {
+    fn a_request_without_range_gets_the_whole_file() {
         let tmp = tempfile::tempdir().unwrap();
+        // Over a chunk: before #248 this got only the first MiB, as a 206.
         let len = MAX_CHUNK as usize * 2 + 7;
         let p = file_of(tmp.path(), "audio.wav", len);
         let r = serve_file(&p, None, false);
-        assert_eq!(r.status, 206);
-        assert_eq!(r.body.len() as u64, MAX_CHUNK);
-        assert_eq!(
-            r.header("Content-Range"),
-            Some(format!("bytes 0-{}/{len}", MAX_CHUNK - 1).as_str())
-        );
+        assert_eq!(r.status, 200);
+        assert!(r.body == std::fs::read(&p).unwrap());
+        assert_eq!(r.header("Content-Length"), Some(len.to_string().as_str()));
+        assert_eq!(r.header("Content-Range"), None);
+        assert_eq!(r.header("Accept-Ranges"), Some("bytes"));
+        // A malformed range is ignored the same way.
+        assert_eq!(serve_file(&p, Some("bytes=x-"), false).status, 200);
+        // Ranges are still served in chunks.
         let r = serve_file(&p, Some("bytes=0-"), false);
+        assert_eq!(r.status, 206);
         assert_eq!(r.body.len() as u64, MAX_CHUNK);
         // The tail, from the middle of the last chunk.
         let from = len as u64 - 3;
@@ -502,6 +650,177 @@ mod tests {
             r.header("Content-Range"),
             Some(format!("bytes {from}-{}/{len}", len - 1).as_str())
         );
+        // An empty file.
+        let empty = file_of(tmp.path(), "audio-e.wav", 0);
+        let r = serve_file(&empty, None, false);
+        assert_eq!((r.status, r.body.len()), (200, 0));
+        assert_eq!(r.header("Content-Length"), Some("0"));
+    }
+
+    #[test]
+    fn too_big_to_send_whole_is_refused_not_cut() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("audio.wav");
+        // Sparse: nothing is written or read.
+        std::fs::File::create(&p)
+            .unwrap()
+            .set_len(MAX_WHOLE + 1)
+            .unwrap();
+        let r = serve_file(&p, None, false);
+        assert_eq!(r.status, 413);
+        assert_eq!(r.header("Accept-Ranges"), Some("bytes"));
+        // HEAD reads nothing: the length is fine to announce.
+        let r = serve_file(&p, None, true);
+        assert_eq!(r.status, 200);
+        assert_eq!(
+            r.header("Content-Length"),
+            Some((MAX_WHOLE + 1).to_string().as_str())
+        );
+        let r = serve_file(&p, Some("bytes=100-199"), false);
+        assert_eq!((r.status, r.body.len()), (206, 100));
+    }
+
+    // ---- Opus served as WAV (#248) ----
+
+    /// A finished `name` in `dir` holding `n` samples of a sweep with a
+    /// slow envelope (speech-like, no period), and its libopus decode.
+    fn opus_file(dir: &Path, name: &str, n: usize) -> (PathBuf, Vec<f32>) {
+        let path = dir.join(name);
+        let mut w = crate::archive::opus::OpusWriter::create_capped(&path, u64::MAX).unwrap();
+        let audio: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f32 / 16_000.0;
+                let f = 400.0 + 150.0 * (t * 0.7).sin();
+                (0.2 + 0.1 * (t * 2.0).sin()) * (t * f * std::f32::consts::TAU).sin()
+            })
+            .collect();
+        w.write(&audio).unwrap();
+        w.finish().unwrap();
+        let (pcm, complete) = crate::archive::opus::decode_file(&path).unwrap();
+        assert!(complete);
+        assert_eq!(pcm.len(), n);
+        (path, pcm)
+    }
+
+    /// The WAV of a full decode: what the scheme must serve.
+    fn wav_of(pcm: &[f32]) -> Vec<u8> {
+        crate::archive::audio::wav_bytes(pcm)
+    }
+
+    fn i16s(bytes: &[u8]) -> Vec<f32> {
+        bytes
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32)
+            .collect()
+    }
+
+    fn snr_db(want: &[f32], got: &[f32]) -> f64 {
+        let s: f64 = want.iter().map(|&x| (x as f64).powi(2)).sum();
+        let n: f64 = want
+            .iter()
+            .zip(got)
+            .map(|(&a, &b)| (a as f64 - b as f64).powi(2))
+            .sum();
+        10.0 * (s / n.max(1e-9)).log10()
+    }
+
+    #[test]
+    fn opus_is_served_as_the_wav_of_its_decode() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 40 s: 1.28 MB of WAV, more than a chunk.
+        let (p, pcm) = opus_file(tmp.path(), "audio.opus", 40 * 16_000 + 3);
+        let want = wav_of(&pcm);
+        let len = want.len() as u64;
+
+        // No range: the whole virtual WAV, exact.
+        let r = serve_file(&p, None, false);
+        assert_eq!(r.status, 200);
+        assert_eq!(r.header("Content-Type"), Some("audio/wav"));
+        assert_eq!(r.header("Content-Length"), Some(len.to_string().as_str()));
+        assert!(r.body == want, "whole body differs from a full decode");
+
+        // HEAD: the exact length, nothing decoded.
+        let r = serve_file(&p, None, true);
+        assert_eq!((r.status, r.body.len()), (200, 0));
+        assert_eq!(r.header("Content-Length"), Some(len.to_string().as_str()));
+
+        // The element's sequence: the probe, then open ranges one after the
+        // other — bit-exact with the full decode.
+        let r = serve_file(&p, Some("bytes=0-1"), false);
+        assert_eq!((r.status, r.body.as_slice()), (206, &b"RI"[..]));
+        let expected = format!("bytes 0-1/{len}");
+        assert_eq!(r.header("Content-Range"), Some(expected.as_str()));
+        let mut got = Vec::new();
+        let mut at = 0u64;
+        while at < len {
+            let r = serve_file(&p, Some(&format!("bytes={at}-")), false);
+            assert_eq!(r.status, 206);
+            let end = (at + MAX_CHUNK).min(len) - 1;
+            let range = format!("bytes {at}-{end}/{len}");
+            assert_eq!(r.header("Content-Range"), Some(range.as_str()));
+            let count = (end - at + 1).to_string();
+            assert_eq!(r.header("Content-Length"), Some(count.as_str()));
+            got.extend_from_slice(&r.body);
+            at = end + 1;
+        }
+        assert!(got == want, "chunked bytes differ from a full decode");
+
+        // Ranges across the header's end and on odd bytes, from the start.
+        let r = serve_file(&p, Some("bytes=40-49"), false);
+        assert_eq!(r.body, want[40..50]);
+        let r = serve_file(&p, Some("bytes=45-1044"), false);
+        assert_eq!(r.body, want[45..1045]);
+
+        // At and past the end.
+        let r = serve_file(&p, Some(&format!("bytes={len}-")), false);
+        assert_eq!(r.status, 416);
+        let expected = format!("bytes */{len}");
+        assert_eq!(r.header("Content-Range"), Some(expected.as_str()));
+        let r = serve_file(&p, Some(&format!("bytes={}-{}", len - 5, len + 100)), false);
+        assert_eq!(r.body.len(), 5);
+        let r = serve_file(&p, Some("bytes=-4"), false);
+        let expected = format!("bytes {}-{}/{len}", len - 4, len - 1);
+        assert_eq!(r.header("Content-Range"), Some(expected.as_str()));
+        assert_eq!(r.body.len(), 4);
+    }
+
+    #[test]
+    fn opus_seeks_decode_close_to_a_full_decode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (p, pcm) = opus_file(tmp.path(), "audio-remote.opus", 30 * 16_000);
+        let want = wav_of(&pcm);
+        // Random 64 KiB reads, backwards and forwards, odd offsets.
+        for start in [900_001u64, 120_000, 640_445, 44, 300_000, 900_000] {
+            let end = (start + 65_535).min(want.len() as u64 - 1);
+            let r = serve_file(&p, Some(&format!("bytes={start}-{end}")), false);
+            assert_eq!(r.status, 206);
+            assert_eq!(r.body.len() as u64, end - start + 1, "at {start}");
+            // Compared as PCM, on whole samples of the range.
+            let a = (start + (start % 2)) as usize;
+            let off = a - start as usize;
+            let n = (r.body.len() - off) / 2 * 2;
+            let db = snr_db(&i16s(&want[a..a + n]), &i16s(&r.body[off..off + n]));
+            assert!(db > 35.0, "at {start}: {db:.1} dB");
+        }
+    }
+
+    #[test]
+    fn broken_opus_is_an_error_and_a_changed_file_is_reindexed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let junk = file_of(tmp.path(), "audio-x.opus", 500);
+        assert_eq!(serve_file(&junk, Some("bytes=0-1"), false).status, 500);
+        let missing = tmp.path().join("audio-y.opus");
+        assert_eq!(serve_file(&missing, None, false).status, 404);
+
+        // Served once, then replaced by a longer file at the same path.
+        let (p, short) = opus_file(tmp.path(), "audio.opus", 16_000);
+        let r = serve_file(&p, None, true);
+        let expected = (44 + short.len() * 2).to_string();
+        assert_eq!(r.header("Content-Length"), Some(expected.as_str()));
+        std::fs::remove_file(&p).unwrap();
+        let (p, long) = opus_file(tmp.path(), "audio.opus", 3 * 16_000 + 1);
+        let r = serve_file(&p, None, false);
+        assert!(r.body == wav_of(&long));
     }
 
     const DATE: &str = "2026-09-24T10:00:00+02:00";

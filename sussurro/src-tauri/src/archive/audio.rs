@@ -139,7 +139,9 @@ pub fn is_audio_file_name(name: &str) -> bool {
             .is_some_and(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_lowercase()))
 }
 
-fn header(data_bytes: u32) -> [u8; HEADER_LEN as usize] {
+/// The canonical 44-byte header of a mono 16-bit 16 kHz WAV holding
+/// `data_bytes` of samples.
+pub(crate) fn header(data_bytes: u32) -> [u8; HEADER_LEN as usize] {
     let mut h = [0u8; HEADER_LEN as usize];
     h[0..4].copy_from_slice(b"RIFF");
     h[4..8].copy_from_slice(&(36u32.wrapping_add(data_bytes)).to_le_bytes());
@@ -167,7 +169,7 @@ fn patch_sizes(file: &mut File, data_bytes: u64) -> std::io::Result<()> {
 }
 
 /// f32 in [-1, 1] → 16-bit PCM (clamped).
-fn to_i16(s: f32) -> i16 {
+pub(crate) fn to_i16(s: f32) -> i16 {
     (s.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
 }
 

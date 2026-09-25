@@ -1791,8 +1791,9 @@ pub async fn archive_delete_audio(state: State<'_, AppState>, id: String) -> Res
 }
 
 /// One request of the saved-audio scheme (#142, [`archive::playback`]):
-/// the Audio tab's `<audio>` element streams an item's WAV through it, with
-/// range support. Only the main window may use it.
+/// the Audio tab's `<audio>` element streams an item's audio through it as
+/// a WAV (Opus files decoded, #248), with range support. Only the main
+/// window may use it.
 pub fn serve_audio(
     app: &AppHandle,
     webview: &str,
