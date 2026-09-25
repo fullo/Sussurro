@@ -175,11 +175,18 @@ export interface Settings {
   /** "Save audio" preselected in New (P9, #141). Off by default: WAV is
    *  saved only on request. Absent in settings from before 0.10. */
   save_audio?: boolean;
+  /** "Saved audio format" (#247, P16): the format of the audio runs save
+   *  from now on; items saved earlier keep theirs. Absent in settings from
+   *  before 0.11 (= the backend default, WAV until #248). */
+  saved_audio_format?: SavedAudioFormat;
   /** The notice before the first recording of other people (#136) was
    *  acknowledged with "Don't show this again". Absent or false (a fresh or
    *  cleared settings file) = show it. */
   meeting_notice_seen?: boolean;
 }
+
+/** Saved audio file format (#247): 16-bit WAV or Ogg Opus at 24 kb/s. */
+export type SavedAudioFormat = "wav" | "opus";
 
 export type SubtitlesMode = "on_request" | "always";
 

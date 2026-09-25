@@ -17,6 +17,10 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
+CMake builds the two bundled C/C++ libraries: whisper.cpp and libopus (saved
+audio as Ogg Opus, via the `opusic-sys` crate). Both are linked statically,
+so the app needs no extra runtime library.
+
 Linux builds are CPU-only by default (the whisper.cpp Vulkan backend needs
 the Vulkan SDK; see the target-specific dependencies in `Cargo.toml`).
 

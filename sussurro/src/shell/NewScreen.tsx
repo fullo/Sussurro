@@ -17,7 +17,8 @@ import {
 } from "../lib/engineRuns";
 import { baseName, formatClock, progressPercent } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
-import type { ItemType, LinkInfo, SystemAudioDevices, YtDlpStatus } from "../lib/types";
+import { savedAudioFormat } from "../lib/audio";
+import type { ItemType, LinkInfo, SavedAudioFormat, SystemAudioDevices, YtDlpStatus } from "../lib/types";
 import {
   ECHO_NOTE,
   NATIVE,
@@ -214,6 +215,7 @@ function OptionsCard({
         Tags and category are added to the item when it is saved.
       </p>
       <SaveAudio
+        format={savedAudioFormat(settings)}
         checked={saveAudioChoice(settings, defaults)}
         onChange={(saveAudio) => onChange({ ...defaults, saveAudio })}
       />
@@ -227,7 +229,15 @@ function OptionsCard({
 /** Off unless the user asks (or turned the default on in Settings →
  *  Archive). The note names the folder: Documents is often synced to
  *  iCloud Drive or OneDrive, and the audio would go with it. */
-function SaveAudio({ checked, onChange }: { checked: boolean; onChange: (on: boolean) => void }) {
+function SaveAudio({
+  format,
+  checked,
+  onChange,
+}: {
+  format: SavedAudioFormat;
+  checked: boolean;
+  onChange: (on: boolean) => void;
+}) {
   const [dir, setDir] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -247,7 +257,7 @@ function SaveAudio({ checked, onChange }: { checked: boolean; onChange: (on: boo
         </span>
       </label>
       <p className="sh-note" role="note">
-        {checked ? "Saved" : "When ticked, saved"} as <code>audio.wav</code> (one file per channel for a meeting) in
+        {checked ? "Saved" : "When ticked, saved"} as <code>audio.{format}</code> (one file per channel for a meeting) in
         the item's folder
         {dir ? (
           <>

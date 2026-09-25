@@ -1,19 +1,23 @@
 //! Saved audio of an item (0.10, #141, P9: only on request).
 //!
-//! **Layout** — mono 16-bit PCM WAV at 16 kHz (what the engine transcribes),
-//! one file per logical channel, in the item folder:
+//! **Layout** — mono 16 kHz audio (what the engine transcribes), one file
+//! per logical channel, in the item folder, in the format of the *Saved
+//! audio format* setting ([`AudioFormat`], #247): 16-bit PCM WAV, or Ogg
+//! Opus at 24 kb/s ([`super::opus`], about 10× smaller):
 //!
 //! ```text
 //! audio.wav                        one channel (mic, file, link)
 //! audio-mic.wav + audio-remote.wav browser meeting (#126)
 //! audio-mic.wav + audio-system.wav system audio + mic (#139)
+//! audio.opus, audio-mic.opus …     the same, as Ogg Opus
 //! ```
 //!
 //! Every file starts at the session's t = 0 (a channel that joins late is
 //! padded with silence), so a segment's `start_ms` is also its position in
 //! the file. While recording each channel is written as
-//! `audio-<channel>.wav`; when the session ends (or is recovered) with a
-//! single channel file, it is renamed `audio.wav`.
+//! `audio-<channel>.<ext>`; when the session ends (or is recovered) with a
+//! single channel file, it is renamed `audio.<ext>`. The format is chosen
+//! when a run starts; items saved earlier keep theirs.
 //!
 //! **Why mono per channel, not one stereo file**: the channels arrive
 //! independently (a browser's remote track may start late or stall), so
@@ -33,25 +37,28 @@
 //! [`MAX_DATA_BYTES`] of samples — at 32 000 bytes/s about 37 h 17 min per
 //! channel. A channel that reaches it stops being saved (the file stays a
 //! valid WAV and the transcription goes on); RF64 is not needed for any
-//! realistic session.
+//! realistic session. An Opus file has no such limit but takes the same
+//! duration cap ([`MAX_SAMPLES`]), so both formats behave alike.
 //!
 //! The frontmatter lists the files under the app-owned key [`AUDIO_KEY`]
-//! (`audio: [audio.wav]`), kept in [`ItemMeta::extra`] like the session
+//! (`audio: [audio.wav]` or `audio: [audio.opus]`: the extension records
+//! the format), kept in [`ItemMeta::extra`] like the session
 //! marker so a UI that round-trips only the fields it knows never drops it.
 //! What the UI shows, and what "Delete audio" removes, is the files actually
 //! in the folder: names are matched against a fixed pattern
 //! ([`is_audio_file_name`]), never taken from the frontmatter as paths.
 
+use super::opus::OpusWriter;
 use super::types::{Channel, ItemMeta};
 use anyhow::{bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Sample rate of saved audio: the engine's.
 pub const RATE: u32 = 16_000;
-/// The file of a single-channel item.
+/// The WAV file of a single-channel item.
 pub const AUDIO_FILE: &str = "audio.wav";
 /// Frontmatter key listing the item's audio files (app-owned).
 pub const AUDIO_KEY: &str = "audio";
@@ -64,28 +71,72 @@ const _: () = assert!(36 + MAX_DATA_BYTES <= u32::MAX as u64);
 /// Patch the header sizes after this many samples (10 s), so a file copied
 /// or synced mid-session is already a valid WAV of most of the audio.
 pub const PATCH_EVERY_SAMPLES: u64 = 10 * RATE as u64;
+/// Per-channel duration cap of either format: what a WAV can hold
+/// ([`MAX_DATA_BYTES`] of 16-bit samples, about 37 h 17 min).
+pub const MAX_SAMPLES: u64 = MAX_DATA_BYTES / 2;
 
-/// `audio-<channel>.wav`: the file a channel is written to while recording.
-pub fn channel_file_name(channel: Channel) -> String {
+/// The *Saved audio format* setting (#247, P16): the format of the files a
+/// run saves. Items saved earlier keep theirs; the file extension tells
+/// which is which.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioFormat {
+    /// Mono 16-bit PCM, 16 kHz (about 115 MB per hour).
+    ///
+    /// The default until the app plays Opus everywhere (#248): P16 makes
+    /// Opus the default then, and only this attribute moves.
+    #[default]
+    Wav,
+    /// Ogg Opus, mono, 24 kb/s (about 11 MB per hour).
+    Opus,
+}
+
+impl AudioFormat {
+    /// File extension, without the dot.
+    pub fn ext(self) -> &'static str {
+        match self {
+            AudioFormat::Wav => "wav",
+            AudioFormat::Opus => "opus",
+        }
+    }
+
+    /// The format of an audio file name ([`is_audio_file_name`]). Pure.
+    pub fn of_name(name: &str) -> Option<AudioFormat> {
+        [AudioFormat::Wav, AudioFormat::Opus]
+            .into_iter()
+            .find(|f| name.strip_suffix(f.ext()).is_some_and(|s| s.ends_with('.')))
+    }
+
+    /// `audio.<ext>`: the file of a single-channel item.
+    pub fn single_file_name(self) -> String {
+        format!("audio.{}", self.ext())
+    }
+}
+
+/// `audio-<channel>.<ext>`: the file a channel is written to while
+/// recording.
+pub fn channel_file_name(channel: Channel, format: AudioFormat) -> String {
     let c = match channel {
         Channel::Mic => "mic",
         Channel::Remote => "remote",
         Channel::System => "system",
         Channel::File => "file",
     };
-    format!("audio-{c}.wav")
+    format!("audio-{c}.{}", format.ext())
 }
 
-/// `audio.wav` or `audio-<lowercase letters>.wav`: the only names the app
-/// treats as an item's audio (so nothing else in the folder is ever listed,
-/// sized or trashed as audio). Pure.
+/// `audio.<ext>` or `audio-<lowercase letters>.<ext>`, with `<ext>` `wav`
+/// or `opus`: the only names the app treats as an item's audio (so nothing
+/// else in the folder is ever listed, sized or trashed as audio). Pure.
 pub fn is_audio_file_name(name: &str) -> bool {
-    if name == AUDIO_FILE {
-        return true;
-    }
-    name.strip_prefix("audio-")
-        .and_then(|r| r.strip_suffix(".wav"))
-        .is_some_and(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_lowercase()))
+    let Some(format) = AudioFormat::of_name(name) else {
+        return false;
+    };
+    let stem = &name[..name.len() - format.ext().len() - 1];
+    stem == "audio"
+        || stem
+            .strip_prefix("audio-")
+            .is_some_and(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_lowercase()))
 }
 
 fn header(data_bytes: u32) -> [u8; HEADER_LEN as usize] {
@@ -252,6 +303,74 @@ impl WavWriter {
     }
 }
 
+/// The writer of one channel's file, in either format: what the engine's
+/// audio output ([`crate::engine::audio_out`]) drives. Both keep the same
+/// clock (samples written), cap and failure rules.
+pub enum AudioWriter {
+    Wav(WavWriter),
+    Opus(OpusWriter),
+}
+
+impl AudioWriter {
+    /// Create `path` in `format` — never over an existing file — with a
+    /// duration cap of `max_samples` (at most [`MAX_SAMPLES`]).
+    pub fn create(path: &Path, format: AudioFormat, max_samples: u64) -> Result<Self> {
+        let max_samples = max_samples.min(MAX_SAMPLES);
+        Ok(match format {
+            AudioFormat::Wav => AudioWriter::Wav(WavWriter::create_capped(path, max_samples * 2)?),
+            AudioFormat::Opus => AudioWriter::Opus(OpusWriter::create_capped(path, max_samples)?),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        match self {
+            AudioWriter::Wav(w) => w.path(),
+            AudioWriter::Opus(w) => w.path(),
+        }
+    }
+
+    /// Samples written so far: the file's position on the session clock.
+    pub fn samples(&self) -> u64 {
+        match self {
+            AudioWriter::Wav(w) => w.samples(),
+            AudioWriter::Opus(w) => w.samples(),
+        }
+    }
+
+    /// The cap was reached: further samples are dropped.
+    pub fn is_full(&self) -> bool {
+        match self {
+            AudioWriter::Wav(w) => w.is_full(),
+            AudioWriter::Opus(w) => w.is_full(),
+        }
+    }
+
+    /// Append samples (up to the cap). Returns how many were written.
+    pub fn write(&mut self, samples: &[f32]) -> Result<usize> {
+        match self {
+            AudioWriter::Wav(w) => w.write(samples),
+            AudioWriter::Opus(w) => w.write(samples),
+        }
+    }
+
+    /// Append `n` samples of silence (up to the cap).
+    pub fn write_silence(&mut self, n: u64) -> Result<u64> {
+        match self {
+            AudioWriter::Wav(w) => w.write_silence(n),
+            AudioWriter::Opus(w) => w.write_silence(n),
+        }
+    }
+
+    /// Close the file (final header, or the end of the Opus stream) and
+    /// sync it to disk.
+    pub fn finish(self) -> Result<()> {
+        match self {
+            AudioWriter::Wav(w) => w.finish().map(drop),
+            AudioWriter::Opus(w) => w.finish().map(drop),
+        }
+    }
+}
+
 /// Make a WAV left by a crash valid again: sizes recomputed from the file
 /// length (a trailing odd byte dropped), or a fresh empty header if the
 /// crash hit before the header was complete. Only the app's own canonical
@@ -298,6 +417,17 @@ pub fn repair(path: &Path) -> Result<u64> {
     Ok(data)
 }
 
+/// [`repair`] a WAV or [`super::opus::repair`] an Opus file, by its name.
+/// Returns the samples kept.
+pub fn repair_any(path: &Path) -> Result<u64> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    match AudioFormat::of_name(name) {
+        Some(AudioFormat::Wav) => repair(path).map(|bytes| bytes / 2),
+        Some(AudioFormat::Opus) => super::opus::repair(path),
+        None => bail!("{} is not a saved audio file", path.display()),
+    }
+}
+
 /// The item's audio files present in `dir`, by name, sorted.
 pub fn files_in(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -314,14 +444,16 @@ pub fn files_in(dir: &Path) -> Vec<String> {
 }
 
 /// One channel's file alone (`audio-mic.wav`, no `audio.wav`) becomes
-/// `audio.wav`. Returns the files present afterwards. A failed rename keeps
-/// the channel name — the file is still listed and playable.
+/// `audio.wav` (`audio-mic.opus` → `audio.opus`). Returns the files present
+/// afterwards. A failed rename keeps the channel name — the file is still
+/// listed and playable.
 pub fn settle_names(dir: &Path) -> Vec<String> {
     let files = files_in(dir);
     if let [only] = files.as_slice() {
-        if only != AUDIO_FILE {
-            match std::fs::rename(dir.join(only), dir.join(AUDIO_FILE)) {
-                Ok(()) => return vec![AUDIO_FILE.to_string()],
+        let single = AudioFormat::of_name(only).map(AudioFormat::single_file_name);
+        if let Some(single) = single.filter(|s| s != only) {
+            match std::fs::rename(dir.join(only), dir.join(&single)) {
+                Ok(()) => return vec![single],
                 Err(e) => eprintln!("archive: keeping {only} ({e})"),
             }
         }
@@ -329,14 +461,14 @@ pub fn settle_names(dir: &Path) -> Vec<String> {
     files
 }
 
-/// After a crash: [`repair`] every audio file of the item folder, then
+/// After a crash: [`repair_any`] every audio file of the item folder, then
 /// [`settle_names`]. Returns the files to record in the frontmatter.
 pub fn recover_files(dir: &Path) -> Vec<String> {
     for name in files_in(dir) {
-        match repair(&dir.join(&name)) {
-            Ok(bytes) => eprintln!(
+        match repair_any(&dir.join(&name)) {
+            Ok(samples) => eprintln!(
                 "archive: {name} repaired ({:.1} s of audio kept)",
-                bytes as f64 / 2.0 / RATE as f64
+                samples as f64 / RATE as f64
             ),
             Err(e) => eprintln!("archive: {name} left as is ({e:#})"),
         }
@@ -497,12 +629,31 @@ mod tests {
 
     #[test]
     fn names() {
-        assert_eq!(channel_file_name(Channel::Mic), "audio-mic.wav");
-        assert_eq!(channel_file_name(Channel::Remote), "audio-remote.wav");
-        assert_eq!(channel_file_name(Channel::System), "audio-system.wav");
-        for ok in ["audio.wav", "audio-mic.wav", "audio-system.wav"] {
+        use AudioFormat::{Opus, Wav};
+        assert_eq!(channel_file_name(Channel::Mic, Wav), "audio-mic.wav");
+        assert_eq!(channel_file_name(Channel::Remote, Wav), "audio-remote.wav");
+        assert_eq!(channel_file_name(Channel::System, Wav), "audio-system.wav");
+        assert_eq!(channel_file_name(Channel::Mic, Opus), "audio-mic.opus");
+        assert_eq!(
+            channel_file_name(Channel::Remote, Opus),
+            "audio-remote.opus"
+        );
+        assert_eq!(Wav.single_file_name(), AUDIO_FILE);
+        assert_eq!(Opus.single_file_name(), "audio.opus");
+        for ok in [
+            "audio.wav",
+            "audio-mic.wav",
+            "audio-system.wav",
+            "audio.opus",
+            "audio-mic.opus",
+            "audio-remote.opus",
+        ] {
             assert!(is_audio_file_name(ok), "{ok}");
         }
+        assert_eq!(AudioFormat::of_name("audio-mic.opus"), Some(Opus));
+        assert_eq!(AudioFormat::of_name("audio.wav"), Some(Wav));
+        assert_eq!(AudioFormat::of_name("audio.ogg"), None);
+        assert_eq!(AudioFormat::of_name("audioopus"), None);
         for bad in [
             "audio-.wav",
             "audio-Mic.wav",
@@ -511,6 +662,14 @@ mod tests {
             "audio.mp3",
             "transcript.md",
             "audio-mic.wav.tmp",
+            "audio-.opus",
+            "audio-Mic.opus",
+            "audio.ogg",
+            "audio.opus.tmp",
+            "audioopus",
+            "audio-mic.wav.opus",
+            "xaudio.opus",
+            ".opus",
         ] {
             assert!(!is_audio_file_name(bad), "{bad}");
         }
@@ -682,11 +841,86 @@ mod tests {
     }
 
     #[test]
+    fn a_lone_opus_channel_becomes_audio_opus_and_both_formats_are_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        AudioWriter::create(&d.join("audio-mic.opus"), AudioFormat::Opus, MAX_SAMPLES)
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(settle_names(d), vec!["audio.opus"]);
+        // An item folder holding a WAV the user kept next to it: both are
+        // its audio (sized, trashed by Delete audio), nothing is renamed.
+        std::fs::write(d.join("audio-x.wav"), header(0)).unwrap();
+        assert_eq!(settle_names(d), vec!["audio-x.wav", "audio.opus"]);
+        assert_eq!(files_with_sizes(d).len(), 2);
+    }
+
+    #[test]
+    fn writer_of_either_format_keeps_the_clock_and_the_duration_cap() {
+        assert_eq!(MAX_SAMPLES / RATE as u64 / 60, 37 * 60 + 16);
+        let dir = tempfile::tempdir().unwrap();
+        for format in [AudioFormat::Wav, AudioFormat::Opus] {
+            let path = dir.path().join(channel_file_name(Channel::Mic, format));
+            let mut w = AudioWriter::create(&path, format, 1_000).unwrap();
+            assert_eq!(w.path(), path);
+            assert_eq!(w.write_silence(400).unwrap(), 400);
+            assert_eq!(w.write(&tone(700)).unwrap(), 600, "{format:?}");
+            assert_eq!(w.samples(), 1_000);
+            assert!(w.is_full());
+            w.finish().unwrap();
+            // A finished file needs no repair and reports what it holds.
+            assert_eq!(repair_any(&path).unwrap(), 1_000, "{format:?}");
+        }
+        assert!(repair_any(&dir.path().join("transcript.md")).is_err());
+    }
+
+    /// Both channels of a crashed Opus meeting are closed at startup and
+    /// listed (two channels keep their names).
+    #[test]
+    fn recover_files_closes_every_opus_channel() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        for ch in [Channel::Mic, Channel::Remote] {
+            let mut w = AudioWriter::create(
+                &d.join(channel_file_name(ch, AudioFormat::Opus)),
+                AudioFormat::Opus,
+                MAX_SAMPLES,
+            )
+            .unwrap();
+            w.write(&tone(3 * RATE as usize + 400)).unwrap();
+            std::mem::forget(w);
+        }
+        assert_eq!(
+            recover_files(d),
+            vec!["audio-mic.opus", "audio-remote.opus"]
+        );
+        for name in ["audio-mic.opus", "audio-remote.opus"] {
+            let (pcm, complete) = super::super::opus::decode_file(&d.join(name)).unwrap();
+            assert!(complete, "{name}");
+            // Three whole pages (3 s) minus the encoder's lookahead.
+            assert_eq!(pcm.len(), (3 * 48_000 - 312) / 3, "{name}");
+        }
+    }
+
+    #[test]
+    fn format_setting_serializes_in_lowercase() {
+        assert_eq!(AudioFormat::default(), AudioFormat::Wav);
+        assert_eq!(serde_json::to_value(AudioFormat::Opus).unwrap(), "opus");
+        let f: AudioFormat = serde_json::from_str("\"wav\"").unwrap();
+        assert_eq!(f, AudioFormat::Wav);
+        assert!(serde_json::from_str::<AudioFormat>("\"mp3\"").is_err());
+    }
+
+    #[test]
     fn frontmatter_list_accepts_only_audio_names() {
         let mut m = ItemMeta::default();
         assert!(listed(&m).is_empty());
         set_listed(&mut m, &["audio-mic.wav".into(), "audio-remote.wav".into()]);
         assert_eq!(listed(&m), vec!["audio-mic.wav", "audio-remote.wav"]);
+        set_listed(&mut m, &["audio.opus".into()]);
+        assert_eq!(listed(&m), vec!["audio.opus"]);
+        set_listed(&mut m, &["audio-mic.wav".into(), "audio-remote.wav".into()]);
         // Round-trips through the frontmatter.
         let back: ItemMeta = serde_json::from_value(serde_json::to_value(&m).unwrap()).unwrap();
         assert_eq!(listed(&back), listed(&m));

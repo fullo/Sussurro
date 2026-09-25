@@ -13,6 +13,10 @@ setx CARGO_TARGET_DIR "C:\sbuild"       # SHORT path — see note below
 Then open a **new** terminal (so the `setx` variables are picked up) and
 build (see below).
 
+CMake builds the two bundled C/C++ libraries: whisper.cpp and libopus (saved
+audio as Ogg Opus, via the `opusic-sys` crate). Both are linked statically (libopus with the
+`/MD` runtime, like Rust's default), so the app needs no extra runtime library.
+
 ## GPU notes
 
 - Transcription runs on the GPU via **Vulkan** (NVIDIA/AMD/Intel alike). The

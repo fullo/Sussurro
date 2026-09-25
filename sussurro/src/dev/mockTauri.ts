@@ -89,6 +89,7 @@ const settings: Settings = {
   subtitles: "on_request",
   extension_token: "",
   save_audio: false,
+  saved_audio_format: "wav",
   // #136: `?notice=seen` skips the recording notice.
   meeting_notice_seen: params.get("notice") === "seen",
 };
@@ -154,9 +155,18 @@ interface Stored {
   audio?: AudioFile[];
 }
 
-/** A run's saved audio (#141): 16 kHz 16-bit mono, 32 000 bytes/s. */
+/** A run's saved audio (#141): 16 kHz 16-bit mono WAV, 32 000 bytes/s,
+ *  or Ogg Opus at 24 kb/s (#247), ~3 000 bytes/s — by the file names. */
 const mockAudio = (seconds: number, names = ["audio.wav"]): AudioFile[] =>
-  names.map((name) => ({ name, bytes: 44 + Math.round(seconds) * 32_000 }));
+  names.map((name) => ({
+    name,
+    bytes: name.endsWith(".opus") ? 4_000 + Math.round(seconds) * 3_000 : 44 + Math.round(seconds) * 32_000,
+  }));
+/** File names of a new run's audio, in the Saved audio format (#247). */
+const runAudioNames = (channels?: string[]): string[] => {
+  const ext = settings.saved_audio_format === "opus" ? "opus" : "wav";
+  return channels ? channels.map((c) => `audio-${c}.${ext}`) : [`audio.${ext}`];
+};
 
 /** Whether a run saves its audio: New's choice, else the per-app default. */
 const runSavesAudio = (a: Args): boolean => (a.saveAudio as boolean | undefined) ?? !!settings.save_audio;
@@ -742,7 +752,7 @@ function stopMic(system = false): number {
     s.meta.title = title;
     s.id = m.itemId.replace("untitled", m.system ? "riunione-audio-di-sistema" : "nota-dal-microfono");
     s.meta.duration = `00:00:${String(Math.round((Date.now() - m.started) / 1000) % 60).padStart(2, "0")}`;
-    if (m.saveAudio) s.audio = mockAudio((Date.now() - m.started) / 1000, m.system ? ["audio-mic.wav", "audio-system.wav"] : undefined);
+    if (m.saveAudio) s.audio = mockAudio((Date.now() - m.started) / 1000, runAudioNames(m.system ? ["mic", "system"] : undefined));
     ev("engine-done", { session_id: m.id, item_id: s.id, item_type: s.meta.type, title, text: "", segments: s.segments.length, duration_s: (Date.now() - m.started) / 1000 });
   }, 1200);
   return m.id;
@@ -803,7 +813,7 @@ async function transcribeFile(
   const s = find(itemId)!;
   s.recording = false;
   s.meta.duration = "00:03:12";
-  if (saveAudio) s.audio = mockAudio(total);
+  if (saveAudio) s.audio = mockAudio(total, runAudioNames());
   if (voices) labelVoices(s);
   // A transcription's file path is remembered on this machine (#134).
   if (itemType === "transcription") s.sourceFile = "available";
@@ -879,7 +889,7 @@ function startLink(url: string, title: string | null, language: string, identify
     const s = find(itemId)!;
     s.recording = false;
     s.meta.duration = "00:02:24";
-    if (saveAudio) s.audio = mockAudio(144);
+    if (saveAudio) s.audio = mockAudio(144, runAudioNames());
     if (identify) labelVoices(s);
     linkRun = null;
     ev("engine-done", { session_id: id, item_id: itemId, item_type: "transcription", title: name, text: "", segments: 6, duration_s: 144 });
@@ -1730,7 +1740,7 @@ function mockAudioUrl(path: string): string {
   const s = find(path.slice(0, cut));
   const file = path.slice(cut + 1);
   const rate = 8000;
-  const lines = (s?.segments ?? []).filter((x) => file === "audio.wav" || file === `audio-${x.channel ?? "mic"}.wav`);
+  const lines = (s?.segments ?? []).filter((x) => /^audio\.(wav|opus)$/.test(file) || file.replace(/\.opus$/, ".wav") === `audio-${x.channel ?? "mic"}.wav`);
   const endMs = Math.min(5 * 60_000, Math.max(2000, ...(s?.segments ?? []).map((x) => x.end_ms + 1000)));
   const n = Math.round((endMs / 1000) * rate);
   const buf = new DataView(new ArrayBuffer(44 + n * 2));
