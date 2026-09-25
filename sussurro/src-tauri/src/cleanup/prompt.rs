@@ -319,7 +319,7 @@ pub fn build_messages(
         messages.push(json!({"role": "assistant",
             "content": "So, we should review the quarterly numbers, right."}));
         messages.push(json!({"role": "user",
-            "content": "allora ehm, oggi vediamo il eh nuovo progetto, ok."}));
+            "content": "ehm allora, oggi vediamo il eh nuovo progetto, ok."}));
         messages.push(json!({"role": "assistant",
             "content": "Allora, oggi vediamo il nuovo progetto, ok."}));
     }
@@ -872,6 +872,101 @@ mod tests {
         s.language = "fr".into();
         let msgs = build_messages_with_context(&s, None, ITALIAN[2]).unwrap();
         assert!(msgs[0]["content"].as_str().unwrap().contains("Typical French"));
+    }
+
+    /// Lowercase words of `s`, punctuation dropped.
+    fn words_of(s: &str) -> Vec<String> {
+        s.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric() && c != '\'')
+            .filter(|w| !w.is_empty())
+            .map(String::from)
+            .collect()
+    }
+
+    /// Light cleanup of the fixed Italian and English sentences on a real
+    /// model: hesitation sounds and repeated words go, the words that carry
+    /// the meaning stay, the language stays, the guard keeps the output.
+    /// Discourse fillers ("cioè", "tipo", "like"…) are reported, not
+    /// asserted: whether they are fillers depends on the sentence. Language
+    /// on "auto", as a default install dictates. Nothing is downloaded:
+    ///
+    /// ```sh
+    /// # Ollama (default URL http://localhost:11434, API ollama)
+    /// SUSSURRO_TEST_CLEANUP_MODEL=llama3.2:3b \
+    ///   cargo test live_light_cleanup_removes_fillers -- --ignored --nocapture
+    /// # any OpenAI-compatible server, e.g. the bundled model on llama-server
+    /// # (`llama-server -m Qwen3-1.7B-Q8_0.gguf --reasoning off --port 8091`)
+    /// SUSSURRO_TEST_CLEANUP_API=openai SUSSURRO_TEST_CLEANUP_URL=http://127.0.0.1:8091 \
+    ///   SUSSURRO_TEST_CLEANUP_MODEL=qwen3 \
+    ///   cargo test live_light_cleanup_removes_fillers -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore]
+    fn live_light_cleanup_removes_fillers() {
+        use crate::settings::CleanupApi;
+        let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+        let api = match env("SUSSURRO_TEST_CLEANUP_API", "ollama").as_str() {
+            "openai" => CleanupApi::Openai,
+            _ => CleanupApi::Ollama,
+        };
+        let profile = crate::llm::LlmProfile::new(
+            "live",
+            "Live",
+            api,
+            &env("SUSSURRO_TEST_CLEANUP_URL", "http://localhost:11434"),
+            "",
+            &env("SUSSURRO_TEST_CLEANUP_MODEL", "llama3.2:3b"),
+        );
+        let mut settings = cfg(CleanupLevel::Light);
+        settings.language = "auto".into();
+
+        // (sentence, words that must stay, sounds/repeats that must go,
+        //  discourse fillers to report)
+        type Case = (&'static str, &'static [&'static str], &'static [&'static str], &'static [&'static str]);
+        let cases: [Case; 10] = [
+            (ITALIAN[0], &["documento", "pronto", "costi"], &["ehm", "il il"], &[]),
+            (ITALIAN[1], &["riunione", "giovedì", "tutti"], &["eh"], &["praticamente", "cioè"]),
+            (ITALIAN[2], &["cliente", "non", "convinto", "prezzo"], &["uhm"], &["diciamo", "tipo"]),
+            (ITALIAN[3], &["domani", "bozza", "marco", "pensa"], &["ehm", "la la"], &[]),
+            (ITALIAN[4], &["problema", "server", "fermato", "due", "settimana"], &[], &["cioè"]),
+            (ITALIAN[5], &["tre", "chili", "mele", "torta", "domenica"], &[], &[]),
+            (ENGLISH[0], &["quote", "client", "tomorrow"], &["um", "uh", "the the"], &["basically"]),
+            (ENGLISH[1], &["report", "ready", "budget", "missing"], &["uh"], &["like", "you know"]),
+            (ENGLISH[2], &["meeting", "thursday", "everyone"], &["uh"], &["i mean"]),
+            (ENGLISH[3], &["i like", "would like", "design", "blue", "header"], &[], &[]),
+        ];
+        // Sampling runs at the cleanup's temperature: repeat to see how
+        // stable a result is (SUSSURRO_TEST_CLEANUP_RUNS, default 1).
+        let runs: usize = env("SUSSURRO_TEST_CLEANUP_RUNS", "1").parse().unwrap_or(1);
+        let mut failures = Vec::new();
+        for (raw, keep, go, soft) in (0..runs).flat_map(|_| cases) {
+            let language = transcript_language(&settings.language, raw);
+            let messages = build_messages(&settings, None, raw).unwrap();
+            let started = std::time::Instant::now();
+            let out = crate::cleanup::ollama::chat(&profile, &messages).unwrap();
+            let out = out.trim();
+            let text = format!(" {} ", words_of(out).join(" "));
+            let has = |w: &str| text.contains(&format!(" {w} "));
+            let kept_soft: Vec<&str> = soft.iter().copied().filter(|w| has(w)).collect();
+            println!(
+                "[{:?}, {:.1} s] {raw}\n  → {out}\n  discourse fillers kept: {kept_soft:?}",
+                language,
+                started.elapsed().as_secs_f32()
+            );
+            let mut problems = Vec::new();
+            problems.extend(keep.iter().filter(|w| !has(w)).map(|w| format!("lost “{w}”")));
+            problems.extend(go.iter().filter(|w| has(w)).map(|w| format!("kept “{w}”")));
+            if looks_hallucinated(&settings.cleanup_level, raw, out) {
+                problems.push("the guard would drop it".into());
+            }
+            if guess_language(out).is_some_and(|l| Some(l) != language) {
+                problems.push(format!("translated ({:?})", guess_language(out)));
+            }
+            if !problems.is_empty() {
+                failures.push(format!("{raw}\n  → {out}\n  {}", problems.join(", ")));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]
