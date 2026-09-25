@@ -226,3 +226,83 @@ fn word_recall(said: &str, heard: &str) -> f32 {
     let said = words(said);
     said.iter().filter(|w| heard.contains(*w)).count() as f32 / said.len().max(1) as f32
 }
+
+/// Read aloud end to end (#256): a note in a temporary archive becomes a
+/// saved, marked `speech.opus` through the real engine, and the Opus file
+/// decodes through the scheme's reader. Uses the first language of
+/// `SUSSURRO_TTS_LANG` and a short text, so it stays under a minute.
+#[test]
+#[ignore = "needs the downloaded read-aloud models (SUSSURRO_TTS_MODELS)"]
+fn live_read_aloud_saves_a_marked_speech_file() {
+    use super::read_aloud::{self, Jobs, PocketSpeaker, Request, Target};
+    let dir = models_dir();
+    let l = languages()[0];
+    let threads = std::env::var("SUSSURRO_TTS_THREADS")
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(2);
+    let tmp = tempfile::tempdir().unwrap();
+    let archive = tmp.path();
+    let body = if l.code == "it" {
+        "# Promemoria\n\nDomani alle 9:30 chiamo Anna per il budget di 1.200 euro.\n"
+    } else {
+        "# Reminder\n\nTomorrow at 9:30 I call Anna about the $1,200 budget.\n"
+    };
+    let meta = crate::archive::ItemMeta {
+        title: "Read me".into(),
+        date: "2026-09-26T10:00:00+02:00".into(),
+        language: l.code.into(),
+        ..Default::default()
+    };
+    let id = crate::archive::create_item(archive, &meta, &Default::default()).unwrap();
+    let item_dir = crate::archive::store::existing_item_dir(archive, &id).unwrap();
+    std::fs::write(
+        item_dir.join("transcript.md"),
+        format!("---\ntype: note\ntitle: Read me\nlanguage: {}\n---\n{body}", l.code),
+    )
+    .unwrap();
+    let speaker = PocketSpeaker {
+        service: super::service::global(),
+        models_dir: &dir,
+        options: PocketOptions {
+            threads,
+            ..PocketOptions::default()
+        },
+    };
+    let voices = std::collections::BTreeMap::new();
+    let started = Instant::now();
+    let out = read_aloud::run(
+        &Jobs::default(),
+        &speaker,
+        &Request {
+            archive,
+            id: &id,
+            document: None,
+            language: None,
+            voices: &voices,
+            target: Target::Save,
+        },
+        &mut |s| eprintln!("read aloud: {}/{}", s.done, s.total),
+    )
+    .unwrap();
+    let path = item_dir.join(&out.file);
+    eprintln!(
+        "{}: {:.1} s of speech in {:.1} s → {} ({} bytes)",
+        l.label,
+        out.seconds,
+        started.elapsed().as_secs_f32(),
+        path.display(),
+        std::fs::metadata(&path).unwrap().len()
+    );
+    assert_eq!(out.file, "speech.opus");
+    assert!(out.seconds > 2.0 && out.seconds < 30.0, "{}", out.seconds);
+    assert!(crate::archive::opus::verify(&path).unwrap() > 0);
+    let tags = crate::archive::opus::read_tags(&path).unwrap();
+    assert!(tags.contains(&("SYNTHETIC".into(), "1".into())), "{tags:?}");
+    let st = read_aloud::statuses(archive, &id).unwrap();
+    assert!(st[0].recorded && !st[0].stale);
+    if let Ok(keep) = std::env::var("SUSSURRO_TTS_OUT") {
+        let to = PathBuf::from(keep).join(format!("live-read-aloud-{}.opus", l.code));
+        let _ = std::fs::copy(&path, to);
+    }
+}
