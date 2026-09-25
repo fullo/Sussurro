@@ -16,7 +16,8 @@
 //! goes through the archive's own id validation and folder confinement
 //! ([`super::store::existing_item_dir`]), the file name must be one of the
 //! audio names of #141 ([`is_audio_file_name`]: `audio.wav` or
-//! `audio-<letters>.wav`), and the file must be a regular file (not a link)
+//! `audio-<letters>.wav`, and their `.opus` twins of #247), and the file
+//! must be a regular file (not a link)
 //! directly inside that item folder. Nothing else in the archive, and
 //! nothing outside it, can be read through the scheme.
 //!
@@ -40,7 +41,17 @@ pub const SCHEME: &str = "sussurro-audio";
 /// media elements send) gets this much; the element asks for the rest as it
 /// plays. 1 MiB is about 33 s of 16 kHz 16-bit mono.
 pub const MAX_CHUNK: u64 = 1024 * 1024;
-const CONTENT_TYPE: &str = "audio/wav";
+
+/// The media type of a saved audio file, by its extension. An Opus file
+/// (#247) is served as it is, `audio/ogg`, which WebView2 and WebKit from
+/// macOS 15.4 play; the scheme will serve it decoded as WAV everywhere
+/// with #248 (E15).
+fn content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("opus") => "audio/ogg",
+        _ => "audio/wav",
+    }
+}
 
 /// Decode `%XX` escapes (UTF-8). `+` is kept as is (a path, not a form).
 /// Refuses malformed escapes, invalid UTF-8 and NUL. Pure.
@@ -238,7 +249,7 @@ pub fn serve_file(path: &Path, range: Option<&str>, head: bool) -> Reply {
     // request): describe what was actually read.
     let sent = if head { count } else { body.len() as u64 };
     let mut headers = vec![
-        ("Content-Type", CONTENT_TYPE.to_string()),
+        ("Content-Type", content_type(path).to_string()),
         ("Accept-Ranges", "bytes".to_string()),
         ("Content-Length", sent.to_string()),
         // A file can still change (a session writing it, Delete audio).
@@ -437,6 +448,9 @@ mod tests {
         assert_eq!(r.header("Content-Length"), Some("100"));
         assert_eq!(r.header("Content-Type"), Some("audio/wav"));
         assert_eq!(r.header("Accept-Ranges"), Some("bytes"));
+        let opus = file_of(tmp.path(), "audio.opus", 10);
+        let r = serve_file(&opus, Some("bytes=0-1"), false);
+        assert_eq!(r.header("Content-Type"), Some("audio/ogg"));
 
         // The probe WebKit sends first.
         let r = serve_file(&p, Some("bytes=0-1"), false);
@@ -518,6 +532,9 @@ mod tests {
             dir.join("audio.wav")
         );
         assert!(resolve(&archive, &id, "audio-mic.wav").is_ok());
+        // Opus files (#247) are audio names too.
+        file_of(&dir, "audio-mic.opus", 64);
+        assert!(resolve(&archive, &id, "audio-mic.opus").is_ok());
         // Not an audio name, even though the file exists.
         assert!(resolve(&archive, &id, "transcript.md").is_err());
         // Absent channel.
