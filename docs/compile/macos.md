@@ -25,10 +25,14 @@ npm run tauri build    # production bundle (.dmg + .app)
 cd src-tauri && cargo test   # headless test suite
 ```
 
+Without the updater signing key, `tauri build` stops at the updater
+artifacts: add `-- --config '{"bundle":{"createUpdaterArtifacts":false}}'`
+(details in [development.md](../development.md#build--run)).
+
 ### The llama-server sidecar (release bundles)
 
 Release bundles ship a pinned upstream `llama-server` (llama.cpp, Metal) for
-the optional Qwen3-ASR engine (plan E9). It is not in git: fetch it once, and
+the optional Qwen3-ASR engine and the *Local (bundled)* LLM profile (plan E9). It is not in git: fetch it once, and
 again whenever `src-tauri/sidecar/llama-server.lock.json` changes — the
 script downloads the pinned asset, checks its SHA-256 and refuses anything
 else:
@@ -70,6 +74,11 @@ macOS will prompt for two permissions on first use; both are required:
 - **Accessibility** (System Settings → Privacy & Security → Accessibility) —
   needed to synthesize the ⌘V paste into other apps. If text never appears,
   re-check this permission for Sussurro (or your terminal, in dev mode).
+
+Two more are asked when first needed: **Documents** (Files & Folders), when
+the first-run setup creates the archive in `~/Documents/Sussurro`, and
+**System Audio Recording**, the first time *System audio + mic* uses the
+built-in capture (see below).
 
 If you run a downloaded, unsigned build (e.g. a CI artifact) and macOS
 reports it as damaged, clear the quarantine flag:
