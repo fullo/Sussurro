@@ -85,11 +85,18 @@ describe.each(["chrome", "firefox"] as const)("manifest.%s.json", (t) => {
   });
 
   if (t === "firefox") {
-    it("pins a Gecko id and Firefox >= 128 (MAIN-world content scripts)", () => {
+    it("pins a Gecko id and Firefox >= 140 (data_collection_permissions, #234)", () => {
       const gecko = (m.browser_specific_settings as { gecko: { id: string; strict_min_version: string } }).gecko;
       expect(gecko.id).toBe("sussurro@darumahq.it");
-      expect(parseInt(gecko.strict_min_version, 10)).toBeGreaterThanOrEqual(128);
+      // 128 was enough for MAIN-world content scripts, but AMO requires
+      // data_collection_permissions, which Firefox reads from 140 on.
+      expect(gecko.strict_min_version).toBe("140.0");
       expect(m.background).toEqual({ scripts: ["background.js"] });
+    });
+
+    it("is desktop-only: no gecko_android (AMO then does not mark it Android-compatible)", () => {
+      // Android has no sidebar and no local Sussurro app to pair with.
+      expect(m.browser_specific_settings).not.toHaveProperty("gecko_android");
     });
 
     it("sets its own extension CSP: Firefox's MV3 default upgrades ws://127.0.0.1 (spike #104)", () => {

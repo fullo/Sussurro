@@ -14,7 +14,7 @@
     "build:chrome": "node scripts/build.ts chrome",
     "build:firefox": "node scripts/build.ts firefox",
     "typecheck": "tsc",
-    "lint": "web-ext lint --self-hosted --source-dir dist/firefox",
+    "lint": "node scripts/lint.ts",
     "test": "vitest run",
     "test:e2e": "node e2e/run.ts",
     "licenses": "node ../sussurro/scripts/gen-licenses.mjs --extension",

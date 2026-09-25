@@ -234,8 +234,10 @@ follow-up); lag numbers and the real hooks come from the live check (#184).
 ## Browsers (#137)
 
 One Chrome build for the Chromium family (Chrome, Edge, Brave; ≥ 116) and
-one Firefox build (≥ 128). Every feature above works in both; where they
-differ:
+one Firefox build (desktop, ≥ 140: the first release that reads
+`data_collection_permissions`, #234; Firefox for Android is not supported —
+see *Firefox version and Android* below). Every feature above works in
+both; where they differ:
 
 | | Chrome / Edge / Brave | Firefox |
 |---|---|---|
@@ -284,7 +286,7 @@ check there (#184).
 | Path | What it is |
 |---|---|
 | `manifest.chrome.json` | Chrome/Edge/Brave, MV3: service-worker background, `side_panel` |
-| `manifest.firefox.json` | Firefox ≥ 128, MV3: `background.scripts`, `sidebar_action` |
+| `manifest.firefox.json` | Firefox ≥ 140 (desktop), MV3: `background.scripts`, `sidebar_action` |
 | `src/background/` | background worker: per-tab session, WebSocket to the app, badge, Chrome tab capture |
 | `src/content/main-world.ts` | MAIN-world content script (the `RTCPeerConnection` hook, E4) |
 | `src/content/isolated-world.ts` | ISOLATED-world content script (relay to the background) |
@@ -378,19 +380,56 @@ HEADED=1 npm run test:e2e -- chromium     # watch it
 
 Temporary profiles go under `$E2E_TMPDIR` (default: the OS temp folder).
 
-`web-ext lint` runs with `--self-hosted`: the add-on is distributed outside
-AMO's listing with its own `update_url`, which listed-mode lint rejects
-(`MANIFEST_UPDATE_URL`). It passes with 0 errors and four expected warnings:
+`npm run lint` (`scripts/lint.ts`) runs `web-ext lint --self-hosted` on
+`dist/firefox`: the add-on is distributed outside AMO's listing with its
+own `update_url`, which listed-mode lint rejects (`MANIFEST_UPDATE_URL`).
+It fails on any error and on any warning not accepted in
+`scripts/lint-policy.ts` (#234). Today: 0 errors, three accepted warnings,
+the same three AMO's validator shows — explained to Mozilla's reviewers in
+[`AMO-REVIEWER-NOTES.md`](AMO-REVIEWER-NOTES.md), sent with every signing
+submission:
 
-- `UNSAFE_VAR_ASSIGNMENT` ×2 (`assets/page-*.js`): React DOM's own
-  `innerHTML` writes for `dangerouslySetInnerHTML`,
-  which our code never uses.
-- `KEY_FIREFOX_UNSUPPORTED_BY_MIN_VERSION`:
-  `data_collection_permissions` postdates Firefox 128 (it came in 140).
-  AMO requires it; Firefox 140+ reads it, 128–139 ignore it. The minimum
-  stays 128 (MAIN-world content scripts, plan decision E4).
-- `KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION`: the same key on
-  Firefox for Android (142). Android is not a target: it has no sidebar.
+- `UNSAFE_VAR_ASSIGNMENT` ×2 (`assets/page-*.js`): React DOM's own write
+  for the `dangerouslySetInnerHTML` prop — in
+  `react-dom-client.production.js`, one in `setProp` and one in
+  `setPropOnCustomElement`, minified as `n?.__html!==u&&(l.innerHTML=u)`
+  (traced through a source-mapped build). No Sussurro code uses
+  `dangerouslySetInnerHTML` or assigns `innerHTML` (`src/`, and the shared
+  `sussurro/src/transcript`), so the path never runs. It can't be
+  tree-shaken — it is a `case` of the prop setter every element goes
+  through — and patching React's code in the build would hand AMO a
+  modified library to review instead of a known one. The gate accepts only
+  these two sites, matched by that exact pattern at the flagged column: any
+  other `innerHTML` warning fails the lint.
+- `KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION`: see below.
+
+### Firefox version and Android (#234)
+
+- **Desktop minimum: Firefox 140** (`strict_min_version: "140.0"`). AMO
+  requires `data_collection_permissions`, which Firefox reads from 140 on;
+  with 128 the validator warned (`KEY_FIREFOX_UNSUPPORTED_BY_MIN_VERSION`).
+  ESR 128 reached end of life on 2025-09-16; ESR 140 is the oldest
+  supported Firefox (end of life 2026-10-13, when its users move to ESR
+  153 — [Mozilla's ESR calendar](https://whattrainisitnow.com/release/?version=esr)).
+  0.10.0, already published, keeps its 128 entry in `updates.json`: a
+  Firefox 128–139 install stays on 0.10.0 instead of being offered an
+  update it could not install.
+- **Firefox for Android: not supported.** The add-on needs the desktop
+  sidebar and a Sussurro app on the same device. The manifest has no
+  `browser_specific_settings.gecko_android`, which is how AMO learns a
+  version is desktop-only (declaring it, even empty, marks it
+  Android-compatible), and each submission also sets the version's
+  compatibility to Firefox only (`--amo-metadata`, `scripts/amo.ts`).
+  Nothing offers it on Android: it is unlisted on AMO and the release
+  `.xpi` is documented for the desktop; side-loading it into a Firefox for
+  Android build that allows installing from a file would give an add-on
+  without its sidebar — unsupported. The linter still checks the
+  Android minimum — without `gecko_android` it falls back to
+  `gecko.strict_min_version` (140 < 142, when Firefox for Android started
+  reading the key) — hence the one accepted
+  `KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION` warning. Raising the
+  desktop minimum to 142 would silence it but lock out ESR 140 for no
+  benefit.
 
 ## Releases, signing and updates (#228)
 
@@ -422,9 +461,12 @@ pre-release version, signing is skipped with a notice
   # from a local copy: npm run update-manifest -- 0.10.1 path/to/sussurro-extension-firefox-0.10.1.xpi
   ```
 
-  It checks the file's version and gecko id and writes `version`,
-  `update_link` (the release asset) and `update_hash` (`sha256:` of the
-  signed file) into `docs/extension/updates.json`; commit it on a branch
+  It checks the file's version, gecko id and minimum Firefox (it must be
+  `manifest.firefox.json`'s, 140.0 since #234) and writes `version`,
+  `update_link` (the release asset), `update_hash` (`sha256:` of the
+  signed file) and that `strict_min_version` into
+  `docs/extension/updates.json`, leaving the published entries as they are
+  (0.10.0 keeps 128.0); commit it on a branch
   and merge. Installed copies pick it up on their next update check
   (about once a day). If the add-on is ever listed on AMO instead,
   `update_url` must go (AMO refuses it for listed add-ons).
