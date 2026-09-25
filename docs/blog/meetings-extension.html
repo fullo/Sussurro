@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Record web meetings with the browser extension — Sussurro Blog</title>
+<meta name="description" content="Sussurro&#x27;s browser extension records Google Meet, Teams and Zoom in the browser and streams them to the app on your computer: install, pairing, consent, Meet names, Voice N and People." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+<!-- seo:start -->
+<link rel="canonical" href="https://fullo.github.io/Sussurro/blog/meetings-extension.html" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#fafaf8" />
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+<meta property="og:site_name" content="Sussurro" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Record web meetings with the browser extension — Sussurro Blog" />
+<meta property="og:description" content="Sussurro&#x27;s browser extension records Google Meet, Teams and Zoom in the browser and streams them to the app on your computer: install, pairing, consent, Meet names, Voice N and People." />
+<meta property="og:url" content="https://fullo.github.io/Sussurro/blog/meetings-extension.html" />
+<meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:published_time" content="2026-09-25" />
+<meta property="article:author" content="DarumaHQ" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Record web meetings with the browser extension — Sussurro Blog" />
+<meta name="twitter:description" content="Sussurro&#x27;s browser extension records Google Meet, Teams and Zoom in the browser and streams them to the app on your computer: install, pairing, consent, Meet names, Voice N and People." />
+<meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Record web meetings with the browser extension","description":"Sussurro's browser extension records Google Meet, Teams and Zoom in the browser and streams them to the app on your computer: install, pairing, consent, Meet names, Voice N and People.","url":"https://fullo.github.io/Sussurro/blog/meetings-extension.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-09-25","dateModified":"2026-09-25","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/meetings-extension.html"}</script>
+<!-- seo:end -->
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<main id="main">
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Record web meetings with the browser extension</h1>
+    <p class="dek">Sussurro's browser extension turns a Google Meet, Microsoft Teams or Zoom call in the browser into a speaker-labelled <em>Meeting</em> in your Library, transcribed live by the app on the same computer. It's the capture side only: editing happens in the app.</p>
+    <div class="meta">7 min read · Feature guide</div>
+  </header>
+
+  <div class="prose">
+    <p>The extension hooks into the meeting page's own audio streams. What your microphone sends is one channel and what the call plays is the other. It streams both to the Sussurro app over <code>127.0.0.1</code>. The app transcribes as the call goes, labels who spoke, and saves the result as a <em>Meeting</em> in <code>Documents/Sussurro</code>. Nothing goes to any other server.</p>
+
+    <h2>Supported browsers and sites</h2>
+    <ul>
+      <li><strong>Chrome, Edge and Brave</strong> 116 or later: one build, with a side panel.</li>
+      <li><strong>Firefox</strong> 128 or later: one build, with a sidebar.</li>
+      <li>Sites: <strong>Google Meet</strong>, <strong>Microsoft Teams</strong> (work and personal) and the <strong>Zoom web client</strong>.</li>
+    </ul>
+    <p>For the desktop Zoom or Teams apps, use <a href="system-audio.html">System audio + mic</a> instead.</p>
+
+    <h2>Install</h2>
+    <p>The extension is not in the browser stores yet. Every <a href="https://github.com/fullo/Sussurro/releases">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and <code>sussurro-extension-firefox-&lt;version&gt;.zip</code>. Use the one with the same version as your app.</p>
+    <ul>
+      <li><strong>Chrome, Edge, Brave</strong>: unzip it into a folder you keep. Open <code>chrome://extensions</code> (or <code>edge://</code>, <code>brave://</code>), turn on <strong>Developer mode</strong>, click <strong>Load unpacked</strong> and pick the folder. To update, replace the folder's content and press the reload icon on the extension's card.</li>
+      <li><strong>Firefox</strong>: open <code>about:debugging#/runtime/this-firefox</code>, click <strong>Load Temporary Add-on…</strong> and pick the zip. Firefox removes temporary add-ons when it quits, so load it again after a restart.</li>
+    </ul>
+    <p>If the extension has no access to a meeting site, its panel offers <strong>Allow access</strong>.</p>
+
+    <h2>Pair it with the app</h2>
+    <ol class="figure-steps">
+      <li>In Sussurro, open <strong>Settings → Browser extension</strong>. The extension talks to the app through the local API. The card shows whether it is listening and, if it is off, offers <strong>Turn on the local API</strong> (it applies when Sussurro restarts).</li>
+      <li>Click <strong>Copy pairing code</strong>. The code is a single string with the port and a secret token. The app never shows the token.</li>
+      <li>Open the extension's options (right-click its toolbar button → <em>Options</em>), paste the code and click <strong>Save and test</strong>.</li>
+    </ol>
+    <p><strong>Test connection</strong> on the options page tells apart an app that isn't reachable, a wrong token and an app that is too old. Treat the code like a password. <strong>Regenerate token…</strong> in the app invalidates the old one at once, and every paired browser then has to be paired again.</p>
+    <p>The local API only answers on <code>127.0.0.1</code>. The extension's routes need the token and accept only browser-extension origins, so a web page can't use them even if it knows the token. They reach only the meetings the extension recorded, never your notes. Turning on the local API for the extension does not turn on the token-less <a href="local-api.html">scripting routes</a>.</p>
+
+    <h2 id="consent">Record, with consent</h2>
+    <p>Nothing is captured until you press <strong>Start recording</strong> in the side panel (Chrome) or sidebar (Firefox) on the meeting tab. The first time, a short notice says what you are about to do. <em>You are about to record other people</em>: depending on where you and they are, and on your organisation's rules, you may have to tell them, and some may have to agree first. Sussurro doesn't try to decide which rules apply to you. <em>Start recording</em> goes ahead and <em>Cancel</em> starts nothing. <em>Don't show this again</em> is ticked by default, and <em>Show the notice again</em> on the options page brings the notice back. While recording, a “Recording other people” line stays under the controls. The app shows the same notice before <em>System audio + mic</em> and <em>Meeting in the room</em>.</p>
+    <p>While it records, the toolbar button shows a red <strong>REC</strong> badge on that tab. <strong>Stop</strong>, closing the tab or leaving the page ends the recording, and the app keeps what it received. The page's own audio is never changed or muted.</p>
+
+    <h2>The side panel</h2>
+    <p>The panel mirrors the live transcript. You see lines with timestamps and speaker chips, and <strong>Jump to live</strong> when you scroll up. A backlog note shows how far behind Sussurro is. When the call ends:</p>
+    <ul>
+      <li><strong>Open in Sussurro</strong> brings the app forward on the meeting.</li>
+      <li><strong>Copy as text</strong> puts the transcript on the clipboard.</li>
+      <li><strong>Create .srt</strong> saves subtitles. It shows when the app's subtitles setting is <em>Only when I ask</em>; with <em>Create .srt automatically</em> the app writes the <code>.srt</code> itself.</li>
+    </ul>
+    <p>If the connection to the app drops, the extension retries with backoff and keeps about 30 seconds of audio meanwhile. The rest of the call continues as a new item, shown under a “connection lost” note.</p>
+
+    <h2>Who spoke: You, Meet names and Voice N</h2>
+    <ul>
+      <li><strong>You</strong>: whatever your microphone sends to the call is always your line.</li>
+      <li><strong>Meet names</strong>: on Google Meet the extension also reads participants' names from the page and matches them to who is speaking. Remote lines are named instead of numbered, and the participants join the item's frontmatter. It reads the page's structure only and never clicks or opens panels. When it can't read names reliably it stops and says so rather than guess. Meet changes its page often, so this is the part most likely to need an update.</li>
+      <li><strong>Voice 1, Voice 2…</strong>: everyone else is told apart by voice, on this computer. This is what Teams and Zoom get, and what Meet falls back to. It uses a small speaker-embedding model (WeSpeaker ResNet34, 26.5 MB, CC-BY-4.0) that downloads on first use.</li>
+    </ul>
+    <p>In the app, the document's <strong>Speakers</strong> panel lets you rename a voice, link it to a person, or <strong>Re-detect speakers</strong> over the whole call. It also shows each voice's share of speech and a <strong>voice map</strong>: every line is a dot placed by how the voice sounds, so lines that sound alike sit close together. Click a dot to find its line in the transcript.</p>
+
+    <h2 id="people">People</h2>
+    <p>Meeting pages don't expose emails reliably, so Sussurro keeps a small registry of its own. On the <strong>People</strong> screen you add a person once, with a name, an optional email and aliases (“Fra”, “Francesco F.”). After that, a participant whose name matches a person or alias gets that person's email on save, ignoring case, accents and spacing. A name that matches two people links to nobody. Linking only ever adds an email and never replaces one, and editing or deleting a person never rewrites your items. The registry lives in the archive, in <code>.sussurro/people.json</code>, so it travels with it.</p>
+
+    <h2>Privacy</h2>
+    <p>The extension has no analytics and sends audio and page events only to the Sussurro app at <code>127.0.0.1</code>. It asks for storage, access to the meeting sites and to <code>127.0.0.1</code>. On Chrome it also asks for the side panel and a tab-capture fallback, used only when a page plays call audio in a way the extension can't otherwise reach. The audio is transcribed on this computer. A <code>.wav</code> is kept only if <em>Save audio</em> is on in Settings → Archive.</p>
+
+    <div class="callout">
+      <span class="k">Requires 0.10</span>
+      <p>Meetings are on by default since the 0.10 release: there's no switch to find, only pairing. Keep the extension's version equal to the app's.</p>
+    </div>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="system-audio.html">Record desktop calls: system audio + mic</a></li>
+        <li><a href="archive-and-notes.html">The archive: notes, meetings and transcriptions</a></li>
+        <li><a href="recipes-and-llm-profiles.html">Recipes, LLM profiles and the privacy gate</a></li>
+        <li><a href="local-api.html">The local API</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+</main>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <ul class="foot-links">
+    <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
+    <li><a href="index.html">Blog</a></li>
+    <li><a href="https://github.com/fullo/Sussurro/releases">Download</a></li>
+  </ul>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

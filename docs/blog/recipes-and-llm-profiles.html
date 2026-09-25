@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Recipes, LLM profiles and the privacy gate — Sussurro Blog</title>
+<meta name="description" content="Turn a transcript into formatted notes, a summary or meeting minutes with a local or remote LLM: how recipes, the Ask panel, LLM profiles, the bundled Qwen3 model and the privacy gate for external servers work in Sussurro 0.10." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+<!-- seo:start -->
+<link rel="canonical" href="https://fullo.github.io/Sussurro/blog/recipes-and-llm-profiles.html" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#fafaf8" />
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+<meta property="og:site_name" content="Sussurro" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Recipes, LLM profiles and the privacy gate — Sussurro Blog" />
+<meta property="og:description" content="Turn a transcript into formatted notes, a summary or meeting minutes with a local or remote LLM: how recipes, the Ask panel, LLM profiles, the bundled Qwen3 model and the privacy gate for external servers work in Sussurro 0.10." />
+<meta property="og:url" content="https://fullo.github.io/Sussurro/blog/recipes-and-llm-profiles.html" />
+<meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:published_time" content="2026-09-25" />
+<meta property="article:author" content="DarumaHQ" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Recipes, LLM profiles and the privacy gate — Sussurro Blog" />
+<meta name="twitter:description" content="Turn a transcript into formatted notes, a summary or meeting minutes with a local or remote LLM: how recipes, the Ask panel, LLM profiles, the bundled Qwen3 model and the privacy gate for external servers work in Sussurro 0.10." />
+<meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Recipes, LLM profiles and the privacy gate","description":"Turn a transcript into formatted notes, a summary or meeting minutes with a local or remote LLM: how recipes, the Ask panel, LLM profiles, the bundled Qwen3 model and the privacy gate for external servers work in Sussurro 0.10.","url":"https://fullo.github.io/Sussurro/blog/recipes-and-llm-profiles.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-09-25","dateModified":"2026-09-25","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/recipes-and-llm-profiles.html"}</script>
+<!-- seo:end -->
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<main id="main">
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Recipes, LLM profiles and the privacy gate</h1>
+    <p class="dek">A transcript is raw material. <strong>Recipes</strong> turn it into a companion document, <strong>Ask</strong> answers questions about it, and <strong>LLM profiles</strong> decide which model does the work: Ollama, any OpenAI-compatible server, or the model Sussurro can run itself. When the server is not on your computer, Sussurro asks first, every time.</p>
+    <div class="meta">7 min read · Feature guide</div>
+  </header>
+
+  <div class="prose">
+    <h2>LLM profiles</h2>
+    <p>A profile is one LLM server plus one model. Profiles live on the <strong>Recipes</strong> screen, in the <em>LLM profiles</em> card. Each has a name and an API, either <strong>Ollama (native)</strong> or <strong>OpenAI-compatible</strong> (llama.cpp's <code>llama-server</code>, LM Studio, DS4, vLLM, Ollama's own <code>/v1</code>, or a hosted service that speaks <code>/v1</code>). It also has a server address, a model (<em>Test connection</em> lists the server's models), an optional context window, and an API key for OpenAI-compatible servers that need one.</p>
+    <p>One profile is the <strong>cleanup</strong> profile, picked in Settings → Cleanup. It cleans hotkey dictations, microphone sessions, files, links and the local API's <code>/clean</code>. Recipes and Ask let you pick a profile per run.</p>
+    <ul>
+      <li>A new install starts with one profile, <strong>Local</strong>: Ollama on <code>http://localhost:11434</code> with <code>llama3.2:3b</code>. An upgrade from 0.6 turns your old cleanup settings (server, model, API key) into this <em>Local</em> profile, so nothing changes until you want it to.</li>
+      <li><strong>API keys</strong> are kept in the OS credential store: the macOS Keychain, Windows Credential Manager, or the Secret Service keyring on Linux (GNOME Keyring, KWallet…). The settings file only notes that the key is there. Without a working store, the key stays in the settings file and the editor says so. Keys from before 0.10 move into the store at the first start.</li>
+    </ul>
+
+    <h2>The bundled model: cleanup without Ollama</h2>
+    <p>Installers ship a pinned <code>llama-server</code> from llama.cpp. With it comes a built-in profile, <strong>Local (bundled)</strong>, that runs <strong>Qwen3 1.7B</strong> (Q8, Apache-2.0, about 2.2 GB) on your computer. It downloads only when you click, and the download is checked against a pinned checksum. The server starts on first use and stops after 15 idle minutes. The profile is always local, and its server can't be pointed anywhere else.</p>
+    <p>Sussurro never switches to it on its own. It's offered when no cleanup server answers: in the first-run setup (once no local Ollama, LM Studio or llama.cpp server was found), in Settings → Cleanup, on the setup banner and on the Models screen, as <em>Use the bundled model</em> or <em>Use for cleanup</em>.</p>
+
+    <h2>Recipes</h2>
+    <p>A recipe is a prompt that turns the transcript into a <strong>companion document</strong>: a markdown file saved next to <code>transcript.md</code>, in the <em>Document</em> tab. The built-in ones:</p>
+    <ul>
+      <li><strong>Formatted document</strong> (<code>document.md</code>): the transcript with a tl;dr, headings and tables where they help.</li>
+      <li><strong>Summary</strong>, <strong>Action items</strong>, <strong>Decisions</strong>.</li>
+      <li><strong>Meeting minutes</strong> and <strong>Who said what</strong>: offered only on meetings and transcriptions whose transcript names its speakers. The minutes include attendees, a timestamped agenda, the discussion, decisions and an <em>Action | Owner | Due</em> table, with “—” where nobody said, since the prompt tells the model never to invent.</li>
+    </ul>
+    <p>Built-in recipes are read-only. <em>Duplicate</em> one, or <em>Add recipe</em>, to write your own. A transcript longer than the model's context window is processed in chunks and merged (map-reduce), and on meetings the chunks follow speaker turns so no statement loses its speaker. Participants are sent by name only. Their emails go along only if you tick <em>Include participant emails</em> for that run.</p>
+    <p>Each companion document records in its frontmatter which recipe, profile and model made it, and whether it went to an external server. <em>Regenerate</em> replaces a document only if you haven't edited it. If you have, the new version goes to <code>document-2.md</code> and your edit stays.</p>
+
+    <h2>Ask</h2>
+    <p>The <strong>Ask</strong> panel next to a document runs the recipes with one click and takes free questions: <em>“What did we decide about the budget?”</em>. Answers are not saved unless you click <em>Save as document</em>. You can also <em>Copy</em> or <em>Discard</em> them.</p>
+
+    <h2 id="privacy-gate">The privacy gate</h2>
+    <p>Speech-to-text always runs on your computer. An LLM profile is <strong>external</strong> when its server is not on this machine, meaning anything other than <code>localhost</code>, a loopback address or a <code>.local</code> host. A server on your LAN counts as external unless you untick the flag yourself. Text sent to an external profile leaves your computer and is processed under that provider's terms. Sussurro never falls back from a local profile to an external one.</p>
+    <ul>
+      <li><strong>Recipes and Ask on an external profile</strong> show a confirmation <strong>every time</strong>: <em>Send this to host?</em>, with the document, the task, which people are named, roughly how much text (characters and tokens), the server and the model. <em>Cancel</em> is the default and sends nothing. The check lives in the backend, not just the dialog: a run needs a one-time permission issued for exactly that item, task, server and model, valid once and for two minutes.</li>
+      <li><strong>Cleanup</strong> runs with no dialog, so an external cleanup profile needs a standing opt-in: Settings → Cleanup → <em>Send dictations to host for cleanup</em>, tied to that host. Point the profile elsewhere and the opt-in is void. Without it, cleanup keeps the raw text and sends nothing.</li>
+      <li>The <strong>Library marks</strong> every item whose text went out: <em>↗ Sent externally</em>, with the hosts in the tooltip. The record is <code>.sussurro/external-log.json</code> in the item: date, host, profile, model and recipe of each send, <strong>never the content</strong>. Hotkey dictations don't create items, so they carry no marker.</li>
+    </ul>
+
+    <div class="callout">
+      <span class="k">Requires 0.10</span>
+      <p>LLM profiles, recipes, Ask, the privacy gate and the bundled model arrive together in Sussurro 0.10. The older <a href="use-ds4.html">OpenAI-compatible setup guide</a> still applies: the server and model now go into a profile.</p>
+    </div>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="archive-and-notes.html">The archive: notes, meetings and transcriptions</a></li>
+        <li><a href="use-ds4.html">Use DS4 or any OpenAI-compatible server</a></li>
+        <li><a href="choosing-ollama-model.html">Choosing the right model</a></li>
+        <li><a href="ai-cleanup-levels.html">AI cleanup: the four levels</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+</main>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <ul class="foot-links">
+    <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
+    <li><a href="index.html">Blog</a></li>
+    <li><a href="https://github.com/fullo/Sussurro/releases">Download</a></li>
+  </ul>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

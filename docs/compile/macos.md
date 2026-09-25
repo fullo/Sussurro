@@ -25,10 +25,14 @@ npm run tauri build    # production bundle (.dmg + .app)
 cd src-tauri && cargo test   # headless test suite
 ```
 
+Without the updater signing key, `tauri build` stops at the updater
+artifacts: add `-- --config '{"bundle":{"createUpdaterArtifacts":false}}'`
+(details in [development.md](../development.md#build--run)).
+
 ### The llama-server sidecar (release bundles)
 
 Release bundles ship a pinned upstream `llama-server` (llama.cpp, Metal) for
-the optional Qwen3-ASR engine (plan E9). It is not in git: fetch it once, and
+the optional Qwen3-ASR engine and the *Local (bundled)* LLM profile (plan E9). It is not in git: fetch it once, and
 again whenever `src-tauri/sidecar/llama-server.lock.json` changes — the
 script downloads the pinned asset, checks its SHA-256 and refuses anything
 else:
@@ -56,10 +60,12 @@ and removing Gatekeeper's flag from inside the app is not something an
 ad-hoc-signed app should do behind the user's back — the manual step stays
 the user's choice.
 
-The sidecar runs only while the Qwen3-ASR engine is loaded, on a random
-`127.0.0.1` port; it stops with the idle model unload (15 min), an engine
-change and on quit. macOS has no way to tie a child to its parent's life,
-so if Sussurro itself crashes or is force-quit while the engine is loaded,
+The sidecar runs only while the Qwen3-ASR engine is loaded (or, as a
+second process, while the bundled LLM is in use), listening on a Unix
+socket in a private 0700 folder under the app's data folder and requiring
+a random key per start (#216); it stops with the idle unload (15 min), an
+engine change and on quit. macOS has no way to tie a child to its parent's
+life, so if Sussurro itself crashes or is force-quit while it runs,
 `sussurro-llama-server` can stay behind: quit it from Activity Monitor.
 
 ## Runtime notes
@@ -70,6 +76,11 @@ macOS will prompt for two permissions on first use; both are required:
 - **Accessibility** (System Settings → Privacy & Security → Accessibility) —
   needed to synthesize the ⌘V paste into other apps. If text never appears,
   re-check this permission for Sussurro (or your terminal, in dev mode).
+
+Two more are asked when first needed: **Documents** (Files & Folders), when
+the first-run setup creates the archive in `~/Documents/Sussurro`, and
+**System Audio Recording**, the first time *System audio + mic* uses the
+built-in capture (see below).
 
 If you run a downloaded, unsigned build (e.g. a CI artifact) and macOS
 reports it as damaged, clear the quarantine flag:

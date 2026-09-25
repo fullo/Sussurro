@@ -53,6 +53,7 @@
   </header>
 
   <div class="prose">
+    <div class="callout"><span class="k">Updated for 0.10</span><p>Since 0.10 the model is set in an <strong>LLM profile</strong> (Recipes → LLM profiles), and Settings → Cleanup picks the profile. Without any server, the built-in <em>Local (bundled)</em> profile runs Qwen3 1.7B for you. See <a href="recipes-and-llm-profiles.html">LLM profiles</a>.</p></div>
     <p>The model doesn't transcribe your speech — Whisper or Parakeet does that. The model only <em>cleans up</em> the transcript: strip “um” and “uh”, fix grammar and punctuation, and optionally translate or adjust tone. That's a light task, and a small instruct model handles it well while keeping latency low.</p>
 
     <h2>The short answer</h2>

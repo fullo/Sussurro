@@ -49,11 +49,16 @@ npm run tauri build    # production bundle (AppImage, .deb, .rpm)
 cd src-tauri && cargo test   # headless test suite
 ```
 
+Without the updater signing key, `tauri build` stops at the updater
+artifacts: add `-- --config '{"bundle":{"createUpdaterArtifacts":false}}'`
+(details in [development.md](../development.md#build--run)).
+
 ### The llama-server sidecar (release bundles)
 
 Release bundles ship a pinned upstream `llama-server` (llama.cpp, CPU build;
 upstream's Vulkan Linux build is a possible later addition, like
-`linux-vulkan` above) for the optional Qwen3-ASR engine (plan E9). Fetch it
+`linux-vulkan` above) for the optional Qwen3-ASR engine and the *Local
+(bundled)* LLM profile (plan E9). Fetch it
 once, and again whenever `src-tauri/sidecar/llama-server.lock.json` changes
 (SHA-256-checked, fails closed):
 
@@ -100,6 +105,10 @@ the tray, `enigo` and the Secret Service keyring below all link it.
   clipboard set reports success but the selection empties immediately).
 - **X11**: hotkey + paste injection work once `xclip`/`xsel` is installed.
 - **Wayland**: injection is native. Sussurro tries, in order:
+  0. the XDG **RemoteDesktop portal** (default `wayland-portal` feature):
+     zero setup on KDE Plasma and GNOME; the desktop asks for consent on
+     first use (KDE may ask again after a reboot, kde#480235). See
+     [issue #40](https://github.com/fullo/Sussurro/issues/40).
   1. **wtype** (virtual-keyboard protocol — wlroots compositors: Sway,
      Hyprland, river; and KDE Plasma): `sudo apt install wtype`
   2. **ydotool** (uinput — works on ANY compositor, GNOME included):

@@ -7,7 +7,7 @@ How to build Sussurro from source and work on it. For using the app, see the
 
 - `sussurro/` — the Tauri 2 app: React + TypeScript frontend, Rust backend in
   `sussurro/src-tauri/`.
-- `extension/` — the browser extension for meeting capture (0.9, preview):
+- `extension/` — the browser extension for meeting capture:
   Vite + TypeScript + React, one build per browser (Chrome/Edge/Brave and
   Firefox). See [Browser extension](#browser-extension) below.
 - The repo root holds docs and CI only.
@@ -42,6 +42,16 @@ npm run tauri dev      # development, hot-reload
 npm run tauri build    # production bundle (installer per platform)
 ```
 
+`tauri.conf.json` asks for signed updater artifacts, so a plain
+`npm run tauri build` stops with *"A public key has been found, but no
+private key"* unless `TAURI_SIGNING_PRIVATE_KEY` is set (see
+[releases.md](releases.md#updater-signing-key-one-time-setup)). For a local
+bundle without the key, turn them off for that build:
+
+```bash
+npm run tauri build -- --config '{"bundle":{"createUpdaterArtifacts":false}}'
+```
+
 First run: a short setup opens over the workspace (permissions, the archive
 folder, a speech model to download, cleanup, your shortcut) — then dictate.
 Settings → About → *Run the setup again* reopens it. In the browser preview
@@ -49,8 +59,9 @@ Settings → About → *Run the setup again* reopens it. In the browser preview
 
 ## llama-server sidecar
 
-Extra STT engines (Qwen3-ASR, Track E) run in a bundled `llama-server`
-(plan E9): a **pinned upstream llama.cpp release**, never built here and never
+Extra STT engines (Qwen3-ASR, Track E) and the *Local (bundled)* LLM
+profile (Qwen3 1.7B, #118) run in a bundled `llama-server` (plan E9): a
+**pinned upstream llama.cpp release**, never built here and never
 in git. `sussurro/src-tauri/sidecar/llama-server.lock.json` pins the release
 and, per target, the asset URL, SHA-256, size, the companion libraries to
 ship and the licence. Run once per machine (and after the lock changes):
@@ -105,10 +116,16 @@ archive whose licence differs from the committed copy in `sidecar/licenses/`).
 ## Tests & CI
 
 ```bash
-cd sussurro/src-tauri
-cargo test             # unit + integration (Ollama-backed tests are #[ignore])
-cargo clippy --all-targets -- -D warnings
+cd sussurro
+npm test               # vitest: frontend helpers (src/**/*.test.ts) + scripts/
+npm run build          # tsc + vite build (the type check; the crate embeds dist/)
+cd src-tauri
+cargo test             # unit + integration (live tests are #[ignore])
+cargo clippy --all-targets -- -D warnings   # stricter than CI, which allows warnings
 ```
+
+Run `npm run build` once before the first `cargo` command in a fresh
+checkout: the crate embeds the built frontend.
 
 Live tests that need a running Ollama are marked `#[ignore]`; run them
 explicitly, e.g.:
@@ -117,9 +134,24 @@ explicitly, e.g.:
 cargo test live_english_stays_english -- --ignored --nocapture
 ```
 
-CI (`.github/workflows/test.yml`) runs the suite, clippy and an Xvfb E2E smoke
-test (launches the app, asserts the window exists). When GitHub Actions minutes
-are unavailable, `scripts/ci-local.sh` mirrors it inside WSL2 Ubuntu 24.04:
+CI (`.github/workflows/test.yml`, Ubuntu 24.04) has two jobs:
+
+- **test**: links Microsoft's ONNX Runtime release, builds the frontend,
+  runs the sidecar script's tests (`npx vitest run scripts/`) and
+  `npm run sidecar` (+ a `--version` check of the fetched binary),
+  `cargo test`, `cargo clippy --all-targets`, an Xvfb E2E smoke test
+  (launches the app, asserts the window exists), then builds the `.deb` and
+  AppImage with the sidecar and checks them with
+  `scripts/verify-sidecar-bundle.sh`.
+- **extension**: typecheck, unit tests, build, `web-ext lint`, the capture
+  harness in Chromium + Firefox and again in Edge (see
+  [Browser extension](#browser-extension)), and uploads the zips.
+
+The frontend unit tests under `sussurro/src/` run locally (`npm test`) and
+in `scripts/ci-local.sh`, not in `test.yml`. When GitHub Actions minutes
+are unavailable, `scripts/ci-local.sh` mirrors the **test** job inside WSL2
+Ubuntu 24.04 (plus `npm test` and the ignored `engine_end_to_end` test; it
+does not run the extension harness):
 
 ```bash
 wsl -d Ubuntu-dev -u root -- bash /mnt/f/GitHub/Sussurro/scripts/ci-local.sh <branch>
@@ -143,10 +175,20 @@ The capture harness (Playwright, runs in CI) loads the built extension into
 real Chromium and Firefox against a local two-peer call and a fake app:
 
 ```bash
-npx playwright install chromium firefox   # once; PLAYWRIGHT_BROWSERS_PATH chooses where
-npm run build && npm run test:e2e         # or: npm run test:e2e -- firefox
+npx playwright install chromium firefox   # once (Linux: add --with-deps)
+npm run build && npm run test:e2e         # Chromium + Firefox; or: -- firefox
+npm run test:e2e -- edge                  # the installed Edge (CI runs it too)
+npm run test:e2e -- brave                 # the installed Brave (or BRAVE_PATH), local only
 HEADED=1 npm run test:e2e -- chromium     # watch it
 ```
+
+Playwright keeps its browsers in `~/Library/Caches/ms-playwright` (macOS),
+`~/.cache/ms-playwright` (Linux) or `%USERPROFILE%\AppData\Local\ms-playwright`
+(Windows); set `PLAYWRIGHT_BROWSERS_PATH` to keep them elsewhere (for
+example inside the repo or a scratch folder) and use the same value for
+`install` and `test:e2e`. On a Linux box without a sound server, Firefox's
+audio stays suspended and the harness fails: start one first, as CI does
+(`sudo apt install pulseaudio && pulseaudio --start --exit-idle-time=-1`).
 
 It imports the app's transcript components from `sussurro/src/transcript/`
 (`@sussurro/transcript`), the pairing-code format (`@sussurro/pairing`) and

@@ -7,6 +7,25 @@
 > written yet. Steps use checkbox (`- [ ]`) syntax. Workflow as per
 > `CLAUDE.md`: branch → PR → merge, no direct pushes to `main`.
 
+## Status (2026-09-25)
+
+Everything below is merged on `main`; the text of the plan is kept as it
+was written. Plan change of 2026-09-25: **one final release**, 0.10.0,
+instead of separate 0.7/0.8/0.9/0.10 tags. Not yet released: the version
+files still say 0.6.3, and the tag stays with the maintainer after the
+manual QA below, the website (#180) and the version bump.
+
+| Release | Merged PRs | Open |
+|---|---|---|
+| Phase 0 | spikes #106–#108 closed (no code PRs) | #104, #105 (desk studies, checked on real calls in #184), #109 (benchmark: Mac done, Windows half open) |
+| 0.7 — Notetaking | #160, #161 (plan, mock), #162, #163 (command mode removed), #164 (archive), #165 (long-form engine), #166, #167 (checkpoints), #168 (dictation priority), #169 (shell A), #170, #171 (per-run options), #172, #209 (workspace only + onboarding) | manual QA **#177** |
+| 0.8 — Advanced notetaking + links | #173 (LLM profiles), #174 (recipes), #175 (link source), #176 (Ask), #178 (participants), #179 (privacy gate), #182 (keychain) | manual QA **#177** |
+| 0.9 — Meeting | #181 (extension scaffold), #183 (subtitles), #185 (`/live`), #186 + #190 (Voice N, link to People), #188 (People), #189 (pairing), #191 (facets), #192 (Identify voices), #193 (capture), #198 (side panel), #200 (Meet names), #204 (consent notice), #208 (Firefox parity), #211 (meetings on by default); fixes #201, #202 | manual QA **#184**; #128 still open for its manual checks |
+| 0.10 — Advanced meeting | #195 (system audio + mic), #196 (speaker-aware recipes/Ask), #197 (saved audio), #203 (per-speaker replay), #206 (native loopback), #207 (voice map), #212 (build-only release run), #219 (multilingual fillers); security review: #220 (local API, #215), #221 (live rate limits, #217), #222 (yt-dlp and sidecar trust, #216) | manual QA **#184**; website **#180**; docs + release notes **#145** |
+| Track E — Qwen3-ASR | #199 (sidecar packaging), #205 (Qwen3-ASR engine), #213 (bundled LLM profile), #214 | manual QA **#184** (engine on each OS) |
+
+Release notes for users: `docs/releases/0.10.0.md`.
+
 ---
 
 ## 1. Goal

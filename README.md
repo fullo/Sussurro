@@ -1,145 +1,211 @@
 # Sussurro
 
-**Fully-local voice dictation for Windows, macOS and Linux.** A Wispr Flow
-alternative with no cloud: your voice never leaves your machine. whisper.cpp
-for speech-to-text, a local LLM (via Ollama) for AI cleanup, paste-injection
-into any app.
+**A local-first speech-to-text workbench for Windows, macOS and Linux.**
+Dictate into any app with a hotkey, and turn voice notes, audio files, links
+and meetings into markdown documents in your own archive. Transcription runs
+on your computer (whisper.cpp, NVIDIA Parakeet or Qwen3-ASR), and cleanup and
+summaries use a local LLM: Ollama, any OpenAI-compatible server, or a model
+Sussurro runs itself. Nothing leaves your machine unless you send it
+to a server yourself.
 
 > **Hold `Ctrl+Shift+Space` (⌘⇧Space on Mac), speak, release.**
 > The cleaned-up text appears wherever your cursor is.
 
-🌐 Project site: [`docs/index.html`](docs/index.html) · 🛠️ Building & contributing:
-[`docs/development.md`](docs/development.md)
+🌐 Project site: [`docs/index.html`](docs/index.html) · 📰 Guides:
+[`docs/blog/`](docs/blog/index.html) · 🛠️ Building & contributing:
+[`docs/development.md`](docs/development.md) · 📝 What's new in 0.10:
+[`docs/releases/0.10.0.md`](docs/releases/0.10.0.md)
 
 ## Why Sussurro
 
-- **100% local, private by design.** Audio is captured, transcribed and cleaned
-  entirely on your device. No account, no telemetry, no network round-trip —
-  it works on a plane. Text leaves the machine only when you send it to an
-  **external LLM profile** yourself — see [Privacy](#privacy).
-- **AI cleanup, not just transcription.** A small local model removes fillers,
-  fixes punctuation and adapts tone — with graceful fallback to the raw
-  transcript if the model isn't running.
-- **Works in every app.** The result is pasted into whatever has focus (your
-  clipboard is restored), so there's nothing to integrate.
-- **Free and open.** No subscription.
+- **Local, private by design.** Audio is captured and transcribed on your
+  device. No account, no telemetry, no cloud service. Text leaves the machine
+  only when you choose an **external LLM profile**, and Sussurro asks first.
+  See [Privacy](#privacy).
+- **Your files, not a database.** Every note, transcription and meeting is a
+  folder of plain markdown in `Documents/Sussurro`: readable, editable and
+  searchable without Sussurro.
+- **Dictation that works in every app.** The result is pasted into whatever
+  has focus (your clipboard is restored), so there's nothing to integrate.
+- **Free and open.** AGPL-3.0, no subscription.
 
-## How it works
+## What it does
 
-```
-global hotkey (press / release)
-  → microphone capture (cpal, resampled to 16 kHz mono)
-  → local STT: whisper.cpp (GPU: Vulkan/Metal) or NVIDIA Parakeet TDT v3
-    (ONNX, CPU-optimized ~10x faster than Whisper without a GPU)
-  → local LLM cleanup — None / Light / Medium / High,
-    falls back to the raw transcript if the model is unreachable
-  → clipboard-paste injection into the focused app (clipboard restored)
-  → local JSONL history
-```
+The app is a workspace with a left rail: **New · Library · People · Recipes ·
+Models · Settings**.
 
-The research behind the design:
-[`docs/whisperflow-clone-research.md`](docs/whisperflow-clone-research.md).
+### Dictation (hotkey)
+
+- **Hold or toggle a global shortcut**, speak, and the cleaned text is pasted
+  into the focused app. The Dictate button at the bottom of the rail does the
+  same without the keyboard. A small overlay shows recording and
+  transcribing, with a live preview.
+- **Cleanup levels** None / Light / Medium / High remove fillers, fix
+  punctuation and adapt tone, with a fallback to the raw transcript if the
+  model is unreachable. Fillers are recognised per language (Italian “ehm”,
+  English “um”…).
+- **Streaming typing** (word by word, or sentence by sentence with cleanup),
+  **translation** into another language, **per-app tone styles**, **voice
+  snippets**, spoken **formatting commands** (“new line”, “a capo”), a
+  **self-learning dictionary**, **whisper mode** for quiet dictation, and
+  **dictate to file** (append to a note instead of pasting).
+- Dictations are not Library items. Their **history** (search, re-clean,
+  translate, retention, export to Markdown or JSON) is under
+  Settings → Dictation history.
+
+### Notes, files and links → the archive
+
+- **New → Microphone** records a **note**. Tick *Meeting in the room* for
+  several people on one mic, told apart by voice.
+- **New → File** transcribes wav, mp3, m4a, aac, flac or ogg as a **note**
+  (your own voice memo) or a **transcription** (someone else's recording).
+  Files are decoded as a stream, so hour-long recordings fit.
+- **New → Link** downloads a direct media link, or a video page through
+  [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) if you have it installed, and
+  transcribes it as a **transcription**. The download is temporary.
+- Long recordings are cut at pauses (Silero voice-activity detection),
+  transcribed and cleaned segment by segment while you talk, and saved after
+  every segment, so a crash leaves an *Interrupted* item, not nothing. A hotkey
+  dictation during a long session still goes first.
+- **The archive** lives in `Documents/Sussurro` (changeable in
+  Settings → Archive): one folder per item with `transcript.md` (YAML
+  frontmatter: type, title, date, source, language, tags, categories,
+  participants…), companion documents, optional subtitles and audio. The
+  frontmatter is the source of truth. Edit it in any editor and your edit
+  wins. The search index is derived and can be rebuilt.
+- **The Library** searches titles, text and tags and filters by type and by
+  **tag, category, participant and date**. It marks items that are
+  recording, interrupted, edited outside, have audio, or were sent to an
+  external LLM.
+- **Export** as `.md` or `.txt`, and for meetings and transcriptions as
+  **`.srt` / `.vtt` subtitles**. Subtitles are created when you ask
+  (default) or automatically on every save (Settings → Archive).
+
+### Recipes, Ask and LLM profiles
+
+- **Recipes** turn a transcript into a companion document next to it:
+  *Formatted document* (tl;dr, headings, tables), *Summary*, *Action items*,
+  *Decisions*, and, on transcripts with named speakers, *Meeting minutes* and
+  *Who said what*. Duplicate one or write your own. Long transcripts are
+  processed in chunks and merged.
+- **Ask** answers free questions about the open document. Answers are saved
+  only if you click *Save as document*.
+- **LLM profiles** (Recipes screen) pair a server with a model: **Ollama** or
+  any **OpenAI-compatible** server (llama.cpp `llama-server`, LM Studio, DS4,
+  vLLM, hosted `/v1` services). One profile does cleanup, and recipes and
+  Ask pick one per run. **API keys are kept in the OS keychain.**
+- **Local (bundled)**: a built-in profile that runs **Qwen3 1.7B**
+  (Apache-2.0, ~2.2 GB, downloaded when you ask) in Sussurro's own
+  `llama-server`. You get cleanup and recipes with nothing else installed.
+  It is offered when no cleanup server answers, never selected for you,
+  starts on first use and stops after 15 idle minutes.
+- **Privacy gate**: a profile whose server is not on this machine is
+  *external*. Recipes and Ask on it ask for confirmation **every time**, and
+  cleanup on it needs a standing opt-in. See [Privacy](#privacy).
+
+### Meetings
+
+- **Web meetings**: the [browser extension](#browser-extension-meetings)
+  records Google Meet, Microsoft Teams and Zoom in the browser (Chrome,
+  Edge, Brave, Firefox) and streams them to the app, which transcribes
+  live.
+- **Desktop calls**: **New → System audio + mic** records your microphone
+  and the computer's sound as two channels. The computer's sound comes
+  through **native loopback** (WASAPI on Windows, a Core Audio tap on
+  macOS 14.2+, the PulseAudio/PipeWire monitor on Linux) or any **virtual
+  audio device** (BlackHole, VB-Cable, a monitor source).
+- **Speakers**: your microphone is always **You**. On Google Meet, remote
+  lines take the participants' **names from the page**. Everyone else is
+  told apart by voice as **Voice 1, Voice 2…**, on this computer, with a
+  small speaker model (WeSpeaker, downloaded on first use). Rename voices,
+  link them to people, or **Re-detect speakers** over the whole call.
+  Transcriptions can do the same with *Identify voices*.
+- **People**: a registry of names, emails and aliases. Participants whose
+  name matches get the person's email automatically, and the registry
+  travels with the archive.
+- **Voice map**: every line as a dot placed by how the voice sounds, so
+  lines that sound alike sit together. Click a dot to find its line.
+- **Saved audio and replay**: tick *Save audio* (off by default) to keep a
+  16 kHz WAV per channel next to the transcript. The **Audio** tab replays
+  it with the transcript highlighted, and *Play only* plays one speaker's
+  lines back to back.
+- **Speaker-aware recipes**: *Meeting minutes* (with an *Action | Owner |
+  Due* table) and *Who said what* keep every statement with its speaker.
+  Participants go to the LLM by name only, unless you tick *Include
+  participant emails* for that run.
+
+### Speech engines
+
+Choose on the **Models** screen:
+
+- **Whisper** (whisper.cpp; GPU through Vulkan on Windows and Metal on
+  macOS, CPU on Linux by default): any language, from Base English 148 MB
+  to Large v3 Turbo 574 MB.
+- **NVIDIA Parakeet TDT v3** (a single 456 MB int8 model, CPU-optimized,
+  auto-detects 25 European languages).
+- **Qwen3-ASR 1.7B** (optional, ~2.5 GB): runs in the bundled
+  `llama-server` and detects the language itself. It takes no dictionary
+  prompt, and Whisper large-v3-turbo stays more accurate on Italian, so it
+  is never the default.
 
 ## Getting started
 
 Download the installer for your OS from the
-[releases](https://github.com/fullo/Sussurro/releases), then:
+[releases](https://github.com/fullo/Sussurro/releases). The first launch
+opens a short **guided setup**:
 
-1. **[Ollama](https://ollama.com)** running locally, with a small instruct
-   model — this powers the AI cleanup:
-   ```
-   ollama pull llama3.2:3b
-   ```
-   Sussurro still works without it — you just get the raw transcript (set
-   Cleanup to "None", or let the automatic fallback handle it). **No Ollama?**
-   When no cleanup server answers, Settings offers *Use the bundled model*:
-   Sussurro downloads Qwen3 1.7B (~2.2 GB, Apache-2.0) once and runs it
-   itself in its bundled `llama-server`, on this machine — nothing to install.
-2. **A Whisper model** — pick one in Settings and click *Download*
-   (Base English 148 MB → Large v3 Turbo 574 MB). Or switch to the Parakeet
-   engine for a single CPU-optimized model.
-3. **A microphone.**
+1. **Permissions**: microphone, and on macOS Accessibility (to paste into
+   other apps).
+2. **Archive folder**: `Documents/Sussurro` by default. On macOS this is
+   when the system asks for access to Documents, once.
+3. **A speech model**: download one Whisper model, or pick Parakeet.
+4. **Cleanup**: Sussurro looks for a local server (Ollama on port 11434,
+   LM Studio on 1234, a llama.cpp server on 8080). If none answers, it
+   offers the **bundled model**, or you can install
+   [Ollama](https://ollama.com) (`ollama pull llama3.2:3b`). Without any,
+   you get the raw transcript.
+5. **Your shortcut**.
 
-First run opens on Settings: pick a model, click *Download*, set your shortcut
-with the click-to-record hotkey widget, and dictate.
+Every step can be skipped. Settings → About → *Run the setup again* reopens
+it. Upgrading from 0.6 shows a single **What's new** screen instead, and
+your settings carry over (see the [release notes](docs/releases/0.10.0.md)).
 
-Building from source instead? See
-[`docs/development.md`](docs/development.md).
+Guides for each feature are on the [blog](docs/blog/index.html). Building
+from source: [`docs/development.md`](docs/development.md).
 
-## Features
+## Requirements
 
-### Dictation
-- **STT engines** — Whisper (GPU, any language, multiple sizes) or NVIDIA
-  Parakeet TDT v3 (single 456 MB int8 model, CPU-optimized, auto-detects 25
-  European languages). Switch in Settings → Engine. Optionally **Qwen3-ASR
-  1.7B** (~2.5 GB, 52 languages, detects the language itself) runs in the
-  bundled `llama-server` (see *Third-party binaries*); it takes no dictionary
-  prompt, and Whisper large-v3-turbo stays more accurate on Italian, so it
-  is never the default.
-- **Language** — pick your dictation language or auto-detect; a fixed language
-  is more accurate on smaller multilingual models.
-- **Streaming typing** — text is typed while you speak: word by word with
-  Cleanup None, or sentence by sentence with cleanup on (each completed
-  sentence is LLM-cleaned before it's typed; the final pass finishes the tail).
-- **Live preview** — the overlay shows a rolling partial transcript while you
-  speak; the pasted text always comes from the final full-quality pass.
-- **Whisper mode** — dictate quietly: 3× mic gain and a lower silence gate.
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| System | Windows 10/11, x64; WebView2 (built into Windows 11) | macOS 11+ on **Apple Silicon** (no Intel build) | glibc ≥ 2.38: Ubuntu 24.04+, Debian 13+, Fedora 39+ |
+| Paste into apps | nothing extra | Accessibility permission | a clipboard helper: `xclip`/`xsel` (X11) or `wl-clipboard` (Wayland); on Wayland the RemoteDesktop portal, or `wtype`/`ydotool` |
+| GPU | Vulkan (any modern driver) | Metal | CPU by default ([optional Vulkan build](docs/compile/linux.md)) |
+| System audio + mic, built-in | WASAPI loopback, nothing to install | **macOS 14.2+**; asks for *System Audio Recording* once | `pactl` + `parec` from **`pulseaudio-utils`** (PulseAudio or PipeWire) |
+| System audio + mic, otherwise | VB-Cable, Voicemeeter or Stereo Mix | BlackHole or Loopback | a monitor source exposed as an ALSA device |
+| LLM API keys | Credential Manager | Keychain | a Secret Service keyring (GNOME Keyring, KWallet…); without one the key stays in `settings.json` |
 
-### Cleanup & tone
-- **Cleanup levels** — None / Light / Medium / High, editable in Cleanup →
-  Advanced (override the built-in instructions; empty = defaults).
-- **Translation** — dictate in one language, get the cleaned text in another
-  (works even with Cleanup None — translate-only). Something Wispr Flow can't
-  do locally.
-- **Per-app tone styles & language** — rules like `slack → "casual, emojis
-  welcome"` adapt the cleanup prompt to whatever app you dictate into; each
-  rule can force its own output language, overriding the global "Translate to".
-- **Voice snippets** — say a cue exactly (e.g. "firma email") and Sussurro
-  pastes the snippet's full text instead of transcribing.
-- **Voice commands** — say "a capo" / "new line" (and paragraph/bullet
-  variants) for deterministic line breaks with no LLM involved; contextual
-  commands like "scratch that" ride the cleanup prompt.
-- **Self-learning dictionary** — correct a history entry and the words you fix
-  are added to your personal dictionary automatically, Wispr-style.
+**Optional, on every OS:**
 
-### History & workflow
-- **History** — hover an entry to Copy, Re-clean, Translate or Edit it;
-  full-text search over raw + cleaned text; retention auto-deletes entries
-  older than N days (0 = keep forever); export to Markdown or JSON.
-- **Usage statistics** — persistent total / today / last-7-days dictation and
-  word counts; clearing history never resets them.
-- **Dictate to file** — note-taking mode: append every dictation to a
-  `.md`/`.txt` file (e.g. an Obsidian note) instead of pasting into the app.
-- **Audio file transcription** — feed a wav/mp3/m4a/flac/ogg recording through
-  the same STT + cleanup pipeline.
-- **Portable config** — export/import dictionary + snippets + app styles as a
-  JSON file to move your setup between machines (import merges, no duplicates).
+- An LLM server for cleanup, recipes and Ask: Ollama, LM Studio, a llama.cpp
+  server, or any OpenAI-compatible service. Alternatively, the bundled model
+  needs nothing.
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) for links to video platforms
+  (`brew install yt-dlp`, `winget install yt-dlp.yt-dlp`, `pipx install
+  yt-dlp`). Sussurro finds it on your PATH or in the usual package-manager
+  folders. Direct media links need nothing.
+- Chrome, Edge or Brave 116+, or Firefox 128+, for the meetings extension.
+- **Headphones** for calls: Sussurro does not cancel echo, so on speakers
+  your microphone also records the others.
 
-### Interface
-The UI follows the **Daruma design system**: warm paper surfaces, ink text,
-and daruma-red reserved for the moment that matters — the daruma "eye" next to
-the wordmark is hollow when idle and painted red while recording.
+**The first launch on macOS**: the app is not notarized, so right-click it →
+*Open* once ([why](docs/blog/macos-signing-gatekeeper.html)). If the
+Qwen3-ASR engine or the bundled model then fails to start because macOS
+quarantined its helper, run `xattr -cr /Applications/sussurro.app` once (the
+error message says so). Sussurro never removes the quarantine flag itself.
 
-- **Dictate button** — the header status pill is a live button: hold it
-  (push-to-talk) or click it (toggle) to dictate without the keyboard.
-- **Recording overlay** — a small floating pill near the bottom of the screen
-  while recording (red, pulsing) and transcribing (spinner). Always on top,
-  never steals focus.
-- **Sound feedback** — a rising tick when recording starts, a falling one when
-  it stops (toggle in Settings).
-- **Microphone selector + VU meter** — pick the capture device (falls back to
-  the system default if unplugged); a live input-level bar helps you test it.
-- **Tray** — left-click to show/hide; closing the window hides to tray.
-- **Setup banner** — lists anything missing (Ollama not running, model not
-  downloaded) with a one-click fix, including *Use the bundled model* when no
-  cleanup server is reachable.
-- **Local (bundled) LLM profile** — a built-in profile served by Sussurro's own
-  `llama-server` with Qwen3 1.7B: pick it for cleanup or for a recipe run,
-  no setup needed. It is never external, never selected for you, starts on
-  first use and stops after 15 idle minutes. Ollama and any other server
-  stay available as profiles.
-- **Copy diagnostics** — a footer button copies version + OS + configuration
-  for bug reports (configuration only — never dictated text or dictionary).
+Per-OS details, including the virtual-device setup step by step, are in
+[`docs/compile/`](docs/compile/) and the
+[system audio guide](docs/blog/system-audio.html).
 
 ## Browser extension (meetings)
 
@@ -282,13 +348,33 @@ from Settings → Browser extension or the extension's options), and a
 transcribed on this computer and is not sent anywhere; a saved `.wav` is
 kept only if you ask for it.
 
+### Where your data lives
+
+Everything stays on this computer, as ordinary files under your user
+account:
+
+| What | Where |
+|---|---|
+| Notes, transcriptions, meetings (text, companion documents, subtitles, saved audio) | the archive, `Documents/Sussurro/YYYY/MM/<date>-<title>/` (Settings → Archive) |
+| People registry | `<archive>/.sussurro/people.json` (travels with the archive) |
+| Settings, including LLM profiles and the extension's pairing token | `settings.json` in the app's config folder (readable only by you on macOS and Linux) |
+| LLM profile API keys | the OS credential store, service `com.sussurro.app` |
+| Dictation history and usage stats | `history.jsonl`, `stats.json` in the app's data folder |
+| Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
+| Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
+
+*Delete…* and *Delete audio…* move files to the OS trash. The
+app's config and data folders follow each OS's convention (for example
+`~/Library/Application Support/com.sussurro.app` on macOS). The
+[data guide](docs/blog/where-data-lives.html) has more.
+
 ## Local API (scripting)
 
 Enable it in Behavior → Advanced: switch on **Local API** (loopback only;
 applied at restart) and **Scripting routes** (applies at once). Both are off
-on a new install; pairing the browser extension turns on the local API but
-not the scripting routes. If you used the API before the switch existed, it
-stays on for you. Then, from any script:
+on a new install. *Turn on the local API* in Settings → Browser extension
+(for pairing) never turns on the scripting routes. If you used the API
+before the switch existed, it stays on for you. Then, from any script:
 
 ```bash
 # clean up / translate a text with your current settings
@@ -318,73 +404,77 @@ token and accept only browser-extension origins, never a web page, and
 dictations or other transcriptions. `settings.json`, which holds the pairing
 token, is readable only by your user on macOS and Linux.
 
-## Roadmap
+## Removed in 0.10
 
-Current version **0.4.1**. Full detail (and standing decisions) in
-[`CLAUDE.md`](CLAUDE.md).
-
-- **0.5.0 — go public**: macOS Developer ID signing + notarization, the repo
-  goes public (which unfreezes auto-update), Flatpak + Flathub distribution.
-- **0.6.0 (candidate)**: backend-agnostic cleanup via the OpenAI-compatible
-  `/v1/chat/completions` API — drive cleanup with any local runtime (Ollama,
-  llama.cpp-server, LM Studio, …) instead of only Ollama's native schema.
+- **Command mode**, the second hotkey that applied a spoken instruction to
+  the selected text, is gone. Use your OS voice control instead: Voice
+  Control on macOS, Voice Access on Windows 11. Spoken formatting commands
+  *inside* a dictation (“new line”, “a capo”, “scratch that”) still work.
+- **The classic single-window UI** is gone. The workspace is the only UI,
+  and its old preview switch is ignored.
+- **The flat cleanup settings** (server, model, API key) became the *Local*
+  LLM profile on upgrade. See the [release notes](docs/releases/0.10.0.md).
 
 ## Known limits
 
+- **Speaker labels are approximate.** *Voice N* clustering was tuned on
+  English recordings. Two similar voices can merge, and one voice can split.
+  Rename, move lines, or *Re-detect speakers*. **Meet names** depend on
+  Meet's page, which changes often. When the extension can't read the names
+  it says so and falls back to *Voice N*. Teams and Zoom get *You* and
+  *Voice N* only.
+- **No echo cancellation.** Record calls with headphones, or the others'
+  voices can land on your *You* channel too.
+- **Built-in system audio** follows the output device that was the default
+  when the recording started. If you switch outputs mid-call, start a new
+  recording. On macOS it needs 14.2 or later, and on Linux `pulseaudio-utils`.
+  The Windows loopback has not been verified on real hardware yet.
+- **Links**: video pages work only on known platforms, through `yt-dlp`.
+  Videos whose only audio is Opus or AC-3 are refused, because no ffmpeg is
+  bundled. Links are capped at 2 GB and ignore system proxy settings (so the
+  local-network check can't be bypassed).
+- **The browser extension is not in the stores yet.** Firefox loads it as a
+  temporary add-on, which is removed when Firefox quits.
 - **Linux Wayland injection** goes through the XDG **RemoteDesktop portal**
-  first (zero setup on KDE/GNOME; the OS asks for consent on first use — KDE
-  may re-ask after a reboot, kde#480235). Fallbacks: `ydotool`, `wtype`,
-  enigo. See [issue #40](https://github.com/fullo/Sussurro/issues/40).
+  first (zero setup on KDE/GNOME; the OS asks for consent on first use, and
+  KDE may ask again after a reboot, kde#480235). Fallbacks: `wtype`,
+  `ydotool`, enigo. See [issue #40](https://github.com/fullo/Sussurro/issues/40).
 - **Linux builds are CPU-only by default** (Vulkan needs the SDK; Windows uses
   Vulkan, macOS uses Metal). An opt-in Vulkan build is documented in
   [`docs/compile/linux.md`](docs/compile/linux.md).
-- **macOS is Apple Silicon only** (min 11.0) — ONNX Runtime has no prebuilt
+- **macOS is Apple Silicon only** (min 11.0): ONNX Runtime has no prebuilt
   binaries for Intel Macs.
-- **Installers aren't OS-code-signed yet.** macOS builds are ad-hoc signed, so
+- **Installers aren't OS-code-signed.** macOS builds are ad-hoc signed, so
   Gatekeeper needs a one-time right-click → *Open* (see
-  [the blog](docs/blog/macos-signing-gatekeeper.html)); Windows shows a
-  SmartScreen prompt (*More info → Run anyway*). Signing is on the roadmap
-  (Windows via SignPath; macOS Developer ID later). The **updater** artifacts
-  are always signed with the project's own key, independent of OS signing.
-- **Recording a desktop call** (*New → System audio + mic*) records your microphone and **this computer's sound** with nothing
-  to install: WASAPI loopback on Windows, a Core Audio process tap on
-  macOS 14.2+ (macOS asks once for the System Audio Recording permission),
-  the default output's monitor on Linux (PulseAudio/PipeWire, needs
-  `pactl`/`parec` from `pulseaudio-utils`). Where that is unavailable (macOS
-  before 14.2, no sound server…) the tab says why, and a virtual device —
-  BlackHole or Loopback, VB-Cable or Voicemeeter, a monitor exposed through
-  ALSA — works as before. **Use headphones**: on speakers the microphone
-  hears the others too, and Sussurro does not cancel echo. Setup per OS is
-  in [`docs/compile/`](docs/compile/).
-- **Editing a selection by voice is not built in.** Command mode (a second
-  hotkey that applied a spoken instruction to the selected text) was removed
-  in 0.7; use your OS voice control instead — Voice Control on macOS, Voice
-  Access on Windows 11.
+  [the blog](docs/blog/macos-signing-gatekeeper.html)). Windows shows a
+  SmartScreen prompt (*More info → Run anyway*), and an antivirus may ask
+  about `sussurro-llama-server.exe` the first time it runs. The **updater**
+  artifacts are always signed with the project's own key, independent of OS
+  signing.
 - **Cleanup output is pasted without review.** The cleaned text goes straight
-  into the focused app;
-  there is no step between the model and your cursor. By design the model only
-  ever generates text and never triggers actions, so instructions carried by a
-  dictation or a personal-dictionary entry can at most change what gets
-  pasted, not what Sussurro does.
+  into the focused app, with no step between the model and your cursor. By
+  design the model only ever generates text and never triggers actions, so
+  instructions carried by a dictation or a personal-dictionary entry can at
+  most change what gets pasted, not what Sussurro does.
 - **The global hotkey works over password fields too.** It fires wherever
-  focus is — including another app's password field — and starts recording
-  there (as designed); the audio goes only to local STT, and the text only to
+  focus is, including another app's password field, and starts recording
+  there (as designed). The audio goes only to local STT, and the text only to
   your cleanup profile (an external one only with your opt-in).
-- **An external cleanup profile sends transcripts off-machine — once you opt
-  in.** Choosing a cleanup profile whose server isn't on this machine holds
-  cleanup back (raw text, nothing sent) until you allow that server in
-  Settings → Cleanup; from then on every dictation is sent there
-  ([issue #92](https://github.com/fullo/Sussurro/issues/92),
-  [issue #122](https://github.com/fullo/Sussurro/issues/122)). See
-  [Privacy](#privacy).
 
 ## Documentation
 
-- [`docs/development.md`](docs/development.md) — build from source, tests, CI.
-- [`docs/compile/`](docs/compile/) — per-OS build guides (Windows/macOS/Linux).
-- [`docs/releases.md`](docs/releases.md) — release process, auto-update,
+- [`docs/releases/0.10.0.md`](docs/releases/0.10.0.md): what's new in 0.10
+  and upgrade notes.
+- [`docs/blog/`](docs/blog/index.html): a guide for each feature.
+- [`docs/development.md`](docs/development.md): build from source, tests, CI,
+  the sidecar and the extension.
+- [`docs/compile/`](docs/compile/): per-OS build guides (Windows/macOS/Linux),
+  including system-audio setup.
+- [`docs/releases.md`](docs/releases.md): release process, auto-update,
   code-signing.
-- [`docs/index.html`](docs/index.html) — the project landing page (+ `docs/blog/`).
+- [`extension/README.md`](extension/README.md): working on the browser
+  extension.
+- [`CLAUDE.md`](CLAUDE.md): roadmap and standing project decisions.
 
 ## License
 
@@ -415,8 +505,9 @@ The installers include one prebuilt program that Sussurro does not compile:
 `b11146` — Metal on macOS, Vulkan on Windows, CPU on Linux) with its shared
 libraries in `llama-server-libs/`. It runs the optional extra speech
 engines (Qwen3-ASR) and the optional *Local (bundled)* LLM profile (Qwen3
-1.7B), each as its own local process bound to `127.0.0.1`, only when you
-choose them; their models download when you pick them. The release and the SHA-256 of
+1.7B), each as its own local process that only Sussurro can reach (see
+[Privacy](#privacy)), only when you choose them; their models download when
+you pick them. The release and the SHA-256 of
 every upstream archive are committed in
 [`sussurro/src-tauri/sidecar/llama-server.lock.json`](sussurro/src-tauri/sidecar/llama-server.lock.json),
 and the build refuses any file that doesn't match. The Windows build also

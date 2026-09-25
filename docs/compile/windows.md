@@ -73,10 +73,21 @@ npm run tauri build    # production bundle (NSIS .exe + .msi)
 cd src-tauri; cargo test   # headless test suite
 ```
 
+Without the updater signing key, `tauri build` stops at the updater
+artifacts. PowerShell mangles inline JSON, so put the override in a file
+and pass its path (details in
+[development.md](../development.md#build--run)):
+
+```powershell
+Set-Content no-updater.json '{"bundle":{"createUpdaterArtifacts":false}}'
+npm run tauri build -- --config no-updater.json
+```
+
 ### The llama-server sidecar (release bundles)
 
 Release installers ship a pinned upstream `llama-server` (llama.cpp, Vulkan
-build) for the optional Qwen3-ASR engine (plan E9). Fetch it once, and again
+build) for the optional Qwen3-ASR engine and the *Local (bundled)* LLM
+profile (plan E9). Fetch it once, and again
 whenever `src-tauri/sidecar/llama-server.lock.json` changes (SHA-256-checked,
 fails closed):
 
