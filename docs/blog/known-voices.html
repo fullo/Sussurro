@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Known voices: suggestions, not surveillance — Sussurro Blog</title>
+<meta name="description" content="How Sussurro 0.11 suggests who a voice is: opt-in per person, built only from your own links, kept on this computer, never applied without a click — and why a voice profile is biometric data." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+<!-- seo:start -->
+<link rel="canonical" href="https://fullo.github.io/Sussurro/blog/known-voices.html" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#fafaf8" />
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+<meta property="og:site_name" content="Sussurro" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Known voices: suggestions, not surveillance — Sussurro Blog" />
+<meta property="og:description" content="How Sussurro 0.11 suggests who a voice is: opt-in per person, built only from your own links, kept on this computer, never applied without a click — and why a voice profile is biometric data." />
+<meta property="og:url" content="https://fullo.github.io/Sussurro/blog/known-voices.html" />
+<meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:published_time" content="2026-09-25" />
+<meta property="article:author" content="DarumaHQ" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Known voices: suggestions, not surveillance — Sussurro Blog" />
+<meta name="twitter:description" content="How Sussurro 0.11 suggests who a voice is: opt-in per person, built only from your own links, kept on this computer, never applied without a click — and why a voice profile is biometric data." />
+<meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Known voices: suggestions, not surveillance","description":"How Sussurro 0.11 suggests who a voice is: opt-in per person, built only from your own links, kept on this computer, never applied without a click — and why a voice profile is biometric data.","url":"https://fullo.github.io/Sussurro/blog/known-voices.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-09-25","dateModified":"2026-09-25","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/known-voices.html"}</script>
+<!-- seo:end -->
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+      <a href="../manual/index.html">Manual</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<main id="main">
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Known voices: suggestions, not surveillance</h1>
+    <p class="dek">How Sussurro 0.11 suggests who a voice is: opt-in per person, built only from your own links, kept on this computer, never applied without a click — and why a voice profile is biometric data.</p>
+    <div class="meta">5 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+<p>Since 0.9 every meeting labels the people it can't name as <em>Voice 1</em>, <em>Voice 2</em>… and you link them to People by hand. Do it every week for the same colleagues and it gets old. From 0.11 Sussurro can remember a voice you have linked before and, in the next meeting, say so: <b>Sounds like Anna · Link · Not Anna</b>.</p>
+<p>That small chip carries a lot of rules, because a voice profile tied to a name is not like a tag or an email address. It is <b>biometric data</b>.</p>
+
+<h2>Why voice profiles are special</h2>
+<p>Under the GDPR (art. 9), a voice becomes biometric data when it is processed to identify a person. <em>Voice 2</em> inside one document identifies no one; a profile that says “this is how Anna sounds” does. The European data protection authorities ask for explicit consent, an alternative without a voiceprint, and storage on the user's own device. Sussurro follows all three.</p>
+
+<h2>The rules</h2>
+<ul>
+  <li><b>Off by default, person by person.</b> In People, open someone and switch on <em>Recognise this voice</em>. A sheet explains what is stored, where, how to delete it — and reminds you to tell that person.</li>
+  <li><b>Learned only from your own links.</b> The profile comes from the lines of speakers you linked to that person in the speaker panel. Move a line to someone else and it stops counting. Nothing is learned from a voice you never confirmed.</li>
+  <li><b>Minimum evidence.</b> A profile suggests nothing until it has 60 seconds of confirmed speech from at least 2 documents; the person's entry in People shows how far it has got.</li>
+  <li><b>Only the clear winner.</b> A voice is suggested only when it is close enough to one profile and clearly closer to it than to anyone else. Room microphones, where every voice picks up the same echo, need a closer match. A doubtful case gets no suggestion.</li>
+  <li><b>Never applied by itself.</b> <em>Link</em> does exactly what linking by hand does (the participant and their email are added). <em>Not Anna</em> hides the suggestion for that voice in that document, and Sussurro remembers it.</li>
+</ul>
+
+<h2>Where it lives</h2>
+<p>A profile is a short list of numbers — an average of the voice prints of the linked lines, not a recording — stored in the app's data folder as <code>voices/&lt;person id&gt;.json</code>, readable only by you on macOS and Linux. It is <b>never</b> in the archive folder: archives get synced to iCloud Drive or OneDrive and shared, profiles don't. They are never in a config export, diagnostics, logs or the local API, and the app itself only ever sees a status line. On another computer you turn recognition on again and the profile is rebuilt from the archive's links — nothing is recorded twice.</p>
+<p>Your <em>Not Anna</em> answers sit next to them in <code>voice_dismissals.json</code>: ids only, no names, no voice data.</p>
+
+<h2>Turning it off</h2>
+<p>Switch <em>Recognise this voice</em> off, or click <em>Forget this voice</em>, and the file is deleted at once — not moved to the trash. Deleting or merging away a person does the same. Settings → <b>Voices</b> has two more controls: <em>Suggest names from known voices</em> hides every suggestion but keeps the profiles, and <em>Forget all voices</em> deletes every profile — your own voice included — and every <em>Not</em> answer on this computer.</p>
+
+<div class="callout"><span class="k">Tell people</span><p>Keeping voice profiles of friends and family for your own use is generally a different matter from an organisation recognising its staff or clients, where data protection law applies in full: a lawful basis — usually explicit consent — and a record of it. Sussurro can't tell which case you are in. When in doubt, ask first, and delete a profile whenever someone asks you to.</p></div>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="meetings-extension.html">Record web meetings with the browser extension</a></li>
+        <li><a href="where-data-lives.html">Where your data lives</a></li>
+        <li><a href="why-local-first.html">Why local-first</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+</main>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <ul class="foot-links">
+    <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
+    <li><a href="index.html">Blog</a></li>
+    <li><a href="https://github.com/fullo/Sussurro/releases">Download</a></li>
+  </ul>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

@@ -656,7 +656,28 @@ project decisions here, not in per-machine memory.**
   exports, diagnostics or logs (`Debug` prints sizes). Commands:
   `voices_status`, `voice_status`, `voice_set_enabled`, `voices_rebuild`,
   `voice_forget`, `voices_forget_all`. Overlap lines (#244) are to be
-  excluded once segments carry the flag. Suggestions UI is #242.
+  excluded once segments carry the flag.
+- **Voice suggestions (0.11, #242, P12)** (`speakers/suggestions.rs`,
+  `src/lib/voiceSuggestions.ts`, `shell/VoiceSuggestionChip.tsx`):
+  `voice_suggestions(id)` returns `{speaker_id, person_id}` only (no score)
+  for unlinked **`voice:N`** speakers (never "You" — the mic channel or a
+  voice with `own_voice: true` from #243 — nor `meet:` names) of a
+  non-recording item, from ready profiles of people still in People; a
+  dismissed best match gives **no** suggestion (never the runner-up). The
+  panel chip *Sounds like X · Link · Not X*: Link = the normal
+  `archive_link_speaker` path; *Not X* (`voice_suggestion_dismiss`) is kept
+  per item + voice + person in `<app data>/voice_dismissals.json` (0600,
+  ids only, never in the archive), dropped on item delete and by *Forget
+  all voices*. The UI refetches on any change of speakers/links, voice data
+  or People (so after runs, Re-detect, and for items opened later).
+  `Settings.voice_suggestions` (default on) hides all suggestions and keeps
+  the profiles. People → person: *Recognise this voice* (turning on shows a
+  first-use sheet — what, where, delete, tell the person), status line,
+  *Forget this voice*. **Settings → Voices is one section** holding #243's
+  *Your voice* card and the *Known voices* card (the switch, *Forget all
+  voices* with confirmation — it deletes your own voice too, and the *Your
+  voice* card is reloaded — and the GDPR note). Not built: stripping
+  per-line embeddings from items on request (optional in the issue).
 - **Own voice "You" (0.11, #243, P14)** (`speakers/own_voice.rs`,
   `shell/OwnVoiceDialog.tsx`, Settings → Voices): optional read-aloud
   enrolment (IT/EN paragraph, ~30 s, own `Recorder` on the picked mic; the

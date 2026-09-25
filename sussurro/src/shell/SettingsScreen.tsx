@@ -13,11 +13,11 @@ import { DiagnosticsCard } from "../settings/DiagnosticsCard";
 import { DictationCard } from "../settings/DictationCard";
 import { ExtensionCard } from "../settings/ExtensionCard";
 import { HistoryCard } from "../settings/HistoryCard";
-import { OwnVoiceCard } from "../settings/OwnVoiceCard";
 import { PersonalizationCard } from "../settings/PersonalizationCard";
 import { ScriptingCard } from "../settings/ScriptingCard";
 import { SetupBanner } from "../settings/SetupBanner";
 import { SpeechOptionsCard } from "../settings/SpeechCard";
+import { VoicesSection } from "../settings/VoicesCard";
 import { CompressAllField } from "./CompressAudio";
 import { sttLabel } from "./labels";
 
@@ -61,6 +61,7 @@ export function SettingsScreen({
   onSection,
   onOpenModels,
   onOpenRecipes,
+  onOpenPeople,
   onAbout,
   onRunSetup,
 }: {
@@ -69,6 +70,8 @@ export function SettingsScreen({
   onSection: (s: SectionId) => void;
   onOpenModels: () => void;
   onOpenRecipes: () => void;
+  /** Settings → Voices links to People (#242). */
+  onOpenPeople?: () => void;
   onAbout: () => void;
   /** Reopen the first-run setup (#115). */
   onRunSetup: () => void;
@@ -130,7 +133,7 @@ export function SettingsScreen({
           {section === "history" && <HistoryCard ctl={ctl} />}
           {section === "archive" && <ArchiveCard ctl={ctl} />}
           {section === "calendar" && <CalendarCard ctl={ctl} />}
-          {section === "voices" && <OwnVoiceCard ctl={ctl} />}
+          {section === "voices" && <VoicesSection ctl={ctl} onOpenPeople={onOpenPeople} />}
           {section === "extension" && <ExtensionCard ctl={ctl} />}
           {section === "scripting" && <ScriptingCard ctl={ctl} />}
           {section === "diagnostics" && <DiagnosticsCard ctl={ctl} />}

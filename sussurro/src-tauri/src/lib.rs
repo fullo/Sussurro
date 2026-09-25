@@ -279,6 +279,8 @@ pub fn run() {
             commands::own_voice_set_label,
             commands::own_voice_forget,
             commands::own_voice_find,
+            commands::voice_suggestions,
+            commands::voice_suggestion_dismiss,
             commands::archive_export,
             commands::archive_subtitles_status,
             commands::archive_create_subtitles,

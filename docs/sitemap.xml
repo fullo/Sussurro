@@ -205,6 +205,12 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://fullo.github.io/Sussurro/blog/known-voices.html</loc>
+    <lastmod>2026-09-25</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://fullo.github.io/Sussurro/blog/system-audio.html</loc>
     <lastmod>2026-09-25</lastmod>
     <changefreq>monthly</changefreq>

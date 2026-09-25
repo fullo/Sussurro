@@ -18,6 +18,8 @@ import type { DocSpeaker, Item, Person, VoiceSource } from "../lib/types";
 import { voiceMapShown } from "../lib/voiceMap";
 import { OwnVoiceOffer } from "./OwnVoiceOffer";
 import { VoiceMapCard } from "./VoiceMapCard";
+import { useVoiceSuggestions } from "../hooks/useVoiceSuggestions";
+import { VoiceSuggestionChip } from "./VoiceSuggestionChip";
 
 /** The context pane's *Speakers* section (#130): the document's speakers
  *  with colour and share of speech, rename for this document, link to a
@@ -71,6 +73,8 @@ export function SpeakerPanel({
     };
   }, [id, wantsSource, item.edited_externally, item.meta.source, audioNames]);
   const offer = identifyOffer(item, source);
+  // Known voices (#242): "Voice 2 sounds like Anna — Link · Not Anna".
+  const voiceSugg = useVoiceSuggestions(item, people, ctl.settings);
 
   const call = async (cmd: string, args: Record<string, unknown>, done?: string) => {
     setBusy(true);
@@ -189,6 +193,15 @@ export function SpeakerPanel({
                     {percent}%
                   </span>
                   {speaker.person_id && <LinkedTo speaker={speaker} people={people} />}
+                  {editable && voiceSugg.shown.has(speaker.id) && (
+                    <VoiceSuggestionChip
+                      speaker={speaker}
+                      person={voiceSugg.shown.get(speaker.id)!}
+                      busy={busy}
+                      onLink={() => link(speaker, voiceSugg.shown.get(speaker.id)!)}
+                      onDismiss={() => voiceSugg.dismiss(speaker.id, voiceSugg.shown.get(speaker.id)!.id)}
+                    />
+                  )}
                   {editable && (
                     <SpeakerActions
                       speaker={speaker}

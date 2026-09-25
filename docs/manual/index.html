@@ -85,6 +85,7 @@
           <li><a href="#extension-language">Language</a></li>
           <li><a href="#speakers">Speakers</a></li>
           <li><a href="#people">People</a></li>
+          <li><a href="#known-voices">Known voices</a></li>
         </ol></li>
       <li><a href="#system-audio">System audio</a></li>
       <li><a href="#subtitles">Subtitles and exports</a></li>
@@ -430,7 +431,11 @@ participants:
 <figure class="fig"><a href="../assets/screenshots/people.webp"><img src="../assets/screenshots/people.webp" width="1440" height="900" loading="lazy" alt="The People screen: an explanation of name and alias matching, a search box, a “Possible duplicates” note with Review and merge, and five people with their emails, aliases and how many items they appear in." /></a>
 <figcaption>People: aliases catch the other spellings; possible duplicates can be merged.</figcaption></figure>
 <p>Participant chips offer <span class="ui">+ People</span> to add someone. Deleting or editing a person never changes items that already have their email. People travel to another computer with the archive, or in a portable-config export only if you tick <span class="ui">Include People in the export</span>.</p>
-<p class="more">More: <a href="../blog/meetings-extension.html">Record web meetings with the browser extension</a></p>
+<h3 id="known-voices">Known voices</h3>
+<p>Sussurro can learn the voice of someone in People so that, in a later meeting or transcription, an unlinked <em>Voice N</em> comes with a suggestion: <span class="ui">Sounds like Anna · Link · Not Anna</span>. It is off until you turn it on, person by person: open the person in People and switch on <span class="ui">Recognise this voice</span>. A sheet first explains what is stored (a summary of how the person sounds, not a recording), where (only on this computer, never in the archive), how to delete it, and that you should tell the person — a voice profile that identifies someone is biometric data under the GDPR.</p>
+<p>The profile learns only from lines you linked to that person yourself. The person's entry shows how far it has got — seconds of confirmed speech and documents — and it starts suggesting at 60 seconds from 2 documents. A suggestion is never applied by itself: <span class="ui">Link</span> links like any other link (participant and email included); <span class="ui">Not Anna</span> hides it for that voice in that document, and Sussurro remembers the answer. Suggestions also appear when you open an older item from the Library.</p>
+<p>To stop: switch <span class="ui">Recognise this voice</span> off or click <span class="ui">Forget this voice</span> on the person; Settings → <b>Voices</b> has <span class="ui">Suggest names from known voices</span> (off hides every suggestion and keeps the profiles) and <span class="ui">Forget all voices</span>, which also deletes your own voice. Forgetting deletes the files at once, not to the trash.</p>
+<p class="more">More: <a href="../blog/meetings-extension.html">Record web meetings with the browser extension</a> · <a href="../blog/known-voices.html">Known voices: suggestions, not surveillance</a></p>
 <a class="top-link" href="#main">↑ Contents</a>
 </section>
 
@@ -536,6 +541,7 @@ participants:
     <tr><td>API keys of LLM profiles</td><td>The system credential store, service <code>com.sussurro.app</code></td></tr>
     <tr><td>Dictation history and statistics</td><td><code>history.jsonl</code>, <code>stats.json</code> in the app's data folder</td></tr>
     <tr><td>Search index, paths kept for <em>Identify voices</em>, temporary link downloads</td><td><code>archive-index.sqlite</code>, <code>source-files.json</code>, <code>link-downloads/</code> in the app's data folder</td></tr>
+    <tr><td>Voice profiles (<em>Recognise this voice</em>) and your <em>Not X</em> answers to voice suggestions</td><td><code>voices/</code>, <code>voice_dismissals.json</code> in the app's data folder (readable only by you on macOS and Linux) — never in the archive</td></tr>
     <tr><td>Speech, speaker and bundled LLM models</td><td><code>models/</code> in the app's data folder, or your Models folder</td></tr>
     <tr><td>Logs of the helper processes</td><td><code>llama-server.log</code>, <code>llama-server-llm.log</code> in the app's log folder</td></tr>
   </tbody>

@@ -10,7 +10,9 @@ import {
   personProblems,
   usageLabel,
 } from "../lib/people";
-import type { Person } from "../lib/types";
+import type { Person, VoiceStatus } from "../lib/types";
+import { statusesById, voiceBadge } from "../lib/voiceRecognition";
+import { PersonVoice } from "./PersonVoice";
 
 const NEW_PERSON: Person = { id: "", name: "", aliases: [] };
 
@@ -22,6 +24,8 @@ export function PeopleScreen({ ctl }: { ctl: Ctl }) {
   const [people, setPeople] = useState<Person[] | null>(null);
   const [error, setError] = useState("");
   const [usage, setUsage] = useState<Record<string, number>>({});
+  /** Voice profile status per person (#242): only people with one. */
+  const [voices, setVoices] = useState<Record<string, VoiceStatus>>({});
   const [query, setQuery] = useState("");
   /** The person open in the editor: a saved one, or a new draft (id ""). */
   const [editing, setEditing] = useState<{ person: Person; mergeWith?: string } | null>(null);
@@ -39,6 +43,9 @@ export function PeopleScreen({ ctl }: { ctl: Ctl }) {
     invoke<Record<string, number>>("people_usage")
       .then(setUsage)
       .catch(() => setUsage({}));
+    invoke<VoiceStatus[]>("voices_status")
+      .then((list) => setVoices(statusesById(list)))
+      .catch(() => setVoices({}));
   }, []);
 
   useEffect(() => {
@@ -79,6 +86,10 @@ export function PeopleScreen({ ctl }: { ctl: Ctl }) {
             display name, a nickname, a renamed voice. The list lives in your archive folder
             (<code>.sussurro/people.json</code>) on this computer and is never sent anywhere; deleting a person
             doesn't change items that already have their email.
+          </p>
+          <p className="card-hint">
+            <em>Recognise this voice</em> (open a person) is separate and off by default: it keeps a voice profile on
+            this computer only, never in the archive folder, so the speaker panel can suggest who a voice is.
           </p>
 
           {error && (
@@ -147,6 +158,7 @@ export function PeopleScreen({ ctl }: { ctl: Ctl }) {
                     <span className="prof-sub">
                       {[p.email ?? "no email", p.aliases.length ? `aka ${p.aliases.join(", ")}` : ""].filter(Boolean).join(" · ")}
                     </span>
+                    {voiceBadge(voices[p.id]) && <span className="people-voice-badge">{voiceBadge(voices[p.id])}</span>}
                     <span className="people-usage">{usageLabel(usage[p.id])}</span>
                   </button>
                   {editing?.person.id === p.id && (
@@ -158,6 +170,7 @@ export function PeopleScreen({ ctl }: { ctl: Ctl }) {
                       people={people ?? []}
                       usage={usage}
                       onDone={done}
+                      onVoice={(s) => setVoices((v) => ({ ...v, [s.person_id]: s }))}
                     />
                   )}
                 </li>
@@ -177,6 +190,7 @@ function PersonEditor({
   people,
   usage,
   onDone,
+  onVoice,
 }: {
   ctl: Ctl;
   initial: Person;
@@ -184,6 +198,8 @@ function PersonEditor({
   people: Person[];
   usage: Record<string, number>;
   onDone: (changed: boolean) => void;
+  /** *Recognise this voice* changed (#242). */
+  onVoice?: (s: VoiceStatus) => void;
 }) {
   const [name, setName] = useState(initial.name);
   const [email, setEmail] = useState(initial.email ?? "");
@@ -274,7 +290,7 @@ function PersonEditor({
         <div className="row-gap prof-actions" role="alertdialog" aria-label="Confirm delete">
           <span>
             Remove {initial.name} from People? Items that already list them keep their email; only future linking
-            stops.
+            stops. Their voice profile, if any, is deleted.
           </span>
           <button type="button" className="btn-danger sh-btn push" disabled={busy} onClick={remove}>Delete</button>
           <button type="button" className="btn-ghost" onClick={() => setConfirmDelete(false)}>Keep</button>
@@ -290,6 +306,8 @@ function PersonEditor({
           )}
         </div>
       )}
+
+      {!isNew && !confirmDelete && <PersonVoice ctl={ctl} person={initial} onChanged={onVoice} />}
 
       {!isNew && others.length > 0 && !confirmDelete && (
         <div className="people-merge">

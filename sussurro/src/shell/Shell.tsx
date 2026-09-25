@@ -204,6 +204,7 @@ export function Shell({ ctl }: { ctl: Ctl }) {
             onSection={setSection}
             onOpenModels={() => setScreen("models")}
             onOpenRecipes={() => setScreen("recipes")}
+            onOpenPeople={() => setScreen("people")}
             onAbout={() => setAboutOpen(true)}
             onRunSetup={() => setOnboarding("welcome")}
           />
