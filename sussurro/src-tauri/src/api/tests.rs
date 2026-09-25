@@ -134,6 +134,9 @@ struct Inner {
     slow_running: AtomicUsize,
     /// Archive token ids that passed the middleware (#249).
     tokens_used: Mutex<Vec<String>>,
+    /// `archive_dir` waits while this is set (#250 worker slots).
+    block_archive: AtomicBool,
+    archive_waiting: AtomicUsize,
 }
 
 #[derive(Clone)]
@@ -181,7 +184,18 @@ impl Host for TestHost {
         serde_json::json!([{"q": query, "n": n}])
     }
     fn archive_dir(&self) -> anyhow::Result<PathBuf> {
+        if self.0.block_archive.load(Ordering::SeqCst) {
+            self.0.archive_waiting.fetch_add(1, Ordering::SeqCst);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while self.0.block_archive.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            self.0.archive_waiting.fetch_sub(1, Ordering::SeqCst);
+        }
         Ok(self.0.archive.clone())
+    }
+    fn archive_index(&self) -> anyhow::Result<PathBuf> {
+        Ok(self.0.paths.archive_index.clone())
     }
     fn open_item(&self, id: &str) -> anyhow::Result<()> {
         archive::read_item(&self.0.archive, id)?;
@@ -265,6 +279,8 @@ fn start_server_with(limits: Option<tiny_http::Limits>) -> Running {
         release_slow: AtomicBool::new(false),
         slow_running: AtomicUsize::new(0),
         tokens_used: Mutex::new(Vec::new()),
+        block_archive: AtomicBool::new(false),
+        archive_waiting: AtomicUsize::new(0),
     }));
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     if let Some(limits) = limits {
@@ -1454,9 +1470,9 @@ fn archive_routes_need_the_switch_a_token_and_no_origin() {
     }
     assert!(r.host.0.tokens_used.lock().unwrap().is_empty(), "nothing got through yet");
 
-    // Authorized: past the middleware (the routes themselves come with #250).
+    // Authorized: past the middleware, into the read routes (#250).
     let ok = http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "");
-    assert_eq!((ok.status, ok.json()["code"].as_str()), (404, Some("not_found")));
+    assert_eq!((ok.status, ok.json()["total"].as_u64()), (200, Some(0)));
     assert_no_cors(&ok, "authorized");
     assert_eq!(*r.host.0.tokens_used.lock().unwrap(), vec![read_id.clone()]);
 
@@ -1481,7 +1497,11 @@ fn archive_scopes_are_enforced_per_method() {
     assert!(denied.header("WWW-Authenticate").unwrap().contains("scope=\"write\""));
     let denied = get(&write);
     assert_eq!((denied.status, denied.json()["code"].as_str()), (403, Some("insufficient_scope")));
-    for reply in [post(&write), get(&read), post(&all), get(&all)] {
+    // Authorized: reads answer (#250); writes come with #251.
+    for reply in [get(&read), get(&all)] {
+        assert_eq!(reply.status, 200, "authorized");
+    }
+    for reply in [post(&write), post(&all)] {
         assert_eq!(reply.json()["code"], "not_found", "authorized");
     }
     let del = http(r.port, "DELETE", "/archive/items/x", &[("Authorization", &read)], "");
@@ -1493,7 +1513,7 @@ fn a_revoked_archive_token_is_refused_at_once() {
     let r = start_server();
     r.host.0.config.lock().unwrap().archive = true;
     let (read, id) = add_archive_token(&r, "reader", &[Scope::Read]);
-    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "").json()["code"], "not_found");
+    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "").status, 200);
     assert!(archive_tokens::revoke(&mut r.host.0.config.lock().unwrap().archive_tokens, &id));
     assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "").status, 401);
     // Switching the API off refuses every token too.
@@ -1514,7 +1534,7 @@ fn archive_requests_are_rate_limited_per_token() {
         if reply.status == 429 {
             break reply;
         }
-        assert_eq!(reply.json()["code"], "not_found");
+        assert_eq!(reply.status, 200);
         passed += 1;
         assert!(passed < 1000, "never limited");
     };
@@ -1523,8 +1543,215 @@ fn archive_requests_are_rate_limited_per_token() {
     assert!(limited.header("Retry-After").unwrap().parse::<u64>().unwrap() >= 1);
     assert_no_cors(&limited, "429");
     // Another token is unaffected.
-    assert_eq!(
-        http(r.port, "GET", "/archive/items", &[("Authorization", &calm)], "").json()["code"],
-        "not_found"
-    );
+    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &calm)], "").status, 200);
+}
+
+// ---- archive read routes (#250) ---------------------------------------------
+
+/// A meeting with a participant email and a speaker embedding, a companion
+/// document and a People registry, in the running server's archive.
+fn seed_archive(r: &Running) -> String {
+    let archive = &r.host.0.archive;
+    let meta = archive::ItemMeta {
+        item_type: ItemType::Meeting,
+        title: "Weekly sync".into(),
+        date: "2026-09-24T10:00:00+02:00".into(),
+        source: "browser:meet.google.com".into(),
+        participants: vec![archive::Participant {
+            name: "Anna Rossi".into(),
+            email: Some("anna@example.com".into()),
+        }],
+        ..Default::default()
+    };
+    let segs = archive::SegmentsFile {
+        speakers: vec![archive::DocSpeaker {
+            id: "voice:1".into(),
+            label: "Anna Rossi".into(),
+            person_id: Some("p-anna".into()),
+            ..Default::default()
+        }],
+        segments: vec![archive::Segment {
+            id: 0,
+            channel: Channel::Remote,
+            start_ms: 1_000,
+            end_ms: 2_000,
+            speaker_id: Some("voice:1".into()),
+            text: "Parliamo della roadmap.".into(),
+            embedding: Some(vec![0.987_654_3; 4]),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let id = archive::create_item(archive, &meta, &segs).unwrap();
+    std::fs::write(archive.join(&id).join("document.md"), "---\ntitle: Minutes\n---\n\nAgreed.\n").unwrap();
+    std::fs::create_dir_all(archive.join(".sussurro")).unwrap();
+    std::fs::write(
+        archive.join(".sussurro").join("people.json"),
+        r#"{"version":1,"people":[{"id":"p-anna","name":"Anna Rossi","email":"anna@example.com","aliases":["Annina"]}]}"#,
+    )
+    .unwrap();
+    id
+}
+
+/// Every read route: no token, a wrong token, a token without `read`, a
+/// browser Origin and a foreign Host are refused before the route runs;
+/// the right token gets an answer with no CORS and `no-store`.
+#[test]
+fn every_archive_read_route_is_guarded() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().archive = true;
+    let id = seed_archive(&r);
+    let (read, _) = add_archive_token(&r, "reader", &[Scope::Read]);
+    let (write, _) = add_archive_token(&r, "clipper", &[Scope::Write]);
+    let (people, _) = add_archive_token(&r, "people only", &[Scope::People]);
+    let foreign = format!("rebind.attacker:{}", r.port);
+    let routes = [
+        "/archive/items".to_string(),
+        "/archive/items?q=roadmap&limit=1".to_string(),
+        format!("/archive/items/{id}"),
+        format!("/archive/items/{id}/export?format=txt"),
+        format!("/archive/items/{id}/documents"),
+        format!("/archive/items/{id}/documents/document.md"),
+        "/archive/people".to_string(),
+    ];
+    for path in &routes {
+        let get = |headers: &[(&str, &str)]| http(r.port, "GET", path, headers, "");
+        let none = get(&[]);
+        assert_eq!((none.status, none.json()["code"].as_str()), (401, Some("unauthorized")), "{path}");
+        let wrong = get(&[("Authorization", "Bearer sua_0000")]);
+        assert_eq!(wrong.status, 401, "{path}");
+        let ext_token = bearer();
+        assert_eq!(get(&[("Authorization", &ext_token)]).status, 401, "the extension token: {path}");
+        for scoped in [&write, &people] {
+            let denied = get(&[("Authorization", scoped)]);
+            assert_eq!((denied.status, denied.json()["code"].as_str()), (403, Some("insufficient_scope")), "{path}");
+        }
+        let from_ext = get(&[("Authorization", &read), ("Origin", EXT)]);
+        assert_eq!((from_ext.status, from_ext.json()["code"].as_str()), (403, Some("origin_refused")), "{path}");
+        let from_web = get(&[("Authorization", &read), ("Origin", "https://evil.example")]);
+        assert_eq!(from_web.status, 403, "{path}");
+        let rebind = get(&[("Authorization", &read), ("Host", &foreign)]);
+        assert_eq!((rebind.status, rebind.json()["error"].as_str()), (403, Some("host not allowed")), "{path}");
+        for reply in [&none, &wrong, &from_ext, &from_web, &rebind] {
+            assert_no_cors(reply, path);
+            assert!(!reply.body.contains("Parliamo") && !reply.body.contains("Anna"), "{path}: nothing served");
+        }
+
+        let ok = get(&[("Authorization", &read)]);
+        assert_eq!(ok.status, 200, "{path}: {}", ok.body);
+        assert_no_cors(&ok, path);
+        assert_eq!(ok.header("Cache-Control"), Some("no-store"), "{path}");
+        assert_eq!(ok.header("X-Content-Type-Options"), Some("nosniff"), "{path}");
+        for forbidden in ["anna@example.com", "embedding", "0.98765", "person_id", "archive-index"] {
+            assert!(!ok.body.contains(forbidden), "{forbidden} in {path}: {}", ok.body);
+        }
+    }
+    // Unknown ids and document names; unknown archive paths.
+    for (path, status, code) in [
+        ("/archive/items/2026/09/nope".to_string(), 404, "not_found"),
+        ("/archive/items/2026/09/nope/export".to_string(), 404, "not_found"),
+        (format!("/archive/items/{id}/documents/nope.md"), 404, "not_found"),
+        ("/archive/items/..%2F..%2Fetc".to_string(), 400, "invalid_id"),
+        (format!("/archive/items/{id}/documents/transcript.md"), 400, "invalid_name"),
+        ("/archive/voices".to_string(), 404, "not_found"),
+    ] {
+        let reply = http(r.port, "GET", &path, &[("Authorization", &read)], "");
+        assert_eq!((reply.status, reply.json()["code"].as_str()), (status, Some(code)), "{path}");
+        assert_no_cors(&reply, &path);
+    }
+}
+
+#[test]
+fn archive_reads_answer_json_pages_and_files() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().archive = true;
+    let id = seed_archive(&r);
+    for i in 0..3 {
+        let meta = archive::ItemMeta {
+            title: format!("Note {i}"),
+            date: format!("2026-09-0{}T08:00:00+02:00", i + 1),
+            ..Default::default()
+        };
+        archive::create_item(&r.host.0.archive, &meta, &archive::SegmentsFile::default()).unwrap();
+    }
+    let (read, _) = add_archive_token(&r, "reader", &[Scope::Read]);
+    let (full, _) = add_archive_token(&r, "full", &[Scope::Read, Scope::People]);
+    let get = |auth: &str, path: &str| http(r.port, "GET", path, &[("Authorization", auth)], "");
+
+    // Pages with an opaque cursor, bounded.
+    let first = get(&read, "/archive/items?limit=2");
+    assert_eq!(first.status, 200);
+    assert_eq!(first.header("Content-Type"), Some("application/json"));
+    assert_eq!(first.json()["total"], 4);
+    assert_eq!(first.json()["items"].as_array().unwrap().len(), 2);
+    assert_eq!(first.json()["items"][0]["id"], id.as_str());
+    let cursor = first.json()["next_cursor"].as_str().unwrap().to_string();
+    let second = get(&read, &format!("/archive/items?limit=2&cursor={cursor}"));
+    assert_eq!(second.json()["items"].as_array().unwrap().len(), 2);
+    assert!(second.json()["next_cursor"].is_null());
+    for bad in ["/archive/items?limit=1000", "/archive/items?limit=0", "/archive/items?cursor=zzz"] {
+        assert_eq!(get(&read, bad).status, 400, "{bad}");
+    }
+
+    // An item; emails with the people scope only.
+    let item = get(&read, &format!("/archive/items/{id}"));
+    assert_eq!(item.json()["meta"]["participants"], serde_json::json!([{"name": "Anna Rossi"}]));
+    assert_eq!(item.json()["speakers"], serde_json::json!([{"id": "voice:1", "label": "Anna Rossi"}]));
+    let item = get(&full, &format!("/archive/items/{}", id.replace('/', "%2F")));
+    assert_eq!(item.json()["meta"]["participants"][0]["email"], "anna@example.com");
+    assert!(!item.body.contains("embedding"));
+    let people = get(&read, "/archive/people");
+    assert_eq!(people.json()["people"], serde_json::json!([{"id": "p-anna", "name": "Anna Rossi", "aliases": ["Annina"]}]));
+    assert_eq!(get(&full, "/archive/people").json()["people"][0]["email"], "anna@example.com");
+
+    // An export is a file download.
+    let vtt = get(&read, &format!("/archive/items/{id}/export?format=vtt"));
+    assert_eq!(vtt.status, 200);
+    assert!(vtt.body.starts_with("WEBVTT"));
+    assert_eq!(vtt.header("Content-Type"), Some("text/vtt; charset=utf-8"));
+    assert!(vtt.header("Content-Disposition").unwrap().ends_with("weekly-sync.vtt\""));
+    assert_eq!(vtt.header("Cache-Control"), Some("no-store"));
+    let md = get(&read, &format!("/archive/items/{id}/export?format=md"));
+    assert!(md.body.contains("Anna Rossi") && !md.body.contains("anna@example.com"));
+    assert!(get(&full, &format!("/archive/items/{id}/export?format=md")).body.contains("anna@example.com"));
+
+    // HEAD is a read too: headers, no body.
+    let head = http(r.port, "HEAD", "/archive/items", &[("Authorization", &read)], "");
+    assert_eq!(head.status, 200);
+    assert!(head.body.is_empty());
+}
+
+/// Archive requests hold one of a few slots, so a script can't take every
+/// worker from the extension; the rest get 503 + Retry-After.
+#[test]
+fn archive_requests_share_a_bounded_number_of_workers() {
+    assert!(ARCHIVE_SLOTS < WORKERS, "a worker always stays free for the extension");
+    let r = start_server();
+    r.host.0.config.lock().unwrap().archive = true;
+    let (read, _) = add_archive_token(&r, "reader", &[Scope::Read]);
+    r.host.0.block_archive.store(true, Ordering::SeqCst);
+    let port = r.port;
+    let held: Vec<_> = (0..ARCHIVE_SLOTS)
+        .map(|_| {
+            let read = read.clone();
+            std::thread::spawn(move || http(port, "GET", "/archive/items", &[("Authorization", &read)], "").status)
+        })
+        .collect();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while r.host.0.archive_waiting.load(Ordering::SeqCst) < ARCHIVE_SLOTS {
+        assert!(std::time::Instant::now() < deadline, "the slow requests never started");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let busy = http(r.port, "GET", "/archive/people", &[("Authorization", &read)], "");
+    assert_eq!((busy.status, busy.json()["code"].as_str()), (503, Some("busy")));
+    assert_eq!(busy.header("Retry-After"), Some("1"));
+    assert_no_cors(&busy, "503");
+    // The extension still gets an answer meanwhile.
+    let auth = bearer();
+    assert_eq!(http(r.port, "GET", "/app/version", &[("Authorization", &auth)], "").status, 200);
+    r.host.0.block_archive.store(false, Ordering::SeqCst);
+    for h in held {
+        assert_eq!(h.join().unwrap(), 200);
+    }
+    assert_eq!(http(r.port, "GET", "/archive/people", &[("Authorization", &read)], "").status, 200);
 }
