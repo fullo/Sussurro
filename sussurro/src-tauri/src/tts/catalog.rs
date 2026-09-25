@@ -32,7 +32,7 @@ pub const ROOT_DIR: &str = "pocket-tts";
 /// Licence of the models and voice states.
 pub const MODEL_LICENCE: &str = "CC-BY-4.0";
 /// Attribution line shown next to the download and in About.
-pub const ATTRIBUTION: &str = "Pocket TTS by Kyutai (CC BY 4.0), ONNX export by KevinAHM";
+pub const ATTRIBUTION: &str = "Pocket TTS by Kyutai, ONNX export by KevinAHM";
 
 /// One pinned file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

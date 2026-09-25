@@ -1137,3 +1137,26 @@ button.pchip-name:hover { text-decoration: underline; }
 .ov-lang { margin: 0; font-size: 12.5px; }
 .ov-progress { display: flex; flex-direction: column; gap: 6px; }
 .spk-own-voice { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; }
+
+/* ---------- Read aloud: Models → Voices, Settings → Experimental (#255) ---------- */
+.badge-experimental {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-pill);
+  padding: 0 6px;
+  line-height: 16px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.tts-langs { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.tts-lang { border: 1px solid var(--border); border-radius: var(--radius); background: var(--c-surface); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.tts-voices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tts-voices li { font-size: 13px; }
+.tts-voice-pick { display: inline-flex; align-items: center; gap: 6px; min-width: 90px; }
+.tts-voice-source { font-size: 12px; }
+.tts-progress .progress { width: 200px; }

@@ -11,6 +11,7 @@ import { CalendarCard } from "../settings/CalendarCard";
 import { CleanupCard } from "../settings/CleanupCard";
 import { DiagnosticsCard } from "../settings/DiagnosticsCard";
 import { DictationCard } from "../settings/DictationCard";
+import { ExperimentalCard } from "../settings/ExperimentalCard";
 import { ExtensionCard } from "../settings/ExtensionCard";
 import { HistoryCard } from "../settings/HistoryCard";
 import { PersonalizationCard } from "../settings/PersonalizationCard";
@@ -33,6 +34,7 @@ export type SectionId =
   | "voices"
   | "extension"
   | "scripting"
+  | "experimental"
   | "diagnostics"
   | "about";
 
@@ -48,13 +50,14 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "voices", label: "Voices" },
   { id: "extension", label: "Browser extension" },
   { id: "scripting", label: "Scripting" },
+  { id: "experimental", label: "Experimental" },
   { id: "diagnostics", label: "Diagnostics" },
   { id: "about", label: "About" },
 ];
 
 /** Settings: one section at a time — dictation, speech, cleanup, dictionary,
  *  behavior, history, archive, calendar, voices, browser extension, scripting,
- *  diagnostics and About. */
+ *  experimental modules (read aloud, #255), diagnostics and About. */
 export function SettingsScreen({
   ctl,
   section,
@@ -136,6 +139,7 @@ export function SettingsScreen({
           {section === "voices" && <VoicesSection ctl={ctl} onOpenPeople={onOpenPeople} />}
           {section === "extension" && <ExtensionCard ctl={ctl} />}
           {section === "scripting" && <ScriptingCard ctl={ctl} />}
+          {section === "experimental" && <ExperimentalCard ctl={ctl} onOpenModels={onOpenModels} />}
           {section === "diagnostics" && <DiagnosticsCard ctl={ctl} />}
           {section === "about" && <AboutCard ctl={ctl} onAbout={onAbout} onRunSetup={onRunSetup} />}
         </div>

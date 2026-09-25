@@ -96,6 +96,10 @@ const settings: Settings = {
   meeting_notice_seen: params.get("notice") === "seen",
   // #242: `?voicesugg=off` starts with voice suggestions turned off.
   voice_suggestions: params.get("voicesugg") !== "off",
+  // #255 (P24): read aloud is off by default; `?tts=on` starts with it on
+  // and the Italian model + Giovanni downloaded.
+  tts_enabled: params.get("tts") === "on",
+  tts_voices: {},
 };
 
 // `?dict=N`: a dictionary of N entries (with a few duplicates) and N/10
@@ -957,6 +961,109 @@ function startLink(url: string, title: string | null, language: string, identify
 
 /** Fake model listing per profile: Ollama and localhost servers answer,
  *  "*.example.com" hosts behave as unreachable (to preview the error). */
+/* ---------- Read aloud (#255): Models → Voices ---------- */
+
+/** The pinned catalog as the backend reports it (sizes from tts/catalog.rs). */
+const TTS_CATALOG: { code: string; label: string; variant: string; model_bytes: number; voices: [string, string, string, number][] }[] = [
+  {
+    code: "it",
+    label: "Italian",
+    variant: "24 layers",
+    model_bytes: 1_307_501_592,
+    voices: [
+      ["giovanni", "Giovanni", "Common Voice Italian (CC0)", 18_486_272],
+      ["alba", "Alba", "Alba MacKenna (CC BY 4.0)", 24_777_760],
+      ["marius", "Marius", "Unmute voice donation (CC0)", 24_777_760],
+      ["anna", "Anna", "VCTK corpus, CSTR, University of Edinburgh (CC BY 4.0)", 31_265_824],
+    ],
+  },
+  {
+    code: "en",
+    label: "English",
+    variant: "April 2026",
+    model_bytes: 399_783_234,
+    voices: [
+      ["alba", "Alba", "Alba MacKenna (CC BY 4.0)", 6_194_424],
+      ["marius", "Marius", "Unmute voice donation (CC0)", 6_194_424],
+      ["javert", "Javert", "Unmute voice donation (CC0)", 6_194_424],
+      ["anna", "Anna", "VCTK corpus, CSTR, University of Edinburgh (CC BY 4.0)", 7_816_440],
+      ["george", "George", "VCTK corpus, CSTR, University of Edinburgh (CC BY 4.0)", 6_243_576],
+      ["peter_yearsley", "Peter", "LibriVox reader Peter Yearsley, via Voice-Zero (CC0)", 3_736_816],
+    ],
+  },
+];
+/** What is "on disk": language code → model present + voice ids. */
+const ttsDisk: Record<string, { model: boolean; voices: Set<string> }> = {
+  it: { model: params.get("tts") === "on", voices: new Set(params.get("tts") === "on" ? ["giovanni"] : []) },
+  en: { model: false, voices: new Set() },
+};
+let ttsJob: { language: string; voice: string | null; file: string; done_bytes: number; total_bytes: number } | null = null;
+let ttsCancel = false;
+let ttsPreviews = 0;
+
+function ttsVoiceOf(code: string): string {
+  const lang = TTS_CATALOG.find((l) => l.code === code)!;
+  const pick = settings.tts_voices?.[code];
+  return lang.voices.some((v) => v[0] === pick) ? pick! : lang.voices[0][0];
+}
+
+function ttsStatus() {
+  let onDisk = 0;
+  const languages = TTS_CATALOG.map((l) => {
+    const d = ttsDisk[l.code];
+    if (d.model) onDisk += l.model_bytes;
+    const selected = ttsVoiceOf(l.code);
+    return {
+      code: l.code,
+      label: l.label,
+      variant: l.variant,
+      model_bytes: l.model_bytes,
+      model_downloaded: d.model,
+      voices: l.voices.map(([id, label, source, bytes]) => {
+        if (d.voices.has(id)) onDisk += bytes;
+        return { id, label, source, bytes, downloaded: d.voices.has(id), selected: id === selected };
+      }),
+    };
+  });
+  return {
+    enabled: !!settings.tts_enabled,
+    engine: "Pocket TTS",
+    licence: "CC-BY-4.0",
+    attribution: "Pocket TTS by Kyutai, ONNX export by KevinAHM",
+    languages,
+    bytes_on_disk: onDisk,
+    downloading: ttsJob,
+    loaded: null,
+  };
+}
+
+async function ttsDownload(code: string, voice: string | null, voiceOnly: boolean): Promise<null> {
+  if (!settings.tts_enabled) throw "Read aloud is off — turn it on in Settings → Experimental.";
+  if (ttsJob) throw "another read-aloud download is running";
+  const lang = TTS_CATALOG.find((l) => l.code === code);
+  if (!lang) throw `no read-aloud model for '${code}'`;
+  const v = voice ?? ttsVoiceOf(code);
+  const vBytes = lang.voices.find((x) => x[0] === v)?.[3] ?? 0;
+  const d = ttsDisk[code];
+  const total = (voiceOnly || d.model ? 0 : lang.model_bytes) + (d.voices.has(v) ? 0 : vBytes);
+  ttsCancel = false;
+  ttsJob = { language: code, voice: voiceOnly ? v : null, file: voiceOnly ? `${v}.safetensors` : "flow_lm_main.onnx", done_bytes: 0, total_bytes: total };
+  try {
+    for (let i = 1; i <= 10; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      if (ttsCancel) throw "download cancelled";
+      ttsJob = { ...ttsJob, done_bytes: Math.round((total * i) / 10), file: i === 10 ? `${v}.safetensors` : ttsJob.file };
+      ev("tts-download-progress", ttsJob);
+    }
+    if (!voiceOnly) d.model = true;
+    d.voices.add(v);
+    return null;
+  } finally {
+    ttsJob = null;
+    ev("tts-download-progress", null);
+  }
+}
+
 /* ---------- the bundled LLM (#118) ---------- */
 
 /** `?bundled=missing`: its model isn't downloaded; `?sidecar=0`: a build
@@ -1354,6 +1461,30 @@ function handle(cmd: string, a: Args): unknown {
     }
     case "bundled_llm_status":
       return bundledStatus();
+    case "tts_status":
+      return ttsStatus();
+    case "tts_download":
+      return ttsDownload(String(a.language), (a.voice as string | null) ?? null, !!a.voiceOnly);
+    case "tts_cancel_download":
+      ttsCancel = true;
+      return null;
+    case "tts_delete": {
+      if (ttsJob) throw "a read-aloud download is running — cancel it first";
+      const codes = a.language ? [String(a.language)] : Object.keys(ttsDisk);
+      for (const c of codes) {
+        if (a.voice) ttsDisk[c].voices.delete(String(a.voice));
+        else ttsDisk[c] = { model: false, voices: new Set() };
+      }
+      return null;
+    }
+    case "tts_preview": {
+      if (!settings.tts_enabled) throw "Read aloud is off — turn it on in Settings → Experimental.";
+      const code = String(a.language);
+      const v = (a.voice as string | null) ?? ttsVoiceOf(code);
+      if (!ttsDisk[code]?.model) throw "the read-aloud model is not downloaded";
+      if (!ttsDisk[code].voices.has(v)) throw `the voice ${v} is not downloaded`;
+      return new Promise((r) => setTimeout(() => r(`tts-preview/preview-${++ttsPreviews}.wav`), 900));
+    }
     case "bundled_llm_download":
       return bundledDownload();
     case "bundled_llm_use":
@@ -1972,6 +2103,33 @@ const audioUrls = new Map<string, string>();
 function mockAudioUrl(path: string): string {
   const cached = audioUrls.get(path);
   if (cached) return cached;
+  // A read-aloud preview (#255): a short rising "voice", 2 s.
+  if (path.startsWith("tts-preview/")) {
+    const rate = 8000;
+    const n = rate * 2;
+    const buf = new DataView(new ArrayBuffer(44 + n * 2));
+    const str = (o: number, t: string) => [...t].forEach((c, i) => buf.setUint8(o + i, c.charCodeAt(0)));
+    str(0, "RIFF");
+    buf.setUint32(4, 36 + n * 2, true);
+    str(8, "WAVEfmt ");
+    buf.setUint32(16, 16, true);
+    buf.setUint16(20, 1, true);
+    buf.setUint16(22, 1, true);
+    buf.setUint32(24, rate, true);
+    buf.setUint32(28, rate * 2, true);
+    buf.setUint16(32, 2, true);
+    buf.setUint16(34, 16, true);
+    str(36, "data");
+    buf.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) {
+      const t = i / rate;
+      const env = 0.5 + 0.5 * Math.sin(2 * Math.PI * 5 * t);
+      buf.setInt16(44 + i * 2, 0.2 * env * Math.sin(2 * Math.PI * (160 + 40 * t) * t) * 32767, true);
+    }
+    const url = URL.createObjectURL(new Blob([buf.buffer], { type: "audio/wav" }));
+    audioUrls.set(path, url);
+    return url;
+  }
   const cut = path.lastIndexOf("/");
   const s = find(path.slice(0, cut));
   const file = path.slice(cut + 1);
