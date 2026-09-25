@@ -149,6 +149,20 @@ Choose on the **Models** screen:
   prompt, and Whisper large-v3-turbo stays more accurate on Italian, so it
   is never the default.
 
+### Read aloud (experimental, 0.12)
+
+An optional text-to-speech module, **off by default** (Settings →
+Experimental). It uses [Pocket TTS](https://kyutai.org) by Kyutai — the
+Italian 24-layer model (1.3 GB) and the English model (0.4 GB), CC BY 4.0 —
+on this computer, through the same ONNX Runtime as the speaker labels, and
+writes audio files (not live playback). **Nothing is downloaded until you
+ask**: Models → Voices lists each language and voice with its size and
+licence, asks before downloading, and can delete them; turning the module
+off offers to delete everything it downloaded. Only voices from recordings
+that allow commercial use are offered (Common Voice, voice donations,
+LibriVox, VCTK, Alba MacKenna), and no voice cloning is included. The
+engine leaves memory after 5 minutes unused.
+
 ## Getting started
 
 Download the installer for your OS from the
@@ -428,6 +442,7 @@ account:
 | Dictation history and usage stats | `history.jsonl`, `stats.json` in the app's data folder |
 | Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
 | Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
+| Read-aloud models and voices (experimental, only if you download them) | `models/pocket-tts/` in the same folder; voice previews are temporary files in `tts-preview/` in the app's data folder, deleted at the next start |
 | Voice profiles of people with *Recognise this voice* on, and your own voice if you recorded it (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
 | *Not X* answers to voice suggestions (0.11) | `voice_dismissals.json` in the app's data folder (ids only; readable only by you on macOS and Linux) |
 
