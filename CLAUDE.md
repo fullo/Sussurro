@@ -832,7 +832,7 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03; current version 0.10.0 — released 2026-09-25)
+## Roadmap (agreed 2026-07-03; current version 0.10.1 — released 2026-09-26)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -957,6 +957,13 @@ entries; the Firefox `.xpi` is signed on AMO (unlisted, secrets
 it. Still open: manual QA **#177** (0.7/0.8) and **#184** (0.9/0.10,
 real Meet/Teams/Zoom calls, Meet names selector set, system audio) —
 fixes from them ship as 0.10.x patch releases.
+
+**0.10.1 — published 2026-09-26** (notes `docs/releases/0.10.1.md`): built
+on the branch `release/0.10.x` (= `v0.10.0` + cherry-picks only, PR #300)
+with #279 (Firefox ≥ 140 desktop, AMO warnings), #291 (Teams on
+`teams.cloud.microsoft`, Zoom `/wc/` iframe) and #294 (meeting language;
+backported without the 0.11 archive API code). Later 0.10.x patches go on
+that branch the same way — never from `main`, which carries 0.11 work.
 
 - **Phase 0** — spikes #106–#108 closed (Silero VAD, WeSpeaker embeddings,
   word timings). #104/#105 (browser capture, Meet names) were desk studies
