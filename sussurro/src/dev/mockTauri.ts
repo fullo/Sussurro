@@ -13,9 +13,11 @@
    play a scripted live preview — revisions, a long dictation, then the
    final pass; ?overlay=long stays on the long text while recording),
    ?dict=5000 (a dictionary and snippet list that large, for the
-   Dictionary & snippets manager). */
+   Dictionary & snippets manager), ?tokens=3 (archive API tokens already
+   listed in Settings → Scripting). */
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { normalizeScopes, tokenNameError, type ArchiveScope, type ArchiveTokenInfo } from "../lib/archiveTokens";
 import { version as pkgVersion } from "../../package.json";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
@@ -73,6 +75,7 @@ const settings: Settings = {
   api_enabled: false,
   api_port: 4525,
   api_scripting: false,
+  api_archive: false,
   output_file: "",
   archive_dir: "",
   // #115: the preview opens on the workspace; `?onboarding=welcome` or
@@ -113,6 +116,17 @@ const settings: Settings = {
 function fakeToken(): string {
   return Array.from({ length: 64 }, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("");
 }
+
+/** Archive API tokens (#249). Like the backend, the mock keeps no
+ *  plaintext: a token exists only in `archive_token_create`'s answer.
+ *  `?tokens=N` starts with N listed tokens. */
+const archiveTokens: ArchiveTokenInfo[] = Array.from({ length: Number(params.get("tokens") ?? 0) }, (_, i) => ({
+  id: `mock${i.toString(16).padStart(12, "0")}`,
+  name: ["backup script", "clipboard to note", "weekly export"][i % 3] + (i >= 3 ? ` ${i}` : ""),
+  scopes: ([["read"], ["write"], ["read", "people"]] as ArchiveScope[][])[i % 3],
+  created: new Date(Date.now() - (i + 2) * 86_400_000).toISOString(),
+  last_used: i % 2 ? null : new Date(Date.now() - 3_600_000).toISOString(),
+}));
 
 const ARCHIVE = "/Users/demo/Documents/Sussurro";
 
@@ -1431,6 +1445,31 @@ function handle(cmd: string, a: Args): unknown {
     case "local_api_status":
       // As if Sussurro started with the current settings.
       return settings.api_enabled ? { state: "listening", port: settings.api_port } : { state: "off" };
+    case "archive_tokens_list":
+      return archiveTokens.map((t) => ({ ...t }));
+    case "archive_token_create": {
+      const name = String(a.name ?? "").trim();
+      const problem = tokenNameError(name, archiveTokens);
+      if (problem) throw problem;
+      const scopes = normalizeScopes((a.scopes as ArchiveScope[]) ?? []);
+      if (!scopes.length) throw "choose at least one scope";
+      const info: ArchiveTokenInfo = {
+        id: fakeToken().slice(0, 16),
+        name,
+        scopes,
+        created: new Date().toISOString(),
+        last_used: null,
+      };
+      archiveTokens.push(info);
+      // Shown once, never kept: a fake value, like the backend's shape.
+      return { token: `sua_${fakeToken()}`, info: { ...info } };
+    }
+    case "archive_token_revoke": {
+      const i = archiveTokens.findIndex((t) => t.id === a.id);
+      if (i < 0) throw "no such token (already revoked?)";
+      archiveTokens.splice(i, 1);
+      return archiveTokens.map((t) => ({ ...t }));
+    }
     case "engine_status":
       return {
         active: (mic ? 1 : 0) + (fileRun ? 1 : 0) + (linkRun ? 1 : 0),

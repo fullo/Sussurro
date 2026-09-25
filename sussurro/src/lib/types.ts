@@ -153,6 +153,12 @@ export interface Settings {
   /** The token-less scripting routes (`/clean`, `/transcribe`, `/history`)
    *  answer (#215). Off on a new install; applies at once. */
   api_scripting: boolean;
+  /** The archive API (`/archive/…`, #249) answers — each request also needs
+   *  an archive token. Off by default; applies at once. Absent before 0.11.
+   *  The tokens themselves are not part of the settings the UI edits: they
+   *  come from `archive_tokens_list` and change only through their own
+   *  commands. */
+  api_archive?: boolean;
   /** Dictate-to-file: append dictations to this file instead of pasting. */
   output_file: string;
   /** Archive folder; "" = the default `<Documents>/Sussurro`. */

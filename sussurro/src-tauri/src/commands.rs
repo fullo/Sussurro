@@ -8,7 +8,8 @@ use tauri_plugin_autostart::ManagerExt;
 
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> Settings {
-    state.settings.lock().unwrap().clone()
+    // Archive tokens without their hashes (#249).
+    state.settings.lock().unwrap().for_ui()
 }
 
 #[tauri::command]
@@ -24,9 +25,6 @@ pub fn set_settings(
     if crate::stt::sidecar::sidecar_available(&app) {
         settings.ensure_bundled_profile();
     }
-    // The extension token changes only through its own commands (#126): a
-    // UI holding an older copy of the settings must not undo a regenerate.
-    settings.extension_token = state.settings.lock().unwrap().extension_token.clone();
     // The model name flows into models_dir.join(name) for download and load —
     // reject traversal/absolute paths before anything touches the filesystem.
     models::validate_model_name(&settings.whisper_model).map_err(|e| e.to_string())?;
@@ -45,12 +43,21 @@ pub fn set_settings(
     // no store works, a key stays in settings.json (the editor warns).
     let prev = state.settings.lock().unwrap().clone();
     crate::secrets::sync_keys(&mut settings, &prev, &crate::secrets::OsStore);
-    settings
-        .save(&state.paths.settings_file)
-        .map_err(|e| e.to_string())?;
+    {
+        // The extension token (#126) and the archive tokens (#249) change
+        // only through their own commands: taken from the settings in
+        // effect, and saved under the same lock those commands save under,
+        // so a UI holding an older copy can't undo a regenerate or bring a
+        // revoked token back — in memory or on disk.
+        let current = state.settings.lock().unwrap();
+        settings.keep_backend_owned(&current);
+        settings
+            .save(&state.paths.settings_file)
+            .map_err(|e| e.to_string())?;
+    }
     // Main thread: must never wait for the transcriber (#154).
     // The UI learns where each key ended up (keychain, or the file fallback).
-    let saved = settings.clone();
+    let saved = settings.for_ui();
     crate::pipeline::swap_settings(&state, settings);
     Ok(saved)
 }
@@ -113,6 +120,71 @@ fn replace_extension_token(
 #[tauri::command]
 pub fn local_api_status() -> crate::api::ListenState {
     crate::api::listen_state()
+}
+
+/// Settings → Scripting (#249): the archive API tokens, without hashes.
+#[tauri::command]
+pub fn archive_tokens_list(state: State<'_, AppState>) -> Vec<crate::api::tokens::TokenInfo> {
+    list_archive_tokens(&state.settings)
+}
+
+/// Create an archive token: saved as a hash; the plaintext is returned
+/// here once, for the UI to show and copy, and never again.
+#[tauri::command]
+pub fn archive_token_create(
+    state: State<'_, AppState>,
+    name: String,
+    scopes: Vec<crate::api::tokens::Scope>,
+) -> Result<crate::api::tokens::NewToken, String> {
+    create_archive_token(&state.settings, &state.paths.settings_file, &name, &scopes)
+}
+
+/// Revoke an archive token: the next request with it is refused (the API
+/// reads the tokens on every request). Returns the remaining ones.
+#[tauri::command]
+pub fn archive_token_revoke(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<crate::api::tokens::TokenInfo>, String> {
+    revoke_archive_token(&state.settings, &state.paths.settings_file, &id)
+}
+
+fn list_archive_tokens(settings: &std::sync::Mutex<Settings>) -> Vec<crate::api::tokens::TokenInfo> {
+    settings.lock().unwrap().archive_tokens.iter().map(Into::into).collect()
+}
+
+/// A new token, saved; on a failed save nothing changes.
+fn create_archive_token(
+    settings: &std::sync::Mutex<Settings>,
+    file: &std::path::Path,
+    name: &str,
+    scopes: &[crate::api::tokens::Scope],
+) -> Result<crate::api::tokens::NewToken, String> {
+    let mut settings = settings.lock().unwrap();
+    let (stored, new) =
+        crate::api::tokens::create(&settings.archive_tokens, name, scopes, chrono::Utc::now())?;
+    let mut next = settings.clone();
+    next.archive_tokens.push(stored);
+    next.save(file).map_err(|e| e.to_string())?;
+    *settings = next;
+    Ok(new)
+}
+
+/// Remove token `id`, saved; on a failed save it stays in effect (and the
+/// UI says so).
+fn revoke_archive_token(
+    settings: &std::sync::Mutex<Settings>,
+    file: &std::path::Path,
+    id: &str,
+) -> Result<Vec<crate::api::tokens::TokenInfo>, String> {
+    let mut settings = settings.lock().unwrap();
+    let mut next = settings.clone();
+    if !crate::api::tokens::revoke(&mut next.archive_tokens, id) {
+        return Err("no such token (already revoked?)".into());
+    }
+    next.save(file).map_err(|e| e.to_string())?;
+    *settings = next;
+    Ok(settings.archive_tokens.iter().map(Into::into).collect())
 }
 
 /// Drive dictation from the in-app Dictate button: mirrors the global hotkey
@@ -391,7 +463,7 @@ pub async fn bundled_llm_use(app: AppHandle, state: State<'_, AppState>) -> Resu
         .save(&state.paths.settings_file)
         .map_err(|e| e.to_string())?;
     crate::pipeline::swap_settings(&state, settings.clone());
-    Ok(settings)
+    Ok(settings.for_ui())
 }
 
 /// GGML whisper models (`ggml-*.bin`) already present in the models folder, so
@@ -1103,21 +1175,33 @@ pub async fn diagnostics(app: AppHandle, state: State<'_, AppState>) -> Result<S
         );
         let _ = writeln!(
             r,
-            "History retention: {} · Local API: {} (port {}, scripting routes {})",
+            "History retention: {} · {}",
             if settings.history_retention_days == 0 {
                 "forever".to_string()
             } else {
                 format!("{} days", settings.history_retention_days)
             },
-            if settings.api_enabled { "on" } else { "off" },
-            settings.api_port,
-            if settings.api_scripting { "on" } else { "off" }
+            local_api_summary(&settings)
         );
         r.push_str(&crate::diagnostics::report::live_section(&live));
         Ok(crate::diagnostics::report::redact_home(&r, home.as_deref()))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The local API in the diagnostics report: switches and counts only —
+/// never a token, a hash or a token's name (#249).
+fn local_api_summary(settings: &Settings) -> String {
+    let on = |b: bool| if b { "on" } else { "off" };
+    format!(
+        "Local API: {} (port {}, scripting routes {}, archive API {}, {} archive token(s))",
+        on(settings.api_enabled),
+        settings.api_port,
+        on(settings.api_scripting),
+        on(settings.api_archive),
+        settings.archive_tokens.len()
+    )
 }
 
 /// Pull the cleanup profile's model on its Ollama server (blocking, can take
@@ -2330,5 +2414,108 @@ mod extension_token_tests {
         std::fs::create_dir_all(blocked.join("settings.json")).unwrap();
         assert!(replace_extension_token(&settings, &blocked.join("settings.json")).is_err());
         assert_eq!(settings.lock().unwrap().extension_token, old);
+    }
+}
+
+#[cfg(test)]
+mod archive_token_tests {
+    use super::*;
+    use crate::api::tokens::{hash_token, Scope};
+    use std::sync::Mutex;
+
+    #[test]
+    fn a_created_token_is_saved_as_a_hash_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let new = create_archive_token(&settings, &file, "notes shortcut", &[Scope::Write]).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(!text.contains(&new.token), "plaintext on disk");
+        assert!(!text.contains(&new.token["sua_".len()..]));
+        assert!(text.contains(&hash_token(&new.token)));
+        let loaded = Settings::load(&file);
+        assert_eq!(loaded.archive_tokens.len(), 1);
+        assert_eq!(loaded.archive_tokens[0].sha256, hash_token(&new.token));
+        assert_eq!(loaded.archive_tokens[0].scopes, vec![Scope::Write]);
+        // The list and the UI copy of the settings carry no hash.
+        let listed = serde_json::to_string(&list_archive_tokens(&settings)).unwrap();
+        assert!(!listed.contains(&hash_token(&new.token)) && !listed.contains(&new.token));
+        let ui = serde_json::to_string(&settings.lock().unwrap().for_ui()).unwrap();
+        assert!(!ui.contains(&hash_token(&new.token)) && !ui.contains(&new.token));
+        // Invalid requests change nothing.
+        assert!(create_archive_token(&settings, &file, "notes shortcut", &[Scope::Read]).is_err());
+        assert!(create_archive_token(&settings, &file, "x", &[]).is_err());
+        assert_eq!(Settings::load(&file).archive_tokens.len(), 1);
+    }
+
+    #[test]
+    fn revoking_removes_the_token_in_memory_and_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let a = create_archive_token(&settings, &file, "a", &[Scope::Read]).unwrap();
+        let b = create_archive_token(&settings, &file, "b", &[Scope::Read]).unwrap();
+        let left = revoke_archive_token(&settings, &file, &a.info.id).unwrap();
+        assert_eq!(left, vec![b.info.clone()]);
+        assert_eq!(Settings::load(&file).archive_tokens.len(), 1);
+        assert!(revoke_archive_token(&settings, &file, &a.info.id).is_err());
+        assert!(crate::api::tokens::find(&settings.lock().unwrap().archive_tokens, &a.token).is_none());
+    }
+
+    #[test]
+    fn a_failed_save_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let a = create_archive_token(&settings, &file, "a", &[Scope::Read]).unwrap();
+        // A directory where the file should be: the save fails.
+        let blocked = dir.path().join("blocked");
+        std::fs::create_dir_all(blocked.join("settings.json")).unwrap();
+        let bad = blocked.join("settings.json");
+        assert!(create_archive_token(&settings, &bad, "b", &[Scope::Read]).is_err());
+        assert_eq!(settings.lock().unwrap().archive_tokens.len(), 1);
+        assert!(revoke_archive_token(&settings, &bad, &a.info.id).is_err());
+        assert_eq!(settings.lock().unwrap().archive_tokens.len(), 1, "still in effect");
+    }
+
+    #[test]
+    fn diagnostics_show_no_token_hash_or_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings {
+            api_archive: true,
+            extension_token: "ext-secret-token".into(),
+            ..Default::default()
+        });
+        let new = create_archive_token(&settings, &file, "backup script", &[Scope::Read]).unwrap();
+        let s = settings.lock().unwrap().clone();
+        let line = local_api_summary(&s);
+        assert!(line.contains("archive API on, 1 archive token(s)"), "{line}");
+        for secret in [new.token.as_str(), &hash_token(&new.token), "backup script", "ext-secret-token"] {
+            assert!(!line.contains(secret), "{line}");
+        }
+    }
+
+    /// A UI holding settings from before a revoke can't bring the token
+    /// back, nor drop or rewrite the tokens it was sent without hashes.
+    #[test]
+    fn a_stale_ui_save_keeps_the_current_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Mutex::new(Settings::default());
+        let a = create_archive_token(&settings, &file, "a", &[Scope::Read]).unwrap();
+        let stale_ui = settings.lock().unwrap().for_ui();
+        assert!(stale_ui.archive_tokens[0].sha256.is_empty());
+        revoke_archive_token(&settings, &file, &a.info.id).unwrap();
+        let mut incoming = stale_ui;
+        incoming.api_archive = true;
+        incoming.keep_backend_owned(&settings.lock().unwrap());
+        assert!(incoming.archive_tokens.is_empty(), "the revoked token stays revoked");
+        assert!(incoming.api_archive, "the rest of the UI's change applies");
+        // And the other way round: a token created meanwhile survives, hash intact.
+        let b = create_archive_token(&settings, &file, "b", &[Scope::Read]).unwrap();
+        let mut incoming = Settings::default();
+        incoming.keep_backend_owned(&settings.lock().unwrap());
+        assert_eq!(incoming.archive_tokens[0].sha256, hash_token(&b.token));
     }
 }

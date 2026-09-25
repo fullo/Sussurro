@@ -50,6 +50,20 @@ fn routes_map_method_and_path() {
     assert_eq!(route("OPTIONS", "/app/version"), Route::Preflight);
     assert_eq!(route("OPTIONS", "/items/a/export"), Route::Preflight);
     assert_eq!(route("OPTIONS", "/clean"), Route::NotFound);
+    // Everything under /archive goes through the archive middleware (#249).
+    for (m, p) in [
+        ("GET", "/archive"),
+        ("GET", "/archive/items"),
+        ("GET", "/archive/items/2026/09/x/export"),
+        ("POST", "/archive/items"),
+        ("DELETE", "/archive/items/x"),
+        ("OPTIONS", "/archive/items"),
+    ] {
+        assert_eq!(route(m, p), Route::Archive, "{m} {p}");
+        assert!(route(m, p).is_archive() && !route(m, p).is_meeting() && !route(m, p).is_scripting());
+    }
+    assert_eq!(route("GET", "/archives"), Route::NotFound);
+    assert_eq!(route("GET", "/archiveitems"), Route::NotFound);
 }
 
 #[test]
@@ -118,6 +132,8 @@ struct Inner {
     /// `/transcribe?ext=slow` runs until this is set (#215 concurrency).
     release_slow: AtomicBool,
     slow_running: AtomicUsize,
+    /// Archive token ids that passed the middleware (#249).
+    tokens_used: Mutex<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -141,6 +157,9 @@ fn fake_transcribe(samples: &[f32], _language: &str) -> anyhow::Result<TimedTran
 impl Host for TestHost {
     fn config(&self) -> ApiConfig {
         self.0.config.lock().unwrap().clone()
+    }
+    fn archive_token_used(&self, id: &str) {
+        self.0.tokens_used.lock().unwrap().push(id.to_string());
     }
     fn clean(&self, text: &str) -> serde_json::Value {
         self.0.calls.fetch_add(1, Ordering::SeqCst);
@@ -245,6 +264,7 @@ fn start_server_with(limits: Option<tiny_http::Limits>) -> Running {
         calls: AtomicUsize::new(0),
         release_slow: AtomicBool::new(false),
         slow_running: AtomicUsize::new(0),
+        tokens_used: Mutex::new(Vec::new()),
     }));
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     if let Some(limits) = limits {
@@ -870,6 +890,8 @@ fn a_foreign_host_is_refused_on_every_route() {
             ("POST", "/items/2026/09/x/open"),
             ("OPTIONS", "/app/version"),
             ("GET", "/nope"),
+            ("GET", "/archive/items"),
+            ("POST", "/archive/items"),
         ] {
             let reply = http(r.port, method, path, &[("Host", host), ("Authorization", &auth)], "text");
             assert_eq!(reply.status, 403, "{host} {method} {path}");
@@ -1370,3 +1392,139 @@ fn live_outlasts_the_http_timeout() {
     assert!(rest.is_empty(), "nothing after the answer: {:?}", String::from_utf8_lossy(&rest));
 }
 
+
+// ---- archive API tokens (#249) ----------------------------------------------
+
+use crate::api::tokens::{self as archive_tokens, Scope};
+
+/// A token with `scopes`, added to the running server's config; returns the
+/// `Authorization` header value and the token id.
+fn add_archive_token(r: &Running, name: &str, scopes: &[Scope]) -> (String, String) {
+    let mut config = r.host.0.config.lock().unwrap();
+    let (stored, new) =
+        archive_tokens::create(&config.archive_tokens, name, scopes, chrono::Utc::now()).unwrap();
+    config.archive_tokens.push(stored);
+    (format!("Bearer {}", new.token), new.info.id)
+}
+
+fn assert_no_cors(reply: &Reply, what: &str) {
+    for (k, _) in &reply.headers {
+        assert!(!k.to_ascii_lowercase().starts_with("access-control-"), "{what}: {k}");
+    }
+}
+
+#[test]
+fn archive_routes_need_the_switch_a_token_and_no_origin() {
+    let r = start_server();
+    let (read, read_id) = add_archive_token(&r, "reader", &[Scope::Read]);
+    // Off by default: refused, with a code scripts can branch on.
+    let off = http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "");
+    assert_eq!((off.status, off.json()["code"].as_str()), (403, Some("archive_api_off")));
+    assert_no_cors(&off, "off");
+    r.host.0.config.lock().unwrap().archive = true;
+
+    // No token, a wrong one, the extension token, the token as a query.
+    let ext = bearer();
+    let q = format!("/archive/items?token={}", &read["Bearer ".len()..]);
+    for (path, auth) in [
+        ("/archive/items", None),
+        ("/archive/items", Some("Bearer sua_wrong")),
+        ("/archive/items", Some(ext.as_str())),
+        (q.as_str(), None),
+    ] {
+        let headers: Vec<(&str, &str)> = auth.map(|a| vec![("Authorization", a)]).unwrap_or_default();
+        let reply = http(r.port, "GET", path, &headers, "");
+        assert_eq!(reply.status, 401, "{path} {auth:?}");
+        assert_eq!(reply.json()["code"], "unauthorized");
+        assert!(reply.header("WWW-Authenticate").unwrap().starts_with("Bearer"));
+        assert_no_cors(&reply, "401");
+    }
+    // The right token with any browser Origin: an extension's is refused
+    // by the archive middleware, a web page's already by the #215 guard.
+    let from_ext = http(r.port, "GET", "/archive/items", &[("Authorization", &read), ("Origin", EXT)], "");
+    assert_eq!((from_ext.status, from_ext.json()["code"].as_str()), (403, Some("origin_refused")));
+    assert_no_cors(&from_ext, "extension origin");
+    let pre = http(r.port, "OPTIONS", "/archive/items", &[("Origin", EXT)], "");
+    assert_eq!(pre.status, 403, "no preflight answer");
+    assert_no_cors(&pre, "preflight");
+    for origin in ["https://evil.example", "null"] {
+        let web = http(r.port, "GET", "/archive/items", &[("Authorization", &read), ("Origin", origin)], "");
+        assert_eq!((web.status, web.json()["error"].as_str()), (403, Some("origin not allowed")));
+        assert_no_cors(&web, origin);
+    }
+    assert!(r.host.0.tokens_used.lock().unwrap().is_empty(), "nothing got through yet");
+
+    // Authorized: past the middleware (the routes themselves come with #250).
+    let ok = http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "");
+    assert_eq!((ok.status, ok.json()["code"].as_str()), (404, Some("not_found")));
+    assert_no_cors(&ok, "authorized");
+    assert_eq!(*r.host.0.tokens_used.lock().unwrap(), vec![read_id.clone()]);
+
+    // The archive token opens nothing else: not the extension's routes.
+    assert_eq!(http(r.port, "GET", "/app/version", &[("Authorization", &read)], "").status, 401);
+}
+
+#[test]
+fn archive_scopes_are_enforced_per_method() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().archive = true;
+    let (read, _) = add_archive_token(&r, "reader", &[Scope::Read]);
+    let (write, _) = add_archive_token(&r, "clipper", &[Scope::Write]);
+    let (all, _) = add_archive_token(&r, "all", &[Scope::Read, Scope::People, Scope::Write]);
+    let post = |auth: &str| {
+        http(r.port, "POST", "/archive/items", &[("Authorization", auth)], r#"{"title":"x","text":"y"}"#)
+    };
+    let get = |auth: &str| http(r.port, "GET", "/archive/people", &[("Authorization", auth)], "");
+
+    let denied = post(&read);
+    assert_eq!((denied.status, denied.json()["code"].as_str()), (403, Some("insufficient_scope")));
+    assert!(denied.header("WWW-Authenticate").unwrap().contains("scope=\"write\""));
+    let denied = get(&write);
+    assert_eq!((denied.status, denied.json()["code"].as_str()), (403, Some("insufficient_scope")));
+    for reply in [post(&write), get(&read), post(&all), get(&all)] {
+        assert_eq!(reply.json()["code"], "not_found", "authorized");
+    }
+    let del = http(r.port, "DELETE", "/archive/items/x", &[("Authorization", &read)], "");
+    assert_eq!(del.status, 403, "anything but GET/HEAD needs write");
+}
+
+#[test]
+fn a_revoked_archive_token_is_refused_at_once() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().archive = true;
+    let (read, id) = add_archive_token(&r, "reader", &[Scope::Read]);
+    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "").json()["code"], "not_found");
+    assert!(archive_tokens::revoke(&mut r.host.0.config.lock().unwrap().archive_tokens, &id));
+    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "").status, 401);
+    // Switching the API off refuses every token too.
+    let (again, _) = add_archive_token(&r, "again", &[Scope::Read]);
+    r.host.0.config.lock().unwrap().archive = false;
+    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &again)], "").status, 403);
+}
+
+#[test]
+fn archive_requests_are_rate_limited_per_token() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().archive = true;
+    let (busy, _) = add_archive_token(&r, "busy", &[Scope::Read]);
+    let (calm, _) = add_archive_token(&r, "calm", &[Scope::Read]);
+    let mut passed = 0;
+    let limited = loop {
+        let reply = http(r.port, "GET", "/archive/items", &[("Authorization", &busy)], "");
+        if reply.status == 429 {
+            break reply;
+        }
+        assert_eq!(reply.json()["code"], "not_found");
+        passed += 1;
+        assert!(passed < 1000, "never limited");
+    };
+    assert!(passed >= archive_tokens::RATE_BURST as usize, "the burst passes: {passed}");
+    assert_eq!(limited.json()["code"], "rate_limited");
+    assert!(limited.header("Retry-After").unwrap().parse::<u64>().unwrap() >= 1);
+    assert_no_cors(&limited, "429");
+    // Another token is unaffected.
+    assert_eq!(
+        http(r.port, "GET", "/archive/items", &[("Authorization", &calm)], "").json()["code"],
+        "not_found"
+    );
+}

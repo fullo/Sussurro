@@ -546,6 +546,28 @@ mod tests {
         assert!(!text.contains("llm_profiles"), "{text}");
     }
 
+    /// #249: the portable config never carries the archive tokens (not even
+    /// their names or hashes) nor the extension token.
+    #[test]
+    fn export_never_contains_tokens() {
+        use crate::api::tokens::{create, Scope};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cfg.json");
+        let (stored, new) = create(&[], "backup script", &[Scope::Read], chrono::Utc::now()).unwrap();
+        let s = Settings {
+            archive_tokens: vec![stored.clone()],
+            api_archive: true,
+            extension_token: "ext-secret-token".into(),
+            dictionary: vec!["Sussurro".into()],
+            ..Default::default()
+        };
+        export_to(&path, &s, &[]).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        for secret in [new.token.as_str(), stored.sha256.as_str(), "backup script", "ext-secret-token", "archive_tokens"] {
+            assert!(!text.contains(secret), "{secret} in {text}");
+        }
+    }
+
     #[test]
     fn bundle_excludes_machine_specific_fields() {
         // Compile-time guard: ConfigBundle has exactly the portable fields.
