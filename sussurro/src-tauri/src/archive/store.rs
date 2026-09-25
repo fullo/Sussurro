@@ -61,6 +61,9 @@ pub struct Item {
     /// Saved audio in the item folder (#141): `audio.wav`, or one file per
     /// channel. Empty when no audio was saved (or it was deleted).
     pub audio: Vec<super::audio::AudioFile>,
+    /// Generated speech in the item folder (read aloud, #256): `speech.opus`
+    /// and `speech-<document>.opus` — synthetic, never a recording.
+    pub speech: Vec<super::audio::AudioFile>,
     /// Size of the item folder on disk, audio included.
     pub folder_bytes: u64,
 }
@@ -460,6 +463,7 @@ fn read_item_at(id: &str, dir: &Path) -> Result<Item> {
         interrupted: state == Some(SessionState::Interrupted),
         external_hosts: super::external::sent_hosts_at(dir),
         audio: super::audio::files_with_sizes(dir),
+        speech: super::speech::files_in(dir),
         folder_bytes: super::audio::folder_bytes(dir),
     })
 }
@@ -562,7 +566,9 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
 /// marker is kept, so a UI sending back a stale copy can neither resurrect
 /// `recording` on a finished item nor clear it on a live one. The list of
 /// saved audio files (`audio:`, #141) is app-owned the same way: only the
-/// engine, "Delete audio" and "Compress audio" (#248) change it.
+/// engine, "Delete audio" and "Compress audio" (#248) change it — and so
+/// are the generated speech keys (`speech:`, `synthetic:`, #256), changed
+/// only by read aloud.
 ///
 /// Participants are written normalized ([`normalize_participants`]). Notes
 /// never get participants (P10): an update that would add or change them on
@@ -604,6 +610,8 @@ fn update_meta_with(
         meta.extra.remove(SESSION_KEY);
     }
     meta.extra.remove(super::audio::AUDIO_KEY);
+    meta.extra.remove(super::speech::SPEECH_KEY);
+    meta.extra.remove(super::speech::SYNTHETIC_KEY);
     // Keys the UI doesn't know (e.g. Obsidian's `aliases`) are kept.
     for (k, v) in old.extra {
         meta.extra.entry(k).or_insert(v);

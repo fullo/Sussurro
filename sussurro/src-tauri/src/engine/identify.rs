@@ -641,6 +641,7 @@ mod tests {
             external_hosts: Vec::new(),
             embedded_segments: 0,
             audio: Vec::new(),
+            speech: Vec::new(),
             folder_bytes: 0,
         }
     }

@@ -67,14 +67,58 @@ fn opus_head(pre_skip: u16) -> Vec<u8> {
     h
 }
 
-/// The `OpusTags` comment header: the libopus version as vendor, no tags.
-fn opus_tags() -> Vec<u8> {
+/// The `OpusTags` comment header: the libopus version as vendor, then
+/// `tags` as `NAME=value` user comments (RFC 7845 §5.2) — none for
+/// recorded audio, the synthetic-speech marks for generated speech (#256,
+/// P21).
+fn opus_tags(tags: &[(String, String)]) -> Vec<u8> {
     let vendor = opus::version();
     let mut t = b"OpusTags".to_vec();
     t.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
     t.extend_from_slice(vendor.as_bytes());
-    t.extend_from_slice(&0u32.to_le_bytes());
+    t.extend_from_slice(&(tags.len() as u32).to_le_bytes());
+    for (k, v) in tags {
+        let c = format!("{k}={v}");
+        t.extend_from_slice(&(c.len() as u32).to_le_bytes());
+        t.extend_from_slice(c.as_bytes());
+    }
     t
+}
+
+/// An `OpusTags` packet → its user comments as `(NAME, value)`, names
+/// upper-cased (Vorbis comment names compare case-insensitively). Pure.
+fn parse_tags(packet: &[u8]) -> Option<Vec<(String, String)>> {
+    let rest = packet.strip_prefix(b"OpusTags")?;
+    let u32_at = |at: usize| -> Option<usize> {
+        Some(u32::from_le_bytes(rest.get(at..at.checked_add(4)?)?.try_into().ok()?) as usize)
+    };
+    let mut at = 4usize.checked_add(u32_at(0)?)?;
+    let n = u32_at(at)?;
+    at += 4;
+    let mut out = Vec::new();
+    for _ in 0..n {
+        let len = u32_at(at)?;
+        at += 4;
+        let c = std::str::from_utf8(rest.get(at..at.checked_add(len)?)?).ok()?;
+        at += len;
+        let (k, v) = c.split_once('=')?;
+        out.push((k.to_ascii_uppercase(), v.to_string()));
+    }
+    Some(out)
+}
+
+/// The user comments of an Ogg Opus file: the synthetic-speech marks of
+/// generated speech (#256), none for recorded audio.
+pub fn read_tags(path: &Path) -> Result<Vec<(String, String)>> {
+    let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut reader = ogg::reading::PacketReader::new(BufReader::new(file));
+    reader
+        .read_packet_expected()
+        .with_context(|| format!("{} has no OpusHead", path.display()))?;
+    let tags = reader
+        .read_packet_expected()
+        .with_context(|| format!("{} has no OpusTags", path.display()))?;
+    parse_tags(&tags.data).with_context(|| format!("{}: malformed OpusTags", path.display()))
 }
 
 /// Our `OpusHead` (as [`opus_head`] writes it): its pre-skip, else `None`.
@@ -138,6 +182,12 @@ impl OpusWriter {
     /// Create `path` — never over an existing file — holding a duration cap
     /// of `max_samples`; both headers are on disk when this returns.
     pub fn create_capped(path: &Path, max_samples: u64) -> Result<Self> {
+        Self::create_tagged(path, max_samples, &[])
+    }
+
+    /// [`Self::create_capped`] with `tags` (`NAME`, value) as the stream's
+    /// user comments — generated speech carries its synthetic marks (#256).
+    pub fn create_tagged(path: &Path, max_samples: u64, tags: &[(String, String)]) -> Result<Self> {
         let mut enc = encoder()?;
         let lookahead = enc.get_lookahead().context("reading the Opus lookahead")? as u64;
         let file = OpenOptions::new()
@@ -160,11 +210,11 @@ impl OpusWriter {
             held: None,
             scratch: vec![0u8; MAX_PACKET],
         };
-        w.write_headers()?;
+        w.write_headers(tags)?;
         Ok(w)
     }
 
-    fn write_headers(&mut self) -> Result<()> {
+    fn write_headers(&mut self, tags: &[(String, String)]) -> Result<()> {
         let pre_skip = u16::try_from(self.pre_skip).context("Opus pre-skip out of range")?;
         let path = &self.path;
         (|| -> std::io::Result<()> {
@@ -176,7 +226,7 @@ impl OpusWriter {
                 0,
             )?;
             self.pw
-                .write_packet(opus_tags(), self.serial, PacketWriteEndInfo::EndPage, 0)?;
+                .write_packet(opus_tags(tags), self.serial, PacketWriteEndInfo::EndPage, 0)?;
             self.pw.inner_mut().flush()
         })()
         .with_context(|| format!("writing {}", path.display()))
@@ -989,6 +1039,39 @@ pub(crate) fn decode_file(path: &Path) -> Result<(Vec<f32>, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tags_are_written_and_read_back_and_the_audio_is_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let tagged = dir.path().join("speech.opus");
+        let tags = vec![
+            ("SYNTHETIC".to_string(), "1".to_string()),
+            ("comment".to_string(), "a=b, ünïcode".to_string()),
+        ];
+        let mut w = OpusWriter::create_tagged(&tagged, u64::MAX, &tags).unwrap();
+        w.write(&voice(RATE as usize, 0)).unwrap();
+        w.finish().unwrap();
+        assert_eq!(
+            read_tags(&tagged).unwrap(),
+            [
+                ("SYNTHETIC".to_string(), "1".to_string()),
+                ("COMMENT".to_string(), "a=b, ünïcode".to_string())
+            ]
+        );
+        // Readers skip the comment header whatever it holds.
+        assert_eq!(verify(&tagged).unwrap(), RATE as u64);
+        assert_eq!(decode_file(&tagged).unwrap().0.len(), RATE as usize);
+        // Recorded audio has none.
+        let plain = dir.path().join("audio.opus");
+        OpusWriter::create_capped(&plain, u64::MAX).unwrap().finish().unwrap();
+        assert!(read_tags(&plain).unwrap().is_empty());
+        // Malformed comment headers are refused, not read past their end.
+        assert_eq!(parse_tags(b"OpusTags\x05\0\0\0ab"), None);
+        assert_eq!(parse_tags(b"OpusHead"), None);
+        let mut t = opus_tags(&tags);
+        t.truncate(t.len() - 1);
+        assert_eq!(parse_tags(&t), None);
+    }
 
     /// Test signal with no period (so a lag is unambiguous): a tone whose
     /// pitch sweeps 150–1 150 Hz and back every second, with a slow

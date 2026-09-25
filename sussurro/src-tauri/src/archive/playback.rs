@@ -15,9 +15,11 @@
 //! **Confinement** — the URL names an item and a file, never a path: the id
 //! goes through the archive's own id validation and folder confinement
 //! ([`super::store::existing_item_dir`]), the file name must be one of the
-//! audio names of #141 ([`is_audio_file_name`]: `audio.wav` or
-//! `audio-<letters>.wav`, and their `.opus` twins of #247), and the file
-//! must be a regular file (not a link)
+//! audio names of #141 ([`super::audio::is_audio_file_name`]: `audio.wav`
+//! or `audio-<letters>.wav`, and their `.opus` twins of #247) or a
+//! generated speech file of #256 (`speech(-[a-z0-9-]+)?.(opus|wav)`,
+//! [`super::speech::is_speech_file_name`]), and the file must be a regular
+//! file (not a link)
 //! directly inside that item folder. Nothing else in the archive, and
 //! nothing outside it, can be read through the scheme.
 //!
@@ -48,7 +50,8 @@
 //! `206` to a request without one, what this answered before, made WebKit
 //! stop playing after the first MiB).
 
-use super::audio::{is_audio_file_name, AudioFormat};
+use super::audio::AudioFormat;
+use super::speech::is_playable_file_name;
 use super::opus::OpusReader;
 use anyhow::{bail, Context, Result};
 use std::io::{Read, Seek, SeekFrom};
@@ -106,7 +109,7 @@ pub fn parse_path(path: &str) -> Result<(String, String)> {
     let Some((id, file)) = decoded.rsplit_once('/') else {
         bail!("expected <item id>/<file name>");
     };
-    if id.is_empty() || !is_audio_file_name(file) {
+    if id.is_empty() || !is_playable_file_name(file) {
         bail!("'{decoded}' is not an item's audio file");
     }
     Ok((id.to_string(), file.to_string()))
@@ -115,7 +118,7 @@ pub fn parse_path(path: &str) -> Result<(String, String)> {
 /// The audio file `file` of item `id`, confined to the item folder (see the
 /// module docs). Errors for anything else, including a missing file.
 pub fn resolve(archive: &Path, id: &str, file: &str) -> Result<PathBuf> {
-    if !is_audio_file_name(file) {
+    if !is_playable_file_name(file) {
         bail!("'{file}' is not an audio file name");
     }
     let dir = super::store::existing_item_dir(archive, id)?;
@@ -472,7 +475,16 @@ mod tests {
             parse_path("/2026/09/x/audio.wav").unwrap(),
             ("2026/09/x".into(), "audio.wav".into())
         );
+        // Generated speech (#256) is served too — the pattern widened.
+        assert_eq!(
+            parse_path("/2026%2F09%2Fx%2Fspeech-action-items.opus").unwrap(),
+            ("2026/09/x".into(), "speech-action-items.opus".into())
+        );
+        assert!(parse_path("/2026/09/x/speech.opus").is_ok());
         for bad in [
+            "/2026/09/x/speech-X.opus",
+            "/2026/09/x/speech.opus.part",
+            "/2026/09/x/.sussurro/speech.opus.part",
             "/",
             "/audio.wav",
             "/2026%2F09%2Fx%2Ftranscript.md",

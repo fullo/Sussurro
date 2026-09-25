@@ -17,8 +17,10 @@
 
 pub mod catalog;
 pub mod engine;
+pub mod marking;
 pub mod models;
 pub mod pocket;
+pub mod resample;
 pub mod service;
 pub mod text;
 
