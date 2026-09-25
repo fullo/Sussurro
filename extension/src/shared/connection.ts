@@ -3,9 +3,12 @@
    mapping are separate so the mapping can be tested without a network.
 
    What the app answers (sussurro/src-tauri/src/api):
-   - 200 `{app, protocol, protocol_min?, subtitles}` → paired; compatible
-                               when ours is within `protocol_min..=protocol`
-                               (`subtitles`: the app's setting, #129)
+   - 200 `{app, protocol, protocol_min?, subtitles, live_auth?}` → paired;
+                               compatible when ours is within
+                               `protocol_min..=protocol` (`subtitles`: the
+                               app's setting, #129; `live_auth: "message"`:
+                               `/live` takes the token as its first message,
+                               #217)
    - 401                     → wrong or missing token (or never paired in the app)
    - 403                     → origin refused (should not happen from the extension)
    - 404                     → a Sussurro without the extension routes (older
@@ -19,7 +22,7 @@ import { PROTOCOL_VERSION, appUrl, authHeaders, protocolCompatible, type Pairing
 export type SubtitlesMode = "on_request" | "always";
 
 export type ConnectionResult =
-  | { kind: "ok"; app: string; protocol: number; subtitles?: SubtitlesMode }
+  | { kind: "ok"; app: string; protocol: number; subtitles?: SubtitlesMode; liveAuth?: "message" }
   | { kind: "protocol_mismatch"; app: string; protocol: number }
   | { kind: "not_running" }
   | { kind: "timeout" }
@@ -37,10 +40,16 @@ export function classifyResponse(status: number, body: unknown): ConnectionResul
   if (status === 403) return { kind: "forbidden" };
   if (status === 404) return { kind: "app_outdated" };
   if (status === 200 && body && typeof body === "object") {
-    const { app, protocol, protocol_min, subtitles } = body as { app?: unknown; protocol?: unknown; protocol_min?: unknown; subtitles?: unknown };
+    const { app, protocol, protocol_min, subtitles, live_auth } = body as { app?: unknown; protocol?: unknown; protocol_min?: unknown; subtitles?: unknown; live_auth?: unknown };
     if (typeof app === "string" && typeof protocol === "number") {
       if (!protocolCompatible(protocol, typeof protocol_min === "number" ? protocol_min : undefined)) return { kind: "protocol_mismatch", app, protocol };
-      return subtitles === "on_request" || subtitles === "always" ? { kind: "ok", app, protocol, subtitles } : { kind: "ok", app, protocol };
+      return {
+        kind: "ok",
+        app,
+        protocol,
+        ...(subtitles === "on_request" || subtitles === "always" ? { subtitles } : {}),
+        ...(live_auth === "message" ? { liveAuth: "message" as const } : {}),
+      };
     }
   }
   return { kind: "unexpected", status };

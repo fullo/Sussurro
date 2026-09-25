@@ -149,8 +149,11 @@ interface Sidebar extends Panel {
 
 interface Launched {
   ctx: BrowserContext;
-  /** Store the pairing, as the options page does (#127's keys). */
+  /** Store the pairing the way versions before #217 did (`storage.local`,
+   *  #127's keys): the extension must move it to its own store. */
   pair(port: number, token: string): Promise<void>;
+  /** What `storage.local` holds under the pairing's keys now. */
+  localPairing(): Promise<Record<string, unknown>>;
   /** The tab id of the first tab whose URL contains `part`. */
   tabIdOf(part: string): Promise<number>;
   /** The side panel, opened as a tab controlling `tabId`. */
@@ -193,6 +196,7 @@ async function launchChromium(config: Config): Promise<Launched> {
     async pair(port, token) {
       await sw.evaluate(([port, token]) => (globalThis as any).chrome.storage.local.set({ port, token }), [port, token] as const);
     },
+    localPairing: () => sw.evaluate(() => (globalThis as any).chrome.storage.local.get(["port", "token"])),
     tabIdOf: (part) =>
       sw.evaluate(async (part) => {
         const tabs = await (globalThis as any).chrome.tabs.query({});
@@ -309,8 +313,8 @@ async function launchFirefox(config: Config): Promise<Launched> {
     suspends: async () => Number(await chromeJs("globalThis.__e2eSuspends")),
     async pair(port, token) {
       await bg(`browser.storage.local.set(${JSON.stringify({ port, token })}); 0`);
-      await until("the pairing to be stored", async () => (await bgAwait("browser.storage.local.get('token').then((r) => r.token)")) === token);
     },
+    localPairing: async () => (await bgAwait("browser.storage.local.get(['port', 'token'])")) as Record<string, unknown>,
     async tabIdOf(part) {
       const code = `browser.tabs.query({}).then((ts) => (ts.find((t) => (t.url || "").includes(${JSON.stringify(part)})) || {}).id)`;
       return (await until("the tab id", async () => (await bgAwait(code)) as number)) as number;
@@ -388,6 +392,13 @@ async function runConfig(config: Config): Promise<Check[]> {
       return !text.includes("Not paired") && text.includes("Open a Google Meet") ? text : "";
     }).catch(async () => unpaired.text());
     check("once paired, the panel drops the note and follows the tab", paired.includes("Open a Google Meet"), paired);
+    // #217: the pairing moves out of storage.local (content scripts can
+    // read it there) into the extension's own IndexedDB.
+    const left = await until("the pairing to leave storage.local", async () => {
+      const items = await b.localPairing();
+      return Object.keys(items).length === 0 ? "moved" : "";
+    }).catch(async () => JSON.stringify(Object.keys(await b.localPairing())));
+    check("the pairing is moved out of storage.local", left === "moved", left);
 
     // 0. Firefox's event page (#137): with nothing going on it is suspended
     //    after the idle timeout — so the lifetime checks below mean something.
@@ -501,6 +512,7 @@ async function runConfig(config: Config): Promise<Check[]> {
 
     const s: LiveSession | undefined = server.sessions[0];
     check("one /live session, from the extension origin", server.sessions.length === 1 && /^(chrome|moz)-extension:\/\//.test(s?.origin ?? ""), s?.origin);
+    check("the token went as the first message, not in the /live URL (#217)", s?.auth === "message" && !s.tokenInUrl, { auth: s?.auth, tokenInUrl: s?.tokenInUrl });
     const start = s?.start ?? {};
     const rate = Number(start.rate);
     check(

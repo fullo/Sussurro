@@ -134,7 +134,10 @@ project decisions here, not in per-machine memory.**
   (`GET /app/version`, `WS /live`, `POST /items/{id}/open`,
   `GET /items/{id}/export`) exist whenever the local API runs and need
   `Settings.extension_token` — `Authorization: Bearer` on
-  HTTP, `?token=` plus an extension `Origin` on the WebSocket; web-page
+  HTTP, an extension `Origin` plus `?token=` or (#217, preferred; the app
+  reports `live_auth: "message"`) `auth {token}` as the first message
+  within 2 s on the WebSocket — the upgraded stream can't time out a
+  read, so the deadline is checked when that message arrives; web-page
   origins are refused even with the token; CORS only for
   `chrome-extension://` / `moz-extension://`. `/clean`, `/transcribe`,
   `/history` stay token-less and CORS-less. The token changes only via
@@ -145,6 +148,17 @@ project decisions here, not in per-machine memory.**
   A meeting is a two-channel engine run (`mic`, `remote`) into a `meeting`
   item, `source: browser:<host>`; page events go to
   `.sussurro/meeting-events.jsonl` for attribution (#131).
+  **Page input is untrusted (#217)**: a page script or XSS drives the
+  MAIN-world port during capture, so it is capped at every hop — ISOLATED
+  relay and background (`extension/src/shared/ratelimit.ts`), and the app
+  per connection (`api/live.rs`: 400 burst / 20 per s, 100k page events
+  and 8 MB of participant lists per meeting, repeated identical
+  `participants` dropped); `seq` gaps insert at most the wall clock since
+  start plus 30 s of silence per channel (and 60 s per gap); the name
+  timeline keeps ≤ 1000 speakers, ≤ 500 participants, ≤ 20k intervals
+  (oldest half ages out; the end-of-run pass leaves older lines alone).
+  The events file stays open while recording and is closed at the end of
+  the audio (Windows can't rename a folder with an open file).
 - **System audio + mic (0.10 step 1, #139)** (`sources/system.rs`):
   *New → System audio + mic* (it records other people: the #136 notice
   asks first). The mic and **any second input
@@ -206,8 +220,15 @@ project decisions here, not in per-machine memory.**
 - **Extension pairing (0.9, #127)**: the pairing code is
   `sussurro:<port>:<token>`, defined once in `sussurro/src/lib/pairingCode.ts`
   and imported by the extension as `@sussurro/pairing`. The extension keeps
-  it in `storage.local` under `port` / `token`, only through
-  `extension/src/shared/pairing.ts` (also `PROTOCOL_VERSION`, `liveUrl`).
+  it under `port` / `token` in **its own origin's IndexedDB** (#217:
+  content scripts in meeting pages can read `storage.local` — Firefox has
+  no `setAccessLevel`, Chrome restricts `local` only from 140 — but not the
+  extension's IndexedDB), only through `extension/src/shared/pairing.ts`
+  (also `PROTOCOL_VERSION`, `liveUrl`); a pairing left in `storage.local`
+  by an older version is moved on the next read. Chrome ≥ 140 also gets
+  `storage.local.setAccessLevel(TRUSTED_CONTEXTS)` at every background
+  start. Content scripts must never import the pairing (a unit test
+  checks).
   Settings → Browser extension never shows the token (Copy puts the code on
   the clipboard) and reads `local_api_status` (the API's settings apply at
   startup) to say when a restart is needed.

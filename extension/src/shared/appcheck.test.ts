@@ -6,6 +6,7 @@ describe("toAppCheck", () => {
   it("passes a compatible app", () => {
     expect(toAppCheck({ kind: "ok", app: "0.9.0", protocol: 1 })).toEqual({ ok: true, app: "0.9.0" });
     expect(toAppCheck({ kind: "ok", app: "0.9.0", protocol: 1, subtitles: "on_request" })).toEqual({ ok: true, app: "0.9.0", subtitles: "on_request" });
+    expect(toAppCheck({ kind: "ok", app: "0.9.1", protocol: 2, liveAuth: "message" })).toEqual({ ok: true, app: "0.9.1", liveAuth: "message" });
   });
 
   it("names every failure, not paired included", () => {

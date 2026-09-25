@@ -6,14 +6,17 @@ import type { ConnectionResult, SubtitlesMode } from "./connection";
 /** Why the app can't take a meeting right now. */
 export type AppProblem = "not_paired" | Exclude<ConnectionResult["kind"], "ok">;
 
-export type AppCheck = { ok: true; app: string; subtitles?: SubtitlesMode } | { ok: false; reason: AppProblem; detail?: string };
+export type AppCheck =
+  /** `liveAuth`: the app takes the token as `/live`'s first message (#217). */
+  | { ok: true; app: string; subtitles?: SubtitlesMode; liveAuth?: "message" }
+  | { ok: false; reason: AppProblem; detail?: string };
 
 /** `null` = no pairing stored. */
 export function toAppCheck(r: ConnectionResult | null): AppCheck {
   if (!r) return { ok: false, reason: "not_paired" };
   switch (r.kind) {
     case "ok":
-      return r.subtitles ? { ok: true, app: r.app, subtitles: r.subtitles } : { ok: true, app: r.app };
+      return { ok: true, app: r.app, ...(r.subtitles ? { subtitles: r.subtitles } : {}), ...(r.liveAuth ? { liveAuth: r.liveAuth } : {}) };
     case "protocol_mismatch":
       return { ok: false, reason: r.kind, detail: `app ${r.app} speaks protocol ${r.protocol}` };
     case "unexpected":

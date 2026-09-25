@@ -31,9 +31,17 @@ wrong token, an app without the extension routes, another protocol, or a reply b
 browser. **Regenerate token** in the app invalidates the old token at once;
 every paired browser must be paired again.
 
-The pairing lives in `storage.local` under the keys `port` and `token`,
-read and written only through `src/shared/pairing.ts` (`getPairing`,
-`setPairing`, `onPairingChanged`, `liveUrl`…). The pairing-code format is
+The pairing lives in the extension origin's IndexedDB (`sussurro` →
+`pairing`, keys `port` and `token`), read and written only through
+`src/shared/pairing.ts` (`getPairing`, `setPairing`, `onPairingChanged`,
+`liveUrl`…) — not in `storage.local`, which content scripts in the
+meeting pages can read (#217; Firefox has no `setAccessLevel`, Chrome
+restricts `local` only from 140). A content script's `indexedDB` is the web
+page's, so the token is out of their reach. A pairing an older version
+left in `storage.local` is moved on the next read. Changes are announced
+on a `BroadcastChannel` (same origin only); a write to `storage.local` the
+old way (the E2E harness does) is still picked up and moved. On Chrome ≥
+140 the background also restricts `storage.local` to trusted contexts. The pairing-code format is
 defined once in the app (`sussurro/src/lib/pairingCode.ts`) and imported
 here as `@sussurro/pairing`. The token is never logged and the options
 page shows it only masked once saved.
@@ -59,6 +67,16 @@ MAIN world (hook, AudioWorklet) ─MessagePort─▶ ISOLATED world ─runtime p
   Several peer connections and tracks added, replaced or ended mid-call
   are followed (`src/content/registry.ts` picks the tracks). It only
   *observes* until armed: no audio graph, nothing leaves the page.
+- **What the page can send is capped** (#217): the MAIN world is the
+  page's, so a page script (or an XSS on the page) can post on its port
+  while a capture runs. The ISOLATED relay drops beyond 200 speaker events
+  at once / 20 per s, 100 audio blocks / 60 per s, 50 state messages / 10
+  per s, blocks over 64 KiB and bad counters; the background again (400 /
+  20 per s per tab, a counter jump skips at most 1500 frames, repeated
+  participant lists dropped, at most 1000 speaker ids kept); the app
+  caps per connection (`api/live.rs`) and bounds the silence `seq` gaps
+  insert by the wall clock (`sources/browser.rs`). Constants in
+  `src/shared/ratelimit.ts`.
 - **Channels** match the app (`api/protocol.rs`): `0` = `mic` (what the page
   sends, else its `getUserMedia` track), `1` = `remote` (every received
   track, mixed). One `AudioContext` at the device rate → a mono bus per
@@ -90,7 +108,9 @@ MAIN world (hook, AudioWorklet) ─MessagePort─▶ ISOLATED world ─runtime p
   back to base64 on older Chromium engines (`src/shared/transport.ts`).
 - **Background** (`src/background/`): per-tab session (`session.ts`, a pure
   state machine): checks the app with `GET /app/version`, arms the page,
-  opens `ws://127.0.0.1:<port>/live?token=…`, sends `start {title, url,
+  opens `ws://127.0.0.1:<port>/live` and sends `auth {token}` first (an
+  app reporting `live_auth: "message"`, #217; older apps get `?token=…`,
+  which Chrome logs when the connection fails), then `start {title, url,
   platform, rate, channels: 2}`, numbers `seq` per connection, buffers up
   to ~30 s while (re)connecting, reconnects with capped exponential backoff
   (a reconnect is a new `start`, i.e. a new item), stops retrying on a
@@ -227,7 +247,7 @@ differ:
 | Host access | granted at install (users can restrict it) | can be withheld per site |
 | Tab-capture fallback | yes (`tabCapture` + offscreen document) | none: not built, never shown |
 
-Identical in both: pairing in `storage.local`, the MAIN-world hook
+Identical in both: pairing in the extension's IndexedDB (#217), the MAIN-world hook
 (`world: "MAIN"`, Firefox ≥ 128), the Meet name observer
 (`getContributingSources()` exists in both), the recording notice, the
 live lines and the item buttons; without host access to the meeting
