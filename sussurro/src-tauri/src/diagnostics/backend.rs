@@ -111,7 +111,10 @@ pub fn parse_whisper_log<S: AsRef<str>>(lines: &[S]) -> Option<ComputeBackend> {
             kind: "CPU".into(),
             device: None,
             source,
-            note: note(Some(format!("{} ({dev}) failed to initialise", kind_of(&dev)))),
+            note: note(Some(format!(
+                "{} ({dev}) failed to initialise",
+                kind_of(&dev)
+            ))),
         }),
         (Some(dev), _, _) => Some(ComputeBackend {
             kind: kind_of(&dev),
@@ -220,7 +223,10 @@ pub fn ggml_device_description(name: &str) -> Option<String> {
             if d.is_null() {
                 return None;
             }
-            let d = std::ffi::CStr::from_ptr(d).to_string_lossy().trim().to_string();
+            let d = std::ffi::CStr::from_ptr(d)
+                .to_string_lossy()
+                .trim()
+                .to_string();
             return (!d.is_empty() && d != name).then_some(d);
         }
     }
@@ -333,7 +339,10 @@ mod tests {
     fn whisper_vulkan_log() {
         let lines = ["whisper_backend_init_gpu: using Vulkan0 backend\n"];
         let b = parse_whisper_log(&lines).unwrap();
-        assert_eq!((b.kind.as_str(), b.device.as_deref()), ("Vulkan", Some("Vulkan0")));
+        assert_eq!(
+            (b.kind.as_str(), b.device.as_deref()),
+            ("Vulkan", Some("Vulkan0"))
+        );
     }
 
     #[test]
@@ -356,7 +365,10 @@ mod tests {
         ];
         let b = parse_whisper_log(&lines).unwrap();
         assert_eq!(b.kind, "CPU");
-        assert_eq!(b.note.as_deref(), Some("Vulkan (Vulkan0) failed to initialise"));
+        assert_eq!(
+            b.note.as_deref(),
+            Some("Vulkan (Vulkan0) failed to initialise")
+        );
     }
 
     #[test]
@@ -383,7 +395,10 @@ mod tests {
     #[test]
     fn whisper_log_without_backend_lines_says_nothing() {
         assert_eq!(parse_whisper_log::<&str>(&[]), None);
-        assert_eq!(parse_whisper_log(&["whisper_model_load: n_vocab = 51866"]), None);
+        assert_eq!(
+            parse_whisper_log(&["whisper_model_load: n_vocab = 51866"]),
+            None
+        );
     }
 
     /// Needs a whisper model: SUSSURRO_TEST_MODEL=/path/ggml-base.en.bin
@@ -442,7 +457,10 @@ llama_model_load_from_file_impl: using device Vulkan1 (NVIDIA GeForce RTX 3060) 
 load_tensors: offloaded 29/29 layers to GPU
 ";
         let b = parse_llama_log(log).unwrap();
-        assert_eq!(b.device.as_deref(), Some("Vulkan1, NVIDIA GeForce RTX 3060"));
+        assert_eq!(
+            b.device.as_deref(),
+            Some("Vulkan1, NVIDIA GeForce RTX 3060")
+        );
         assert_eq!(b.note.as_deref(), Some("29/29 layers on the GPU"));
     }
 }

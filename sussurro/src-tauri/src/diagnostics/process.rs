@@ -62,7 +62,11 @@ impl CpuMeter {
             Some((t, _)) if now.saturating_duration_since(t) < Duration::from_millis(200) => None,
             Some((t, c)) => {
                 *last = Some((now, cpu));
-                cpu_percent(cpu.saturating_sub(c), now.saturating_duration_since(t), cpus)
+                cpu_percent(
+                    cpu.saturating_sub(c),
+                    now.saturating_duration_since(t),
+                    cpus,
+                )
             }
             None => {
                 *last = Some((now, cpu));
@@ -241,7 +245,14 @@ mod tests {
         let t0 = Instant::now();
         assert_eq!(m.sample(t0, Duration::from_millis(100), 2), None);
         // Too soon: ignored, the first reading stays the baseline.
-        assert_eq!(m.sample(t0 + Duration::from_millis(50), Duration::from_millis(150), 2), None);
+        assert_eq!(
+            m.sample(
+                t0 + Duration::from_millis(50),
+                Duration::from_millis(150),
+                2
+            ),
+            None
+        );
         let pct = m
             .sample(t0 + Duration::from_secs(1), Duration::from_millis(600), 2)
             .unwrap();

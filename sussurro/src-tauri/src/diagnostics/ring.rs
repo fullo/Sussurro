@@ -10,10 +10,11 @@
 //! newer sample is simply skipped. No locks, no allocation on the write
 //! path: recording a timing costs a handful of atomic stores.
 //!
-//! Two writers only ever race on one slot if more than [`CAPACITY`] samples
-//! are pushed while one of them is still writing — not a situation the app
-//! can produce (one dictation at a time, a few engine workers); the worst
-//! case is one dropped sample.
+//! A writer claims its slot with a compare-and-swap from even to odd, so
+//! two writers never interleave in one slot: if more than [`CAPACITY`]
+//! samples are pushed while one writer is still in its slot (not something
+//! the app does — one dictation at a time, a few engine workers), the
+//! later sample is dropped, never torn.
 
 use serde::Serialize;
 use std::sync::atomic::{fence, AtomicU64, Ordering};
@@ -123,11 +124,22 @@ impl TimingRing {
         }
     }
 
-    /// Record one sample. Wait-free.
+    /// Record one sample. Lock-free: never waits.
     pub fn push(&self, sample: Sample) {
         let n = self.head.fetch_add(1, Ordering::Relaxed);
         let slot = &self.slots[(n % CAPACITY as u64) as usize];
-        slot.seq.store(2 * n + 1, Ordering::Relaxed);
+        // Claim the slot: only one writer between odd and even. A slot
+        // still being written by a writer [`CAPACITY`] samples behind
+        // means this sample is dropped rather than waiting.
+        let cur = slot.seq.load(Ordering::Relaxed);
+        if cur % 2 == 1
+            || slot
+                .seq
+                .compare_exchange(cur, 2 * n + 1, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+        {
+            return;
+        }
         fence(Ordering::Release);
         for (dst, v) in slot.words.iter().zip(sample.to_words()) {
             dst.store(v, Ordering::Relaxed);
@@ -317,7 +329,10 @@ mod tests {
         for w in writers {
             w.join().unwrap();
         }
-        assert_eq!(r.samples().len(), CAPACITY);
+        // Under this contention a few samples may be dropped, never torn.
+        for s in r.samples() {
+            assert_eq!(Some(s.at_ms), s.stt_ms);
+        }
     }
 
     #[test]

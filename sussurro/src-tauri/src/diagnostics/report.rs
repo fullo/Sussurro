@@ -167,7 +167,11 @@ pub fn live_section(s: &Snapshot) -> String {
     if let Some(sc) = &s.stt.sidecar {
         let _ = writeln!(r, "  {}", fmt_sidecar("Qwen3-ASR sidecar", sc));
     }
-    let _ = writeln!(r, "  {}", fmt_sidecar("Bundled LLM sidecar", &s.bundled_llm));
+    let _ = writeln!(
+        r,
+        "  {}",
+        fmt_sidecar("Bundled LLM sidecar", &s.bundled_llm)
+    );
     let _ = writeln!(
         r,
         "  Cleanup last call: {}",
@@ -326,7 +330,11 @@ mod tests {
                 api: "ollama".into(),
                 endpoint: "http://localhost:11434".into(),
                 external: false,
-                last_call: Some(LastCall { ms: 640, ok: true, age_s: 3 }),
+                last_call: Some(LastCall {
+                    ms: 640,
+                    ok: true,
+                    age_s: 3,
+                }),
             },
             bundled_llm: SidecarStatus::default(),
             process: ProcessStatus {
@@ -344,14 +352,26 @@ mod tests {
             recording: false,
         };
         let r = live_section(&snap);
-        assert!(r.contains("Last dictation: record 2.0 s · STT 400 ms · Finish→Idle 600 ms"), "{r}");
-        assert!(r.contains("Dictations (last 1): Finish→Idle median 600 ms, p90 600 ms"), "{r}");
+        assert!(
+            r.contains("Last dictation: record 2.0 s · STT 400 ms · Finish→Idle 600 ms"),
+            "{r}"
+        );
+        assert!(
+            r.contains("Dictations (last 1): Finish→Idle median 600 ms, p90 600 ms"),
+            "{r}"
+        );
         assert!(r.contains("whisper · ggml-base.bin · not loaded · Metal (Apple M1 Pro) — from whisper.cpp log"), "{r}");
-        assert!(r.contains("Memory: app 812 MB · STT model file 148 MB"), "{r}");
+        assert!(
+            r.contains("Memory: app 812 MB · STT model file 148 MB"),
+            "{r}"
+        );
         assert!(r.contains("CPU: 12 % of 10 logical cores"), "{r}");
         assert!(r.contains("Bundled LLM sidecar: not in this build"), "{r}");
         assert!(r.contains("Cleanup last call: 640 ms (ok, 3 s ago)"), "{r}");
-        assert!(r.contains("session 2: 4.2 s behind, 1 queued, 5 segment(s) done"), "{r}");
+        assert!(
+            r.contains("session 2: 4.2 s behind, 1 queued, 5 segment(s) done"),
+            "{r}"
+        );
     }
 
     #[test]
@@ -374,7 +394,10 @@ mod tests {
         let r = redact_home(t, Some(Path::new("/home/fullo")));
         assert_eq!(r, "Microphone: <user>'s AirPods · Model: fullone-v2");
         // Too short to redact safely.
-        assert_eq!(redact_home("an ad hoc", Some(Path::new("/home/ad"))), "an ad hoc");
+        assert_eq!(
+            redact_home("an ad hoc", Some(Path::new("/home/ad"))),
+            "an ad hoc"
+        );
         assert_eq!(redact_home("x", None), "x");
     }
 }

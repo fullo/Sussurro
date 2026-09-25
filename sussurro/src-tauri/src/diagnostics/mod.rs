@@ -304,7 +304,10 @@ static CPU: process::CpuMeter = process::CpuMeter::new();
 static QWEN_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn file_size(p: &std::path::Path) -> Option<u64> {
-    std::fs::metadata(p).ok().filter(|m| m.is_file()).map(|m| m.len())
+    std::fs::metadata(p)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
 }
 
 /// Total size of the files directly in `dir`.
@@ -545,7 +548,9 @@ mod tests {
             segments_done: 3,
         };
         note_progress(&p);
-        assert!(backlog().iter().any(|b| b.session_id == 987_654 && b.backlog_s == 4.0));
+        assert!(backlog()
+            .iter()
+            .any(|b| b.session_id == 987_654 && b.backlog_s == 4.0));
         forget_session(987_654);
         assert!(!backlog().iter().any(|b| b.session_id == 987_654));
     }
