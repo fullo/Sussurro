@@ -368,8 +368,12 @@ export interface VoiceSource {
   available: boolean;
   /** Why not, for the speaker panel (empty when available). */
   reason: string;
-  /** The original file's name (empty when unknown). */
+  /** The original file's name (empty when unknown), or the saved audio
+   *  file's when `saved_audio`. */
   file_name: string;
+  /** The voices come from the audio saved with the item (#248): the
+   *  original file isn't available. Absent from older backends. */
+  saved_audio?: boolean;
 }
 
 /** One line on the Voice map (#144, `archive_voice_map`). */

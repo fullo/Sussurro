@@ -190,18 +190,21 @@ function labelVoices(s: Stored) {
 /** Mirrors engine::identify::availability (#134). */
 function voiceSource(s: Stored) {
   const file = s.meta.source.startsWith("file:") ? s.meta.source.slice(5) : "";
-  const no = (reason: string) => ({ available: false, reason, file_name: file });
+  const no = (reason: string) => ({ available: false, reason, file_name: file, saved_audio: false });
   if (s.meta.type === "note") return no("Notes are your own voice: they have no speakers.");
   if (s.meta.type === "meeting") return no("Meetings get their voices while they are recorded.");
   if (s.recording) return no("Available when the recording ends.");
   if (s.edited_externally) return no("The transcript was edited outside Sussurro.");
   if (s.voiceOf) return no("This transcription already has voice data: use Re-detect speakers.");
+  // Without the original file, the audio saved with the item (#248).
+  const saved = ["audio.wav", "audio-file.wav", "audio.opus", "audio-file.opus"].find((n) => (s.audio ?? []).some((f) => f.name === n));
+  if (saved && (s.sourceFile !== "available" || !file)) return { available: true, reason: "", file_name: saved, saved_audio: true };
   if (s.meta.source.startsWith("url:"))
     return no("Voices are found in the audio, and a link's download is deleted once it is transcribed (downloading it again is not supported yet). Transcribe the link again with Identify voices on.");
   if (!file) return no("The original audio of this transcription is not available.");
   switch (s.sourceFile) {
     case "available":
-      return { available: true, reason: "", file_name: file };
+      return { available: true, reason: "", file_name: file, saved_audio: false };
     case "missing":
       return no(`The original file “${file}” is no longer where it was transcribed from. Transcribe it again with Identify voices on.`);
     case "changed":

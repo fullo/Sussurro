@@ -7,6 +7,7 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
+use crate::archive::opus::OpusReader;
 use crate::audio::recorder::TARGET_RATE;
 use crate::audio::resample::{downmix_to_mono, resample_linear, StreamResampler};
 
@@ -30,20 +31,55 @@ pub fn decode_bytes_16k_mono(bytes: Vec<u8>, ext: &str) -> Result<Vec<f32>> {
 /// packets are decoded, downmixed and resampled to 16 kHz mono one at a time
 /// through [`StreamResampler`] (bit-identical to the batch path), so an
 /// hour-long file never sits in RAM — only the current packet does.
+///
+/// Ogg Opus (saved audio of #247, or any mono/stereo Opus file) is decoded
+/// by libopus through [`OpusReader`] — symphonia has no Opus decoder — so
+/// every reader of saved audio (Identify voices, #248) takes both formats.
 pub struct FileStream {
+    inner: Inner,
+    /// Total length announced by the container, if any.
+    pub duration_ms: Option<u64>,
+}
+
+enum Inner {
+    Symphonia(Box<SymphoniaStream>),
+    Opus(Box<OpusReader>),
+}
+
+struct SymphoniaStream {
     format: Box<dyn symphonia::core::formats::FormatReader>,
     decoder: Box<dyn symphonia::core::codecs::Decoder>,
     track_id: u32,
     src_rate: u32,
     /// Created on the first decoded packet (its spec gives the channels).
     resampler: Option<(usize, StreamResampler)>,
-    /// Total length announced by the container, if any.
-    pub duration_ms: Option<u64>,
     done: bool,
+}
+
+/// Samples per chunk of an Opus file (0.25 s).
+const OPUS_CHUNK: usize = TARGET_RATE as usize / 4;
+
+/// Whether `path` starts like an Ogg file.
+fn is_ogg(path: &Path) -> bool {
+    use std::io::Read as _;
+    let mut magic = [0u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut magic))
+        .is_ok()
+        && &magic == b"OggS"
 }
 
 impl FileStream {
     pub fn open(path: &Path) -> Result<Self> {
+        if is_ogg(path) {
+            // Ogg Vorbis/FLAC fall through to symphonia.
+            if let Ok(r) = OpusReader::open(path) {
+                return Ok(Self {
+                    duration_ms: Some(r.total_samples() * 1000 / TARGET_RATE as u64),
+                    inner: Inner::Opus(Box::new(r)),
+                });
+            }
+        }
         let file = std::fs::File::open(path).context("open audio file")?;
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -81,19 +117,33 @@ impl FileStream {
             .make(&track.codec_params, &DecoderOptions::default())
             .context("no decoder for this audio codec")?;
         Ok(Self {
-            format,
-            decoder,
-            track_id,
-            src_rate,
-            resampler: None,
+            inner: Inner::Symphonia(Box::new(SymphoniaStream {
+                format,
+                decoder,
+                track_id,
+                src_rate,
+                resampler: None,
+                done: false,
+            })),
             duration_ms,
-            done: false,
         })
     }
 
     /// The next chunk of 16 kHz mono samples; `None` at end of stream. A
     /// chunk can be empty (a packet whose output the resampler holds back).
     pub fn next_chunk(&mut self) -> Result<Option<Vec<f32>>> {
+        match &mut self.inner {
+            Inner::Symphonia(s) => s.next_chunk(),
+            Inner::Opus(r) => {
+                let mut out = Vec::with_capacity(OPUS_CHUNK);
+                Ok((r.read(&mut out, OPUS_CHUNK)? > 0).then_some(out))
+            }
+        }
+    }
+}
+
+impl SymphoniaStream {
+    fn next_chunk(&mut self) -> Result<Option<Vec<f32>>> {
         if self.done {
             return Ok(None);
         }
@@ -277,5 +327,34 @@ mod tests {
         std::fs::write(&path, b"definitely not audio").unwrap();
         assert!(FileStream::open(&path).is_err());
         assert!(FileStream::open(&dir.path().join("missing.mp3")).is_err());
+    }
+
+    /// Saved Opus (#247) streams through libopus (#248): the same samples
+    /// as a full decode, whatever the extension says.
+    #[test]
+    fn ogg_opus_streams_through_libopus() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audio.opus");
+        let mut w = crate::archive::opus::OpusWriter::create_capped(&path, u64::MAX).unwrap();
+        w.write(&tone(16_000, 1, 2.3)).unwrap();
+        w.finish().unwrap();
+        let (full, _) = crate::archive::opus::decode_file(&path).unwrap();
+        for p in [path.clone(), dir.path().join("renamed.bin")] {
+            if p != path {
+                std::fs::copy(&path, &p).unwrap();
+            }
+            let mut stream = FileStream::open(&p).unwrap();
+            assert_eq!(stream.duration_ms, Some(2_300));
+            let mut got = Vec::new();
+            while let Some(chunk) = stream.next_chunk().unwrap() {
+                got.extend(chunk);
+            }
+            assert_eq!(got, full);
+            assert!(stream.next_chunk().unwrap().is_none());
+        }
+        // An Ogg file that isn't Opus is still symphonia's to judge.
+        let not_opus = dir.path().join("x.ogg");
+        std::fs::write(&not_opus, b"OggS but nothing else").unwrap();
+        assert!(FileStream::open(&not_opus).is_err());
     }
 }

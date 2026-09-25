@@ -46,8 +46,12 @@ pub struct VoiceSource {
     pub available: bool,
     /// Why not, in words for the panel (empty when available).
     pub reason: String,
-    /// The original file's name (empty when unknown).
+    /// The original file's name (empty when unknown), or the saved audio
+    /// file's when `saved_audio`.
     pub file_name: String,
+    /// The voices come from the audio saved with the item (#141, WAV or
+    /// Opus, #248): the original file isn't available, the saved audio is.
+    pub saved_audio: bool,
 }
 
 fn ms_to_samples(ms: u64) -> u64 {
@@ -185,9 +189,21 @@ fn file_name_of(source: &str) -> &str {
     source.strip_prefix("file:").unwrap_or_default()
 }
 
+/// The item's saved audio of the `file` channel, if any: `audio.<ext>` (a
+/// file or link run's single channel) or `audio-file.<ext>`, WAV first
+/// (lossless) when a Compress audio left both. Its clock is the file's, so
+/// the lines' times fit it. Pure.
+pub fn saved_voice_audio(item: &archive::Item) -> Option<String> {
+    ["audio.wav", "audio-file.wav", "audio.opus", "audio-file.opus"]
+        .into_iter()
+        .find(|name| item.audio.iter().any(|f| f.name == *name))
+        .map(str::to_string)
+}
+
 /// Whether "Identify voices" can run on this item, and if not, why — in
 /// words for the speaker panel. `original`: the recorded original file and
-/// its state now, if any. Pure.
+/// its state now, if any; without it the audio saved with the item (#141)
+/// serves too. Pure.
 pub fn availability(item: &archive::Item, original: Option<FileState>) -> VoiceSource {
     let source = item.meta.source.trim();
     let file_name = file_name_of(source).to_string();
@@ -195,6 +211,7 @@ pub fn availability(item: &archive::Item, original: Option<FileState>) -> VoiceS
         available: false,
         reason,
         file_name: file_name.clone(),
+        saved_audio: false,
     };
     match item.meta.item_type {
         ItemType::Transcription => {}
@@ -209,6 +226,17 @@ pub fn availability(item: &archive::Item, original: Option<FileState>) -> VoiceS
     }
     if item.embedded_segments > 0 {
         return no("This transcription already has voice data: use Re-detect speakers.".into());
+    }
+    // The original file first (lossless); else the audio saved with the item.
+    if original != Some(FileState::Available) || !source.starts_with("file:") {
+        if let Some(saved) = saved_voice_audio(item) {
+            return VoiceSource {
+                available: true,
+                reason: String::new(),
+                file_name: saved,
+                saved_audio: true,
+            };
+        }
     }
     if source.starts_with("url:") {
         return no(
@@ -226,6 +254,7 @@ pub fn availability(item: &archive::Item, original: Option<FileState>) -> VoiceS
             available: true,
             reason: String::new(),
             file_name,
+            saved_audio: false,
         },
         Some(FileState::Missing) => no(format!(
             "The original file “{file_name}” is no longer where it was transcribed from. \
@@ -251,8 +280,9 @@ pub fn voice_source(archive: &Path, store: &Path, id: &str) -> Result<VoiceSourc
     Ok(availability(&item, original))
 }
 
-/// "Identify voices" on transcription `id`: re-reads its original file,
-/// labels the lines as a run with the toggle on would, and saves. The
+/// "Identify voices" on transcription `id`: re-reads its original file —
+/// or, without it, the audio saved with the item (WAV or Opus) — labels
+/// the lines as a run with the toggle on would, and saves. The
 /// speaker model comes from `load` (downloaded on first use in the app); a
 /// model that can't be loaded fails here, before anything changes.
 /// Blocking — a long file takes a while.
@@ -265,8 +295,13 @@ pub fn identify_voices(
     let item = archive::read_item(archive, id)?;
     let entry: Option<Entry> = source_files::lookup(store, archive, id);
     let state = availability(&item, entry.as_ref().map(source_files::check));
-    let Some(entry) = entry.filter(|_| state.available) else {
+    if !state.available {
         bail!("{}", state.reason);
+    }
+    let path = match entry {
+        Some(entry) if !state.saved_audio => entry.path,
+        // Confined to the item folder, a regular file (as the player's).
+        _ => archive::playback::resolve(archive, id, &state.file_name)?,
     };
     let spans = spans(&item.segments);
     if spans.is_empty() {
@@ -277,7 +312,7 @@ pub fn identify_voices(
         SpeakerOptions::clustering(&[Channel::File]),
         Box::new(move || Ok(embedder)),
     );
-    let mut source = crate::sources::file::FileSource::open(&entry.path)?;
+    let mut source = crate::sources::file::FileSource::open(&path)?;
     let labels = label_source(&mut source, &spans, &mut tracker)?;
     let mut identified = None;
     let item = archive::store::modify_segments(archive, id, |file| {
@@ -489,6 +524,51 @@ mod tests {
         assert!(!vs.available && vs.reason.contains("no longer"), "{vs:?}");
     }
 
+    /// #248: without the original file, the audio saved with the item —
+    /// here Opus, decoded by libopus — gives the voices back, for a link
+    /// transcription too.
+    #[test]
+    fn identify_reads_the_saved_opus_audio_when_the_original_is_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive_dir = tmp.path().join("Sussurro");
+        let store = tmp.path().join(source_files::FILE);
+        let (audio, file) = layout();
+        for source in ["file:gone.wav", "url:https://example.org/a.mp3"] {
+            let id = write_item(&archive_dir, &transcription(source), &file);
+            let vs = voice_source(&archive_dir, &store, &id).unwrap();
+            assert!(!vs.available && !vs.saved_audio, "{vs:?}");
+
+            let saved = archive_dir.join(&id).join("audio.opus");
+            let mut w = archive::opus::OpusWriter::create_capped(&saved, u64::MAX).unwrap();
+            w.write(&audio).unwrap();
+            w.finish().unwrap();
+            let vs = voice_source(&archive_dir, &store, &id).unwrap();
+            assert!(vs.available && vs.saved_audio, "{vs:?}");
+            assert_eq!(vs.file_name, "audio.opus");
+
+            let (load, _) = fake_loader(5);
+            let (item, done) = identify_voices(&archive_dir, &store, &id, load).unwrap();
+            assert_eq!(
+                done,
+                Identified {
+                    voices: 2,
+                    lines: 4
+                },
+                "{source}"
+            );
+            assert_eq!(
+                who(&item.segments),
+                [
+                    Some("voice:1"),
+                    Some("voice:2"),
+                    Some("voice:1"),
+                    Some("voice:2"),
+                    None
+                ]
+            );
+        }
+    }
+
     #[test]
     fn a_model_that_fails_to_load_changes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
@@ -559,6 +639,42 @@ mod tests {
         let mut done = t.clone();
         done.embedded_segments = 3;
         assert!(!ok(&done, Some(FileState::Available)));
+
+        // Saved audio (#141, #248) stands in for a missing original file.
+        let with = |i: &archive::Item, names: &[&str]| {
+            let mut i = i.clone();
+            i.audio = names
+                .iter()
+                .map(|n| archive::audio::AudioFile {
+                    name: n.to_string(),
+                    bytes: 1,
+                })
+                .collect();
+            i
+        };
+        let saved = with(&t, &["audio.opus"]);
+        for f in [None, Some(FileState::Missing), Some(FileState::Changed)] {
+            let v = availability(&saved, f.clone());
+            assert!(v.available && v.saved_audio, "{f:?}");
+            assert_eq!(v.file_name, "audio.opus");
+        }
+        // The original, when there, comes first (lossless).
+        let v = availability(&saved, Some(FileState::Available));
+        assert!(v.available && !v.saved_audio);
+        assert_eq!(v.file_name, "a.wav");
+        assert!(availability(&with(&link, &["audio.wav"]), None).saved_audio);
+        // WAV before Opus (a Compress audio cut short leaves both).
+        let both = with(&t, &["audio.opus", "audio.wav"]);
+        assert_eq!(availability(&both, None).file_name, "audio.wav");
+        // Other channels' audio is not the file's.
+        assert!(!ok(&with(&t, &["audio-mic.opus"]), None));
+        // Every other refusal still wins.
+        let mut rec = with(&t, &["audio.wav"]);
+        rec.recording = true;
+        assert!(!ok(&rec, None));
+        let mut done = with(&t, &["audio.wav"]);
+        done.embedded_segments = 3;
+        assert!(!ok(&done, None));
     }
 
     #[test]
