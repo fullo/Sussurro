@@ -306,6 +306,33 @@ export interface VoiceStatus {
   updated: string;
 }
 
+/** The user's own voice, "You" (#243): no vector ever reaches the UI.
+ *  `label_as_you` = *Label my voice as You* (on after enrolment). */
+export interface OwnVoiceStatus {
+  enrolled: boolean;
+  speech_ms: number;
+  label_as_you: boolean;
+  /** RFC 3339 time of the enrolment; "" when not enrolled. */
+  updated: string;
+  min_speech_ms: number;
+  target_ms: number;
+  max_ms: number;
+}
+
+/** The enrolment recording, polled while the paragraph is read (#243). */
+export interface EnrolProgress {
+  recording: boolean;
+  elapsed_ms: number;
+  level: number;
+  failed: boolean;
+}
+
+/** `own_voice_find`: the item, and whether a voice is "You" now (#243). */
+export interface OwnVoiceFound {
+  item: Item;
+  found: boolean;
+}
+
 /** Frontmatter of transcript.md. Unknown keys (Obsidian aliases…) ride along
  *  flattened and must be sent back untouched on update. */
 export interface ItemMeta {
@@ -354,6 +381,10 @@ export interface DocSpeaker {
   person_id?: string;
   /** Label before a link replaced it; unlinking gives it back. */
   label_before_link?: string;
+  /** #243: true = labelled "You" automatically (it matched the user's
+   *  enrolled voice); false = the user took that label off, so it is never
+   *  labelled "You" automatically again in this document. */
+  own_voice?: boolean;
 }
 
 export interface SegmentsFile {

@@ -656,8 +656,27 @@ project decisions here, not in per-machine memory.**
   exports, diagnostics or logs (`Debug` prints sizes). Commands:
   `voices_status`, `voice_status`, `voice_set_enabled`, `voices_rebuild`,
   `voice_forget`, `voices_forget_all`. Overlap lines (#244) are to be
-  excluded once segments carry the flag. Suggestions UI is #242, "You"
-  #243.
+  excluded once segments carry the flag. Suggestions UI is #242.
+- **Own voice "You" (0.11, #243, P14)** (`speakers/own_voice.rs`,
+  `shell/OwnVoiceDialog.tsx`, Settings → Voices): optional read-aloud
+  enrolment (IT/EN paragraph, ~30 s, own `Recorder` on the picked mic; the
+  audio is never saved): quiet frames dropped, ≤ 3 s windows embedded, one
+  centroid; needs ≥ 20 s of speech, uses ≤ 90 s. File
+  `<app data>/voices/you.own-voice.json` (0600, same lock and folder as
+  #241; the dot keeps it out of person-id scans; *Forget all voices*
+  deletes it too). Never a People entry. **Labelling** only in
+  single-channel documents (not `browser:`, no `you` line, no mic line in a
+  `system` item): the best-matching "Voice N" with cosine ≥ **0.45** (spike
+  #235, voice level, never per line) becomes label "You" + `YOU_COLOR`,
+  marked `DocSpeaker.own_voice = true` (lines keep their `voice:N` id). Runs
+  at the end of a run (tracker), after Identify voices and Re-detect, when
+  *Label my voice as You* is on (default on after enrolment, kept on
+  re-enrol); `own_voice_find` on request. Never over a user label: a voice
+  renamed/linked is skipped (no fallback to the runner-up); renaming or
+  linking an automatic "You" sets `own_voice = false` = never automatic
+  again in that document; a "You" that stops being the best match goes
+  back to "Voice N". The centroid is also the 0.13 own-voice cloning
+  reference (not built).
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at

@@ -117,6 +117,10 @@ pub struct Tracker {
     /// ms) → (channel index, cluster)` — so the end-of-run pass can give a
     /// line the page no longer names its voice back.
     clustered: Vec<(Channel, u64, usize, usize)>,
+    /// The user's enrolled voice, when *Label my voice as You* is on
+    /// (#243): the end of the run labels the best-matching voice "You" in
+    /// a single-channel document ([`super::own_voice::label_you`]).
+    own_voice: Option<Vec<f32>>,
 }
 
 impl Tracker {
@@ -129,6 +133,24 @@ impl Tracker {
             you_listed: false,
             names_listed: Vec::new(),
             clustered: Vec::new(),
+            own_voice: None,
+        }
+    }
+
+    /// Label the user's voice "You" at the end of the run (#243); `None`
+    /// leaves the voices as they are.
+    pub fn with_own_voice(mut self, you: Option<Vec<f32>>) -> Self {
+        self.own_voice = you;
+        self
+    }
+
+    /// End of the run, after the voices are final: the best match of the
+    /// user's enrolled voice becomes "You" (single-channel documents only;
+    /// a no-op without an enrolled voice). `source` is the item's
+    /// frontmatter `source`.
+    pub fn label_own_voice(&self, file: &mut SegmentsFile, source: &str) {
+        if let Some(you) = &self.own_voice {
+            super::own_voice::label_you(file, source, you);
         }
     }
 

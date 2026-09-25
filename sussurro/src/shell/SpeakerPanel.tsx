@@ -16,6 +16,7 @@ import {
 } from "../lib/speakers";
 import type { DocSpeaker, Item, Person, VoiceSource } from "../lib/types";
 import { voiceMapShown } from "../lib/voiceMap";
+import { OwnVoiceOffer } from "./OwnVoiceOffer";
 import { VoiceMapCard } from "./VoiceMapCard";
 
 /** The context pane's *Speakers* section (#130): the document's speakers
@@ -210,6 +211,7 @@ export function SpeakerPanel({
       {shares.length > 0 && voiceMapShown(item) && (
         <VoiceMapCard item={item} selectedId={pickedLine} onPick={onPickLine} />
       )}
+      {shares.length > 0 && <OwnVoiceOffer ctl={ctl} item={item} onItem={onItem} />}
       {editable && item.embedded_segments ? (
         confirmRedetect ? (
           <div className="spk-confirm" role="group" aria-label="Confirm re-detect">

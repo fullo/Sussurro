@@ -570,6 +570,9 @@ fn run_inner(
         // The online clustering over-splits: tiny voices fold into the
         // nearest one before the item is finalized (#107).
         item.finalize_voices();
+        // The user's own voice becomes "You" in a single-channel recording
+        // when they enrolled it (#243).
+        item.edit_file(|f| tracker.label_own_voice(f, &meta.source));
     }
     // People emails for the page's participants (P5); an unreadable
     // registry links nothing.

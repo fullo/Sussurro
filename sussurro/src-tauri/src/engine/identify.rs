@@ -294,6 +294,18 @@ pub fn identify_voices(
     id: &str,
     load: EmbedderLoader,
 ) -> Result<(archive::Item, Identified)> {
+    identify_voices_with_own_voice(archive, store, id, load, None)
+}
+
+/// [`identify_voices`], then the user's enrolled voice (`you`, #243)
+/// labels its best match "You" ([`crate::speakers::own_voice::label_you`]).
+pub fn identify_voices_with_own_voice(
+    archive: &Path,
+    store: &Path,
+    id: &str,
+    load: EmbedderLoader,
+    you: Option<&[f32]>,
+) -> Result<(archive::Item, Identified)> {
     let item = archive::read_item(archive, id)?;
     let entry: Option<Entry> = source_files::lookup(store, archive, id);
     let state = availability(&item, entry.as_ref().map(source_files::check));
@@ -319,6 +331,9 @@ pub fn identify_voices(
     let mut identified = None;
     let item = archive::store::modify_segments(archive, id, |file| {
         identified = Some(apply(file, &labels)?);
+        if let Some(you) = you {
+            crate::speakers::own_voice::label_you(file, &item.meta.source, you);
+        }
         Ok(())
     })?;
     let identified = identified.unwrap_or(Identified {

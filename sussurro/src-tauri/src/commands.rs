@@ -1715,10 +1715,17 @@ pub async fn archive_identify_voices(
     };
     let always = subtitles_always(&state);
     let voices = voice_store(&state);
+    let you = own_voice_store(&state).labelling_voice();
     blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
         let load = crate::engine::session::embedder_loader(models_dir);
-        let (item, _) = crate::engine::identify::identify_voices(&dir, &store, &id, load)?;
+        let (item, _) = crate::engine::identify::identify_voices_with_own_voice(
+            &dir,
+            &store,
+            &id,
+            load,
+            you.as_deref(),
+        )?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
         refresh_subtitles_if(always, &dir, &id);
         update_voices_later(voices, dir, id);
@@ -1736,9 +1743,16 @@ async fn edit_speakers_command(
     let journal = crate::engine::session::journal_path(state);
     let always = subtitles_always(state);
     let voices = voice_store(state);
+    // After a re-detect the user's enrolled voice is looked for again (#243).
+    let you = matches!(edit, archive::SpeakerEdit::Redetect)
+        .then(|| own_voice_store(state).labelling_voice())
+        .flatten();
     blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
-        let item = archive::edit_speakers(&dir, &id, edit)?;
+        let item = match &you {
+            Some(you) => archive::store::redetect_with_own_voice(&dir, &id, you)?,
+            None => archive::edit_speakers(&dir, &id, edit)?,
+        };
         reindex(&dir, &db, |idx| idx.index_item(&id));
         // Speaker names and moves change the subtitles too.
         refresh_subtitles_if(always, &dir, &id);
@@ -2259,6 +2273,168 @@ pub async fn voice_forget(state: State<'_, AppState>, person_id: String) -> Resu
 pub async fn voices_forget_all(state: State<'_, AppState>) -> Result<usize, String> {
     let store = voice_store(&state);
     blocking(move || store.forget_all()).await
+}
+
+// ---- Your own voice, "You" (0.11, #243; P14) ----
+//
+// Optional read-aloud enrolment from the mic the user picks; the profile
+// lives next to the People profiles (`voices/you.own-voice.json`, 0600,
+// never in the archive) and the UI only gets `OwnVoiceStatus`. With *Label
+// my voice as You* on, single-channel recordings label the best-matching
+// voice "You" at the end of a run, after *Identify voices* and after
+// *Re-detect speakers*.
+
+use crate::speakers::own_voice::{OwnVoiceStatus, OwnVoiceStore};
+
+fn own_voice_store(state: &AppState) -> OwnVoiceStore {
+    OwnVoiceStore::at(state.paths.history_file.with_file_name(VOICES_DIR))
+}
+
+/// The enrolment recording in progress (its own recorder: dictation and
+/// the mic test are not touched) and when it started.
+static ENROLMENT: std::sync::Mutex<Option<(crate::audio::recorder::Recorder, std::time::Instant)>> =
+    std::sync::Mutex::new(None);
+
+fn enrolment() -> std::sync::MutexGuard<'static, Option<(crate::audio::recorder::Recorder, std::time::Instant)>> {
+    ENROLMENT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Settings → Voices and the enrolment dialog: is the user's voice
+/// enrolled, and is *Label my voice as You* on.
+#[tauri::command]
+pub async fn own_voice_status(state: State<'_, AppState>) -> Result<OwnVoiceStatus, String> {
+    let store = own_voice_store(&state);
+    blocking(move || Ok(store.status())).await
+}
+
+/// Start recording the enrolment paragraph from `device` (empty = the
+/// system default input). A recording already running is restarted.
+#[tauri::command]
+pub fn own_voice_enrol_start(device: String) -> Result<(), String> {
+    let mut slot = enrolment();
+    if let Some((mut old, _)) = slot.take() {
+        let _ = old.stop();
+    }
+    let mut rec = crate::audio::recorder::Recorder::default();
+    rec.start(&device).map_err(|e| format!("{e:#}"))?;
+    *slot = Some((rec, std::time::Instant::now()));
+    Ok(())
+}
+
+/// `own_voice_enrol_progress` result.
+#[derive(serde::Serialize)]
+pub struct EnrolProgress {
+    pub recording: bool,
+    pub elapsed_ms: u64,
+    /// Input level (RMS of the last ~100 ms), for the meter.
+    pub level: f32,
+    /// The mic stopped delivering (unplugged, refused).
+    pub failed: bool,
+}
+
+/// The enrolment recording's time and level, polled by the dialog. A
+/// recording left running well past the maximum (a dialog that went away)
+/// is dropped.
+#[tauri::command]
+pub fn own_voice_enrol_progress() -> EnrolProgress {
+    let mut slot = enrolment();
+    let Some((rec, started)) = slot.as_ref() else {
+        return EnrolProgress { recording: false, elapsed_ms: 0, level: 0.0, failed: false };
+    };
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let progress = EnrolProgress {
+        recording: true,
+        elapsed_ms,
+        level: rec.level().unwrap_or(0.0),
+        failed: rec.has_failed(),
+    };
+    if elapsed_ms > crate::speakers::own_voice::MAX_ENROL_MS + 60_000 {
+        if let Some((mut rec, _)) = slot.take() {
+            let _ = rec.stop();
+        }
+    }
+    progress
+}
+
+/// Stop the enrolment recording and discard it.
+#[tauri::command]
+pub fn own_voice_enrol_cancel() {
+    if let Some((mut rec, _)) = enrolment().take() {
+        let _ = rec.stop(); // samples discarded
+    }
+}
+
+/// Stop the enrolment recording and build the profile from it (the
+/// speaker model is downloaded on first use). The recording itself is
+/// never saved. A too-short reading fails and keeps any previous profile.
+#[tauri::command]
+pub async fn own_voice_enrol_finish(state: State<'_, AppState>) -> Result<OwnVoiceStatus, String> {
+    let taken = enrolment().take();
+    let Some((mut rec, _)) = taken else {
+        return Err("no recording of your voice is running".to_string());
+    };
+    let models_dir = {
+        let settings = state.settings.lock().unwrap();
+        crate::state::resolve_models_dir(&state.paths, &settings)
+    };
+    let store = own_voice_store(&state);
+    blocking(move || {
+        let samples = rec.stop()?;
+        let mut embedder = crate::engine::session::embedder_loader(models_dir)()?;
+        store.enrol(embedder.as_mut(), &samples)
+    })
+    .await
+}
+
+/// Turn *Label my voice as You* on or off (it applies to the next runs,
+/// *Identify voices* and *Re-detect speakers*).
+#[tauri::command]
+pub async fn own_voice_set_label(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<OwnVoiceStatus, String> {
+    let store = own_voice_store(&state);
+    blocking(move || store.set_label_as_you(enabled)).await
+}
+
+/// *Forget my voice*: delete the profile. Documents keep the "You" labels
+/// they have. Returns whether there was one.
+#[tauri::command]
+pub async fn own_voice_forget(state: State<'_, AppState>) -> Result<bool, String> {
+    let store = own_voice_store(&state);
+    blocking(move || store.forget()).await
+}
+
+/// `own_voice_find` result.
+#[derive(serde::Serialize)]
+pub struct OwnVoiceFound {
+    pub item: Item,
+    /// A voice of the document is "You" now.
+    pub found: bool,
+}
+
+/// Speaker panel: *Find my voice* in one single-channel document (after
+/// enrolling from its panel). Works whatever *Label my voice as You* says —
+/// the user asked. Same rules as a speaker edit.
+#[tauri::command]
+pub async fn own_voice_find(state: State<'_, AppState>, id: String) -> Result<OwnVoiceFound, String> {
+    let (dir, db) = archive_paths(&state)?;
+    let journal = crate::engine::session::journal_path(&state);
+    let always = subtitles_always(&state);
+    let Some(you) = own_voice_store(&state).centroid() else {
+        return Err("record your voice first".to_string());
+    };
+    blocking(move || {
+        crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
+        let (item, found) = archive::store::label_own_voice(&dir, &id, &you)?;
+        reindex(&dir, &db, |idx| idx.index_item(&id));
+        refresh_subtitles_if(always, &dir, &id);
+        Ok(OwnVoiceFound {
+            item: item.without_embeddings(),
+            found,
+        })
+    })
+    .await
 }
 
 // ---- Recipes (0.8, #120): prompts that write companion documents ----
