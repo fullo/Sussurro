@@ -255,15 +255,39 @@ pub fn is_visibly_local(url: &Url) -> bool {
     literal_ip(url).is_some_and(is_local_ip) || url.host_str().is_some_and(is_local_name)
 }
 
+/// A link refused by the address rules of [`resolve_checked`]: its host is
+/// on this computer or the local network. Typed so other users of the
+/// shared client (the calendar link, #252) can word it their way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalAddressRefused {
+    pub host: String,
+    pub ip: Option<IpAddr>,
+}
+
+impl std::fmt::Display for LocalAddressRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let at = self
+            .ip
+            .filter(|ip| literal_host(&self.host) != Some(*ip))
+            .map(|ip| format!(" ({ip})"))
+            .unwrap_or_default();
+        write!(
+            f,
+            "{} is on this computer or the local network{at} — tick “Allow local network \
+             addresses” to transcribe from it",
+            self.host
+        )
+    }
+}
+
+impl std::error::Error for LocalAddressRefused {}
+
 fn local_refused(host: &str, ip: Option<IpAddr>) -> anyhow::Error {
-    let at = ip
-        .filter(|ip| literal_host(host) != Some(*ip))
-        .map(|ip| format!(" ({ip})"))
-        .unwrap_or_default();
-    anyhow!(
-        "{host} is on this computer or the local network{at} — tick “Allow local network \
-         addresses” to transcribe from it"
-    )
+    LocalAddressRefused {
+        host: host.to_string(),
+        ip,
+    }
+    .into()
 }
 
 /// Resolve the link's host and apply the address rules: unless

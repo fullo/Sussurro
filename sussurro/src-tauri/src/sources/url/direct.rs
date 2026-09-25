@@ -70,6 +70,28 @@ pub fn download(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(&Progress),
 ) -> Result<Downloaded> {
+    let (resp, current) = get_checked(
+        url,
+        allow_local,
+        "audio/*, video/*;q=0.9, */*;q=0.5",
+        cancel,
+    )?;
+    save(resp, current, max_bytes, dest, cancel, progress)
+}
+
+/// GET `url` with the shared rules: redirects followed by hand (at most
+/// [`MAX_REDIRECTS`]), every hop through the address rules (unless
+/// `allow_local`) and pinned to the checked addresses, never through a
+/// system proxy, with the model downloads' timeouts. Returns the
+/// successful response and the URL it came from. Errors name the host
+/// only, never the link: a link can be a secret (a private calendar
+/// address, #252).
+pub fn get_checked(
+    url: &Url,
+    allow_local: bool,
+    accept: &str,
+    cancel: &AtomicBool,
+) -> Result<(reqwest::blocking::Response, Url)> {
     let mut current = url.clone();
     for _ in 0..=MAX_REDIRECTS {
         if cancel.load(Ordering::Relaxed) {
@@ -79,8 +101,9 @@ pub fn download(
         let host = current.host_str().unwrap_or_default().to_string();
         let resp = client_for(&current, &addrs)?
             .get(current.clone())
-            .header(ACCEPT, "audio/*, video/*;q=0.9, */*;q=0.5")
+            .header(ACCEPT, accept)
             .send()
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("could not download from {host}"))?;
         let status = resp.status();
         if status.is_redirection() {
@@ -99,9 +122,45 @@ pub fn download(
         if !status.is_success() {
             bail!("{host} answered {status}");
         }
-        return save(resp, current, max_bytes, dest, cancel, progress);
+        return Ok((resp, current));
     }
     bail!("too many redirects (more than {MAX_REDIRECTS})")
+}
+
+/// A small body fetched whole by [`fetch_bytes`].
+#[derive(Debug)]
+pub struct Fetched {
+    pub bytes: Vec<u8>,
+    pub content_type: Option<String>,
+}
+
+/// [`get_checked`], then the whole body in memory, refused past
+/// `max_bytes` (announced or read). For small documents such as a
+/// calendar feed; media goes through [`download`].
+pub fn fetch_bytes(url: &Url, allow_local: bool, accept: &str, max_bytes: u64) -> Result<Fetched> {
+    let (resp, current) = get_checked(url, allow_local, accept, &AtomicBool::new(false))?;
+    let host = current.host_str().unwrap_or_default().to_string();
+    let too_big = || anyhow!("{host} sent more than {} MB", max_bytes / (1024 * 1024));
+    if resp.content_length().is_some_and(|n| n > max_bytes) {
+        return Err(too_big());
+    }
+    let content_type = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_ascii_lowercase());
+    let mut bytes = Vec::new();
+    resp.take(max_bytes + 1)
+        .read_to_end(&mut bytes)
+        // The source error may carry the link: only its kind is kept.
+        .map_err(|e| anyhow!("the download from {host} was interrupted ({})", e.kind()))?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(too_big());
+    }
+    Ok(Fetched {
+        bytes,
+        content_type,
+    })
 }
 
 fn save(
