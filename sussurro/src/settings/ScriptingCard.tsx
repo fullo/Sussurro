@@ -134,7 +134,7 @@ export function ScriptingCard({ ctl }: CardProps) {
             </button>
           </div>
           <p className="card-hint">
-            Try it: <code>{curlExample(settings.api_port)}</code> with the token in <code>SUSSURRO_TOKEN</code>. Treat it
+            Try it: <code>{curlExample(settings.api_port, created.info.scopes)}</code> with the token in <code>SUSSURRO_TOKEN</code>. Treat it
             like a password; if it leaks, revoke it below and create another.
           </p>
         </div>

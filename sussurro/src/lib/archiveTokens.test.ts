@@ -59,6 +59,13 @@ describe("texts", () => {
     expect(c).toContain("$SUSSURRO_TOKEN");
     expect(c).toContain("http://127.0.0.1:4525/archive/items");
     expect(c).not.toMatch(/sua_[0-9a-f]/);
+    expect(c).not.toContain("--json");
+    expect(curlExample(4525, ["read", "write"])).toBe(c);
+    // A Write-only token can't list: its example creates a note (#251).
+    const w = curlExample(4525, ["write"]);
+    expect(w).toContain("--json");
+    expect(w).toContain("$SUSSURRO_TOKEN");
+    expect(w).toContain("http://127.0.0.1:4525/archive/items");
   });
 
   it("the status follows the switches and the token count", () => {
