@@ -6,11 +6,16 @@
 //!
 //! **Lifecycle** — [`Sidecar`]:
 //! - started on demand, when the transcriber is loaded (first dictation or
-//!   long-form segment with the Qwen3-ASR engine), on a random free port
-//!   bound to `127.0.0.1` only (`--host 127.0.0.1`), with the model and its
+//!   long-form segment with the Qwen3-ASR engine), with the model and its
 //!   audio encoder (`--mmproj`);
+//! - reachable only by Sussurro (#216, [`endpoint`]): on macOS and Linux a
+//!   Unix socket in a fresh 0700 folder; on Windows a random `127.0.0.1`
+//!   port whose listener must belong to the child. Every spawn gets a
+//!   random API key (in its environment, sent as a bearer token), and the
+//!   `/slots` endpoint is off (`--no-slots`);
 //! - spawned directly, never through a shell: the executable path and each
-//!   argument are separate `Command` arguments ([`command`]);
+//!   argument are separate `Command` arguments ([`command`]), with no
+//!   inherited `LLAMA_*` variables;
 //! - the lib folder is the working directory and is prepended to the
 //!   platform library path ([`library_path_var`]), as #116's layout needs;
 //! - health-checked (`GET /health` answers 200 once the model is loaded)
@@ -54,6 +59,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, Instant};
+
+pub mod endpoint;
+pub use endpoint::{Endpoint, SidecarAccess};
 
 /// The one Qwen3-ASR size that passed the gate (#109, #152): 1.7B Q8.
 pub const QWEN3_ASR_REPO: &str = "ggml-org/Qwen3-ASR-1.7B-GGUF";
@@ -261,6 +269,10 @@ pub struct SidecarConfig {
     pub role: SidecarRole,
     /// stdout + stderr of the server; `None` discards them.
     pub log_file: Option<PathBuf>,
+    /// Where the private per-run socket folders go (macOS, Linux; see
+    /// [`endpoint`]): `<app data>/sidecar` in the app. The temporary
+    /// folder is the fallback, and the only place when `None`.
+    pub socket_base: Option<PathBuf>,
     /// Spawn → `/health` 200 (model load; 2–3 s warm on an M1, much more
     /// from a cold disk or on CPU).
     pub start_timeout: Duration,
@@ -283,6 +295,7 @@ impl SidecarConfig {
             mmproj,
             role: SidecarRole::Asr,
             log_file: None,
+            socket_base: None,
             start_timeout: Duration::from_secs(180),
             request_timeout: Duration::from_secs(180),
             backoff_base: Duration::from_millis(500),
@@ -308,13 +321,13 @@ impl SidecarConfig {
         }
     }
 
-    /// The server's own arguments for `port`: [`server_args`] or
-    /// [`chat_server_args`]. Pure.
-    pub fn server_args(&self, port: u16) -> Vec<OsString> {
+    /// The server's own arguments, listening on `listen`: [`server_args`]
+    /// or [`chat_server_args`]. Pure.
+    pub fn server_args(&self, listen: &Endpoint) -> Vec<OsString> {
         match &self.role {
-            SidecarRole::Asr => server_args(&self.model, &self.mmproj, port),
+            SidecarRole::Asr => server_args(&self.model, &self.mmproj, listen),
             SidecarRole::Chat { ctx_tokens, alias } => {
-                chat_server_args(&self.model, alias, *ctx_tokens, port)
+                chat_server_args(&self.model, alias, *ctx_tokens, listen)
             }
         }
     }
@@ -328,22 +341,34 @@ impl SidecarConfig {
     }
 }
 
-/// `llama-server` arguments for Qwen3-ASR on `port`, as benchmarked in
+/// Where to listen: `--host <socket>` for a Unix socket (llama-server
+/// takes a host ending in `.sock` as one), else `--host 127.0.0.1 --port
+/// <port>` — never another interface. Pure.
+pub fn listen_args(listen: &Endpoint) -> Vec<OsString> {
+    match listen {
+        Endpoint::Unix(path) => vec!["--host".into(), path.as_os_str().to_os_string()],
+        Endpoint::Tcp(port) => vec![
+            "--host".into(),
+            "127.0.0.1".into(),
+            "--port".into(),
+            port.to_string().into(),
+        ],
+    }
+}
+
+/// `llama-server` arguments for Qwen3-ASR on `listen`, as benchmarked in
 /// #109: all layers on the GPU (ignored by the CPU build), one slot with a
 /// 4096-token context (a 30 s chunk is ~370 input tokens), no prompt cache,
-/// no web UI, loopback only. Pure.
-pub fn server_args(model: &Path, mmproj: &Path, port: u16) -> Vec<OsString> {
-    let mut args: Vec<OsString> = Vec::new();
-    let mut push = |a: &OsStr| args.push(a.to_os_string());
-    push("-m".as_ref());
-    push(model.as_os_str());
-    push("--mmproj".as_ref());
-    push(mmproj.as_os_str());
+/// no web UI, no `/slots` endpoint (#216). Pure.
+pub fn server_args(model: &Path, mmproj: &Path, listen: &Endpoint) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec![
+        "-m".into(),
+        model.as_os_str().to_os_string(),
+        "--mmproj".into(),
+        mmproj.as_os_str().to_os_string(),
+    ];
+    args.extend(listen_args(listen));
     for a in [
-        "--host",
-        "127.0.0.1",
-        "--port",
-        &port.to_string(),
         "-ngl",
         "99",
         "-c",
@@ -353,27 +378,33 @@ pub fn server_args(model: &Path, mmproj: &Path, port: u16) -> Vec<OsString> {
         "--cache-ram",
         "0",
         "--no-webui",
+        "--no-slots",
     ] {
-        push(a.as_ref());
+        args.push(a.into());
     }
     args
 }
 
-/// `llama-server` arguments for a chat model on `port` (#118): the same
-/// loopback-only, all-layers-on-GPU, one-slot, no-prompt-cache, no-web-UI
+/// `llama-server` arguments for a chat model on `listen` (#118): the same
+/// all-layers-on-GPU, one-slot, no-prompt-cache, no-web-UI, no-`/slots`
 /// shape as [`server_args`], plus the model's id in `/v1/models`
 /// (`--alias`) and reasoning off: Qwen3 would otherwise think before every
 /// cleanup, which costs seconds for nothing. `ctx_tokens` is the whole
 /// window (one slot). Pure.
-pub fn chat_server_args(model: &Path, alias: &str, ctx_tokens: u32, port: u16) -> Vec<OsString> {
-    let mut args: Vec<OsString> = vec!["-m".into(), model.as_os_str().to_os_string()];
+pub fn chat_server_args(
+    model: &Path,
+    alias: &str,
+    ctx_tokens: u32,
+    listen: &Endpoint,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec![
+        "-m".into(),
+        model.as_os_str().to_os_string(),
+        "--alias".into(),
+        alias.into(),
+    ];
+    args.extend(listen_args(listen));
     for a in [
-        "--alias",
-        alias,
-        "--host",
-        "127.0.0.1",
-        "--port",
-        &port.to_string(),
         "-ngl",
         "99",
         "-c",
@@ -385,6 +416,7 @@ pub fn chat_server_args(model: &Path, alias: &str, ctx_tokens: u32, port: u16) -
         "--reasoning",
         "off",
         "--no-webui",
+        "--no-slots",
     ] {
         args.push(a.into());
     }
@@ -413,20 +445,33 @@ pub fn library_path_value(os: &str, lib_dir: &Path, current: Option<&OsStr>) -> 
     value
 }
 
-/// The sidecar command for `port`: the executable itself (no shell), its
-/// arguments, the lib folder as working directory and first on the library
-/// path. Stdio is set by the caller.
-pub fn command(cfg: &SidecarConfig, port: u16) -> Command {
+/// The variable llama-server reads its API key from. Passed in the
+/// environment, not as `--api-key`: another user can read a process's
+/// command line (`ps`), not its environment.
+pub const API_KEY_VAR: &str = "LLAMA_API_KEY";
+
+/// The sidecar command listening on `listen` with `api_key`: the
+/// executable itself (no shell), its arguments, the lib folder as working
+/// directory and first on the library path. No `LLAMA_*` variable of the
+/// user's environment reaches it (llama-server reads its options from
+/// them), except the key set here. Stdio is set by the caller.
+pub fn command(cfg: &SidecarConfig, listen: &Endpoint, api_key: &str) -> Command {
     let os = std::env::consts::OS;
     let var = library_path_var(os);
     let mut cmd = Command::new(&cfg.binary);
+    for (k, _) in std::env::vars_os() {
+        if k.to_string_lossy().starts_with("LLAMA_") {
+            cmd.env_remove(k);
+        }
+    }
     cmd.args(&cfg.prefix_args)
-        .args(cfg.server_args(port))
+        .args(cfg.server_args(listen))
         .current_dir(&cfg.lib_dir)
         .env(
             var,
             library_path_value(os, &cfg.lib_dir, std::env::var_os(var).as_deref()),
         )
+        .env(API_KEY_VAR, api_key)
         .stdin(Stdio::null());
     #[cfg(windows)]
     {
@@ -449,10 +494,33 @@ pub fn backoff(base: Duration, failures: u32) -> Duration {
         .min(Duration::from_secs(60))
 }
 
+/// A free loopback port. Another process can take it before the server
+/// binds it: [`endpoint::verify_listener_owner`] catches that (Windows).
+#[cfg(not(unix))]
 fn free_loopback_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
         .context("no free loopback port for the sidecar")?;
     Ok(listener.local_addr()?.port())
+}
+
+/// Where a new server listens: a Unix socket in a fresh private folder
+/// (returned too, to remove it when the server stops) — see [`endpoint`].
+#[cfg(unix)]
+fn new_endpoint(cfg: &SidecarConfig) -> Result<(Endpoint, Option<PathBuf>)> {
+    let bases: Vec<PathBuf> = cfg
+        .socket_base
+        .iter()
+        .cloned()
+        .chain(std::iter::once(std::env::temp_dir()))
+        .collect();
+    let (dir, sock) = endpoint::private_run_dir(&bases)?;
+    Ok((Endpoint::Unix(sock), Some(dir)))
+}
+
+/// Where a new server listens: a random loopback port (see [`endpoint`]).
+#[cfg(not(unix))]
+fn new_endpoint(_cfg: &SidecarConfig) -> Result<(Endpoint, Option<PathBuf>)> {
+    Ok((Endpoint::Tcp(free_loopback_port()?), None))
 }
 
 type SharedChild = Arc<Mutex<Option<Child>>>;
@@ -646,7 +714,13 @@ enum PostError {
 pub struct Sidecar {
     cfg: SidecarConfig,
     child: SharedChild,
-    port: u16,
+    /// Where the current process listens and its API key; `None` before
+    /// the first start.
+    access: Option<SidecarAccess>,
+    /// The current process's private socket folder (Unix), removed when it
+    /// stops.
+    run_dir: Option<PathBuf>,
+    /// The request client for `access`.
     http: reqwest::blocking::Client,
     /// Consecutive failed starts and crashes; reset by a good answer.
     failures: u32,
@@ -672,15 +746,12 @@ impl Sidecar {
             }
             let _ = std::fs::File::create(log); // a fresh log per load
         }
-        let http = reqwest::blocking::Client::builder()
-            .no_proxy() // loopback: never through a system proxy
-            .connect_timeout(Duration::from_secs(2))
-            .timeout(cfg.request_timeout)
-            .build()?;
+        let http = reqwest::blocking::Client::builder().no_proxy().build()?;
         let s = Self {
             cfg,
             child: Arc::new(Mutex::new(None)),
-            port: 0,
+            access: None,
+            run_dir: None,
             http,
             failures: 0,
             retry_at: None,
@@ -703,14 +774,9 @@ impl Sidecar {
         &self.cfg
     }
 
-    /// The loopback port it listens on.
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    /// `http://127.0.0.1:<port>`: the server's base URL while it runs.
-    pub fn base_url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
+    /// How to reach the server (endpoint + API key) while it runs.
+    pub fn access(&self) -> Option<&SidecarAccess> {
+        self.access.as_ref().filter(|_| self.is_running())
     }
 
     /// A request answered: the failure count starts over.
@@ -758,6 +824,10 @@ impl Sidecar {
             let _ = child.kill();
             let _ = child.wait();
         }
+        self.access = None;
+        if let Some(dir) = self.run_dir.take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     fn note_failure(&mut self) {
@@ -794,8 +864,13 @@ impl Sidecar {
     }
 
     fn try_launch(&mut self) -> Result<()> {
-        let port = free_loopback_port()?;
-        let mut cmd = command(&self.cfg, port);
+        let (listen, run_dir) = new_endpoint(&self.cfg)?;
+        self.run_dir = run_dir;
+        let access = SidecarAccess {
+            endpoint: listen,
+            api_key: endpoint::new_api_key()?,
+        };
+        let mut cmd = command(&self.cfg, &access.endpoint, &access.api_key);
         match &self.cfg.log_file {
             Some(path) => {
                 let log = std::fs::OpenOptions::new()
@@ -817,16 +892,32 @@ impl Sidecar {
             )
         })?;
         kill_with_parent(&child);
+        let pid = child.id();
         *lock(&self.child) = Some(child);
-        self.port = port;
-        self.wait_healthy()
+        self.http = access
+            .client_builder()
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(self.cfg.request_timeout)
+            .build()?;
+        self.wait_healthy(&access)?;
+        // The answer came from our child, not from a process that took the
+        // port first (#216). A Unix socket in our private folder needs no
+        // check: nobody else can listen there.
+        #[cfg(windows)]
+        if let Endpoint::Tcp(port) = &access.endpoint {
+            endpoint::verify_listener_owner(*port, pid)
+                .context("the llama-server sidecar's port is not its own")?;
+        }
+        let _ = pid;
+        self.access = Some(access);
+        Ok(())
     }
 
-    fn wait_healthy(&self) -> Result<()> {
+    fn wait_healthy(&self, access: &SidecarAccess) -> Result<()> {
         let started = Instant::now();
-        let url = format!("http://127.0.0.1:{}/health", self.port);
-        let probe = reqwest::blocking::Client::builder()
-            .no_proxy()
+        let url = format!("{}/health", access.base_url());
+        let probe = access
+            .client_builder()
             .timeout(Duration::from_secs(2))
             .build()?;
         loop {
@@ -864,12 +955,13 @@ impl Sidecar {
             "audio.wav",
             wav,
         );
+        let access = self.access.as_ref().ok_or_else(|| {
+            PostError::Transport(anyhow::anyhow!("the sidecar is not running"))
+        })?;
         let resp = self
             .http
-            .post(format!(
-                "http://127.0.0.1:{}/v1/audio/transcriptions",
-                self.port
-            ))
+            .post(format!("{}/v1/audio/transcriptions", access.base_url()))
+            .bearer_auth(&access.api_key)
             .header(
                 reqwest::header::CONTENT_TYPE,
                 format!("multipart/form-data; boundary={boundary}"),

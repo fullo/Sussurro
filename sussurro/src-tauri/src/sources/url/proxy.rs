@@ -272,7 +272,11 @@ fn handle(mut conn: TcpStream, s: &Shared) {
         Ok(u) => u,
         Err(e) => {
             let host = url.host_str().unwrap_or_default();
-            respond(&mut conn, "502 Bad Gateway", &format!("could not connect to {host}: {e}"));
+            respond(
+                &mut conn,
+                "502 Bad Gateway",
+                &format!("could not connect to {host}: {e}"),
+            );
             return;
         }
     };
@@ -360,7 +364,13 @@ mod tests {
         ] {
             assert!(route(&head(bad)).is_err(), "{bad}");
         }
-        for bad in ["", "GET", "GET / HTTP/1.1 x", "GET / SPDY/3", "GET / HTTP/1.1\r\nno colon"] {
+        for bad in [
+            "",
+            "GET",
+            "GET / HTTP/1.1 x",
+            "GET / SPDY/3",
+            "GET / HTTP/1.1\r\nno colon",
+        ] {
             assert!(parse_head(bad).is_err(), "{bad:?}");
         }
     }

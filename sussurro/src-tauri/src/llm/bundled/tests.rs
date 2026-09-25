@@ -50,10 +50,11 @@ fn the_sidecar_config_serves_the_model_as_the_profile_model() {
             alias: MODEL_ID.into()
         }
     );
-    let args = cfg.server_args(1234);
+    let args = cfg.server_args(&crate::stt::remote::Endpoint::Tcp(1234));
     let pos = |a: &str| args.iter().position(|x| x == a).unwrap();
     assert_eq!(args[pos("--alias") + 1], profile().model.as_str());
     assert_eq!(args[pos("--host") + 1], "127.0.0.1");
+    assert!(args.iter().any(|a| a == "--no-slots"));
 }
 
 #[test]
@@ -89,7 +90,7 @@ fn chat_starts_the_server_on_first_use_and_reuses_it() {
     assert_eq!(out, "ciao");
     let pid = llm.pid().unwrap();
     assert!(process_alive(pid));
-    assert!(llm.port().is_some_and(|p| p > 0));
+    assert!(llm.endpoint().is_some());
 
     // The next request goes to the same process.
     assert_eq!(chat_bundled(&llm, &user("hello"), &ChatOptions::default()).unwrap(), "hello");
@@ -224,12 +225,12 @@ fn it_runs_beside_the_qwen3_asr_sidecar_with_its_own_lifecycle() {
     let (d1, d2) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let asr = RemoteTranscriber::start(fake_config(d1.path(), "ok")).unwrap();
     let asr_pid = asr.sidecar().pid().unwrap();
-    let asr_port = asr.sidecar().port();
+    let asr_endpoint = asr.sidecar().access().unwrap().endpoint().clone();
     let llm = fake_llm(d2.path(), "ok");
     assert_eq!(chat_bundled(&llm, &user("a"), &ChatOptions::default()).unwrap(), "a");
     let llm_pid = llm.pid().unwrap();
     assert_ne!(asr_pid, llm_pid, "two processes");
-    assert_ne!(Some(asr_port), llm.port(), "two ports");
+    assert_ne!(Some(asr_endpoint), llm.endpoint(), "two endpoints");
 
     // The transcriber's idle unload stops only Qwen3-ASR.
     let slot = Mutex::new(Some(asr));

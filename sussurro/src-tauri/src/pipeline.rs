@@ -249,9 +249,11 @@ fn load_model(key: &ModelKey) -> anyhow::Result<AnyTranscriber> {
                 )
             })?;
             let log = app
+                .as_ref()
                 .and_then(|a| a.path().app_log_dir().ok())
                 .map(|d| d.join("llama-server.log"));
-            let cfg = crate::stt::remote::qwen3_asr_config(&paths, models_dir, log);
+            let mut cfg = crate::stt::remote::qwen3_asr_config(&paths, models_dir, log);
+            cfg.socket_base = app.and_then(|a| crate::stt::remote::endpoint::app_socket_base(&a));
             // Starts the sidecar and waits for its health check (seconds).
             AnyTranscriber::Remote(crate::stt::remote::RemoteTranscriber::start(cfg)?)
         }
