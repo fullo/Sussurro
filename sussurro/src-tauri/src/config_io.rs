@@ -190,14 +190,41 @@ fn read_import_text_with(
     kind: ImportKind,
     before_open: &dyn Fn(),
 ) -> anyhow::Result<String> {
+    let bytes = read_picked_file_with(path, kind.extension(), MAX_IMPORT_BYTES, before_open)?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| anyhow::anyhow!("file is not UTF-8 text"))?;
+    Ok(text.strip_prefix('\u{feff}').map(str::to_owned).unwrap_or(text))
+}
+
+/// The bytes of a file the user picked in a native dialog, with the same
+/// guards as the list import ([`read_import_text`]): only extension `ext`,
+/// a regular file that is not a symlink (`O_NOFOLLOW` on Unix), at most
+/// `max_bytes`. For other pickers opened from Rust (a calendar `.ics`,
+/// #252).
+pub fn read_picked_file(path: &Path, ext: &str, max_bytes: u64) -> anyhow::Result<Vec<u8>> {
+    read_picked_file_with(path, ext, max_bytes, &|| {})
+}
+
+fn read_picked_file_with(
+    path: &Path,
+    ext: &str,
+    max_bytes: u64,
+    before_open: &dyn Fn(),
+) -> anyhow::Result<Vec<u8>> {
     use std::io::Read;
 
-    let ext = path
+    let too_large = || {
+        anyhow::anyhow!(
+            "file is too large to import (max {} MB)",
+            max_bytes / (1024 * 1024)
+        )
+    };
+    let actual = path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
-    if ext.as_deref() != Some(kind.extension()) {
-        anyhow::bail!("only .{} files can be imported here", kind.extension());
+    if actual.as_deref() != Some(ext) {
+        anyhow::bail!("only .{ext} files can be imported here");
     }
     // symlink_metadata does not follow the final component, so a link is
     // refused outright instead of being resolved to whatever it targets.
@@ -216,17 +243,15 @@ fn read_import_text_with(
     if !meta.is_file() {
         anyhow::bail!("not a regular file");
     }
-    if meta.len() > MAX_IMPORT_BYTES {
-        anyhow::bail!("file is too large to import (max 1 MB)");
+    if meta.len() > max_bytes {
+        return Err(too_large());
     }
     let mut bytes = Vec::with_capacity(meta.len() as usize);
-    file.take(MAX_IMPORT_BYTES + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_IMPORT_BYTES {
-        anyhow::bail!("file is too large to import (max 1 MB)");
+    file.take(max_bytes + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(too_large());
     }
-    let text = String::from_utf8(bytes)
-        .map_err(|_| anyhow::anyhow!("file is not UTF-8 text"))?;
-    Ok(text.strip_prefix('\u{feff}').map(str::to_owned).unwrap_or(text))
+    Ok(bytes)
 }
 
 /// The import picker may only be opened by the main window, never by the
@@ -458,6 +483,25 @@ mod tests {
         keys.sort();
         assert_eq!(keys, ["contents", "name"]);
         assert!(load_import_file(&csv, Dictionary).is_err());
+    }
+
+    /// The calendar picker (#252) reads through the same guards.
+    #[test]
+    fn picked_files_keep_the_import_guards() {
+        let dir = tempfile::tempdir().unwrap();
+        let ics = dir.path().join("Team.ICS");
+        std::fs::write(&ics, "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n").unwrap();
+        assert_eq!(read_picked_file(&ics, "ics", 1024).unwrap().len(), 32);
+        let e = read_picked_file(&ics, "ics", 10).unwrap_err().to_string();
+        assert!(e.contains("too large"), "{e}");
+        let e = read_picked_file(&ics, "txt", 1024).unwrap_err().to_string();
+        assert!(e.contains("only .txt"), "{e}");
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("link.ics");
+            std::os::unix::fs::symlink(&ics, &link).unwrap();
+            assert!(read_picked_file(&link, "ics", 1024).is_err());
+        }
     }
 
     #[test]

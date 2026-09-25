@@ -6,6 +6,7 @@ import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, fmtCount } from "../lib/format";
 import type { SubtitlesMode } from "../lib/types";
 import { BehaviorCard } from "../settings/BehaviorCard";
+import { CalendarCard } from "../settings/CalendarCard";
 import { CleanupCard } from "../settings/CleanupCard";
 import { DiagnosticsCard } from "../settings/DiagnosticsCard";
 import { DictationCard } from "../settings/DictationCard";
@@ -25,6 +26,7 @@ export type SectionId =
   | "behavior"
   | "history"
   | "archive"
+  | "calendar"
   | "extension"
   | "scripting"
   | "diagnostics"
@@ -38,6 +40,7 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "behavior", label: "Behavior" },
   { id: "history", label: "Dictation history" },
   { id: "archive", label: "Archive" },
+  { id: "calendar", label: "Calendar" },
   { id: "extension", label: "Browser extension" },
   { id: "scripting", label: "Scripting" },
   { id: "diagnostics", label: "Diagnostics" },
@@ -45,7 +48,7 @@ const SECTIONS: { id: SectionId; label: string }[] = [
 ];
 
 /** Settings: one section at a time — dictation, speech, cleanup, dictionary,
- *  behavior, history, archive, browser extension, scripting, diagnostics
+ *  behavior, history, archive, calendar, browser extension, scripting, diagnostics
  *  and About. */
 export function SettingsScreen({
   ctl,
@@ -121,6 +124,7 @@ export function SettingsScreen({
           {section === "behavior" && <BehaviorCard ctl={ctl} />}
           {section === "history" && <HistoryCard ctl={ctl} />}
           {section === "archive" && <ArchiveCard ctl={ctl} />}
+          {section === "calendar" && <CalendarCard ctl={ctl} />}
           {section === "extension" && <ExtensionCard ctl={ctl} />}
           {section === "scripting" && <ScriptingCard ctl={ctl} />}
           {section === "diagnostics" && <DiagnosticsCard ctl={ctl} />}

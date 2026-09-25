@@ -1,6 +1,7 @@
 pub mod api;
 pub mod archive;
 pub mod audio;
+pub mod calendar;
 pub mod cleanup;
 pub mod commands;
 pub mod config_io;
@@ -223,6 +224,12 @@ pub fn run() {
             commands::diagnostics,
             commands::diagnostics_snapshot,
             commands::credential_store_status,
+            commands::calendar_link_status,
+            commands::calendar_link_save,
+            commands::calendar_link_remove,
+            commands::calendar_events_from_file,
+            commands::calendar_events_from_link,
+            commands::calendar_add_attendees,
             commands::pull_ollama_model,
             commands::translate_entry,
             commands::check_permissions,

@@ -176,6 +176,7 @@ export function Shell({ ctl }: { ctl: Ctl }) {
             onChanged={refreshLibrary}
             onCount={setLibraryCount}
             onNew={() => setScreen("new")}
+            onOpenSettings={(s) => { setSection(s); setScreen("settings"); }}
           />
         )}
         {screen === "people" && <PeopleScreen ctl={ctl} />}
