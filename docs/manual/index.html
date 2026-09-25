@@ -82,6 +82,7 @@
           <li><a href="#extension-install">Install</a></li>
           <li><a href="#pairing">Pair</a></li>
           <li><a href="#extension-record">Record</a></li>
+          <li><a href="#extension-language">Language</a></li>
           <li><a href="#speakers">Speakers</a></li>
           <li><a href="#people">People</a></li>
         </ol></li>
@@ -399,11 +400,16 @@ participants:
 <figcaption>The side panel mirrors the live transcript; the app does the work.</figcaption></figure>
 <ol>
   <li>Join the call in the browser. Click the extension's toolbar button: Chrome opens its <b>side panel</b>, Firefox its <b>sidebar</b>. It says <em>Ready to record Google Meet</em> (or Teams, or Zoom). If you opened the meeting before installing the extension, reload the page.</li>
+  <li>Check the <span class="ui">Language</span> next to Start: the language spoken in the meeting (see <a href="#extension-language">below</a>).</li>
   <li>Click <span class="ui">Start recording</span>. Nothing is captured before that. The first time, the <a href="#notice">recording notice</a> appears. While recording, the tab's toolbar button shows a red <b>REC</b> badge.</li>
   <li>The panel shows level meters for <em>mic</em> (your microphone) and <em>remote</em> (the call), whether the transcript is up to date or a few seconds behind, and the lines as the app writes them.</li>
   <li><span class="ui">Stop</span> — or closing the tab, or leaving the page — ends it; the app keeps what it received and saves the meeting.</li>
 </ol>
 <p>The panel also has <span class="ui">Open in Sussurro</span> (brings the app to the front on that meeting), <span class="ui">Copy as text</span> and, when subtitles are set to <em>Only when I ask</em>, <span class="ui">Create .srt</span> once the recording ends (it downloads the file). If the connection to the app drops, the extension reconnects and the rest of the call becomes a new item. Audio goes only to the Sussurro app on this computer; the page's own audio is never changed or muted. During a browser meeting the overlay pill reads <em>Recording (meeting)</em>.</p>
+
+<h3 id="extension-language">The meeting's language</h3>
+<p>The side panel's <span class="ui">Language</span> menu, next to Start, sets the language of this meeting only — your dictation language in Settings doesn't change. It lists <em>Auto-detect</em> and the languages your current engine can transcribe, by their own names (<em>Italiano</em>, <em>English</em>…): about 99 with Whisper (only English with an English-only model), 25 with Parakeet, 30 with Qwen3-ASR (Cantonese and the Chinese dialects under 中文). The first time on a site it shows your dictation language; after that it remembers your last choice separately for Google Meet, Teams and Zoom, so a weekly English call on Teams and an Italian one on Meet each keep theirs. The choice is fixed once you press Start (the menu is greyed while recording) and the panel's header shows it.</p>
+<p>The app uses it for the transcription (Whisper takes it as a hint; Parakeet and Qwen3-ASR detect the language themselves), for the cleanup's list of filler words, and as the meeting's <code>language</code> in its <a href="#frontmatter">frontmatter</a>. With <em>Auto-detect</em> the detected language is recorded. If the engine changed and no longer offers the chosen language, the meeting still records, in your dictation language, and the panel shows why. With an older Sussurro app the menu doesn't appear and meetings use the dictation language.</p>
 
 <h3 id="notice">The recording notice</h3>
 <p>Recording a meeting records other people. Before the first such recording — in the extension, with System audio + mic, or with Meeting in the room — Sussurro shows <em>You are about to record other people</em>: depending on where you and they are, and on your organisation's rules, you may need to tell them, and some may have to agree first. Sussurro can't tell which rules apply to you. <span class="ui">Don't show this again</span> is ticked by default; <span class="ui">Show the notice again</span> in Settings → Browser extension (or in the extension's options) brings it back. A <em>Recording other people — let them know</em> line stays visible while you record.</p>
@@ -555,7 +561,7 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
   <li>Loopback only, and no token: any program on your computer can call the scripting routes while they are on — that's why they ship off.</li>
   <li>Web pages can't use them: requests must come for <code>127.0.0.1:&lt;port&gt;</code> or <code>localhost:&lt;port&gt;</code>, and a request from a web page's origin is refused.</li>
   <li><code>/clean</code> accepts up to 1 MiB, <code>/transcribe</code> up to 200 MiB. At most two of them run at once; a third gets <code>503</code> with <code>Retry-After</code>.</li>
-  <li>The extension's routes (<code>/app/version</code>, <code>/live</code>, <code>/items/…</code>) always need the pairing token and accept only browser-extension origins; <code>/items/…</code> reach only meetings the extension recorded.</li>
+  <li>The extension's routes (<code>/app/version</code>, <code>/app/languages</code>, <code>/live</code>, <code>/items/…</code>) always need the pairing token and accept only browser-extension origins; <code>/items/…</code> reach only meetings the extension recorded.</li>
 </ul>
 
 <h3 id="archive-api">The archive API</h3>

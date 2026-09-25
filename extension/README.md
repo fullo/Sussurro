@@ -111,7 +111,8 @@ MAIN world (hook, AudioWorklet) ─MessagePort─▶ ISOLATED world ─runtime p
   opens `ws://127.0.0.1:<port>/live` and sends `auth {token}` first (an
   app reporting `live_auth: "message"`, #217; older apps get `?token=…`,
   which Chrome logs when the connection fails), then `start {title, url,
-  platform, rate, channels: 2}`, numbers `seq` per connection, buffers up
+  platform, rate, channels: 2, language?}` (the panel's language, #288),
+  numbers `seq` per connection, buffers up
   to ~30 s while (re)connecting, reconnects with capped exponential backoff
   (a reconnect is a new `start`, i.e. a new item), stops retrying on a
   wrong token / app too old / other protocol, and sends `ping` after 10 s
@@ -169,6 +170,24 @@ meeting in the active tab; editing happens in the app (plan E3).
 - A **reconnect** is a new item on the app: its lines follow the earlier
   ones under a "connection lost" note, and the buttons act on the new item.
   A new **Start** clears the panel.
+- **Language** (#288), next to Start: *Auto-detect* plus the languages of
+  the app's active engine by native name, from `GET /app/languages`
+  (extension token, like `/app/version`: `{engine, default, languages:
+  [{code, name}]}` — Whisper 99, an English-only Whisper model `en`,
+  Parakeet 25, Qwen3-ASR 29 codes). The choice is remembered **per
+  platform** in `storage.local` under `meetingLanguage` (`{meet, teams,
+  zoom, other}`, not a secret — content scripts may read it), through
+  `src/shared/language.ts` only; the first time on a platform, or when the
+  engine no longer offers the remembered code, the app's dictation
+  language (`default`) is picked, else Auto-detect. It is sent as
+  `start.language` (`panel:start {language}` → the background, which keeps
+  it for that meeting's reconnects), greyed while recording, and shown in
+  the recording header (`PanelState.language`, so a panel opened
+  mid-meeting shows it too). The app checks it against the engine: an
+  unknown code falls back to the dictation language with a `warning`,
+  never stopping the meeting. With an app without the route (404) the
+  selector is hidden and no `language` is sent — the app's dictation
+  language applies, as before. Additive: the protocol stays 2.
 
 The background keeps each tab's transcript (`src/shared/live.ts`, a pure
 reducer over the app's `/live` messages), so a panel opened mid-meeting,
@@ -360,12 +379,16 @@ plus the capture harness.
 Chromium and Firefox), opens a local two-peer WebRTC call (the user's side
 sends the browser's fake microphone — 440 Hz in Chromium, 1 kHz in Firefox —
 the other side a 300 Hz tone) and a fake Sussurro app (`/app/version`,
-`/live` and the item routes, with the app's Origin and token checks). Per configuration it
+`/app/languages`, `/live` and the item routes, with the app's Origin and
+token checks). Per configuration it
 presses Start in the side panel and checks: no socket before Start, the
 side panel showing the fake app's scripted lines (a correction applied,
 speaker chips, timestamps, the backlog) and reaching `open` / `export`
 (txt, then srt after Stop), a new Start clearing it, the
-`start` message, both channels arriving with their own tone, `seq` from 0
+language selector (#288: first on the app's dictation language, English
+picked → `start {language: "en"}`, greyed and shown in the header while
+recording, remembered for the next Start on the site while a first Meet
+start takes the app's default), the `start` message, both channels arriving with their own tone, `seq` from 0
 without gaps, the call unaffected both ways, Stop (the fake app then
 stays silent for 5 s before `done`, as a busy app can), and `stop` when
 the tab closes; also the not-paired panel, which follows the pairing once
