@@ -68,7 +68,8 @@ pub fn check_access(archive_dir: &Path, id: &str) -> Result<(), ExportError> {
 /// The export of item `id` in `format`, for the extension ([`check_access`]).
 pub fn render(archive_dir: &Path, id: &str, format: ExportFormat) -> Result<Export, ExportError> {
     check_access(archive_dir, id)?;
-    let body = archive::export::export_item(archive_dir, id, format).map_err(ExportError::Refused)?;
+    let body =
+        archive::export::export_item(archive_dir, id, format).map_err(ExportError::Refused)?;
     let folder = id.rsplit('/').next().unwrap_or("transcript");
     Ok(Export {
         body,
@@ -158,7 +159,15 @@ mod tests {
     fn only_items_the_extension_recorded_are_reachable() {
         assert!(extension_may_access("browser:meet.google.com"));
         assert!(extension_may_access("browser:teams.microsoft.com"));
-        for s in ["mic", "file:/Users/x/a.mp3", "url:https://x.example", "system", "", "Browser:x", " browser:x"] {
+        for s in [
+            "mic",
+            "file:/Users/x/a.mp3",
+            "url:https://x.example",
+            "system",
+            "",
+            "Browser:x",
+            " browser:x",
+        ] {
             assert!(!extension_may_access(s), "{s}");
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -167,12 +176,18 @@ mod tests {
         assert!(check_access(&archive, &meeting).is_ok());
         for source in ["mic", "file:/tmp/a.wav", "system"] {
             let other = item_from(&archive, ItemType::Note, source);
-            assert!(matches!(check_access(&archive, &other), Err(ExportError::NotExtensionItem)));
+            assert!(matches!(
+                check_access(&archive, &other),
+                Err(ExportError::NotExtensionItem)
+            ));
             assert!(matches!(
                 render(&archive, &other, ExportFormat::Md),
                 Err(ExportError::NotExtensionItem)
             ));
         }
-        assert!(matches!(check_access(&archive, "2026/09/nope"), Err(ExportError::NotFound(_))));
+        assert!(matches!(
+            check_access(&archive, "2026/09/nope"),
+            Err(ExportError::NotFound(_))
+        ));
     }
 }

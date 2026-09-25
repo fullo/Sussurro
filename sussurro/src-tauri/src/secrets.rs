@@ -61,7 +61,8 @@ fn native_store() -> Result<NativeStore, StoreError> {
     if let Some(store) = slot.as_ref() {
         return Ok(store.clone());
     }
-    let store = build_native_store().map_err(|e| StoreError(format!("no credential store: {}", describe(&e))))?;
+    let store = build_native_store()
+        .map_err(|e| StoreError(format!("no credential store: {}", describe(&e))))?;
     *slot = Some(store.clone());
     Ok(store)
 }
@@ -181,7 +182,9 @@ fn store_key(store: &dyn SecretStore, p: &LlmProfile) -> Result<(), StoreError> 
     store.set(&acct, &p.api_key)?;
     match store.get(&acct)? {
         Some(read) if read == p.api_key => Ok(()),
-        _ => Err(StoreError("the key read back from the store does not match".into())),
+        _ => Err(StoreError(
+            "the key read back from the store does not match".into(),
+        )),
     }
 }
 
@@ -209,7 +212,10 @@ pub fn load_keys(settings: &mut Settings, store: &dyn SecretStore) -> bool {
                     continue;
                 }
                 Ok(None) if p.api_key.is_empty() => {
-                    eprintln!("LLM profile “{}”: its API key is no longer in the credential store", p.name);
+                    eprintln!(
+                        "LLM profile “{}”: its API key is no longer in the credential store",
+                        p.name
+                    );
                     p.api_key_storage = KeyStorage::None;
                     dirty = true;
                     continue;
@@ -370,7 +376,9 @@ pub(crate) mod tests {
                 return Err(StoreError("unavailable".into()));
             }
             self.writes.set(self.writes.get() + 1);
-            self.entries.borrow_mut().insert(account.into(), secret.into());
+            self.entries
+                .borrow_mut()
+                .insert(account.into(), secret.into());
             Ok(())
         }
         fn delete(&self, account: &str) -> Result<(), StoreError> {
@@ -383,11 +391,21 @@ pub(crate) mod tests {
     }
 
     fn work(key: &str) -> LlmProfile {
-        LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com/v1", key, "gpt")
+        LlmProfile::new(
+            "work",
+            "Work",
+            CleanupApi::Openai,
+            "https://api.example.com/v1",
+            key,
+            "gpt",
+        )
     }
 
     fn with_profiles(profiles: Vec<LlmProfile>) -> Settings {
-        Settings { llm_profiles: profiles, ..Default::default() }
+        Settings {
+            llm_profiles: profiles,
+            ..Default::default()
+        }
     }
 
     /// The settings.json a pre-#159 build wrote, with a clear-text key.
@@ -414,7 +432,10 @@ pub(crate) mod tests {
 
         let (mut s, _) = Settings::load_migrating(&path);
         assert!(load_keys(&mut s, &store), "the file must be rewritten");
-        assert_eq!(store.entries.borrow().get("llm-profile:work").unwrap(), "sk-secret-123");
+        assert_eq!(
+            store.entries.borrow().get("llm-profile:work").unwrap(),
+            "sk-secret-123"
+        );
         // In memory the key is still there: cleanup keeps working.
         assert_eq!(s.cleanup_llm().api_key, "sk-secret-123");
         assert_eq!(s.cleanup_llm().api_key_storage, KeyStorage::Keychain);
@@ -447,7 +468,10 @@ pub(crate) mod tests {
         let (mut s, migrated) = Settings::load_migrating(&path);
         assert!(migrated);
         assert!(load_keys(&mut s, &store));
-        assert_eq!(store.entries.borrow().get("llm-profile:local").unwrap(), "sk-old");
+        assert_eq!(
+            store.entries.borrow().get("llm-profile:local").unwrap(),
+            "sk-old"
+        );
         s.save(&path).unwrap();
         assert!(!saved(&path).contains("sk-old"));
     }
@@ -501,7 +525,9 @@ pub(crate) mod tests {
         let mut s = with_profiles(vec![work("sk-1")]);
         load_keys(&mut s, &Lossy);
         assert_eq!(s.llm_profiles[0].api_key_storage, KeyStorage::File);
-        assert!(serde_json::to_string(&s.for_disk()).unwrap().contains("sk-1"));
+        assert!(serde_json::to_string(&s.for_disk())
+            .unwrap()
+            .contains("sk-1"));
     }
 
     /// A locked keychain at start: the key is unknown this session, but the
@@ -509,7 +535,10 @@ pub(crate) mod tests {
     #[test]
     fn unreadable_key_keeps_its_entry() {
         let store = FakeStore::default();
-        store.entries.borrow_mut().insert(account("work"), "sk-1".into());
+        store
+            .entries
+            .borrow_mut()
+            .insert(account("work"), "sk-1".into());
         store.locked.set(true);
         let mut disk = work("");
         disk.api_key_storage = KeyStorage::Keychain;
@@ -527,7 +556,10 @@ pub(crate) mod tests {
         next.llm_profiles[1].api_key_storage = KeyStorage::None; // UI value is ignored
         sync_keys(&mut next, &s, &store);
         assert_eq!(next.llm_profiles[1].api_key_storage, KeyStorage::Unreadable);
-        assert_eq!(store.entries.borrow().get("llm-profile:work").unwrap(), "sk-1");
+        assert_eq!(
+            store.entries.borrow().get("llm-profile:work").unwrap(),
+            "sk-1"
+        );
 
         // Unlocked at the next start, the key is back.
         store.locked.set(false);
@@ -556,8 +588,13 @@ pub(crate) mod tests {
         let mut next = with_profiles(vec![LlmProfile::default(), work("sk-1")]);
         sync_keys(&mut next, &prev, &store);
         assert_eq!(next.llm_profiles[1].api_key_storage, KeyStorage::Keychain);
-        assert_eq!(store.entries.borrow().get("llm-profile:work").unwrap(), "sk-1");
-        assert!(!serde_json::to_string(&next.for_disk()).unwrap().contains("sk-1"));
+        assert_eq!(
+            store.entries.borrow().get("llm-profile:work").unwrap(),
+            "sk-1"
+        );
+        assert!(!serde_json::to_string(&next.for_disk())
+            .unwrap()
+            .contains("sk-1"));
 
         // Unchanged key: no store write.
         let writes = store.writes.get();
@@ -571,7 +608,10 @@ pub(crate) mod tests {
         let mut changed = same.clone();
         changed.llm_profiles[1].api_key = "sk-2".into();
         sync_keys(&mut changed, &same, &store);
-        assert_eq!(store.entries.borrow().get("llm-profile:work").unwrap(), "sk-2");
+        assert_eq!(
+            store.entries.borrow().get("llm-profile:work").unwrap(),
+            "sk-2"
+        );
 
         // Cleared key: entry deleted.
         let mut cleared = changed.clone();
@@ -586,7 +626,11 @@ pub(crate) mod tests {
     fn deleting_a_profile_deletes_its_key() {
         let store = FakeStore::default();
         let mut prev = with_profiles(vec![LlmProfile::default(), work("sk-1")]);
-        sync_keys(&mut prev, &with_profiles(vec![LlmProfile::default()]), &store);
+        sync_keys(
+            &mut prev,
+            &with_profiles(vec![LlmProfile::default()]),
+            &store,
+        );
         assert_eq!(store.entries.borrow().len(), 1);
         let mut next = with_profiles(vec![LlmProfile::default()]);
         sync_keys(&mut next, &prev, &store);
@@ -604,7 +648,9 @@ pub(crate) mod tests {
         let mut next = with_profiles(vec![LlmProfile::default(), p]);
         sync_keys(&mut next, &prev, &store);
         assert_eq!(next.llm_profiles[1].api_key_storage, KeyStorage::File);
-        assert!(serde_json::to_string(&next.for_disk()).unwrap().contains("sk-1"));
+        assert!(serde_json::to_string(&next.for_disk())
+            .unwrap()
+            .contains("sk-1"));
     }
 
     /// A key typed while no store works is saved in the file; the entry of
@@ -633,7 +679,9 @@ pub(crate) mod tests {
         sync_keys(&mut next, &prev, &WriteFails(&store));
         assert_eq!(next.llm_profiles[0].api_key_storage, KeyStorage::File);
         assert!(store.entries.borrow().is_empty());
-        assert!(serde_json::to_string(&next.for_disk()).unwrap().contains("sk-2"));
+        assert!(serde_json::to_string(&next.for_disk())
+            .unwrap()
+            .contains("sk-2"));
     }
 
     #[test]
@@ -641,14 +689,25 @@ pub(crate) mod tests {
         for (url, want) in [
             ("https://api.example.com/v1", "https://api.example.com/v1"),
             ("http://localhost:11434", "http://localhost:11434"),
-            ("https://user:sk-pass@api.example.com/v1", "https://…@api.example.com/v1"),
-            ("https://api.example.com/v1?key=sk-q#frag", "https://api.example.com/v1?…"),
+            (
+                "https://user:sk-pass@api.example.com/v1",
+                "https://…@api.example.com/v1",
+            ),
+            (
+                "https://api.example.com/v1?key=sk-q#frag",
+                "https://api.example.com/v1?…",
+            ),
             ("user:sk@host:8080", "…@host:8080"),
         ] {
             assert_eq!(redact_url(url), want, "{url}");
         }
         let mut p = work("sk-1");
-        for storage in [KeyStorage::None, KeyStorage::Keychain, KeyStorage::File, KeyStorage::Unreadable] {
+        for storage in [
+            KeyStorage::None,
+            KeyStorage::Keychain,
+            KeyStorage::File,
+            KeyStorage::Unreadable,
+        ] {
             p.api_key_storage = storage;
             assert!(!key_summary(&p).contains("sk-1"));
         }
@@ -673,10 +732,15 @@ pub(crate) mod tests {
     fn real_credential_store_roundtrip() {
         let acct = account("sussurro-test-159");
         OsStore.set(&acct, "sk-test-value").expect("write");
-        assert_eq!(OsStore.get(&acct).expect("read").as_deref(), Some("sk-test-value"));
+        assert_eq!(
+            OsStore.get(&acct).expect("read").as_deref(),
+            Some("sk-test-value")
+        );
         OsStore.delete(&acct).expect("delete");
         assert_eq!(OsStore.get(&acct).expect("read after delete"), None);
-        OsStore.delete(&acct).expect("deleting a missing entry is fine");
+        OsStore
+            .delete(&acct)
+            .expect("deleting a missing entry is fine");
         assert!(probe(&OsStore).is_ok());
     }
 }

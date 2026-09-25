@@ -22,9 +22,9 @@ pub mod speakers;
 pub mod state;
 pub mod stats;
 pub mod stt;
+pub mod tray;
 pub mod tts;
 pub mod voice_commands;
-pub mod tray;
 #[cfg(all(target_os = "linux", feature = "wayland-portal"))]
 pub mod wayland_portal;
 
@@ -141,7 +141,12 @@ pub fn run() {
                 std::thread::spawn(move || engine::session::recover_after_crash(&handle));
             }
             {
-                let s = app.state::<state::AppState>().settings.lock().unwrap().clone();
+                let s = app
+                    .state::<state::AppState>()
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .clone();
                 if s.api_enabled {
                     api::spawn(handle.clone(), s.api_port);
                 }

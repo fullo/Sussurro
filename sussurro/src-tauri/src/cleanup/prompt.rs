@@ -170,22 +170,22 @@ const MARKERS: [(&str, &[&str]); 5] = [
     (
         "es",
         &[
-            "el", "los", "las", "por", "para", "pero", "está", "muy", "también", "hay", "y",
-            "yo", "esto", "porque", "pues", "vamos", "tenemos", "sí",
+            "el", "los", "las", "por", "para", "pero", "está", "muy", "también", "hay", "y", "yo",
+            "esto", "porque", "pues", "vamos", "tenemos", "sí",
         ],
     ),
     (
         "fr",
         &[
-            "les", "des", "est", "et", "je", "nous", "vous", "pas", "du", "dans", "avec",
-            "pour", "qui", "ça", "c'est", "euh", "sur", "mais",
+            "les", "des", "est", "et", "je", "nous", "vous", "pas", "du", "dans", "avec", "pour",
+            "qui", "ça", "c'est", "euh", "sur", "mais",
         ],
     ),
     (
         "de",
         &[
-            "der", "die", "das", "und", "ist", "nicht", "ich", "wir", "sie", "mit", "auf",
-            "für", "ein", "eine", "zu", "den", "dem", "auch", "äh", "ähm",
+            "der", "die", "das", "und", "ist", "nicht", "ich", "wir", "sie", "mit", "auf", "für",
+            "ein", "eine", "zu", "den", "dem", "auch", "äh", "ähm",
         ],
     ),
 ];
@@ -392,8 +392,13 @@ pub fn build_messages_with_context(
     transcript: &str,
 ) -> Option<Vec<Value>> {
     let mut messages = build_messages(settings, None, transcript)?;
-    let previous = previous.map(|p| context_tail(p, CONTEXT_MAX_CHARS)).unwrap_or("");
-    let system = messages[0]["content"].as_str().unwrap_or_default().to_string();
+    let previous = previous
+        .map(|p| context_tail(p, CONTEXT_MAX_CHARS))
+        .unwrap_or("");
+    let system = messages[0]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     let mut system = format!(
         "{system} The text is one part of a longer recording, cleaned part by part: \
          clean only this part, and never add text that is not in it."
@@ -439,19 +444,24 @@ mod tests {
         // Same few-shot structure as a dictation.
         assert_eq!(msgs.len(), build_messages(&s, None, "x").unwrap().len());
         // The context never becomes a user message of its own.
-        assert!(msgs[1..].iter().all(|m| !m["content"]
-            .as_str()
-            .unwrap()
-            .contains("Earlier part.")));
+        assert!(msgs[1..]
+            .iter()
+            .all(|m| !m["content"].as_str().unwrap().contains("Earlier part.")));
     }
 
     #[test]
     fn chunked_cleanup_without_previous_and_with_level_none() {
         let s = cfg(CleanupLevel::Medium);
         let msgs = build_messages_with_context(&s, None, "first").unwrap();
-        assert!(!msgs[0]["content"].as_str().unwrap().contains("For context only"));
+        assert!(!msgs[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("For context only"));
         let msgs = build_messages_with_context(&s, Some("   "), "first").unwrap();
-        assert!(!msgs[0]["content"].as_str().unwrap().contains("For context only"));
+        assert!(!msgs[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("For context only"));
         // Nothing for the LLM to do: no messages at all, like build_messages.
         assert!(build_messages_with_context(&cfg(CleanupLevel::None), Some("x"), "y").is_none());
     }
@@ -459,7 +469,8 @@ mod tests {
     #[test]
     fn chunked_cleanup_context_is_bounded() {
         let long = "word ".repeat(1_000);
-        let msgs = build_messages_with_context(&cfg(CleanupLevel::Light), Some(&long), "x").unwrap();
+        let msgs =
+            build_messages_with_context(&cfg(CleanupLevel::Light), Some(&long), "x").unwrap();
         let system = msgs[0]["content"].as_str().unwrap();
         let plain = build_messages(&cfg(CleanupLevel::Light), None, "x").unwrap();
         let base = plain[0]["content"].as_str().unwrap().len();
@@ -468,7 +479,11 @@ mod tests {
 
     /// Settings with voice_commands off so the base assertions stay focused.
     fn cfg(level: CleanupLevel) -> Settings {
-        Settings { cleanup_level: level, voice_commands: false, ..Default::default() }
+        Settings {
+            cleanup_level: level,
+            voice_commands: false,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -506,7 +521,10 @@ mod tests {
         // One example per language, and the language-preservation clause.
         assert!(msgs[1]["content"].as_str().unwrap().contains("quarterly"));
         assert!(msgs[3]["content"].as_str().unwrap().contains("progetto"));
-        assert!(msgs[0]["content"].as_str().unwrap().contains("SAME language"));
+        assert!(msgs[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("SAME language"));
         // Translating: same-language examples would fight the translation
         // instruction, so they're dropped.
         let mut s = cfg(CleanupLevel::Light);
@@ -570,7 +588,10 @@ mod tests {
             "hello",
         )
         .unwrap();
-        assert!(msgs[0]["content"].as_str().unwrap().contains("emojis welcome"));
+        assert!(msgs[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("emojis welcome"));
     }
 
     #[test]
@@ -740,16 +761,26 @@ mod tests {
             ("fr", "Typical French fillers", "\"euh\""),
             ("de", "Typical German fillers", "\"ähm\""),
         ];
-        for level in [CleanupLevel::Light, CleanupLevel::Medium, CleanupLevel::High] {
+        for level in [
+            CleanupLevel::Light,
+            CleanupLevel::Medium,
+            CleanupLevel::High,
+        ] {
             for (code, heading, filler) in cases {
                 let system = system_for(level.clone(), code, "x");
-                assert!(system.contains(FILLER_GENERIC), "{level:?}/{code}: generic text");
+                assert!(
+                    system.contains(FILLER_GENERIC),
+                    "{level:?}/{code}: generic text"
+                );
                 assert!(system.contains(heading), "{level:?}/{code}: {system}");
                 assert!(system.contains(filler), "{level:?}/{code}");
                 // Only that language's examples.
                 for (other, other_heading, _) in cases {
                     if other != code {
-                        assert!(!system.contains(other_heading), "{level:?}/{code} has {other}");
+                        assert!(
+                            !system.contains(other_heading),
+                            "{level:?}/{code} has {other}"
+                        );
                     }
                 }
                 // Never a translation request: the SAME-language rule stays.
@@ -762,7 +793,15 @@ mod tests {
     #[test]
     fn italian_examples_name_the_meaning_carrying_fillers_as_conditional() {
         let system = system_for(CleanupLevel::Light, "it", ITALIAN[0]);
-        for w in ["ehm", "eh", "uhm", "cioè", "tipo", "praticamente", "diciamo"] {
+        for w in [
+            "ehm",
+            "eh",
+            "uhm",
+            "cioè",
+            "tipo",
+            "praticamente",
+            "diciamo",
+        ] {
             assert!(system.contains(&format!("\"{w}\"")), "missing {w}");
         }
         assert!(system.contains("when used as filler"));
@@ -792,11 +831,26 @@ mod tests {
         for sentence in ENGLISH {
             assert_eq!(guess_language(sentence), Some("en"), "{sentence}");
         }
-        assert_eq!(guess_language("el problema es que no tenemos tiempo para esto"), Some("es"));
-        assert_eq!(guess_language("euh je pense que c'est pas le bon moment pour nous"), Some("fr"));
-        assert_eq!(guess_language("ich glaube das ist nicht der richtige Termin für uns"), Some("de"));
+        assert_eq!(
+            guess_language("el problema es que no tenemos tiempo para esto"),
+            Some("es")
+        );
+        assert_eq!(
+            guess_language("euh je pense que c'est pas le bon moment pour nous"),
+            Some("fr")
+        );
+        assert_eq!(
+            guess_language("ich glaube das ist nicht der richtige Termin für uns"),
+            Some("de")
+        );
         // Too short, no markers, or mixed: unknown.
-        for unclear in ["", "ok", "Proviamo l'audio. Va.", "Sussurro GPU Vulkan", "the il"] {
+        for unclear in [
+            "",
+            "ok",
+            "Proviamo l'audio. Va.",
+            "Sussurro GPU Vulkan",
+            "the il",
+        ] {
             assert_eq!(guess_language(unclear), None, "{unclear:?}");
         }
         // Wired into the prompt: "auto" (or empty) uses the guess…
@@ -820,7 +874,11 @@ mod tests {
 
     #[test]
     fn overrides_win_over_the_filler_guidance() {
-        for level in [CleanupLevel::Light, CleanupLevel::Medium, CleanupLevel::High] {
+        for level in [
+            CleanupLevel::Light,
+            CleanupLevel::Medium,
+            CleanupLevel::High,
+        ] {
             let mut s = cfg(level.clone());
             s.language = "it".into();
             s.prompt_overrides.light = "My own light rule.".into();
@@ -871,7 +929,10 @@ mod tests {
         assert!(!system.contains("Typical English"));
         s.language = "fr".into();
         let msgs = build_messages_with_context(&s, None, ITALIAN[2]).unwrap();
-        assert!(msgs[0]["content"].as_str().unwrap().contains("Typical French"));
+        assert!(msgs[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Typical French"));
     }
 
     /// Lowercase words of `s`, punctuation dropped.
@@ -922,18 +983,73 @@ mod tests {
 
         // (sentence, words that must stay, sounds/repeats that must go,
         //  discourse fillers to report)
-        type Case = (&'static str, &'static [&'static str], &'static [&'static str], &'static [&'static str]);
+        type Case = (
+            &'static str,
+            &'static [&'static str],
+            &'static [&'static str],
+            &'static [&'static str],
+        );
         let cases: [Case; 10] = [
-            (ITALIAN[0], &["documento", "pronto", "costi"], &["ehm", "il il"], &[]),
-            (ITALIAN[1], &["riunione", "giovedì", "tutti"], &["eh"], &["praticamente", "cioè"]),
-            (ITALIAN[2], &["cliente", "non", "convinto", "prezzo"], &["uhm"], &["diciamo", "tipo"]),
-            (ITALIAN[3], &["domani", "bozza", "marco", "pensa"], &["ehm", "la la"], &[]),
-            (ITALIAN[4], &["problema", "server", "fermato", "due", "settimana"], &[], &["cioè"]),
-            (ITALIAN[5], &["tre", "chili", "mele", "torta", "domenica"], &[], &[]),
-            (ENGLISH[0], &["quote", "client", "tomorrow"], &["um", "uh", "the the"], &["basically"]),
-            (ENGLISH[1], &["report", "ready", "budget", "missing"], &["uh"], &["like", "you know"]),
-            (ENGLISH[2], &["meeting", "thursday", "everyone"], &["uh"], &["i mean"]),
-            (ENGLISH[3], &["i like", "would like", "design", "blue", "header"], &[], &[]),
+            (
+                ITALIAN[0],
+                &["documento", "pronto", "costi"],
+                &["ehm", "il il"],
+                &[],
+            ),
+            (
+                ITALIAN[1],
+                &["riunione", "giovedì", "tutti"],
+                &["eh"],
+                &["praticamente", "cioè"],
+            ),
+            (
+                ITALIAN[2],
+                &["cliente", "non", "convinto", "prezzo"],
+                &["uhm"],
+                &["diciamo", "tipo"],
+            ),
+            (
+                ITALIAN[3],
+                &["domani", "bozza", "marco", "pensa"],
+                &["ehm", "la la"],
+                &[],
+            ),
+            (
+                ITALIAN[4],
+                &["problema", "server", "fermato", "due", "settimana"],
+                &[],
+                &["cioè"],
+            ),
+            (
+                ITALIAN[5],
+                &["tre", "chili", "mele", "torta", "domenica"],
+                &[],
+                &[],
+            ),
+            (
+                ENGLISH[0],
+                &["quote", "client", "tomorrow"],
+                &["um", "uh", "the the"],
+                &["basically"],
+            ),
+            (
+                ENGLISH[1],
+                &["report", "ready", "budget", "missing"],
+                &["uh"],
+                &["like", "you know"],
+            ),
+            (
+                ENGLISH[2],
+                &["meeting", "thursday", "everyone"],
+                &["uh"],
+                &["i mean"],
+            ),
+            (
+                ENGLISH[3],
+                &["i like", "would like", "design", "blue", "header"],
+                &[],
+                &[],
+            ),
         ];
         // Sampling runs at the cleanup's temperature: repeat to see how
         // stable a result is (SUSSURRO_TEST_CLEANUP_RUNS, default 1).
@@ -954,7 +1070,11 @@ mod tests {
                 started.elapsed().as_secs_f32()
             );
             let mut problems = Vec::new();
-            problems.extend(keep.iter().filter(|w| !has(w)).map(|w| format!("lost “{w}”")));
+            problems.extend(
+                keep.iter()
+                    .filter(|w| !has(w))
+                    .map(|w| format!("lost “{w}”")),
+            );
             problems.extend(go.iter().filter(|w| has(w)).map(|w| format!("kept “{w}”")));
             if looks_hallucinated(&settings.cleanup_level, raw, out) {
                 problems.push("the guard would drop it".into());
@@ -983,7 +1103,11 @@ mod tests {
 
     #[test]
     fn all_levels_demand_output_only_the_text() {
-        for level in [CleanupLevel::Light, CleanupLevel::Medium, CleanupLevel::High] {
+        for level in [
+            CleanupLevel::Light,
+            CleanupLevel::Medium,
+            CleanupLevel::High,
+        ] {
             let msgs = build_messages(&cfg(level), None, "x").unwrap();
             let system = msgs[0]["content"].as_str().unwrap().to_lowercase();
             assert!(system.contains("output only"));

@@ -82,11 +82,9 @@ pub async fn credential_store_status() -> Result<crate::secrets::StoreStatus, St
 #[tauri::command]
 pub async fn calendar_link_status() -> Result<crate::calendar::link::LinkStatus, String> {
     // May block on D-Bus (Linux) or a keychain prompt: off the main thread.
-    tauri::async_runtime::spawn_blocking(|| {
-        crate::calendar::link::status(&crate::secrets::OsStore)
-    })
-    .await
-    .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(|| crate::calendar::link::status(&crate::secrets::OsStore))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Save (or replace) the private ICS link — in the OS credential store
@@ -272,8 +270,16 @@ pub fn archive_token_revoke(
     revoke_archive_token(&state.settings, &state.paths.settings_file, &id)
 }
 
-fn list_archive_tokens(settings: &std::sync::Mutex<Settings>) -> Vec<crate::api::tokens::TokenInfo> {
-    settings.lock().unwrap().archive_tokens.iter().map(Into::into).collect()
+fn list_archive_tokens(
+    settings: &std::sync::Mutex<Settings>,
+) -> Vec<crate::api::tokens::TokenInfo> {
+    settings
+        .lock()
+        .unwrap()
+        .archive_tokens
+        .iter()
+        .map(Into::into)
+        .collect()
 }
 
 /// A new token, saved; on a failed save nothing changes.
@@ -413,7 +419,9 @@ pub fn usage_stats(state: State<'_, AppState>) -> UsageStats {
     let stats = crate::stats::load(&state.paths.stats_file);
     let now = chrono::Local::now();
     let today = now.format("%Y-%m-%d").to_string();
-    let week_start = (now - chrono::Duration::days(6)).format("%Y-%m-%d").to_string();
+    let week_start = (now - chrono::Duration::days(6))
+        .format("%Y-%m-%d")
+        .to_string();
     let t = stats.days.get(&today).cloned().unwrap_or_default();
     let (week_dictations, week_words) = stats
         .days
@@ -486,13 +494,18 @@ pub fn start_mic_test(state: State<'_, AppState>) -> Result<(), String> {
     }
     let device = state.settings.lock().unwrap().input_device.clone();
     recorder.start(&device).map_err(|e| e.to_string())?;
-    state.mic_test.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .mic_test
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 
 #[tauri::command]
 pub fn stop_mic_test(state: State<'_, AppState>) -> Result<(), String> {
-    if !state.mic_test.swap(false, std::sync::atomic::Ordering::Relaxed) {
+    if !state
+        .mic_test
+        .swap(false, std::sync::atomic::Ordering::Relaxed)
+    {
         return Ok(()); // dictation took over (or never started) — nothing to stop
     }
     let _ = state.recorder.lock().unwrap().stop(); // samples discarded
@@ -559,7 +572,10 @@ pub async fn bundled_llm_status(
 /// Download the bundled LLM's model (~2.2 GB, blocking, off the async
 /// runtime) without changing any setting.
 #[tauri::command]
-pub async fn bundled_llm_download(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn bundled_llm_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     if !crate::stt::sidecar::sidecar_available(&app) {
         return Err("this build has no bundled llama-server".into());
     }
@@ -578,7 +594,10 @@ pub async fn bundled_llm_download(app: AppHandle, state: State<'_, AppState>) ->
 /// "Local (bundled)" profile the cleanup profile — only ever on this
 /// explicit request. Returns the saved settings.
 #[tauri::command]
-pub async fn bundled_llm_use(app: AppHandle, state: State<'_, AppState>) -> Result<Settings, String> {
+pub async fn bundled_llm_use(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Settings, String> {
     bundled_llm_download(app, state.clone()).await?;
     let mut settings = state.settings.lock().unwrap().clone();
     settings.use_bundled_for_cleanup();
@@ -1169,9 +1188,7 @@ pub async fn ollama_status(state: State<'_, AppState>) -> Result<OllamaStatus, S
 /// backend, memory, CPU, sidecars, backlog. The panel polls it about once a
 /// second while open. Never waits for a busy model.
 #[tauri::command]
-pub async fn diagnostics_snapshot(
-    app: AppHandle,
-) -> Result<crate::diagnostics::Snapshot, String> {
+pub async fn diagnostics_snapshot(app: AppHandle) -> Result<crate::diagnostics::Snapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
         use tauri::Manager;
         let state = app.state::<AppState>();
@@ -1202,7 +1219,11 @@ pub async fn diagnostics(app: AppHandle, state: State<'_, AppState>) -> Result<S
     let models_dir = crate::state::resolve_models_dir(&state.paths, &settings);
     let bundled = format!(
         "Bundled LLM: {} · model {} (downloaded: {})",
-        if crate::stt::sidecar::sidecar_available(&app) { "available" } else { "not in this build" },
+        if crate::stt::sidecar::sidecar_available(&app) {
+            "available"
+        } else {
+            "not in this build"
+        },
         crate::llm::bundled::MODEL_FILE,
         crate::llm::bundled::model_exists(&models_dir),
     );
@@ -1418,8 +1439,8 @@ use std::path::{Path, PathBuf};
 /// state so the blocking work doesn't hold the settings lock.
 fn archive_paths(state: &AppState) -> Result<(PathBuf, PathBuf), String> {
     let settings = state.settings.lock().unwrap();
-    let dir = crate::state::resolve_archive_dir(&state.paths, &settings)
-        .map_err(|e| format!("{e:#}"))?;
+    let dir =
+        crate::state::resolve_archive_dir(&state.paths, &settings).map_err(|e| format!("{e:#}"))?;
     Ok((dir, state.paths.archive_index.clone()))
 }
 
@@ -1452,11 +1473,7 @@ fn refresh_subtitles_if(always: bool, root: &Path, id: &str) {
 /// Keep the index in step after the app changed an item. The files are
 /// already written, so an index failure is only logged: the next search
 /// re-syncs (or rebuilds) from the folder anyway.
-fn reindex(
-    root: &Path,
-    db: &Path,
-    f: impl FnOnce(&mut archive::Index) -> anyhow::Result<()>,
-) {
+fn reindex(root: &Path, db: &Path, f: impl FnOnce(&mut archive::Index) -> anyhow::Result<()>) {
     let result = archive::Index::open(root, db).and_then(|mut idx| f(&mut idx));
     if let Err(e) = result {
         eprintln!("archive index: update failed ({e:#})");
@@ -1721,12 +1738,12 @@ pub async fn archive_identify_voices(
     let you = own_voice_store(&state).labelling_voice();
     blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &dir, &id)?;
-        let load = crate::engine::session::embedder_loader(models_dir);
+        let models = crate::engine::session::speaker_models(models_dir);
         let (item, _) = crate::engine::identify::identify_voices_with_own_voice(
             &dir,
             &store,
             &id,
-            load,
+            models,
             you.as_deref(),
         )?;
         reindex(&dir, &db, |idx| idx.index_item(&id));
@@ -1914,8 +1931,8 @@ pub async fn archive_compress_audio(
             };
             emit(before_item);
             let (mut done, mut shown) = (0u64, 0u64);
-            let result = crate::engine::session::ensure_not_live(&journal, &dir, item_id)
-                .and_then(|_| {
+            let result =
+                crate::engine::session::ensure_not_live(&journal, &dir, item_id).and_then(|_| {
                     archive::compress::compress_item(&dir, item_id, job.cancel_flag(), &mut |b| {
                         done += b;
                         // A few updates per item, not one per block.
@@ -2319,10 +2336,8 @@ pub async fn voice_suggestions(
     let (dir, _) = archive_paths(&state)?;
     let store = voice_store(&state);
     let dismissals = voice_dismissals(&state);
-    blocking(move || {
-        crate::speakers::suggestions::item_suggestions(&dir, &store, &dismissals, &id)
-    })
-    .await
+    blocking(move || crate::speakers::suggestions::item_suggestions(&dir, &store, &dismissals, &id))
+        .await
 }
 
 /// Speaker panel: *Not X* — remember that `person_id` is not voice
@@ -2358,7 +2373,9 @@ fn own_voice_store(state: &AppState) -> OwnVoiceStore {
 static ENROLMENT: std::sync::Mutex<Option<(crate::audio::recorder::Recorder, std::time::Instant)>> =
     std::sync::Mutex::new(None);
 
-fn enrolment() -> std::sync::MutexGuard<'static, Option<(crate::audio::recorder::Recorder, std::time::Instant)>> {
+fn enrolment(
+) -> std::sync::MutexGuard<'static, Option<(crate::audio::recorder::Recorder, std::time::Instant)>>
+{
     ENROLMENT.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -2402,7 +2419,12 @@ pub struct EnrolProgress {
 pub fn own_voice_enrol_progress() -> EnrolProgress {
     let mut slot = enrolment();
     let Some((rec, started)) = slot.as_ref() else {
-        return EnrolProgress { recording: false, elapsed_ms: 0, level: 0.0, failed: false };
+        return EnrolProgress {
+            recording: false,
+            elapsed_ms: 0,
+            level: 0.0,
+            failed: false,
+        };
     };
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let progress = EnrolProgress {
@@ -2480,7 +2502,10 @@ pub struct OwnVoiceFound {
 /// enrolling from its panel). Works whatever *Label my voice as You* says —
 /// the user asked. Same rules as a speaker edit.
 #[tauri::command]
-pub async fn own_voice_find(state: State<'_, AppState>, id: String) -> Result<OwnVoiceFound, String> {
+pub async fn own_voice_find(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<OwnVoiceFound, String> {
     let (dir, db) = archive_paths(&state)?;
     let journal = crate::engine::session::journal_path(&state);
     let always = subtitles_always(&state);
@@ -2570,7 +2595,10 @@ fn default_recipe_profile(settings: &Settings) -> Option<crate::llm::LlmProfile>
 }
 
 /// The profile `profile_id` names, or the default (local) one.
-fn recipe_profile(settings: &Settings, profile_id: Option<&str>) -> Result<crate::llm::LlmProfile, String> {
+fn recipe_profile(
+    settings: &Settings,
+    profile_id: Option<&str>,
+) -> Result<crate::llm::LlmProfile, String> {
     match profile_id {
         Some(pid) => settings
             .llm_profiles
@@ -2600,7 +2628,8 @@ fn run_recipe_of(
         }
         None => {
             let rid = recipe_id.ok_or("name a recipe or a question")?;
-            let r = recipes::find_recipe(&settings.recipes, rid).ok_or_else(|| format!("no recipe '{rid}'"))?;
+            let r = recipes::find_recipe(&settings.recipes, rid)
+                .ok_or_else(|| format!("no recipe '{rid}'"))?;
             Ok((r, None))
         }
     }
@@ -2608,7 +2637,9 @@ fn run_recipe_of(
 
 /// The per-run options a run command received (#143).
 fn run_options(include_emails: Option<bool>) -> recipes::run::RunOptions {
-    recipes::run::RunOptions { include_emails: include_emails.unwrap_or(false) }
+    recipes::run::RunOptions {
+        include_emails: include_emails.unwrap_or(false),
+    }
 }
 
 /// What a run on an external profile would send, and where (#122): the
@@ -2629,7 +2660,10 @@ pub async fn external_run_preview(
     let profile = recipe_profile(&settings, Some(&profile_id))?;
     let (archive, _) = archive_paths(&state)?;
     let opts = run_options(include_emails);
-    blocking(move || recipes::run::preview_with(&archive, &id, &recipe, question.as_deref(), &profile, &opts)).await
+    blocking(move || {
+        recipes::run::preview_with(&archive, &id, &recipe, question.as_deref(), &profile, &opts)
+    })
+    .await
 }
 
 /// `prepare_external_run` result.
@@ -2658,7 +2692,10 @@ pub fn prepare_external_run(
     let (recipe, _) = run_recipe_of(&settings, recipe_id.as_deref(), question.as_deref())?;
     let profile = recipe_profile(&settings, Some(&profile_id))?;
     if !profile.external {
-        return Err(format!("“{}” is a local profile: its runs need no confirmation", profile.name));
+        return Err(format!(
+            "“{}” is a local profile: its runs need no confirmation",
+            profile.name
+        ));
     }
     archive::paths::validate_item_id(&id).map_err(|e| format!("{e:#}"))?;
     let target = crate::llm::consent::RunTarget::new(&id, &recipe, &profile)
@@ -2693,7 +2730,17 @@ pub async fn recipe_run(
     let settings = state.settings.lock().unwrap().clone();
     let (recipe, _) = run_recipe_of(&settings, Some(&recipe_id), None)?;
     let profile = recipe_profile(&settings, profile_id.as_deref())?;
-    run_recipe(app, &state, id, recipe, None, profile, consent, run_options(include_emails)).await
+    run_recipe(
+        app,
+        &state,
+        id,
+        recipe,
+        None,
+        profile,
+        consent,
+        run_options(include_emails),
+    )
+    .await
 }
 
 /// Ask a free question about an archive item (the Ask panel, #121): a
@@ -2714,7 +2761,17 @@ pub async fn recipe_ask(
     let settings = state.settings.lock().unwrap().clone();
     let (recipe, question) = run_recipe_of(&settings, None, Some(&question))?;
     let profile = recipe_profile(&settings, profile_id.as_deref())?;
-    run_recipe(app, &state, id, recipe, question, profile, consent, run_options(include_emails)).await
+    run_recipe(
+        app,
+        &state,
+        id,
+        recipe,
+        question,
+        profile,
+        consent,
+        run_options(include_emails),
+    )
+    .await
 }
 
 /// The confirmation a run needs (#122): none on a local profile; on an
@@ -2752,7 +2809,14 @@ async fn run_recipe(
     use tauri::{Emitter, Manager};
     let (archive, db) = archive_paths(state)?;
     recipes::run::check_profile(&profile).map_err(|e| format!("{e:#}"))?;
-    let grant = consent_for(&state.consents, &id, &recipe, &profile, consent.as_deref(), &opts)?;
+    let grant = consent_for(
+        &state.consents,
+        &id,
+        &recipe,
+        &profile,
+        consent.as_deref(),
+        &opts,
+    )?;
     {
         let journal = crate::engine::session::journal_path(state);
         let (archive, id) = (archive.clone(), id.clone());
@@ -2764,7 +2828,12 @@ async fn run_recipe(
         .map_err(|e| format!("{e:#}"))?;
 
     let handle = app.clone();
-    let (item_id, r, q, p) = (id.clone(), recipe.clone(), question.clone(), profile.clone());
+    let (item_id, r, q, p) = (
+        id.clone(),
+        recipe.clone(),
+        question.clone(),
+        profile.clone(),
+    );
     let joined = tauri::async_runtime::spawn_blocking(move || {
         let state = handle.state::<AppState>();
         /// Unregisters the run however the closure ends (panic included).
@@ -2819,7 +2888,11 @@ async fn run_recipe(
         profile: profile.name.trim().to_string(),
         model: profile.model.trim().to_string(),
         external: profile.external,
-        host: if profile.external { profile.host() } else { String::new() },
+        host: if profile.external {
+            profile.host()
+        } else {
+            String::new()
+        },
         error: None,
         cancelled: false,
     };
@@ -2827,18 +2900,19 @@ async fn run_recipe(
         Ok(Ok((out, now))) => {
             finished.file = out.file;
             if let Some(text) = out.answer {
-                finished.answer_id = Some(state.recipe_answers.put(recipes::answer::PendingAnswer {
-                    item_id: id,
-                    recipe_id: recipe.id.clone(),
-                    recipe_name: recipe.name.clone(),
-                    question,
-                    profile: finished.profile.clone(),
-                    model: finished.model.clone(),
-                    external: profile.external,
-                    host: finished.host.clone(),
-                    date: now,
-                    text: text.clone(),
-                }));
+                finished.answer_id =
+                    Some(state.recipe_answers.put(recipes::answer::PendingAnswer {
+                        item_id: id,
+                        recipe_id: recipe.id.clone(),
+                        recipe_name: recipe.name.clone(),
+                        question,
+                        profile: finished.profile.clone(),
+                        model: finished.model.clone(),
+                        external: profile.external,
+                        host: finished.host.clone(),
+                        date: now,
+                        text: text.clone(),
+                    }));
                 finished.answer = Some(text);
             }
         }
@@ -3109,8 +3183,22 @@ mod recipe_tests {
 
     #[test]
     fn default_recipe_profile_prefers_a_local_one() {
-        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
-        let lan = LlmProfile::new("lan", "LAN", CleanupApi::Ollama, "http://localhost:11434", "", "m");
+        let work = LlmProfile::new(
+            "work",
+            "Work",
+            CleanupApi::Openai,
+            "https://api.example.com",
+            "",
+            "m",
+        );
+        let lan = LlmProfile::new(
+            "lan",
+            "LAN",
+            CleanupApi::Ollama,
+            "http://localhost:11434",
+            "",
+            "m",
+        );
         let mut s = Settings {
             llm_profiles: vec![work.clone(), lan],
             cleanup_profile: "work".into(),
@@ -3120,7 +3208,11 @@ mod recipe_tests {
         s.cleanup_profile = "lan".into();
         assert_eq!(default_recipe_profile(&s).unwrap().id, "lan");
         assert_eq!(recipe_profile(&s, None).unwrap().id, "lan");
-        assert_eq!(recipe_profile(&s, Some("work")).unwrap().id, "work", "an explicit choice is kept");
+        assert_eq!(
+            recipe_profile(&s, Some("work")).unwrap().id,
+            "work",
+            "an explicit choice is kept"
+        );
         assert!(recipe_profile(&s, Some("nope")).is_err());
     }
 
@@ -3130,7 +3222,14 @@ mod recipe_tests {
     #[test]
     fn recipes_can_run_on_the_bundled_profile() {
         use crate::llm::bundled::{profile, PROFILE_ID};
-        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
+        let work = LlmProfile::new(
+            "work",
+            "Work",
+            CleanupApi::Openai,
+            "https://api.example.com",
+            "",
+            "m",
+        );
         let mut s = Settings {
             llm_profiles: vec![work],
             cleanup_profile: "work".into(),
@@ -3152,8 +3251,22 @@ mod recipe_tests {
     /// external — not even when every profile is external.
     #[test]
     fn local_to_external_fallback_never_happens() {
-        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
-        let mut lan_by_hand = LlmProfile::new("lan", "LAN", CleanupApi::Ollama, "http://localhost:11434", "", "m");
+        let work = LlmProfile::new(
+            "work",
+            "Work",
+            CleanupApi::Openai,
+            "https://api.example.com",
+            "",
+            "m",
+        );
+        let mut lan_by_hand = LlmProfile::new(
+            "lan",
+            "LAN",
+            CleanupApi::Ollama,
+            "http://localhost:11434",
+            "",
+            "m",
+        );
         lan_by_hand.external = true;
         let s = Settings {
             llm_profiles: vec![work, lan_by_hand],
@@ -3171,7 +3284,10 @@ mod recipe_tests {
         let (r, q) = run_recipe_of(&s, Some("summary"), None).unwrap();
         assert_eq!((r.id.as_str(), q), ("summary", None));
         let (r, q) = run_recipe_of(&s, Some("summary"), Some("  Who\nsends it? ")).unwrap();
-        assert_eq!((r.id.as_str(), q.as_deref()), ("question", Some("Who sends it?")));
+        assert_eq!(
+            (r.id.as_str(), q.as_deref()),
+            ("question", Some("Who sends it?"))
+        );
         assert!(run_recipe_of(&s, Some("nope"), None).is_err());
         assert!(run_recipe_of(&s, None, None).is_err());
         assert!(run_recipe_of(&s, None, Some(" ")).is_err());
@@ -3183,27 +3299,56 @@ mod recipe_tests {
     fn consent_for_refuses_without_a_token_and_consumes_it_once() {
         use crate::llm::consent::{ConsentStore, RunTarget};
         let store = ConsentStore::default();
-        let work = LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com", "", "m");
+        let work = LlmProfile::new(
+            "work",
+            "Work",
+            CleanupApi::Openai,
+            "https://api.example.com",
+            "",
+            "m",
+        );
         let recipe = recipes::builtin_recipes().remove(1);
         let names = run_options(None);
         let err = consent_for(&store, "2026/09/a", &recipe, &work, None, &names).unwrap_err();
         assert!(err.contains("Confirm the run first"), "{err}");
         let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work));
-        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &names).unwrap().is_some());
-        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &names).is_err(), "single use");
+        assert!(
+            consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &names)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &names).is_err(),
+            "single use"
+        );
         let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work));
-        assert!(consent_for(&store, "2026/09/b", &recipe, &work, Some(&token), &names).is_err(), "bound to the item");
+        assert!(
+            consent_for(&store, "2026/09/b", &recipe, &work, Some(&token), &names).is_err(),
+            "bound to the item"
+        );
         let local = LlmProfile::default();
-        assert!(consent_for(&store, "2026/09/a", &recipe, &local, None, &names).unwrap().is_none());
+        assert!(
+            consent_for(&store, "2026/09/a", &recipe, &local, None, &names)
+                .unwrap()
+                .is_none()
+        );
         // #143: a confirmation for names only doesn't send emails, and back.
         let emails = run_options(Some(true));
         assert!(emails.include_emails && !names.include_emails);
         let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work));
         assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &emails).is_err());
         let token = store.issue(RunTarget::new("2026/09/a", &recipe, &work).with_emails(true));
-        assert!(consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &emails).unwrap().is_some());
+        assert!(
+            consent_for(&store, "2026/09/a", &recipe, &work, Some(&token), &emails)
+                .unwrap()
+                .is_some()
+        );
         // A local profile needs no confirmation either way.
-        assert!(consent_for(&store, "2026/09/a", &recipe, &local, None, &emails).unwrap().is_none());
+        assert!(
+            consent_for(&store, "2026/09/a", &recipe, &local, None, &emails)
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
@@ -3224,7 +3369,11 @@ mod extension_token_tests {
         let first = current_or_new_token(&settings, &file).unwrap();
         assert_eq!(first.len(), 64);
         assert_eq!(saved_token(&file), first);
-        assert_eq!(current_or_new_token(&settings, &file).unwrap(), first, "stable once created");
+        assert_eq!(
+            current_or_new_token(&settings, &file).unwrap(),
+            first,
+            "stable once created"
+        );
     }
 
     #[test]
@@ -3265,7 +3414,8 @@ mod archive_token_tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
         let settings = Mutex::new(Settings::default());
-        let new = create_archive_token(&settings, &file, "notes shortcut", &[Scope::Write]).unwrap();
+        let new =
+            create_archive_token(&settings, &file, "notes shortcut", &[Scope::Write]).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();
         assert!(!text.contains(&new.token), "plaintext on disk");
         assert!(!text.contains(&new.token["sua_".len()..]));
@@ -3296,7 +3446,9 @@ mod archive_token_tests {
         assert_eq!(left, vec![b.info.clone()]);
         assert_eq!(Settings::load(&file).archive_tokens.len(), 1);
         assert!(revoke_archive_token(&settings, &file, &a.info.id).is_err());
-        assert!(crate::api::tokens::find(&settings.lock().unwrap().archive_tokens, &a.token).is_none());
+        assert!(
+            crate::api::tokens::find(&settings.lock().unwrap().archive_tokens, &a.token).is_none()
+        );
     }
 
     #[test]
@@ -3312,7 +3464,11 @@ mod archive_token_tests {
         assert!(create_archive_token(&settings, &bad, "b", &[Scope::Read]).is_err());
         assert_eq!(settings.lock().unwrap().archive_tokens.len(), 1);
         assert!(revoke_archive_token(&settings, &bad, &a.info.id).is_err());
-        assert_eq!(settings.lock().unwrap().archive_tokens.len(), 1, "still in effect");
+        assert_eq!(
+            settings.lock().unwrap().archive_tokens.len(),
+            1,
+            "still in effect"
+        );
     }
 
     #[test]
@@ -3327,8 +3483,16 @@ mod archive_token_tests {
         let new = create_archive_token(&settings, &file, "backup script", &[Scope::Read]).unwrap();
         let s = settings.lock().unwrap().clone();
         let line = local_api_summary(&s);
-        assert!(line.contains("archive API on, 1 archive token(s)"), "{line}");
-        for secret in [new.token.as_str(), &hash_token(&new.token), "backup script", "ext-secret-token"] {
+        assert!(
+            line.contains("archive API on, 1 archive token(s)"),
+            "{line}"
+        );
+        for secret in [
+            new.token.as_str(),
+            &hash_token(&new.token),
+            "backup script",
+            "ext-secret-token",
+        ] {
             assert!(!line.contains(secret), "{line}");
         }
     }
@@ -3347,7 +3511,10 @@ mod archive_token_tests {
         let mut incoming = stale_ui;
         incoming.api_archive = true;
         incoming.keep_backend_owned(&settings.lock().unwrap());
-        assert!(incoming.archive_tokens.is_empty(), "the revoked token stays revoked");
+        assert!(
+            incoming.archive_tokens.is_empty(),
+            "the revoked token stays revoked"
+        );
         assert!(incoming.api_archive, "the rest of the UI's change applies");
         // And the other way round: a token created meanwhile survives, hash intact.
         let b = create_archive_token(&settings, &file, "b", &[Scope::Read]).unwrap();

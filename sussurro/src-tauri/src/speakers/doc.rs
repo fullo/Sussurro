@@ -387,6 +387,11 @@ fn redetect_candidates(file: &SegmentsFile) -> Vec<usize> {
 /// one ever used. Running it twice gives the same result (the clustering
 /// depends only on the embeddings). Voices no line uses any more are
 /// dropped; "You" and names from the meeting page are never touched.
+///
+/// Overlapped lines (#244) take part like any other (leaving them out
+/// gained nothing in spike #237 and lost a quiet speaker); afterwards each
+/// overlap span gets its second speaker again from the new voices
+/// ([`super::overlap::assign_second_speakers`]).
 pub fn redetect(file: &mut SegmentsFile) -> Result<Redetected> {
     let idx = redetect_candidates(file);
     if idx.is_empty() {
@@ -453,6 +458,7 @@ pub fn redetect(file: &mut SegmentsFile) -> Result<Redetected> {
         }
     }
     tidy_voices(file);
+    super::overlap::assign_second_speakers(file);
     Ok(Redetected {
         voices: nc,
         changed,
@@ -716,6 +722,36 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("no voice data"));
+    }
+
+    #[test]
+    fn redetect_keeps_overlapped_lines_and_gives_them_a_second_voice() {
+        use crate::archive::OverlapSpan;
+        let truth = [0, 1, 0, 1, 0, 1];
+        let mut f = doc(&truth, &[None; 6], 5);
+        // Line 2 (speaker 0, 10–14 s) overlaps at its end with line 3's
+        // speaker; stored before any voice existed.
+        f.segments[2].overlap = vec![OverlapSpan {
+            start_ms: 13_000,
+            end_ms: 14_000,
+            speaker_id: None,
+        }];
+        redetect(&mut f).unwrap();
+        // The overlapped line is clustered like the others…
+        assert_eq!(f.segments[2].speaker_id, f.segments[0].speaker_id);
+        // …and its span names the nearest other voice.
+        assert_eq!(
+            f.segments[2].overlap[0].speaker_id,
+            f.segments[3].speaker_id
+        );
+        assert_ne!(
+            f.segments[2].overlap[0].speaker_id,
+            f.segments[2].speaker_id
+        );
+        // Idempotent with the spans too.
+        let once = f.clone();
+        assert_eq!(redetect(&mut f).unwrap().changed, 0);
+        assert_eq!(f, once);
     }
 
     #[test]

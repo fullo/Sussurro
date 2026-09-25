@@ -16,7 +16,10 @@ fn the_profile_is_local_openai_compatible_and_marked_bundled() {
     assert_eq!(p.api, CleanupApi::Openai);
     assert!(p.bundled);
     assert!(!p.external, "never external");
-    assert!(!crate::llm::infer_external(&p.base_url), "its stored address reads as local too");
+    assert!(
+        !crate::llm::infer_external(&p.base_url),
+        "its stored address reads as local too"
+    );
     assert!(p.cleanup_allowed(), "no opt-in needed");
     assert!(p.api_key.is_empty());
     assert_eq!(p.model, MODEL_ID);
@@ -63,7 +66,13 @@ fn status_carries_the_download_size() {
     assert_eq!(s.download_bytes, MODEL_BYTES);
     assert_eq!(s.model, MODEL_LABEL);
     let json = serde_json::to_value(&s).unwrap();
-    for k in ["available", "downloaded", "running", "model", "download_bytes"] {
+    for k in [
+        "available",
+        "downloaded",
+        "running",
+        "model",
+        "download_bytes",
+    ] {
         assert!(json.get(k).is_some(), "{k}");
     }
 }
@@ -76,7 +85,10 @@ fn fake_llm(dir: &Path, mode: &str) -> BundledLlm {
 }
 
 fn user(text: &str) -> Vec<serde_json::Value> {
-    vec![json!({"role": "system", "content": "clean"}), json!({"role": "user", "content": text})]
+    vec![
+        json!({"role": "system", "content": "clean"}),
+        json!({"role": "user", "content": text}),
+    ]
 }
 
 #[test]
@@ -84,7 +96,10 @@ fn chat_starts_the_server_on_first_use_and_reuses_it() {
     let _serial = serial();
     let dir = tempfile::tempdir().unwrap();
     let llm = fake_llm(dir.path(), "ok");
-    assert!(!llm.is_running() && llm.pid().is_none(), "nothing runs before a request");
+    assert!(
+        !llm.is_running() && llm.pid().is_none(),
+        "nothing runs before a request"
+    );
 
     let out = chat_bundled(&llm, &user("ciao"), &ChatOptions::default()).unwrap();
     assert_eq!(out, "ciao");
@@ -93,7 +108,10 @@ fn chat_starts_the_server_on_first_use_and_reuses_it() {
     assert!(llm.endpoint().is_some());
 
     // The next request goes to the same process.
-    assert_eq!(chat_bundled(&llm, &user("hello"), &ChatOptions::default()).unwrap(), "hello");
+    assert_eq!(
+        chat_bundled(&llm, &user("hello"), &ChatOptions::default()).unwrap(),
+        "hello"
+    );
     assert_eq!(llm.pid(), Some(pid));
 
     // Stopped with its owner.
@@ -109,7 +127,10 @@ fn idle_stop_waits_for_the_threshold_and_for_requests_in_flight() {
     assert!(!llm.stop_if_idle(Duration::ZERO), "nothing to stop yet");
     llm.warm().unwrap();
     let pid = llm.pid().unwrap();
-    assert!(!llm.stop_if_idle(Duration::from_secs(3600)), "used just now");
+    assert!(
+        !llm.stop_if_idle(Duration::from_secs(3600)),
+        "used just now"
+    );
 
     // A request in flight (the fake takes 3 s) is never idle.
     let busy = {
@@ -151,7 +172,10 @@ fn a_crash_during_a_request_restarts_the_server_and_retries_once() {
     // Killed between requests (app exit hook, OS): restarted on next use.
     kill_all();
     assert!(wait_dead(second));
-    assert_eq!(chat_bundled(&llm, &user("x"), &ChatOptions::default()).unwrap(), "x");
+    assert_eq!(
+        chat_bundled(&llm, &user("x"), &ChatOptions::default()).unwrap(),
+        "x"
+    );
     assert!(llm.pid().is_some_and(|p| p != second));
 }
 
@@ -227,7 +251,10 @@ fn it_runs_beside_the_qwen3_asr_sidecar_with_its_own_lifecycle() {
     let asr_pid = asr.sidecar().pid().unwrap();
     let asr_endpoint = asr.sidecar().access().unwrap().endpoint().clone();
     let llm = fake_llm(d2.path(), "ok");
-    assert_eq!(chat_bundled(&llm, &user("a"), &ChatOptions::default()).unwrap(), "a");
+    assert_eq!(
+        chat_bundled(&llm, &user("a"), &ChatOptions::default()).unwrap(),
+        "a"
+    );
     let llm_pid = llm.pid().unwrap();
     assert_ne!(asr_pid, llm_pid, "two processes");
     assert_ne!(Some(asr_endpoint), llm.endpoint(), "two endpoints");
@@ -235,10 +262,18 @@ fn it_runs_beside_the_qwen3_asr_sidecar_with_its_own_lifecycle() {
     // The transcriber's idle unload stops only Qwen3-ASR.
     let slot = Mutex::new(Some(asr));
     let last = Mutex::new(Instant::now().checked_sub(Duration::from_secs(10)));
-    assert!(crate::pipeline::unload_if_idle(&slot, &last, Duration::from_secs(1), false));
+    assert!(crate::pipeline::unload_if_idle(
+        &slot,
+        &last,
+        Duration::from_secs(1),
+        false
+    ));
     assert!(wait_dead(asr_pid));
     assert!(process_alive(llm_pid));
-    assert_eq!(chat_bundled(&llm, &user("b"), &ChatOptions::default()).unwrap(), "b");
+    assert_eq!(
+        chat_bundled(&llm, &user("b"), &ChatOptions::default()).unwrap(),
+        "b"
+    );
     assert_eq!(llm.pid(), Some(llm_pid));
 
     // The LLM's idle stop leaves a (new) Qwen3-ASR process alone.
@@ -285,8 +320,15 @@ fn live_bundled_llm_cleans_italian_and_english() {
         std::env::var("SUSSURRO_TEST_BUNDLED_LLM").expect("set SUSSURRO_TEST_BUNDLED_LLM"),
     );
     let log = tempfile::tempdir().unwrap();
-    let paths = SidecarPaths { binary, lib_dir: libs };
-    let mut cfg = sidecar_config(&paths, model.parent().unwrap(), Some(log.path().join("llm.log")));
+    let paths = SidecarPaths {
+        binary,
+        lib_dir: libs,
+    };
+    let mut cfg = sidecar_config(
+        &paths,
+        model.parent().unwrap(),
+        Some(log.path().join("llm.log")),
+    );
     cfg.model = model;
     let llm = BundledLlm::new(move || Ok(cfg.clone()));
     let started = Instant::now();

@@ -127,7 +127,9 @@ impl Recorder {
         }
         let buf = self.live.lock().unwrap();
         let window = TARGET_RATE as usize / 10;
-        Some(crate::audio::resample::rms(&buf[buf.len().saturating_sub(window)..]))
+        Some(crate::audio::resample::rms(
+            &buf[buf.len().saturating_sub(window)..],
+        ))
     }
 
     /// The device disappeared while recording, or could not be opened: no
@@ -138,8 +140,14 @@ impl Recorder {
 
     /// Returns 16 kHz mono f32 samples.
     pub fn stop(&mut self) -> Result<Vec<f32>> {
-        let stop_tx = self.stop_tx.take().ok_or_else(|| anyhow!("not recording"))?;
-        let result_rx = self.result_rx.take().ok_or_else(|| anyhow!("not recording"))?;
+        let stop_tx = self
+            .stop_tx
+            .take()
+            .ok_or_else(|| anyhow!("not recording"))?;
+        let result_rx = self
+            .result_rx
+            .take()
+            .ok_or_else(|| anyhow!("not recording"))?;
         let _ = stop_tx.send(());
         result_rx.recv().context("recording thread died")?
     }
@@ -157,13 +165,17 @@ pub fn list_input_devices() -> Vec<String> {
 
 /// Name of the system default input device, if there is one.
 pub fn default_input_device_name() -> Option<String> {
-    cpal::default_host().default_input_device().and_then(|d| d.name().ok())
+    cpal::default_host()
+        .default_input_device()
+        .and_then(|d| d.name().ok())
 }
 
 /// Name of the system default output device, if there is one — what
 /// [`Recorder::start_output_loopback`] records.
 pub fn default_output_device_name() -> Option<String> {
-    cpal::default_host().default_output_device().and_then(|d| d.name().ok())
+    cpal::default_host()
+        .default_output_device()
+        .and_then(|d| d.name().ok())
 }
 
 /// What a [`Recorder`] opens.
@@ -229,7 +241,11 @@ fn record_until_stopped(
     // Convert to 16 kHz mono inside the callback so only the converted audio
     // is ever buffered (~64 KB/s instead of the raw device rate). Shared with
     // this thread so the tail held by the resampler can be flushed after stop.
-    let conv = Arc::new(Mutex::new(StreamResampler::new(channels, rate, TARGET_RATE)));
+    let conv = Arc::new(Mutex::new(StreamResampler::new(
+        channels,
+        rate,
+        TARGET_RATE,
+    )));
 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => {
@@ -331,7 +347,11 @@ mod tests {
             snap.as_ref().map(Vec::len)
         );
         // ~1 s of 16 kHz audio, generous tolerance for stream startup latency
-        assert!(samples.len() > 8_000, "expected >8000 samples, got {}", samples.len());
+        assert!(
+            samples.len() > 8_000,
+            "expected >8000 samples, got {}",
+            samples.len()
+        );
         let snap = snap.expect("snapshot mid-recording");
         assert!(snap.len() < samples.len());
     }

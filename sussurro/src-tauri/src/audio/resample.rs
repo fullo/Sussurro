@@ -100,7 +100,9 @@ impl StreamResampler {
         }
         // Drop mono samples no future output will read.
         let next_idx = (self.next_out as f64 * self.ratio) as usize;
-        let drop = next_idx.saturating_sub(self.base).min(self.mono_carry.len());
+        let drop = next_idx
+            .saturating_sub(self.base)
+            .min(self.mono_carry.len());
         self.mono_carry.drain(..drop);
         self.base += drop;
         out
@@ -125,7 +127,11 @@ impl StreamResampler {
             let idx = pos as usize;
             let frac = (pos - idx as f64) as f32;
             let a = self.mono_carry[idx - self.base];
-            let b = self.mono_carry.get(idx + 1 - self.base).copied().unwrap_or(a);
+            let b = self
+                .mono_carry
+                .get(idx + 1 - self.base)
+                .copied()
+                .unwrap_or(a);
             out.push(a + (b - a) * frac);
             self.next_out += 1;
         }
@@ -221,7 +227,9 @@ mod tests {
 
     #[test]
     fn rms_of_constant_signal_is_its_amplitude() {
-        let signal: Vec<f32> = (0..1_000).map(|i| if i % 2 == 0 { 0.3 } else { -0.3 }).collect();
+        let signal: Vec<f32> = (0..1_000)
+            .map(|i| if i % 2 == 0 { 0.3 } else { -0.3 })
+            .collect();
         // f32 accumulation over 1000 samples: tolerance well above epsilon
         assert!((rms(&signal) - 0.3).abs() < 1e-4);
     }
@@ -230,14 +238,18 @@ mod tests {
     fn silence_is_detected() {
         assert!(is_mostly_silence(&[], 0.01));
         assert!(is_mostly_silence(&vec![0.0; 16_000], 0.01));
-        let faint_noise: Vec<f32> = (0..16_000).map(|i| if i % 2 == 0 { 0.002 } else { -0.002 }).collect();
+        let faint_noise: Vec<f32> = (0..16_000)
+            .map(|i| if i % 2 == 0 { 0.002 } else { -0.002 })
+            .collect();
         assert!(is_mostly_silence(&faint_noise, 0.01));
     }
 
     #[test]
     fn speech_level_signal_is_not_silence() {
         // A 440 Hz-ish square wave at 0.1 amplitude — loud enough to matter.
-        let signal: Vec<f32> = (0..16_000).map(|i| if (i / 18) % 2 == 0 { 0.1 } else { -0.1 }).collect();
+        let signal: Vec<f32> = (0..16_000)
+            .map(|i| if (i / 18) % 2 == 0 { 0.1 } else { -0.1 })
+            .collect();
         assert!(!is_mostly_silence(&signal, 0.01));
     }
 
@@ -283,7 +295,13 @@ mod tests {
             .collect()
     }
 
-    fn stream_convert(input: &[f32], chunk_sizes: &[usize], channels: usize, from: u32, to: u32) -> Vec<f32> {
+    fn stream_convert(
+        input: &[f32],
+        chunk_sizes: &[usize],
+        channels: usize,
+        from: u32,
+        to: u32,
+    ) -> Vec<f32> {
         let mut conv = StreamResampler::new(channels, from, to);
         let mut out = Vec::new();
         let mut fed = 0;

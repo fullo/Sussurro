@@ -279,6 +279,40 @@ function downloadedModels() {
         "reader Peter Yearsley via Voice-Zero (CC0).",
       ecosystem: "model",
     },
+    // #244: overlap detection. The ONNX export repo has no LICENSE file, so
+    // the upstream MIT text and CNRS copyright are carried here.
+    {
+      name: "pyannote segmentation-3.0 (overlapping speech)",
+      version: "onnx/model.onnx (fp32)",
+      license: "MIT",
+      spdx: "",
+      repository: "https://huggingface.co/pyannote/segmentation-3.0",
+      text:
+        "Overlapping speech in speaker labels uses the pyannote segmentation-3.0 model by " +
+        "pyannote.audio (Hervé Bredin, CNRS), https://github.com/pyannote/pyannote-audio — " +
+        "Plaquet & Bredin, \"Powerset multi-class cross entropy loss for neural speaker " +
+        "diarization\", Interspeech 2023. Downloaded unmodified on first use from the ONNX " +
+        "export by onnx-community, https://huggingface.co/onnx-community/pyannote-segmentation-3.0 " +
+        "(revision 733a93b6473d019a773298e08cefa686894b1854).\n\n" +
+        "MIT License\n\n" +
+        "Copyright (c) 2023 CNRS\n\n" +
+        "Permission is hereby granted, free of charge, to any person obtaining a copy " +
+        "of this software and associated documentation files (the \"Software\"), to deal " +
+        "in the Software without restriction, including without limitation the rights " +
+        "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell " +
+        "copies of the Software, and to permit persons to whom the Software is " +
+        "furnished to do so, subject to the following conditions:\n\n" +
+        "The above copyright notice and this permission notice shall be included in all " +
+        "copies or substantial portions of the Software.\n\n" +
+        "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR " +
+        "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, " +
+        "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE " +
+        "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER " +
+        "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, " +
+        "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE " +
+        "SOFTWARE.",
+      ecosystem: "model",
+    },
   ];
 }
 

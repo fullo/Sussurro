@@ -100,7 +100,12 @@ pub fn read_capped(
             Ok(0) => break,
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
                 return Err(BodyError::TooSlow)
             }
             Err(_) => return Err(BodyError::Io),
@@ -150,7 +155,9 @@ impl Slots {
     /// every `true` with one [`Slots::release`].
     pub fn try_acquire(&self) -> bool {
         self.busy
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| (b < self.max).then_some(b + 1))
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| {
+                (b < self.max).then_some(b + 1)
+            })
             .is_ok()
     }
 
@@ -175,7 +182,12 @@ mod tests {
 
     #[test]
     fn only_this_apis_loopback_host_is_allowed() {
-        for ok in ["127.0.0.1:4525", "localhost:4525", "LocalHost:4525", " 127.0.0.1:4525 "] {
+        for ok in [
+            "127.0.0.1:4525",
+            "localhost:4525",
+            "LocalHost:4525",
+            " 127.0.0.1:4525 ",
+        ] {
             assert!(host_allowed(Some(ok), 4525), "{ok}");
         }
         for bad in [
@@ -206,8 +218,16 @@ mod tests {
     fn only_no_origin_or_an_extension_origin_is_allowed() {
         assert!(origin_allowed(None));
         assert!(origin_allowed(Some("chrome-extension://abcdefghijklmnop")));
-        assert!(origin_allowed(Some("moz-extension://2d6b6c1e-3f7a-4b1e-9d0a-1c2b3d4e5f60")));
-        for o in ["https://evil.example", "http://127.0.0.1:4525", "http://localhost:4525", "null", ""] {
+        assert!(origin_allowed(Some(
+            "moz-extension://2d6b6c1e-3f7a-4b1e-9d0a-1c2b3d4e5f60"
+        )));
+        for o in [
+            "https://evil.example",
+            "http://127.0.0.1:4525",
+            "http://localhost:4525",
+            "null",
+            "",
+        ] {
             assert!(!origin_allowed(Some(o)), "{o}");
         }
     }
@@ -234,8 +254,14 @@ mod tests {
 
     #[test]
     fn a_declared_length_over_the_cap_is_refused_without_reading() {
-        let mut src = Source { pulled: 0, len: None };
-        assert_eq!(read_capped(&mut src, Some(1_000_001), 1_000_000, later()), Err(BodyError::TooLarge));
+        let mut src = Source {
+            pulled: 0,
+            len: None,
+        };
+        assert_eq!(
+            read_capped(&mut src, Some(1_000_001), 1_000_000, later()),
+            Err(BodyError::TooLarge)
+        );
         assert_eq!(src.pulled, 0);
         assert_eq!(
             read_capped(&mut src, Some(usize::MAX), TRANSCRIBE_MAX_BYTES, later()),
@@ -247,27 +273,61 @@ mod tests {
     #[test]
     fn an_endless_body_stops_one_byte_past_the_cap() {
         // Chunked: no declared length, the sender never stops.
-        let mut src = Source { pulled: 0, len: None };
-        assert_eq!(read_capped(&mut src, None, 100_000, later()), Err(BodyError::TooLarge));
+        let mut src = Source {
+            pulled: 0,
+            len: None,
+        };
+        assert_eq!(
+            read_capped(&mut src, None, 100_000, later()),
+            Err(BodyError::TooLarge)
+        );
         assert_eq!(src.pulled, 100_001, "never reads past cap + 1");
         // A lying length (fewer declared than sent) is cut the same way.
-        let mut src = Source { pulled: 0, len: None };
-        assert_eq!(read_capped(&mut src, Some(10), 100_000, later()), Err(BodyError::TooLarge));
+        let mut src = Source {
+            pulled: 0,
+            len: None,
+        };
+        assert_eq!(
+            read_capped(&mut src, Some(10), 100_000, later()),
+            Err(BodyError::TooLarge)
+        );
         assert!(src.pulled <= 100_001);
     }
 
     #[test]
     fn a_body_up_to_the_cap_is_read_whole_without_over_reserving() {
         let cap = 300_000;
-        for (declared, len) in [(None, cap), (Some(cap), cap), (None, 1), (Some(5), 5), (None, 70_000)] {
-            let mut src = Source { pulled: 0, len: Some(len) };
+        for (declared, len) in [
+            (None, cap),
+            (Some(cap), cap),
+            (None, 1),
+            (Some(5), 5),
+            (None, 70_000),
+        ] {
+            let mut src = Source {
+                pulled: 0,
+                len: Some(len),
+            };
             let body = read_capped(&mut src, declared, cap, later()).unwrap();
             assert_eq!(body.len(), len);
-            assert!(body.capacity() <= cap + 1, "{} reserved for {len}", body.capacity());
+            assert!(
+                body.capacity() <= cap + 1,
+                "{} reserved for {len}",
+                body.capacity()
+            );
         }
-        let mut empty = Source { pulled: 0, len: Some(0) };
-        assert_eq!(read_capped(&mut empty, None, cap, later()), Err(BodyError::Empty));
-        assert_eq!(read_capped(&mut empty, Some(0), cap, later()), Err(BodyError::Empty));
+        let mut empty = Source {
+            pulled: 0,
+            len: Some(0),
+        };
+        assert_eq!(
+            read_capped(&mut empty, None, cap, later()),
+            Err(BodyError::Empty)
+        );
+        assert_eq!(
+            read_capped(&mut empty, Some(0), cap, later()),
+            Err(BodyError::Empty)
+        );
     }
 
     /// A client trickling its body stops at the deadline; a read the
@@ -285,8 +345,15 @@ mod tests {
         }
         let mut src = Trickle(0);
         let deadline = Instant::now() + Duration::from_millis(100);
-        assert_eq!(read_capped(&mut src, Some(1000), 1000, deadline), Err(BodyError::TooSlow));
-        assert!(src.0 < 100, "stopped at the deadline, after {} reads", src.0);
+        assert_eq!(
+            read_capped(&mut src, Some(1000), 1000, deadline),
+            Err(BodyError::TooSlow)
+        );
+        assert!(
+            src.0 < 100,
+            "stopped at the deadline, after {} reads",
+            src.0
+        );
 
         struct TimedOut;
         impl Read for TimedOut {
@@ -294,7 +361,10 @@ mod tests {
                 Err(std::io::ErrorKind::WouldBlock.into())
             }
         }
-        assert_eq!(read_capped(&mut TimedOut, Some(10), 100, later()), Err(BodyError::TooSlow));
+        assert_eq!(
+            read_capped(&mut TimedOut, Some(10), 100, later()),
+            Err(BodyError::TooSlow)
+        );
     }
 
     #[test]

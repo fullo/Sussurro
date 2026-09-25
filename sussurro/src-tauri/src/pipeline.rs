@@ -94,7 +94,10 @@ fn position_overlay(w: &tauri::WebviewWindow) {
 pub fn handle_trigger(app: &AppHandle, pressed: bool) {
     let state = app.state::<AppState>();
     // A running mic test yields to the real thing: stop it and discard the audio.
-    if state.mic_test.swap(false, std::sync::atomic::Ordering::Relaxed) {
+    if state
+        .mic_test
+        .swap(false, std::sync::atomic::Ordering::Relaxed)
+    {
         let _ = state.recorder.lock().unwrap().stop();
     }
     let push_to_talk = state.settings.lock().unwrap().push_to_talk;
@@ -204,10 +207,7 @@ pub fn stream_delta<'a>(injected: &str, partial: &'a str, safety_words: usize) -
 
 /// Gain-boost (whisper mode) and silence handling shared by all paths.
 /// Returns (prepared samples, silence threshold).
-fn prepare_samples(
-    mut samples: Vec<f32>,
-    settings: &crate::settings::Settings,
-) -> (Vec<f32>, f32) {
+fn prepare_samples(mut samples: Vec<f32>, settings: &crate::settings::Settings) -> (Vec<f32>, f32) {
     let threshold = if settings.whisper_mode { 0.003 } else { 0.01 };
     if settings.whisper_mode {
         crate::audio::resample::boost_gain(&mut samples, 3.0);
@@ -421,11 +421,7 @@ pub(crate) fn unload_if_idle<T>(
 /// Cleanup honouring the rule for the focused app: tone instruction plus the
 /// per-app output language override (the rule's language beats the global
 /// "Translate to" setting).
-fn cleanup_for_app(
-    settings: &crate::settings::Settings,
-    target_app: &str,
-    text: &str,
-) -> String {
+fn cleanup_for_app(settings: &crate::settings::Settings, target_app: &str, text: &str) -> String {
     let rule = crate::cleanup::prompt::find_style_rule(&settings.app_styles, target_app);
     let style = crate::cleanup::prompt::find_style(&settings.app_styles, target_app);
     let lang = crate::cleanup::prompt::effective_output_language(settings, rule);
@@ -469,7 +465,8 @@ fn record_stats(state: &AppState, cleaned: &str) {
 pub fn transcribe_batch(state: &AppState, samples: &[f32]) -> anyhow::Result<(String, String)> {
     let settings = state.settings.lock().unwrap().clone();
     let prompt = dictionary_prompt(&settings.dictionary);
-    let raw = lock_transcriber(state)?.transcribe(samples, prompt.as_deref(), &settings.language)?;
+    let raw =
+        lock_transcriber(state)?.transcribe(samples, prompt.as_deref(), &settings.language)?;
     if raw.trim().is_empty() {
         anyhow::bail!("no speech found in the audio");
     }
@@ -656,8 +653,7 @@ fn process_recording(
             (stream.raw_consumed.clone(), stream.injected.clone())
         };
         if !raw_consumed.is_empty() {
-            let rule =
-                crate::cleanup::prompt::find_style_rule(&settings.app_styles, &target_app);
+            let rule = crate::cleanup::prompt::find_style_rule(&settings.app_styles, &target_app);
             let raw_streaming = settings.cleanup_level == crate::settings::CleanupLevel::None
                 && crate::cleanup::prompt::output_language_name(
                     crate::cleanup::prompt::effective_output_language(&settings, rule),
@@ -749,10 +745,22 @@ mod tests {
     #[test]
     fn preview_backs_off_when_passes_get_slow() {
         use std::time::Duration;
-        assert_eq!(preview_interval(Duration::ZERO), Duration::from_millis(1200));
-        assert_eq!(preview_interval(Duration::from_millis(400)), Duration::from_millis(1200));
-        assert_eq!(preview_interval(Duration::from_millis(900)), Duration::from_millis(1800));
-        assert_eq!(preview_interval(Duration::from_secs(3)), Duration::from_secs(6));
+        assert_eq!(
+            preview_interval(Duration::ZERO),
+            Duration::from_millis(1200)
+        );
+        assert_eq!(
+            preview_interval(Duration::from_millis(400)),
+            Duration::from_millis(1200)
+        );
+        assert_eq!(
+            preview_interval(Duration::from_millis(900)),
+            Duration::from_millis(1800)
+        );
+        assert_eq!(
+            preview_interval(Duration::from_secs(3)),
+            Duration::from_secs(6)
+        );
     }
 
     #[test]
@@ -792,7 +800,10 @@ mod tests {
         // No boundary at all.
         assert_eq!(sentence_chunk_end("no punctuation here", 12), None);
         // Decimal points are not sentence boundaries.
-        assert_eq!(sentence_chunk_end("pi is 3.14159 roughly speaking", 5), None);
+        assert_eq!(
+            sentence_chunk_end("pi is 3.14159 roughly speaking", 5),
+            None
+        );
         // A boundary inside the hold-back window is not safe yet.
         assert_eq!(sentence_chunk_end("Short. tail", 12), None);
     }
@@ -800,7 +811,10 @@ mod tests {
     #[test]
     fn stream_delta_types_only_stable_new_words() {
         // Nothing injected yet: hold back the last 2 words.
-        assert_eq!(stream_delta("", "hello brave new world", 2), Some("hello brave "));
+        assert_eq!(
+            stream_delta("", "hello brave new world", 2),
+            Some("hello brave ")
+        );
         // Continues from what was injected.
         assert_eq!(
             stream_delta("hello brave ", "hello brave new world again now", 2),
@@ -809,7 +823,10 @@ mod tests {
         // Too short: nothing safe to type yet.
         assert_eq!(stream_delta("", "hello world", 2), None);
         // Whisper revised the beginning: no longer a prefix, skip.
-        assert_eq!(stream_delta("hello brave ", "help brave new world", 2), None);
+        assert_eq!(
+            stream_delta("hello brave ", "help brave new world", 2),
+            None
+        );
     }
 
     #[test]
@@ -818,7 +835,12 @@ mod tests {
         let last = std::sync::Mutex::new(
             std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
         );
-        assert!(unload_if_idle(&slot, &last, std::time::Duration::from_secs(1), false));
+        assert!(unload_if_idle(
+            &slot,
+            &last,
+            std::time::Duration::from_secs(1),
+            false
+        ));
         assert!(slot.lock().unwrap().is_none());
         assert!(last.lock().unwrap().is_none());
     }
@@ -827,7 +849,12 @@ mod tests {
     fn idle_unload_keeps_a_recently_used_slot() {
         let slot = std::sync::Mutex::new(Some(1u8));
         let last = std::sync::Mutex::new(Some(std::time::Instant::now()));
-        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(60), false));
+        assert!(!unload_if_idle(
+            &slot,
+            &last,
+            std::time::Duration::from_secs(60),
+            false
+        ));
         assert!(slot.lock().unwrap().is_some());
     }
 
@@ -837,12 +864,22 @@ mod tests {
         let stale = std::sync::Mutex::new(
             std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
         );
-        assert!(!unload_if_idle(&empty, &stale, std::time::Duration::from_secs(1), false));
+        assert!(!unload_if_idle(
+            &empty,
+            &stale,
+            std::time::Duration::from_secs(1),
+            false
+        ));
 
         // Loaded but the clock was never set: leave it alone.
         let slot = std::sync::Mutex::new(Some(1u8));
         let never = std::sync::Mutex::new(None);
-        assert!(!unload_if_idle(&slot, &never, std::time::Duration::from_secs(1), false));
+        assert!(!unload_if_idle(
+            &slot,
+            &never,
+            std::time::Duration::from_secs(1),
+            false
+        ));
         assert!(slot.lock().unwrap().is_some());
     }
 
@@ -853,7 +890,12 @@ mod tests {
             std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
         );
         let held = slot.lock().unwrap(); // a transcription in flight
-        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(1), false));
+        assert!(!unload_if_idle(
+            &slot,
+            &last,
+            std::time::Duration::from_secs(1),
+            false
+        ));
         assert!(held.is_some());
     }
 
@@ -866,11 +908,24 @@ mod tests {
         let last = std::sync::Mutex::new(
             std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10)),
         );
-        assert!(!unload_if_idle(&slot, &last, std::time::Duration::from_secs(1), true));
+        assert!(!unload_if_idle(
+            &slot,
+            &last,
+            std::time::Duration::from_secs(1),
+            true
+        ));
         assert!(slot.lock().unwrap().is_some());
-        assert!(last.lock().unwrap().is_some(), "the clock is left alone too");
+        assert!(
+            last.lock().unwrap().is_some(),
+            "the clock is left alone too"
+        );
         // The session ends: the next idle round unloads.
-        assert!(unload_if_idle(&slot, &last, std::time::Duration::from_secs(1), false));
+        assert!(unload_if_idle(
+            &slot,
+            &last,
+            std::time::Duration::from_secs(1),
+            false
+        ));
         assert!(slot.lock().unwrap().is_none());
     }
 
@@ -944,7 +999,10 @@ mod tests {
         let mut s = crate::settings::Settings::default();
         s.whisper_model = format!("{}-other", s.whisper_model);
         assert!(swap_settings(&state, s.clone()), "model change detected");
-        assert_eq!(state.settings.lock().unwrap().whisper_model, s.whisper_model);
+        assert_eq!(
+            state.settings.lock().unwrap().whisper_model,
+            s.whisper_model
+        );
         // Not a model change: nothing to reload either way.
         s.push_to_talk = !s.push_to_talk;
         assert!(!swap_settings(&state, s));

@@ -9,7 +9,8 @@
 //! longer that speaker's line, so it drops out on its own. Each line's
 //! stored WeSpeaker embedding (`Segment.embedding`, the mean of its ≤ 3 s
 //! windows) counts with its duration. Lines flagged as overlapping speech
-//! will be left out too once segments carry that flag (#244).
+//! (#244, `Segment.overlap`) are left out: their embedding mixes two
+//! voices (spike #237: a small gain with oracle flags, no cost).
 //!
 //! **Shape (E13, spike V0-1 #235).** One pooled centroid per person — the
 //! duration-weighted mean of every confirmed line, whatever the recording
@@ -182,10 +183,26 @@ impl VoiceLines {
     }
 }
 
-fn lines_where(file: &SegmentsFile, source: &str, keep: impl Fn(&str) -> bool) -> VoiceLines {
+/// Which lines of a speaker count (#244).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lines {
+    All,
+    /// Lines without overlapping speech only.
+    Clean,
+}
+
+fn lines_where(
+    file: &SegmentsFile,
+    source: &str,
+    which: Lines,
+    keep: impl Fn(&str) -> bool,
+) -> VoiceLines {
     let mut out = VoiceLines::default();
     for s in &file.segments {
         if !s.speaker_id.as_deref().is_some_and(&keep) {
+            continue;
+        }
+        if which == Lines::Clean && super::overlap::is_overlapped(s) {
             continue;
         }
         if let Some(e) = line_embedding(s) {
@@ -204,7 +221,7 @@ pub fn links_person(file: &SegmentsFile, person_id: &str) -> bool {
 
 /// The confirmed lines of `person_id` in one document (`source` is the
 /// item's frontmatter `source`): every usable line of every speaker linked
-/// to them. Empty when there are none.
+/// to them, except overlapped ones (#244). Empty when there are none.
 pub fn person_lines(file: &SegmentsFile, source: &str, person_id: &str) -> VoiceLines {
     let ids: Vec<&str> = file
         .speakers
@@ -215,7 +232,7 @@ pub fn person_lines(file: &SegmentsFile, source: &str, person_id: &str) -> Voice
     if ids.is_empty() {
         return VoiceLines::default();
     }
-    lines_where(file, source, |id| ids.contains(&id))
+    lines_where(file, source, Lines::Clean, |id| ids.contains(&id))
 }
 
 /// A voice of one document as matching sees it (the query of
@@ -240,9 +257,16 @@ impl std::fmt::Debug for DocVoice {
 
 /// The voice of document speaker `speaker_id`: the mean of its lines
 /// carrying an embedding, with the condition most of its speech was
-/// recorded in. `None` when none of its lines has voice data.
+/// recorded in — its lines without overlapping speech (#244), or all of
+/// them when every line is overlapped. `None` when none of its lines has
+/// voice data. Suggestions (#242) and "You" (#243) match this.
 pub fn document_voice(file: &SegmentsFile, source: &str, speaker_id: &str) -> Option<DocVoice> {
-    let lines = lines_where(file, source, |id| id == speaker_id);
+    let clean = lines_where(file, source, Lines::Clean, |id| id == speaker_id);
+    let lines = if clean.is_empty() {
+        lines_where(file, source, Lines::All, |id| id == speaker_id)
+    } else {
+        clean
+    };
     (!lines.is_empty()).then(|| DocVoice {
         embedding: lines.centroid(),
         condition: lines.condition(),
@@ -777,6 +801,63 @@ pub(crate) mod tests {
         let s = suggest_for_speaker(std::slice::from_ref(&anna), &f, "mic", "voice:1").unwrap();
         assert_eq!(s.person_id, "p-anna");
         assert!(suggest_for_speaker(&[anna], &f, "mic", "voice:2").is_none());
+    }
+
+    fn overlapped(mut s: Segment) -> Segment {
+        s.overlap = vec![crate::archive::OverlapSpan {
+            start_ms: s.start_ms,
+            end_ms: s.start_ms + 1_000,
+            speaker_id: Some("voice:2".into()),
+        }];
+        s
+    }
+
+    #[test]
+    fn overlapped_lines_never_build_a_profile() {
+        let f = doc(
+            vec![
+                line(1, "voice:1", 30_000, axis(0), Channel::Remote),
+                // Mixed with someone else: left out.
+                overlapped(line(2, "voice:1", 20_000, axis(1), Channel::Remote)),
+            ],
+            vec![speaker("voice:1", Some("p-anna"))],
+        );
+        let l = person_lines(&f, "system", "p-anna");
+        assert_eq!(l.speech_ms, 30_000);
+        let p = build_profile("p-anna", &[("d1".into(), l)], "t");
+        assert!((p.centroid[0] - 1.0).abs() < 1e-6 && p.centroid[1].abs() < 1e-6);
+        // Only overlapped lines: nothing to learn from this document.
+        let all = doc(
+            vec![overlapped(line(
+                1,
+                "voice:1",
+                30_000,
+                axis(0),
+                Channel::Remote,
+            ))],
+            vec![speaker("voice:1", Some("p-anna"))],
+        );
+        assert!(person_lines(&all, "system", "p-anna").is_empty());
+    }
+
+    #[test]
+    fn a_voice_is_matched_on_its_clean_lines_when_it_has_any() {
+        let f = doc(
+            vec![
+                line(1, "voice:1", 8_000, axis(0), Channel::Mic),
+                overlapped(line(2, "voice:1", 30_000, axis(1), Channel::Mic)),
+                overlapped(line(3, "voice:2", 8_000, axis(2), Channel::Mic)),
+            ],
+            vec![speaker("voice:1", None), speaker("voice:2", None)],
+        );
+        // Voice 1: the overlapped line doesn't pull the mean away.
+        let v = document_voice(&f, "mic", "voice:1").unwrap();
+        assert_eq!(v.speech_ms, 8_000);
+        assert!((v.embedding[0] - 1.0).abs() < 1e-6);
+        // Voice 2 has only an overlapped line: it still has a voice.
+        let v2 = document_voice(&f, "mic", "voice:2").unwrap();
+        assert_eq!(v2.speech_ms, 8_000);
+        assert!((v2.embedding[2] - 1.0).abs() < 1e-6);
     }
 
     #[test]

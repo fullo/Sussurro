@@ -550,7 +550,10 @@ pub fn download(
 enum RunEnd {
     Done(Fetched),
     /// A non-zero exit: its last stderr lines and exit status.
-    Failed { tail: Vec<String>, status: String },
+    Failed {
+        tail: Vec<String>,
+        status: String,
+    },
 }
 
 fn run(
@@ -707,11 +710,7 @@ mod tests {
         assert_eq!(after("--proxy"), "http://127.0.0.1:4321");
         assert_eq!(after("--use-extractors"), "default,-generic");
         assert_eq!(after("--downloader"), "native");
-        assert_eq!(
-            s.iter().filter(|a| *a == "--proxy").count(),
-            1,
-            "one proxy"
-        );
+        assert_eq!(s.iter().filter(|a| *a == "--proxy").count(), 1, "one proxy");
         // A yt-dlp too old for `--use-extractors`: the rest is unchanged.
         let old = build_args(
             &url,
@@ -735,7 +734,8 @@ mod tests {
         let cmd = command(Path::new("/bin/yt-dlp"));
         for var in PROXY_VARS {
             assert!(
-                cmd.get_envs().any(|(k, v)| k == OsStr::new(var) && v.is_none()),
+                cmd.get_envs()
+                    .any(|(k, v)| k == OsStr::new(var) && v.is_none()),
                 "{var} is removed"
             );
         }
@@ -1060,7 +1060,11 @@ echo "sussurro-file $file"
             let runs: Vec<&str> = args.split("run\n").filter(|r| !r.is_empty()).collect();
             assert_eq!(runs.len(), 1);
             assert!(!runs[0].contains("--use-extractors"));
-            assert!(runs[0].contains("--proxy\nhttp://127.0.0.1:"), "{}", runs[0]);
+            assert!(
+                runs[0].contains("--proxy\nhttp://127.0.0.1:"),
+                "{}",
+                runs[0]
+            );
         }
 
         #[test]

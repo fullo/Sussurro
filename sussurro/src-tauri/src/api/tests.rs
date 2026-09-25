@@ -63,7 +63,9 @@ fn routes_map_method_and_path() {
         ("OPTIONS", "/archive/items"),
     ] {
         assert_eq!(route(m, p), Route::Archive, "{m} {p}");
-        assert!(route(m, p).is_archive() && !route(m, p).is_meeting() && !route(m, p).is_scripting());
+        assert!(
+            route(m, p).is_archive() && !route(m, p).is_meeting() && !route(m, p).is_scripting()
+        );
     }
     assert_eq!(route("GET", "/archives"), Route::NotFound);
     assert_eq!(route("GET", "/archiveitems"), Route::NotFound);
@@ -112,7 +114,12 @@ fn parse_url_splits_path_and_params() {
 fn websocket_upgrade_headers() {
     // RFC 6455's example key.
     assert_eq!(
-        websocket_accept(Some("websocket"), Some("13"), Some("dGhlIHNhbXBsZSBub25jZQ==")).unwrap(),
+        websocket_accept(
+            Some("websocket"),
+            Some("13"),
+            Some("dGhlIHNhbXBsZSBub25jZQ==")
+        )
+        .unwrap(),
         "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
     );
     assert!(websocket_accept(Some("h2c"), Some("13"), Some("k")).is_err());
@@ -172,7 +179,10 @@ impl archive_write::NoteHost for TestHost {
         let s = self.0.settings.lock().unwrap();
         archive_write::cleanup_gate(s.cleanup_active(), s.cleanup_llm().external)
     }
-    fn clean_note(&self, paragraphs: &[String]) -> Result<Vec<String>, archive_write::CleanupRefused> {
+    fn clean_note(
+        &self,
+        paragraphs: &[String],
+    ) -> Result<Vec<String>, archive_write::CleanupRefused> {
         self.note_cleanup_gate()?;
         self.0.calls.fetch_add(1, Ordering::SeqCst);
         Ok(paragraphs.iter().map(|p| p.to_uppercase()).collect())
@@ -198,7 +208,9 @@ impl Host for TestHost {
         if ext == "slow" {
             self.0.slow_running.fetch_add(1, Ordering::SeqCst);
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            while !self.0.release_slow.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            while !self.0.release_slow.load(Ordering::SeqCst)
+                && std::time::Instant::now() < deadline
+            {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             self.0.slow_running.fetch_sub(1, Ordering::SeqCst);
@@ -212,7 +224,9 @@ impl Host for TestHost {
         if self.0.block_archive.load(Ordering::SeqCst) {
             self.0.archive_waiting.fetch_add(1, Ordering::SeqCst);
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            while self.0.block_archive.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            while self.0.block_archive.load(Ordering::SeqCst)
+                && std::time::Instant::now() < deadline
+            {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             self.0.archive_waiting.fetch_sub(1, Ordering::SeqCst);
@@ -235,7 +249,8 @@ impl Host for TestHost {
         let inner = self.0.clone();
         std::thread::spawn(move || {
             let cancel = Arc::new(AtomicBool::new(false));
-            let req = crate::engine::session::meeting_request(id, cancel, &m.start, m.source, m.names);
+            let req =
+                crate::engine::session::meeting_request(id, cancel, &m.start, m.source, m.names);
             // No speaker model in tests: voices are off, names and "You" work.
             let no_model = |_: PathBuf| -> crate::speakers::tracker::EmbedderLoader {
                 Box::new(|| Err(anyhow::anyhow!("no speaker model in tests")))
@@ -246,15 +261,24 @@ impl Host for TestHost {
                 &inner.paths,
                 req,
                 move |samples: &[f32], language: &str| {
-                    stt_seen.languages_seen.lock().unwrap().push(format!("stt:{language}"));
+                    stt_seen
+                        .languages_seen
+                        .lock()
+                        .unwrap()
+                        .push(format!("stt:{language}"));
                     fake_transcribe(samples, language)
                 },
                 move |s: &Settings, _: Option<&str>, raw: &str| {
-                    clean_seen.languages_seen.lock().unwrap().push(format!("cleanup:{}", s.language));
+                    clean_seen
+                        .languages_seen
+                        .lock()
+                        .unwrap()
+                        .push(format!("cleanup:{}", s.language));
                     format!("{raw}.")
                 },
                 |_: &std::path::Path| {
-                    Box::new(EnergyDetector::default()) as Box<dyn crate::engine::segmenter::SpeechDetector>
+                    Box::new(EnergyDetector::default())
+                        as Box<dyn crate::engine::segmenter::SpeechDetector>
                 },
                 no_model,
                 m.sink,
@@ -368,7 +392,8 @@ fn http(port: u16, method: &str, path: &str, headers: &[(&str, &str)], body: &st
 /// One response: the head, then `Content-Length` bytes of body (never
 /// waits for the server to close — a refused upload may keep it open).
 fn read_reply(s: &mut TcpStream) -> Reply {
-    s.set_read_timeout(Some(std::time::Duration::from_secs(20))).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(20)))
+        .unwrap();
     let mut raw = Vec::new();
     let mut buf = [0u8; 4096];
     let head_end = loop {
@@ -407,7 +432,11 @@ fn read_reply(s: &mut TcpStream) -> Reply {
         .filter_map(|l| l.split_once(':'))
         .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
         .collect();
-    Reply { status, headers, body }
+    Reply {
+        status,
+        headers,
+        body,
+    }
 }
 
 fn bearer() -> String {
@@ -418,7 +447,10 @@ fn bearer() -> String {
 fn token_less_routes_are_unchanged() {
     let r = start_server();
     let clean = http(r.port, "POST", "/clean", &[], "  ciao  ");
-    assert_eq!((clean.status, clean.json()["cleaned"].as_str()), (200, Some("ciao")));
+    assert_eq!(
+        (clean.status, clean.json()["cleaned"].as_str()),
+        (200, Some("ciao"))
+    );
     // No token needed, and no CORS for anyone — even an extension.
     let hist = http(r.port, "GET", "/history?n=3&q=x", &[("Origin", EXT)], "");
     assert_eq!(hist.status, 200);
@@ -462,13 +494,29 @@ fn meeting_routes_check_token_origin_and_send_cors() {
     );
     assert_eq!(always.json()["subtitles"], "always");
     // A local script: token, no origin.
-    let script = http(r.port, "GET", "/app/version", &[("Authorization", &auth)], "");
+    let script = http(
+        r.port,
+        "GET",
+        "/app/version",
+        &[("Authorization", &auth)],
+        "",
+    );
     assert_eq!(script.status, 200);
     assert!(script.header("Access-Control-Allow-Origin").is_none());
     // No token, a wrong one, a web page.
-    assert_eq!(http(r.port, "GET", "/app/version", &[("Origin", EXT)], "").status, 401);
     assert_eq!(
-        http(r.port, "GET", "/app/version", &[("Authorization", "Bearer 00")], "").status,
+        http(r.port, "GET", "/app/version", &[("Origin", EXT)], "").status,
+        401
+    );
+    assert_eq!(
+        http(
+            r.port,
+            "GET",
+            "/app/version",
+            &[("Authorization", "Bearer 00")],
+            ""
+        )
+        .status,
         401
     );
     let web = http(
@@ -481,39 +529,82 @@ fn meeting_routes_check_token_origin_and_send_cors() {
     assert_eq!(web.status, 403);
     assert!(web.header("Access-Control-Allow-Origin").is_none());
     // Preflight: extension origins only.
-    let pre = http(r.port, "OPTIONS", "/items/a/b/export", &[("Origin", EXT)], "");
+    let pre = http(
+        r.port,
+        "OPTIONS",
+        "/items/a/b/export",
+        &[("Origin", EXT)],
+        "",
+    );
     assert_eq!(pre.status, 204);
     assert!(pre
         .header("Access-Control-Allow-Headers")
         .unwrap()
         .contains("Authorization"));
     assert_eq!(
-        http(r.port, "OPTIONS", "/app/version", &[("Origin", "https://x.example")], "").status,
+        http(
+            r.port,
+            "OPTIONS",
+            "/app/version",
+            &[("Origin", "https://x.example")],
+            ""
+        )
+        .status,
         403
     );
     // Items that don't exist, bad formats.
     assert_eq!(
-        http(r.port, "POST", "/items/2026/09/nope/open", &[("Authorization", &auth)], "").status,
+        http(
+            r.port,
+            "POST",
+            "/items/2026/09/nope/open",
+            &[("Authorization", &auth)],
+            ""
+        )
+        .status,
         404
     );
     assert_eq!(
-        http(r.port, "POST", "/items/../../etc/open", &[("Authorization", &auth)], "").status,
+        http(
+            r.port,
+            "POST",
+            "/items/../../etc/open",
+            &[("Authorization", &auth)],
+            ""
+        )
+        .status,
         404
     );
     assert_eq!(
-        http(r.port, "GET", "/items/2026/09/nope/export?format=docx", &[("Authorization", &auth)], "")
-            .status,
+        http(
+            r.port,
+            "GET",
+            "/items/2026/09/nope/export?format=docx",
+            &[("Authorization", &auth)],
+            ""
+        )
+        .status,
         400
     );
     // WebSocket: an extension origin and the query token are required.
     assert_eq!(ws_connect(r.port, TOKEN, None).err(), Some(403));
-    assert_eq!(ws_connect(r.port, TOKEN, Some("https://meet.google.com")).err(), Some(403));
+    assert_eq!(
+        ws_connect(r.port, TOKEN, Some("https://meet.google.com")).err(),
+        Some(403)
+    );
     assert_eq!(ws_connect(r.port, "wrong", Some(EXT)).err(), Some(401));
     // Unpaired (no token configured): nothing is accepted.
     r.host.0.config.lock().unwrap().extension_token.clear();
     assert_eq!(ws_connect(r.port, "", Some(EXT)).err(), Some(401));
     assert_eq!(
-        http(r.port, "GET", "/app/version", &[("Authorization", "Bearer ")], "").status,
+        http(
+            r.port,
+            "GET",
+            "/app/version",
+            &[("Authorization", "Bearer ")],
+            ""
+        )
+        .status,
         401
     );
 }
@@ -525,7 +616,14 @@ fn a_regenerated_token_replaces_the_old_one_at_once() {
     let r = start_server();
     let old = bearer();
     assert_eq!(
-        http(r.port, "GET", "/app/version", &[("Authorization", &old), ("Origin", EXT)], "").status,
+        http(
+            r.port,
+            "GET",
+            "/app/version",
+            &[("Authorization", &old), ("Origin", EXT)],
+            ""
+        )
+        .status,
         200
     );
     let mut settings = Settings {
@@ -536,12 +634,25 @@ fn a_regenerated_token_replaces_the_old_one_at_once() {
     assert_ne!(fresh, TOKEN);
     r.host.0.config.lock().unwrap().extension_token = fresh.clone();
     assert_eq!(
-        http(r.port, "GET", "/app/version", &[("Authorization", &old), ("Origin", EXT)], "").status,
+        http(
+            r.port,
+            "GET",
+            "/app/version",
+            &[("Authorization", &old), ("Origin", EXT)],
+            ""
+        )
+        .status,
         401
     );
     assert_eq!(ws_connect(r.port, TOKEN, Some(EXT)).err(), Some(401));
     let new = format!("Bearer {fresh}");
-    let ok = http(r.port, "GET", "/app/version", &[("Authorization", &new), ("Origin", EXT)], "");
+    let ok = http(
+        r.port,
+        "GET",
+        "/app/version",
+        &[("Authorization", &new), ("Origin", EXT)],
+        "",
+    );
     assert_eq!(ok.status, 200);
     assert_eq!(ok.json()["protocol"], protocol::PROTOCOL_VERSION);
 }
@@ -562,7 +673,10 @@ fn bind_records_the_listen_state() {
         serde_json::to_value(ListenState::Listening { port: 4525 }).unwrap(),
         serde_json::json!({"state": "listening", "port": 4525})
     );
-    assert_eq!(serde_json::to_value(ListenState::Off).unwrap(), serde_json::json!({"state": "off"}));
+    assert_eq!(
+        serde_json::to_value(ListenState::Off).unwrap(),
+        serde_json::json!({"state": "off"})
+    );
     assert_eq!(
         serde_json::to_value(ListenState::Failed { port: 1 }).unwrap(),
         serde_json::json!({"state": "failed", "port": 1})
@@ -611,15 +725,20 @@ fn a_websocket_meeting_becomes_an_archive_item() {
     let r = start_server();
     let mut ws = ws_connect(r.port, TOKEN, Some(EXT)).expect("upgrade");
     let ready = read_json(&mut ws).unwrap();
-    assert_eq!((ready["type"].as_str(), ready["state"].as_str()), (Some("status"), Some("ready")));
+    assert_eq!(
+        (ready["type"].as_str(), ready["state"].as_str()),
+        (Some("status"), Some("ready"))
+    );
     assert_eq!(ready["protocol"], protocol::PROTOCOL_VERSION);
 
     ws.send(Message::text(
         r#"{"type":"start","title":"Weekly sync","url":"https://meet.google.com/abc-defg-hij","platform":"meet","rate":48000,"channels":2}"#,
     ))
     .unwrap();
-    ws.send(Message::text(r#"{"type":"participants","names":["Anna Rossi","Bo"]}"#))
-        .unwrap();
+    ws.send(Message::text(
+        r#"{"type":"participants","names":["Anna Rossi","Bo"]}"#,
+    ))
+    .unwrap();
     // 9 s: the user (mic) speaks 0.5–2.5 s softly, the remote side
     // 3.5–6 s loudly; 20 ms frames, both channels interleaved.
     let frames = 450;
@@ -628,8 +747,12 @@ fn a_websocket_meeting_becomes_an_archive_item() {
         let mic_amp = if (0.5..2.5).contains(&t) { 0.1 } else { 0.0 };
         let remote_amp = if (3.5..6.0).contains(&t) { 0.4 } else { 0.0 };
         let seq = n as u32;
-        ws.send(Message::binary(protocol::encode_audio_frame(0, seq, &frame_48k(n * 960, mic_amp))))
-            .unwrap();
+        ws.send(Message::binary(protocol::encode_audio_frame(
+            0,
+            seq,
+            &frame_48k(n * 960, mic_amp),
+        )))
+        .unwrap();
         // One remote frame lost at 7 s: filled with silence, reported.
         if n != 350 {
             ws.send(Message::binary(protocol::encode_audio_frame(
@@ -641,8 +764,10 @@ fn a_websocket_meeting_becomes_an_archive_item() {
         }
         // A protocol 1 client: a bare name when the indicator changes.
         if n == 200 {
-            ws.send(Message::text(r#"{"type":"speaker_active","name":"Anna Rossi","t":4000}"#))
-                .unwrap();
+            ws.send(Message::text(
+                r#"{"type":"speaker_active","name":"Anna Rossi","t":4000}"#,
+            ))
+            .unwrap();
         }
         if n == 400 {
             ws.send(Message::text(
@@ -683,14 +808,22 @@ fn a_websocket_meeting_becomes_an_archive_item() {
     assert!(states.contains(&"started".to_string()), "{states:?}");
     assert_eq!(states.last().map(String::as_str), Some("done"));
     assert!(
-        warnings.iter().any(|w| w.contains("1 remote audio frame(s) lost")),
+        warnings
+            .iter()
+            .any(|w| w.contains("1 remote audio frame(s) lost")),
         "{warnings:?}"
     );
     let item_id = done_item.expect("done with an item id");
 
     // Both channels, each with its own text, in time order.
-    let channels: Vec<&str> = segments.iter().filter_map(|s| s["channel"].as_str()).collect();
-    assert!(channels.contains(&"mic") && channels.contains(&"remote"), "{segments:?}");
+    let channels: Vec<&str> = segments
+        .iter()
+        .filter_map(|s| s["channel"].as_str())
+        .collect();
+    assert!(
+        channels.contains(&"mic") && channels.contains(&"remote"),
+        "{segments:?}"
+    );
     let item = archive::read_item(&r.host.0.archive, &item_id).unwrap();
     assert_eq!(item.meta.item_type, ItemType::Meeting);
     assert_eq!(item.meta.source, "browser:meet.google.com");
@@ -703,7 +836,11 @@ fn a_websocket_meeting_becomes_an_archive_item() {
     assert_eq!(remote.text, "hello from remote.");
     // On the shared clock: the mic spoke first, the remote side at ~3.5 s.
     assert!(mic.start_ms < 1_000, "{}", mic.start_ms);
-    assert!((3_000..4_000).contains(&remote.start_ms), "{}", remote.start_ms);
+    assert!(
+        (3_000..4_000).contains(&remote.start_ms),
+        "{}",
+        remote.start_ms
+    );
     assert!(segs.windows(2).all(|w| w[0].start_ms <= w[1].start_ms));
     // Speakers (#131): the mic is You, the remote line takes the name the
     // page showed during it (no speaker model here, so no voices); both
@@ -726,20 +863,34 @@ fn a_websocket_meeting_becomes_an_archive_item() {
         .collect();
     assert_eq!(speakers, item_speakers);
     // The page's participants are the item's (emails would come from People).
-    let names: Vec<&str> = item.meta.participants.iter().map(|p| p.name.as_str()).collect();
+    let names: Vec<&str> = item
+        .meta
+        .participants
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
     assert_eq!(names, ["Anna Rossi", "Bo"]);
 
     // The page's events are stored, on the session clock.
     let events = archive::meeting::read_events(&r.host.0.archive, &item_id).unwrap();
     assert_eq!(events.len(), 3, "{events:?}");
-    assert!(matches!(&events[0], archive::meeting::MeetingEvent::Participants { names, .. } if names.len() == 2));
+    assert!(
+        matches!(&events[0], archive::meeting::MeetingEvent::Participants { names, .. } if names.len() == 2)
+    );
     let archive::meeting::MeetingEvent::SpeakerActive {
-        at_ms, t_ms, name, id, ..
+        at_ms,
+        t_ms,
+        name,
+        id,
+        ..
     } = &events[1]
     else {
         panic!("{events:?}")
     };
-    assert_eq!((name.as_deref(), *t_ms, id.as_deref()), (Some("Anna Rossi"), 4_000, None));
+    assert_eq!(
+        (name.as_deref(), *t_ms, id.as_deref()),
+        (Some("Anna Rossi"), 4_000, None)
+    );
     assert!((3_900..=4_100).contains(at_ms), "{at_ms}");
     let archive::meeting::MeetingEvent::ObserverHealth { state, hooks, .. } = &events[2] else {
         panic!("{events:?}")
@@ -757,10 +908,17 @@ fn a_websocket_meeting_becomes_an_archive_item() {
         "",
     );
     assert_eq!(txt.status, 200);
-    assert!(txt.header("Content-Type").unwrap().starts_with("text/plain"));
+    assert!(txt
+        .header("Content-Type")
+        .unwrap()
+        .starts_with("text/plain"));
     assert_eq!(txt.header("Access-Control-Allow-Origin"), Some(EXT));
     assert!(txt.body.contains("] You: hello from mic."), "{}", txt.body);
-    assert!(txt.body.contains("] Anna Rossi: hello from remote."), "{}", txt.body);
+    assert!(
+        txt.body.contains("] Anna Rossi: hello from remote."),
+        "{}",
+        txt.body
+    );
     let md = http(
         r.port,
         "GET",
@@ -779,9 +937,16 @@ fn a_websocket_meeting_becomes_an_archive_item() {
         "",
     );
     assert_eq!(srt.status, 200);
-    assert!(srt.header("Content-Type").unwrap().starts_with("application/x-subrip"));
+    assert!(srt
+        .header("Content-Type")
+        .unwrap()
+        .starts_with("application/x-subrip"));
     assert!(srt.header("Content-Disposition").unwrap().contains(".srt"));
-    assert!(srt.body.contains(" --> ") && srt.body.contains("hello from remote."), "{}", srt.body);
+    assert!(
+        srt.body.contains(" --> ") && srt.body.contains("hello from remote."),
+        "{}",
+        srt.body
+    );
     let vtt = http(
         r.port,
         "GET",
@@ -792,7 +957,13 @@ fn a_websocket_meeting_becomes_an_archive_item() {
     assert_eq!(vtt.status, 200);
     assert!(vtt.body.starts_with("WEBVTT"), "{}", vtt.body);
     // Without the token, nothing.
-    let anon = http(r.port, "GET", &format!("/items/{item_id}/export?format=srt"), &[], "");
+    let anon = http(
+        r.port,
+        "GET",
+        &format!("/items/{item_id}/export?format=srt"),
+        &[],
+        "",
+    );
     assert_eq!(anon.status, 401);
     let open = http(
         r.port,
@@ -819,8 +990,16 @@ fn app_languages_lists_the_engine_languages_for_the_extension_only() {
     assert_eq!(v["default"], "en", "the dictation's language");
     let langs = v["languages"].as_array().unwrap();
     assert_eq!(langs.len(), 99);
-    assert!(langs.iter().any(|l| l["code"] == "it" && l["name"] == "Italiano"), "{v}");
-    assert!(!langs.iter().any(|l| l["code"] == "auto"), "auto is implied");
+    assert!(
+        langs
+            .iter()
+            .any(|l| l["code"] == "it" && l["name"] == "Italiano"),
+        "{v}"
+    );
+    assert!(
+        !langs.iter().any(|l| l["code"] == "auto"),
+        "auto is implied"
+    );
     // It follows the engine and the dictation setting.
     {
         let mut c = r.host.0.config.lock().unwrap();
@@ -828,14 +1007,20 @@ fn app_languages_lists_the_engine_languages_for_the_extension_only() {
         c.dictation_language = "IT-it".into();
     }
     let v = get(&[("Authorization", &auth), ("Origin", EXT)]).json();
-    assert_eq!((v["engine"].as_str(), v["default"].as_str()), (Some("parakeet"), Some("it")));
+    assert_eq!(
+        (v["engine"].as_str(), v["default"].as_str()),
+        (Some("parakeet"), Some("it"))
+    );
     assert_eq!(v["languages"].as_array().unwrap().len(), 25);
     r.host.0.config.lock().unwrap().dictation_language = String::new();
     assert_eq!(get(&[("Authorization", &auth)]).json()["default"], "auto");
     // Behind the extension token, extension origins only (#126, #215).
     assert_eq!(get(&[("Origin", EXT)]).status, 401);
     assert_eq!(get(&[("Authorization", "Bearer 00")]).status, 401);
-    assert_eq!(get(&[("Authorization", &auth), ("Origin", "https://evil.example")]).status, 403);
+    assert_eq!(
+        get(&[("Authorization", &auth), ("Origin", "https://evil.example")]).status,
+        403
+    );
     let pre = http(r.port, "OPTIONS", "/app/languages", &[("Origin", EXT)], "");
     assert_eq!(pre.status, 204);
 }
@@ -853,10 +1038,18 @@ fn short_meeting(port: u16, extra: &str) -> (String, Vec<String>) {
     for n in 0..200usize {
         let t = n as f32 * 0.02;
         let amp = if (0.5..2.5).contains(&t) { 0.4 } else { 0.0 };
-        ws.send(Message::binary(protocol::encode_audio_frame(0, n as u32, &frame_48k(n * 960, 0.0))))
-            .unwrap();
-        ws.send(Message::binary(protocol::encode_audio_frame(1, n as u32, &frame_48k(n * 960, amp))))
-            .unwrap();
+        ws.send(Message::binary(protocol::encode_audio_frame(
+            0,
+            n as u32,
+            &frame_48k(n * 960, 0.0),
+        )))
+        .unwrap();
+        ws.send(Message::binary(protocol::encode_audio_frame(
+            1,
+            n as u32,
+            &frame_48k(n * 960, amp),
+        )))
+        .unwrap();
     }
     ws.send(Message::text(r#"{"type":"stop"}"#)).unwrap();
     let mut warnings = Vec::new();
@@ -887,30 +1080,61 @@ fn a_meeting_runs_in_the_language_the_side_panel_chose() {
     let item = archive::read_item(&r.host.0.archive, &id).unwrap();
     assert_eq!(item.meta.language, "it");
     let langs = seen();
-    assert!(langs.contains(&"stt:it".to_string()) && langs.contains(&"cleanup:it".to_string()), "{langs:?}");
+    assert!(
+        langs.contains(&"stt:it".to_string()) && langs.contains(&"cleanup:it".to_string()),
+        "{langs:?}"
+    );
     assert!(langs.iter().all(|l| l.ends_with(":it")), "{langs:?}");
-    assert_eq!(r.host.0.settings.lock().unwrap().language, "en", "the global setting is untouched");
+    assert_eq!(
+        r.host.0.settings.lock().unwrap().language,
+        "en",
+        "the global setting is untouched"
+    );
 
     // An older extension sends none: the dictation's language.
     let (id, warnings) = short_meeting(r.port, "");
     assert!(warnings.is_empty(), "{warnings:?}");
-    assert_eq!(archive::read_item(&r.host.0.archive, &id).unwrap().meta.language, "en");
+    assert_eq!(
+        archive::read_item(&r.host.0.archive, &id)
+            .unwrap()
+            .meta
+            .language,
+        "en"
+    );
     assert!(seen().iter().all(|l| l.ends_with(":en")));
 
     // A language the engine doesn't offer: warned, dictation language.
     r.host.0.config.lock().unwrap().languages = crate::stt::languages::LanguageSet::Parakeet;
     let (id, warnings) = short_meeting(r.port, r#","language":"ja""#);
-    assert!(warnings.iter().any(|w| w.contains("\"ja\"")), "{warnings:?}");
-    assert_eq!(archive::read_item(&r.host.0.archive, &id).unwrap().meta.language, "en");
+    assert!(
+        warnings.iter().any(|w| w.contains("\"ja\"")),
+        "{warnings:?}"
+    );
+    assert_eq!(
+        archive::read_item(&r.host.0.archive, &id)
+            .unwrap()
+            .meta
+            .language,
+        "en"
+    );
     seen();
 
     // Auto-detect: the cleanup and the frontmatter take the language the
     // STT detected (#218; the fake detects English).
     let (id, _) = short_meeting(r.port, r#","language":"auto""#);
-    assert_eq!(archive::read_item(&r.host.0.archive, &id).unwrap().meta.language, "en");
+    assert_eq!(
+        archive::read_item(&r.host.0.archive, &id)
+            .unwrap()
+            .meta
+            .language,
+        "en"
+    );
     let langs = seen();
     assert!(langs.contains(&"stt:auto".to_string()), "{langs:?}");
-    assert!(langs.contains(&"cleanup:en".to_string()), "fake STT detects en: {langs:?}");
+    assert!(
+        langs.contains(&"cleanup:en".to_string()),
+        "fake STT detects en: {langs:?}"
+    );
 }
 
 #[test]
@@ -947,14 +1171,19 @@ fn a_dropped_connection_still_keeps_the_meeting() {
             assert_eq!(it.meta.title, "hello from remote");
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "the meeting was not written");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the meeting was not written"
+        );
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 
 /// Connect to `/live` with no token in the URL (#217: first-message auth).
 fn ws_connect_bare(port: u16, origin: Option<&str>) -> Result<Ws, u16> {
-    let mut req = format!("ws://127.0.0.1:{port}/live").into_client_request().unwrap();
+    let mut req = format!("ws://127.0.0.1:{port}/live")
+        .into_client_request()
+        .unwrap();
     if let Some(o) = origin {
         req.headers_mut().insert("Origin", o.parse().unwrap());
     }
@@ -981,16 +1210,29 @@ fn refused(ws: &mut Ws) -> String {
 fn live_takes_the_token_as_its_first_message() {
     let r = start_server();
     // The handshake says so.
-    let v = http(r.port, "GET", "/app/version", &[("Authorization", &bearer()), ("Origin", EXT)], "");
+    let v = http(
+        r.port,
+        "GET",
+        "/app/version",
+        &[("Authorization", &bearer()), ("Origin", EXT)],
+        "",
+    );
     assert_eq!(v.json()["live_auth"], "message");
     // Without a token the origin rules still apply before the upgrade.
     assert_eq!(ws_connect_bare(r.port, None).err(), Some(403));
-    assert_eq!(ws_connect_bare(r.port, Some("https://meet.google.com")).err(), Some(403));
+    assert_eq!(
+        ws_connect_bare(r.port, Some("https://meet.google.com")).err(),
+        Some(403)
+    );
     // …and so does the #215 guard: a rebinding `Host` is refused first.
-    let mut req = format!("ws://127.0.0.1:{}/live", r.port).into_client_request().unwrap();
+    let mut req = format!("ws://127.0.0.1:{}/live", r.port)
+        .into_client_request()
+        .unwrap();
     req.headers_mut().insert("Origin", EXT.parse().unwrap());
-    req.headers_mut()
-        .insert("Host", format!("rebind.attacker:{}", r.port).parse().unwrap());
+    req.headers_mut().insert(
+        "Host",
+        format!("rebind.attacker:{}", r.port).parse().unwrap(),
+    );
     match tungstenite::connect(req) {
         Err(tungstenite::Error::Http(resp)) => assert_eq!(resp.status().as_u16(), 403),
         other => panic!("expected a refusal, got {:?}", other.map(|_| ())),
@@ -999,7 +1241,10 @@ fn live_takes_the_token_as_its_first_message() {
     let mut ws = ws_connect_bare(r.port, Some(EXT)).expect("upgrade");
     ws.send(auth_message(TOKEN)).unwrap();
     let ready = read_json(&mut ws).unwrap();
-    assert_eq!((ready["type"].as_str(), ready["state"].as_str()), (Some("status"), Some("ready")));
+    assert_eq!(
+        (ready["type"].as_str(), ready["state"].as_str()),
+        (Some("status"), Some("ready"))
+    );
     ws.send(Message::text(r#"{"type":"ping"}"#)).unwrap();
     assert_eq!(read_json(&mut ws).unwrap()["state"], "ready");
     drop(ws);
@@ -1013,7 +1258,10 @@ fn live_takes_the_token_as_its_first_message() {
     ))
     .unwrap();
     assert_eq!(refused(&mut ws), "authentication required");
-    assert!(archive::list_items(&r.host.0.archive).is_empty(), "no meeting started");
+    assert!(
+        archive::list_items(&r.host.0.archive).is_empty(),
+        "no meeting started"
+    );
     // Too late, even with the right token.
     let mut ws = ws_connect_bare(r.port, Some(EXT)).expect("upgrade");
     std::thread::sleep(live::AUTH_TIMEOUT + std::time::Duration::from_millis(200));
@@ -1053,7 +1301,13 @@ fn a_foreign_host_is_refused_on_every_route() {
             ("GET", "/archive/items"),
             ("POST", "/archive/items"),
         ] {
-            let reply = http(r.port, method, path, &[("Host", host), ("Authorization", &auth)], "text");
+            let reply = http(
+                r.port,
+                method,
+                path,
+                &[("Host", host), ("Authorization", &auth)],
+                "text",
+            );
             assert_eq!(reply.status, 403, "{host} {method} {path}");
             assert_eq!(reply.json()["error"], "host not allowed");
             assert!(reply.header("Access-Control-Allow-Origin").is_none());
@@ -1061,8 +1315,14 @@ fn a_foreign_host_is_refused_on_every_route() {
     }
     assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0, "no route ran");
     // Both loopback names on the right port work.
-    for host in [format!("127.0.0.1:{}", r.port), format!("localhost:{}", r.port)] {
-        assert_eq!(http(r.port, "GET", "/history", &[("Host", &host)], "").status, 200);
+    for host in [
+        format!("127.0.0.1:{}", r.port),
+        format!("localhost:{}", r.port),
+    ] {
+        assert_eq!(
+            http(r.port, "GET", "/history", &[("Host", &host)], "").status,
+            200
+        );
     }
     // The WebSocket too, even with the token and an extension origin.
     let mut req = format!("ws://127.0.0.1:{}/live?token={TOKEN}", r.port)
@@ -1084,7 +1344,11 @@ fn a_web_origin_is_refused_on_the_token_less_routes() {
     let r = start_server();
     let own = format!("http://127.0.0.1:{}", r.port);
     for origin in ["https://evil.example", "null", own.as_str()] {
-        for (method, path) in [("POST", "/clean"), ("POST", "/transcribe?ext=wav"), ("GET", "/history")] {
+        for (method, path) in [
+            ("POST", "/clean"),
+            ("POST", "/transcribe?ext=wav"),
+            ("GET", "/history"),
+        ] {
             let reply = http(
                 r.port,
                 method,
@@ -1097,10 +1361,17 @@ fn a_web_origin_is_refused_on_the_token_less_routes() {
             assert!(reply.header("Access-Control-Allow-Origin").is_none());
         }
     }
-    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0, "nothing was cleaned or transcribed");
+    assert_eq!(
+        r.host.0.calls.load(Ordering::SeqCst),
+        0,
+        "nothing was cleaned or transcribed"
+    );
     // No origin (curl) or an extension's: allowed.
     assert_eq!(http(r.port, "POST", "/clean", &[], "ciao").status, 200);
-    assert_eq!(http(r.port, "POST", "/clean", &[("Origin", EXT)], "ciao").status, 200);
+    assert_eq!(
+        http(r.port, "POST", "/clean", &[("Origin", EXT)], "ciao").status,
+        200
+    );
 }
 
 /// `Settings.api_scripting` off (a new install): the token-less routes are
@@ -1110,14 +1381,31 @@ fn a_web_origin_is_refused_on_the_token_less_routes() {
 fn the_scripting_routes_answer_only_when_switched_on() {
     let r = start_server();
     r.host.0.config.lock().unwrap().scripting = false;
-    for (method, path) in [("POST", "/clean"), ("POST", "/transcribe?ext=wav"), ("GET", "/history")] {
+    for (method, path) in [
+        ("POST", "/clean"),
+        ("POST", "/transcribe?ext=wav"),
+        ("GET", "/history"),
+    ] {
         let reply = http(r.port, method, path, &[], "RIFF");
         assert_eq!(reply.status, 403, "{method} {path}");
-        assert!(reply.json()["error"].as_str().unwrap().contains("Scripting routes"));
+        assert!(reply.json()["error"]
+            .as_str()
+            .unwrap()
+            .contains("Scripting routes"));
     }
     assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0);
     let auth = bearer();
-    assert_eq!(http(r.port, "GET", "/app/version", &[("Authorization", &auth)], "").status, 200);
+    assert_eq!(
+        http(
+            r.port,
+            "GET",
+            "/app/version",
+            &[("Authorization", &auth)],
+            ""
+        )
+        .status,
+        200
+    );
     r.host.0.config.lock().unwrap().scripting = true;
     assert_eq!(http(r.port, "POST", "/clean", &[], "ciao").status, 200);
 }
@@ -1178,7 +1466,11 @@ fn bodies_over_the_cap_are_refused_without_reading_them() {
     let _ = s.shutdown(std::net::Shutdown::Both);
     drop(s);
     let _ = sender.join();
-    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0, "no host call for a refused body");
+    assert_eq!(
+        r.host.0.calls.load(Ordering::SeqCst),
+        0,
+        "no host call for a refused body"
+    );
 
     // Right at the cap, it goes through.
     let text = "a".repeat(guard::CLEAN_MAX_BYTES);
@@ -1193,19 +1485,36 @@ fn a_slow_transcribe_does_not_block_the_other_routes() {
     let r = start_server();
     let port = r.port;
     let slow: Vec<_> = (0..SLOW_SLOTS)
-        .map(|_| std::thread::spawn(move || http(port, "POST", "/transcribe?ext=slow", &[], "RIFF").status))
+        .map(|_| {
+            std::thread::spawn(move || {
+                http(port, "POST", "/transcribe?ext=slow", &[], "RIFF").status
+            })
+        })
         .collect();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while r.host.0.slow_running.load(Ordering::SeqCst) < SLOW_SLOTS {
-        assert!(std::time::Instant::now() < deadline, "the slow requests never started");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the slow requests never started"
+        );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let auth = bearer();
     let t0 = std::time::Instant::now();
-    let v = http(port, "GET", "/app/version", &[("Authorization", &auth), ("Origin", EXT)], "");
+    let v = http(
+        port,
+        "GET",
+        "/app/version",
+        &[("Authorization", &auth), ("Origin", EXT)],
+        "",
+    );
     assert_eq!(v.status, 200);
     assert_eq!(http(port, "GET", "/history", &[], "").status, 200);
-    assert!(t0.elapsed() < std::time::Duration::from_secs(2), "{:?}", t0.elapsed());
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        t0.elapsed()
+    );
     let busy = http(port, "POST", "/clean", &[], "ciao");
     assert_eq!(busy.status, 503);
     assert_eq!(busy.header("Retry-After"), Some("5"));
@@ -1239,21 +1548,41 @@ fn the_item_routes_reach_only_extension_items() {
     let meeting = archive::create_item(archive, &meta("browser:meet.google.com"), &segs).unwrap();
     let auth = bearer();
     let h = [("Authorization", auth.as_str()), ("Origin", EXT)];
-    let export = http(r.port, "GET", &format!("/items/{note}/export?format=md"), &h, "");
+    let export = http(
+        r.port,
+        "GET",
+        &format!("/items/{note}/export?format=md"),
+        &h,
+        "",
+    );
     assert_eq!(export.status, 403);
     assert_eq!(export.json()["code"], export::NOT_EXTENSION_ITEM);
     assert!(!export.body.contains("Private note"));
-    assert_eq!(export.header("Access-Control-Allow-Origin"), Some(EXT), "readable by the extension");
+    assert_eq!(
+        export.header("Access-Control-Allow-Origin"),
+        Some(EXT),
+        "readable by the extension"
+    );
     let open = http(r.port, "POST", &format!("/items/{note}/open"), &h, "");
     assert_eq!(open.status, 403);
     assert_eq!(open.json()["code"], export::NOT_EXTENSION_ITEM);
     assert!(r.host.0.opened.lock().unwrap().is_empty());
     // The extension's own item still works.
     assert_eq!(
-        http(r.port, "GET", &format!("/items/{meeting}/export?format=md"), &h, "").status,
+        http(
+            r.port,
+            "GET",
+            &format!("/items/{meeting}/export?format=md"),
+            &h,
+            ""
+        )
+        .status,
         200
     );
-    assert_eq!(http(r.port, "POST", &format!("/items/{meeting}/open"), &h, "").status, 200);
+    assert_eq!(
+        http(r.port, "POST", &format!("/items/{meeting}/open"), &h, "").status,
+        200
+    );
 }
 
 // ---- #223: hostile framing against the (vendored, patched) tiny_http -------
@@ -1265,7 +1594,10 @@ fn rss_kib() -> u64 {
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
         .output()
         .expect("ps");
-    String::from_utf8_lossy(&out.stdout).trim().parse().expect("rss")
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .expect("rss")
 }
 
 /// Send a raw request head (CRLFs included), then read one reply.
@@ -1279,13 +1611,19 @@ fn raw(port: u16, head: &str) -> (TcpStream, Reply) {
 /// After a reply, does the server end the connection (EOF or reset within
 /// 5 s) instead of waiting to read the rest of a body?
 fn server_closes(s: &mut TcpStream) -> bool {
-    s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
     let mut buf = [0u8; 1024];
     loop {
         match s.read(&mut buf) {
             Ok(0) => return true,
             Ok(_) => continue,
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
                 return false
             }
             Err(_) => return true,
@@ -1339,23 +1677,46 @@ fn an_absurd_content_length_is_answered_without_reading_it() {
     #[cfg(unix)]
     let before = rss_kib();
     let local = format!("127.0.0.1:{port}");
-    for len in ["9223372036854775807", "18446744073709551615", "100000000000000", "10000000000"] {
+    for len in [
+        "9223372036854775807",
+        "18446744073709551615",
+        "100000000000000",
+        "10000000000",
+    ] {
         for (method, path, host, extra, status) in [
             // Answered without reading the body (a GET with one).
             ("GET", "/history", local.as_str(), "", 200),
             // Refused: over the cap, with and without `Expect`.
             ("POST", "/clean", &local, "", 413),
-            ("POST", "/transcribe?ext=wav", &local, "Expect: 100-continue\r\n", 413),
+            (
+                "POST",
+                "/transcribe?ext=wav",
+                &local,
+                "Expect: 100-continue\r\n",
+                413,
+            ),
             ("GET", "/nope", &local, "", 404),
             ("POST", "/clean", "rebind.attacker", "", 403),
-            ("POST", "/clean", &local, "Origin: https://evil.example\r\n", 403),
+            (
+                "POST",
+                "/clean",
+                &local,
+                "Origin: https://evil.example\r\n",
+                403,
+            ),
         ] {
             let (mut s, reply) = raw(
                 port,
                 &format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n{extra}Content-Length: {len}\r\n\r\n"),
             );
-            assert_eq!(reply.status, status, "{method} {path} {extra:?} Content-Length: {len}");
-            assert!(server_closes(&mut s), "closed, not drained: {method} {path} {len}");
+            assert_eq!(
+                reply.status, status,
+                "{method} {path} {extra:?} Content-Length: {len}"
+            );
+            assert!(
+                server_closes(&mut s),
+                "closed, not drained: {method} {path} {len}"
+            );
         }
     }
     // A length that does not fit, or that is not a number, is a 400 — not
@@ -1399,9 +1760,19 @@ fn a_body_that_never_arrives_holds_no_worker() {
         })
         .collect();
     let t = std::time::Instant::now();
-    let v = http(port, "GET", "/app/version", &[("Authorization", &bearer()), ("Origin", EXT)], "");
+    let v = http(
+        port,
+        "GET",
+        "/app/version",
+        &[("Authorization", &bearer()), ("Origin", EXT)],
+        "",
+    );
     assert_eq!(v.status, 200);
-    assert!(t.elapsed() < std::time::Duration::from_secs(2), "{:?}", t.elapsed());
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(2),
+        "{:?}",
+        t.elapsed()
+    );
     // An upload under the cap that stops arriving: 408.
     let t = std::time::Instant::now();
     let (_s, reply) = raw(
@@ -1409,7 +1780,11 @@ fn a_body_that_never_arrives_holds_no_worker() {
         &format!("POST /transcribe?ext=wav HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 104857600\r\n\r\nRIFF"),
     );
     assert_eq!(reply.status, 408, "{}", reply.body);
-    assert!(t.elapsed() < std::time::Duration::from_secs(10), "{:?}", t.elapsed());
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(10),
+        "{:?}",
+        t.elapsed()
+    );
     // Chunked: a chunk announced, never sent.
     let (_s2, reply) = raw(
         port,
@@ -1452,9 +1827,24 @@ fn oversized_heads_and_framing_lines_are_cut_short() {
     // 10k headers; a 1 MB header line; an endless header line; an endless
     // request line; an endless chunk-size line.
     let cases: [(String, &'static [u8], usize, u16); 5] = [
-        (format!("GET /history HTTP/1.1\r\n{host}"), b"X-H: v\r\n", 10_000 * 8, 431),
-        (format!("GET /history HTTP/1.1\r\n{host}X-Big: "), b"a", 1 << 20, 431),
-        (format!("GET /history HTTP/1.1\r\n{host}X-Big: "), b"a", GIB, 431),
+        (
+            format!("GET /history HTTP/1.1\r\n{host}"),
+            b"X-H: v\r\n",
+            10_000 * 8,
+            431,
+        ),
+        (
+            format!("GET /history HTTP/1.1\r\n{host}X-Big: "),
+            b"a",
+            1 << 20,
+            431,
+        ),
+        (
+            format!("GET /history HTTP/1.1\r\n{host}X-Big: "),
+            b"a",
+            GIB,
+            431,
+        ),
         ("GET /".to_string(), b"a", GIB, 431),
         (
             format!("POST /clean HTTP/1.1\r\n{host}Transfer-Encoding: chunked\r\n\r\n"),
@@ -1467,7 +1857,11 @@ fn oversized_heads_and_framing_lines_are_cut_short() {
         let what = format!("{prefix:?} + {:?} x {max}", String::from_utf8_lossy(filler));
         let (reply, sent) = flood(port, prefix, filler, max);
         // The answer, unless the reset for the unread rest overtook it.
-        assert!(reply.status == status || reply.status == 0, "{what}: {}", reply.status);
+        assert!(
+            reply.status == status || reply.status == 0,
+            "{what}: {}",
+            reply.status
+        );
         if max > STOPPED {
             assert!(sent < STOPPED, "{what}: the server read on ({sent} bytes)");
         }
@@ -1490,7 +1884,9 @@ fn connections_over_the_limit_are_closed_at_accept() {
         ..Default::default()
     }));
     let port = r.port;
-    let idle: Vec<TcpStream> = (0..4).map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap()).collect();
+    let idle: Vec<TcpStream> = (0..4)
+        .map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap())
+        .collect();
     // Let the accept thread count them.
     std::thread::sleep(std::time::Duration::from_millis(300));
     let mut extra = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -1499,12 +1895,19 @@ fn connections_over_the_limit_are_closed_at_accept() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let ok = write!(s, "GET /history HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").is_ok()
+        let ok = write!(
+            s,
+            "GET /history HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )
+        .is_ok()
             && read_reply(&mut s).status == 200;
         if ok {
             break;
         }
-        assert!(std::time::Instant::now() < deadline, "room again once the idle ones close");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "room again once the idle ones close"
+        );
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
@@ -1525,7 +1928,13 @@ fn live_outlasts_the_http_timeout() {
     ws.send(Message::text(r#"{"type":"ping"}"#)).unwrap();
     assert_eq!(read_json(&mut ws).unwrap()["state"], "ready");
     // Plain HTTP: an idle keep-alive connection ends after the timeout.
-    let (mut s, reply) = raw(r.port, &format!("GET /history HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n", r.port));
+    let (mut s, reply) = raw(
+        r.port,
+        &format!(
+            "GET /history HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n",
+            r.port
+        ),
+    );
     assert_eq!(reply.status, 200);
     assert!(server_closes(&mut s));
     // A handler slower than the timeout still delivers its answer (the
@@ -1547,11 +1956,15 @@ fn live_outlasts_the_http_timeout() {
     assert_eq!(reply.status, 200);
     assert_eq!(reply.json()["bytes"], 4);
     let mut rest = Vec::new();
-    s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
     let _ = s.read_to_end(&mut rest);
-    assert!(rest.is_empty(), "nothing after the answer: {:?}", String::from_utf8_lossy(&rest));
+    assert!(
+        rest.is_empty(),
+        "nothing after the answer: {:?}",
+        String::from_utf8_lossy(&rest)
+    );
 }
-
 
 // ---- archive API tokens (#249) ----------------------------------------------
 
@@ -1569,7 +1982,10 @@ fn add_archive_token(r: &Running, name: &str, scopes: &[Scope]) -> (String, Stri
 
 fn assert_no_cors(reply: &Reply, what: &str) {
     for (k, _) in &reply.headers {
-        assert!(!k.to_ascii_lowercase().starts_with("access-control-"), "{what}: {k}");
+        assert!(
+            !k.to_ascii_lowercase().starts_with("access-control-"),
+            "{what}: {k}"
+        );
     }
 }
 
@@ -1578,8 +1994,17 @@ fn archive_routes_need_the_switch_a_token_and_no_origin() {
     let r = start_server();
     let (read, read_id) = add_archive_token(&r, "reader", &[Scope::Read]);
     // Off by default: refused, with a code scripts can branch on.
-    let off = http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "");
-    assert_eq!((off.status, off.json()["code"].as_str()), (403, Some("archive_api_off")));
+    let off = http(
+        r.port,
+        "GET",
+        "/archive/items",
+        &[("Authorization", &read)],
+        "",
+    );
+    assert_eq!(
+        (off.status, off.json()["code"].as_str()),
+        (403, Some("archive_api_off"))
+    );
     assert_no_cors(&off, "off");
     r.host.0.config.lock().unwrap().archive = true;
 
@@ -1592,36 +2017,77 @@ fn archive_routes_need_the_switch_a_token_and_no_origin() {
         ("/archive/items", Some(ext.as_str())),
         (q.as_str(), None),
     ] {
-        let headers: Vec<(&str, &str)> = auth.map(|a| vec![("Authorization", a)]).unwrap_or_default();
+        let headers: Vec<(&str, &str)> =
+            auth.map(|a| vec![("Authorization", a)]).unwrap_or_default();
         let reply = http(r.port, "GET", path, &headers, "");
         assert_eq!(reply.status, 401, "{path} {auth:?}");
         assert_eq!(reply.json()["code"], "unauthorized");
-        assert!(reply.header("WWW-Authenticate").unwrap().starts_with("Bearer"));
+        assert!(reply
+            .header("WWW-Authenticate")
+            .unwrap()
+            .starts_with("Bearer"));
         assert_no_cors(&reply, "401");
     }
     // The right token with any browser Origin: an extension's is refused
     // by the archive middleware, a web page's already by the #215 guard.
-    let from_ext = http(r.port, "GET", "/archive/items", &[("Authorization", &read), ("Origin", EXT)], "");
-    assert_eq!((from_ext.status, from_ext.json()["code"].as_str()), (403, Some("origin_refused")));
+    let from_ext = http(
+        r.port,
+        "GET",
+        "/archive/items",
+        &[("Authorization", &read), ("Origin", EXT)],
+        "",
+    );
+    assert_eq!(
+        (from_ext.status, from_ext.json()["code"].as_str()),
+        (403, Some("origin_refused"))
+    );
     assert_no_cors(&from_ext, "extension origin");
     let pre = http(r.port, "OPTIONS", "/archive/items", &[("Origin", EXT)], "");
     assert_eq!(pre.status, 403, "no preflight answer");
     assert_no_cors(&pre, "preflight");
     for origin in ["https://evil.example", "null"] {
-        let web = http(r.port, "GET", "/archive/items", &[("Authorization", &read), ("Origin", origin)], "");
-        assert_eq!((web.status, web.json()["error"].as_str()), (403, Some("origin not allowed")));
+        let web = http(
+            r.port,
+            "GET",
+            "/archive/items",
+            &[("Authorization", &read), ("Origin", origin)],
+            "",
+        );
+        assert_eq!(
+            (web.status, web.json()["error"].as_str()),
+            (403, Some("origin not allowed"))
+        );
         assert_no_cors(&web, origin);
     }
-    assert!(r.host.0.tokens_used.lock().unwrap().is_empty(), "nothing got through yet");
+    assert!(
+        r.host.0.tokens_used.lock().unwrap().is_empty(),
+        "nothing got through yet"
+    );
 
     // Authorized: past the middleware, into the read routes (#250).
-    let ok = http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "");
+    let ok = http(
+        r.port,
+        "GET",
+        "/archive/items",
+        &[("Authorization", &read)],
+        "",
+    );
     assert_eq!((ok.status, ok.json()["total"].as_u64()), (200, Some(0)));
     assert_no_cors(&ok, "authorized");
     assert_eq!(*r.host.0.tokens_used.lock().unwrap(), vec![read_id.clone()]);
 
     // The archive token opens nothing else: not the extension's routes.
-    assert_eq!(http(r.port, "GET", "/app/version", &[("Authorization", &read)], "").status, 401);
+    assert_eq!(
+        http(
+            r.port,
+            "GET",
+            "/app/version",
+            &[("Authorization", &read)],
+            ""
+        )
+        .status,
+        401
+    );
 }
 
 #[test]
@@ -1632,15 +2098,38 @@ fn archive_scopes_are_enforced_per_method() {
     let (write, _) = add_archive_token(&r, "clipper", &[Scope::Write]);
     let (all, _) = add_archive_token(&r, "all", &[Scope::Read, Scope::People, Scope::Write]);
     let post = |auth: &str| {
-        http(r.port, "POST", "/archive/items", &[("Authorization", auth)], r#"{"title":"x","text":"y"}"#)
+        http(
+            r.port,
+            "POST",
+            "/archive/items",
+            &[("Authorization", auth)],
+            r#"{"title":"x","text":"y"}"#,
+        )
     };
-    let get = |auth: &str| http(r.port, "GET", "/archive/people", &[("Authorization", auth)], "");
+    let get = |auth: &str| {
+        http(
+            r.port,
+            "GET",
+            "/archive/people",
+            &[("Authorization", auth)],
+            "",
+        )
+    };
 
     let denied = post(&read);
-    assert_eq!((denied.status, denied.json()["code"].as_str()), (403, Some("insufficient_scope")));
-    assert!(denied.header("WWW-Authenticate").unwrap().contains("scope=\"write\""));
+    assert_eq!(
+        (denied.status, denied.json()["code"].as_str()),
+        (403, Some("insufficient_scope"))
+    );
+    assert!(denied
+        .header("WWW-Authenticate")
+        .unwrap()
+        .contains("scope=\"write\""));
     let denied = get(&write);
-    assert_eq!((denied.status, denied.json()["code"].as_str()), (403, Some("insufficient_scope")));
+    assert_eq!(
+        (denied.status, denied.json()["code"].as_str()),
+        (403, Some("insufficient_scope"))
+    );
     // Authorized: reads answer (#250), writes create a note (#251).
     for reply in [get(&read), get(&all)] {
         assert_eq!(reply.status, 200, "authorized");
@@ -1648,7 +2137,13 @@ fn archive_scopes_are_enforced_per_method() {
     for reply in [post(&write), post(&all)] {
         assert_eq!(reply.status, 201, "authorized: {}", reply.body);
     }
-    let del = http(r.port, "DELETE", "/archive/items/x", &[("Authorization", &read)], "");
+    let del = http(
+        r.port,
+        "DELETE",
+        "/archive/items/x",
+        &[("Authorization", &read)],
+        "",
+    );
     assert_eq!(del.status, 403, "anything but GET/HEAD needs write");
 }
 
@@ -1657,13 +2152,46 @@ fn a_revoked_archive_token_is_refused_at_once() {
     let r = start_server();
     r.host.0.config.lock().unwrap().archive = true;
     let (read, id) = add_archive_token(&r, "reader", &[Scope::Read]);
-    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "").status, 200);
-    assert!(archive_tokens::revoke(&mut r.host.0.config.lock().unwrap().archive_tokens, &id));
-    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &read)], "").status, 401);
+    assert_eq!(
+        http(
+            r.port,
+            "GET",
+            "/archive/items",
+            &[("Authorization", &read)],
+            ""
+        )
+        .status,
+        200
+    );
+    assert!(archive_tokens::revoke(
+        &mut r.host.0.config.lock().unwrap().archive_tokens,
+        &id
+    ));
+    assert_eq!(
+        http(
+            r.port,
+            "GET",
+            "/archive/items",
+            &[("Authorization", &read)],
+            ""
+        )
+        .status,
+        401
+    );
     // Switching the API off refuses every token too.
     let (again, _) = add_archive_token(&r, "again", &[Scope::Read]);
     r.host.0.config.lock().unwrap().archive = false;
-    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &again)], "").status, 403);
+    assert_eq!(
+        http(
+            r.port,
+            "GET",
+            "/archive/items",
+            &[("Authorization", &again)],
+            ""
+        )
+        .status,
+        403
+    );
 }
 
 #[test]
@@ -1674,7 +2202,13 @@ fn archive_requests_are_rate_limited_per_token() {
     let (calm, _) = add_archive_token(&r, "calm", &[Scope::Read]);
     let mut passed = 0;
     let limited = loop {
-        let reply = http(r.port, "GET", "/archive/items", &[("Authorization", &busy)], "");
+        let reply = http(
+            r.port,
+            "GET",
+            "/archive/items",
+            &[("Authorization", &busy)],
+            "",
+        );
         if reply.status == 429 {
             break reply;
         }
@@ -1682,12 +2216,32 @@ fn archive_requests_are_rate_limited_per_token() {
         passed += 1;
         assert!(passed < 1000, "never limited");
     };
-    assert!(passed >= archive_tokens::RATE_BURST as usize, "the burst passes: {passed}");
+    assert!(
+        passed >= archive_tokens::RATE_BURST as usize,
+        "the burst passes: {passed}"
+    );
     assert_eq!(limited.json()["code"], "rate_limited");
-    assert!(limited.header("Retry-After").unwrap().parse::<u64>().unwrap() >= 1);
+    assert!(
+        limited
+            .header("Retry-After")
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            >= 1
+    );
     assert_no_cors(&limited, "429");
     // Another token is unaffected.
-    assert_eq!(http(r.port, "GET", "/archive/items", &[("Authorization", &calm)], "").status, 200);
+    assert_eq!(
+        http(
+            r.port,
+            "GET",
+            "/archive/items",
+            &[("Authorization", &calm)],
+            ""
+        )
+        .status,
+        200
+    );
 }
 
 // ---- archive read routes (#250) ---------------------------------------------
@@ -1727,7 +2281,11 @@ fn seed_archive(r: &Running) -> String {
         ..Default::default()
     };
     let id = archive::create_item(archive, &meta, &segs).unwrap();
-    std::fs::write(archive.join(&id).join("document.md"), "---\ntitle: Minutes\n---\n\nAgreed.\n").unwrap();
+    std::fs::write(
+        archive.join(&id).join("document.md"),
+        "---\ntitle: Minutes\n---\n\nAgreed.\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(archive.join(".sussurro")).unwrap();
     std::fs::write(
         archive.join(".sussurro").join("people.json"),
@@ -1761,46 +2319,103 @@ fn every_archive_read_route_is_guarded() {
     for path in &routes {
         let get = |headers: &[(&str, &str)]| http(r.port, "GET", path, headers, "");
         let none = get(&[]);
-        assert_eq!((none.status, none.json()["code"].as_str()), (401, Some("unauthorized")), "{path}");
+        assert_eq!(
+            (none.status, none.json()["code"].as_str()),
+            (401, Some("unauthorized")),
+            "{path}"
+        );
         let wrong = get(&[("Authorization", "Bearer sua_0000")]);
         assert_eq!(wrong.status, 401, "{path}");
         let ext_token = bearer();
-        assert_eq!(get(&[("Authorization", &ext_token)]).status, 401, "the extension token: {path}");
+        assert_eq!(
+            get(&[("Authorization", &ext_token)]).status,
+            401,
+            "the extension token: {path}"
+        );
         for scoped in [&write, &people] {
             let denied = get(&[("Authorization", scoped)]);
-            assert_eq!((denied.status, denied.json()["code"].as_str()), (403, Some("insufficient_scope")), "{path}");
+            assert_eq!(
+                (denied.status, denied.json()["code"].as_str()),
+                (403, Some("insufficient_scope")),
+                "{path}"
+            );
         }
         let from_ext = get(&[("Authorization", &read), ("Origin", EXT)]);
-        assert_eq!((from_ext.status, from_ext.json()["code"].as_str()), (403, Some("origin_refused")), "{path}");
+        assert_eq!(
+            (from_ext.status, from_ext.json()["code"].as_str()),
+            (403, Some("origin_refused")),
+            "{path}"
+        );
         let from_web = get(&[("Authorization", &read), ("Origin", "https://evil.example")]);
         assert_eq!(from_web.status, 403, "{path}");
         let rebind = get(&[("Authorization", &read), ("Host", &foreign)]);
-        assert_eq!((rebind.status, rebind.json()["error"].as_str()), (403, Some("host not allowed")), "{path}");
+        assert_eq!(
+            (rebind.status, rebind.json()["error"].as_str()),
+            (403, Some("host not allowed")),
+            "{path}"
+        );
         for reply in [&none, &wrong, &from_ext, &from_web, &rebind] {
             assert_no_cors(reply, path);
-            assert!(!reply.body.contains("Parliamo") && !reply.body.contains("Anna"), "{path}: nothing served");
+            assert!(
+                !reply.body.contains("Parliamo") && !reply.body.contains("Anna"),
+                "{path}: nothing served"
+            );
         }
 
         let ok = get(&[("Authorization", &read)]);
         assert_eq!(ok.status, 200, "{path}: {}", ok.body);
         assert_no_cors(&ok, path);
         assert_eq!(ok.header("Cache-Control"), Some("no-store"), "{path}");
-        assert_eq!(ok.header("X-Content-Type-Options"), Some("nosniff"), "{path}");
-        for forbidden in ["anna@example.com", "embedding", "0.98765", "person_id", "archive-index"] {
-            assert!(!ok.body.contains(forbidden), "{forbidden} in {path}: {}", ok.body);
+        assert_eq!(
+            ok.header("X-Content-Type-Options"),
+            Some("nosniff"),
+            "{path}"
+        );
+        for forbidden in [
+            "anna@example.com",
+            "embedding",
+            "0.98765",
+            "person_id",
+            "archive-index",
+        ] {
+            assert!(
+                !ok.body.contains(forbidden),
+                "{forbidden} in {path}: {}",
+                ok.body
+            );
         }
     }
     // Unknown ids and document names; unknown archive paths.
     for (path, status, code) in [
         ("/archive/items/2026/09/nope".to_string(), 404, "not_found"),
-        ("/archive/items/2026/09/nope/export".to_string(), 404, "not_found"),
-        (format!("/archive/items/{id}/documents/nope.md"), 404, "not_found"),
-        ("/archive/items/..%2F..%2Fetc".to_string(), 400, "invalid_id"),
-        (format!("/archive/items/{id}/documents/transcript.md"), 400, "invalid_name"),
+        (
+            "/archive/items/2026/09/nope/export".to_string(),
+            404,
+            "not_found",
+        ),
+        (
+            format!("/archive/items/{id}/documents/nope.md"),
+            404,
+            "not_found",
+        ),
+        (
+            "/archive/items/..%2F..%2Fetc".to_string(),
+            400,
+            "invalid_id",
+        ),
+        (
+            format!("/archive/items/{id}/documents/transcript.md"),
+            400,
+            "invalid_name",
+        ),
         ("/archive/voices".to_string(), 404, "not_found"),
     ] {
         let reply = http(r.port, "GET", &path, &[("Authorization", &read)], "");
-        assert_eq!((reply.status, reply.json()["code"].as_str()), (status, Some(code)), "{path}");
+        assert_eq!(
+            (reply.status, reply.json()["code"].as_str()),
+            (status, Some(code)),
+            "{path}"
+        );
         assert_no_cors(&reply, &path);
     }
 }
@@ -1833,34 +2448,64 @@ fn archive_reads_answer_json_pages_and_files() {
     let second = get(&read, &format!("/archive/items?limit=2&cursor={cursor}"));
     assert_eq!(second.json()["items"].as_array().unwrap().len(), 2);
     assert!(second.json()["next_cursor"].is_null());
-    for bad in ["/archive/items?limit=1000", "/archive/items?limit=0", "/archive/items?cursor=zzz"] {
+    for bad in [
+        "/archive/items?limit=1000",
+        "/archive/items?limit=0",
+        "/archive/items?cursor=zzz",
+    ] {
         assert_eq!(get(&read, bad).status, 400, "{bad}");
     }
 
     // An item; emails with the people scope only.
     let item = get(&read, &format!("/archive/items/{id}"));
-    assert_eq!(item.json()["meta"]["participants"], serde_json::json!([{"name": "Anna Rossi"}]));
-    assert_eq!(item.json()["speakers"], serde_json::json!([{"id": "voice:1", "label": "Anna Rossi"}]));
+    assert_eq!(
+        item.json()["meta"]["participants"],
+        serde_json::json!([{"name": "Anna Rossi"}])
+    );
+    assert_eq!(
+        item.json()["speakers"],
+        serde_json::json!([{"id": "voice:1", "label": "Anna Rossi"}])
+    );
     let item = get(&full, &format!("/archive/items/{}", id.replace('/', "%2F")));
-    assert_eq!(item.json()["meta"]["participants"][0]["email"], "anna@example.com");
+    assert_eq!(
+        item.json()["meta"]["participants"][0]["email"],
+        "anna@example.com"
+    );
     assert!(!item.body.contains("embedding"));
     let people = get(&read, "/archive/people");
-    assert_eq!(people.json()["people"], serde_json::json!([{"id": "p-anna", "name": "Anna Rossi", "aliases": ["Annina"]}]));
-    assert_eq!(get(&full, "/archive/people").json()["people"][0]["email"], "anna@example.com");
+    assert_eq!(
+        people.json()["people"],
+        serde_json::json!([{"id": "p-anna", "name": "Anna Rossi", "aliases": ["Annina"]}])
+    );
+    assert_eq!(
+        get(&full, "/archive/people").json()["people"][0]["email"],
+        "anna@example.com"
+    );
 
     // An export is a file download.
     let vtt = get(&read, &format!("/archive/items/{id}/export?format=vtt"));
     assert_eq!(vtt.status, 200);
     assert!(vtt.body.starts_with("WEBVTT"));
     assert_eq!(vtt.header("Content-Type"), Some("text/vtt; charset=utf-8"));
-    assert!(vtt.header("Content-Disposition").unwrap().ends_with("weekly-sync.vtt\""));
+    assert!(vtt
+        .header("Content-Disposition")
+        .unwrap()
+        .ends_with("weekly-sync.vtt\""));
     assert_eq!(vtt.header("Cache-Control"), Some("no-store"));
     let md = get(&read, &format!("/archive/items/{id}/export?format=md"));
     assert!(md.body.contains("Anna Rossi") && !md.body.contains("anna@example.com"));
-    assert!(get(&full, &format!("/archive/items/{id}/export?format=md")).body.contains("anna@example.com"));
+    assert!(get(&full, &format!("/archive/items/{id}/export?format=md"))
+        .body
+        .contains("anna@example.com"));
 
     // HEAD is a read too: headers, no body.
-    let head = http(r.port, "HEAD", "/archive/items", &[("Authorization", &read)], "");
+    let head = http(
+        r.port,
+        "HEAD",
+        "/archive/items",
+        &[("Authorization", &read)],
+        "",
+    );
     assert_eq!(head.status, 200);
     assert!(head.body.is_empty());
 }
@@ -1877,26 +2522,67 @@ fn archive_requests_share_a_bounded_number_of_workers() {
     let held: Vec<_> = (0..ARCHIVE_SLOTS)
         .map(|_| {
             let read = read.clone();
-            std::thread::spawn(move || http(port, "GET", "/archive/items", &[("Authorization", &read)], "").status)
+            std::thread::spawn(move || {
+                http(
+                    port,
+                    "GET",
+                    "/archive/items",
+                    &[("Authorization", &read)],
+                    "",
+                )
+                .status
+            })
         })
         .collect();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while r.host.0.archive_waiting.load(Ordering::SeqCst) < ARCHIVE_SLOTS {
-        assert!(std::time::Instant::now() < deadline, "the slow requests never started");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the slow requests never started"
+        );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let busy = http(r.port, "GET", "/archive/people", &[("Authorization", &read)], "");
-    assert_eq!((busy.status, busy.json()["code"].as_str()), (503, Some("busy")));
+    let busy = http(
+        r.port,
+        "GET",
+        "/archive/people",
+        &[("Authorization", &read)],
+        "",
+    );
+    assert_eq!(
+        (busy.status, busy.json()["code"].as_str()),
+        (503, Some("busy"))
+    );
     assert_eq!(busy.header("Retry-After"), Some("1"));
     assert_no_cors(&busy, "503");
     // The extension still gets an answer meanwhile.
     let auth = bearer();
-    assert_eq!(http(r.port, "GET", "/app/version", &[("Authorization", &auth)], "").status, 200);
+    assert_eq!(
+        http(
+            r.port,
+            "GET",
+            "/app/version",
+            &[("Authorization", &auth)],
+            ""
+        )
+        .status,
+        200
+    );
     r.host.0.block_archive.store(false, Ordering::SeqCst);
     for h in held {
         assert_eq!(h.join().unwrap(), 200);
     }
-    assert_eq!(http(r.port, "GET", "/archive/people", &[("Authorization", &read)], "").status, 200);
+    assert_eq!(
+        http(
+            r.port,
+            "GET",
+            "/archive/people",
+            &[("Authorization", &read)],
+            ""
+        )
+        .status,
+        200
+    );
 }
 
 // ---- archive write route (#251) ---------------------------------------------
@@ -1917,37 +2603,72 @@ fn creating_a_note_is_guarded_like_every_archive_route() {
     let json = ("Content-Type", "application/json");
 
     let off = post_note(&r, &[("Authorization", &write), json], body);
-    assert_eq!((off.status, off.json()["code"].as_str()), (403, Some("archive_api_off")));
+    assert_eq!(
+        (off.status, off.json()["code"].as_str()),
+        (403, Some("archive_api_off"))
+    );
     r.host.0.config.lock().unwrap().archive = true;
     let foreign = format!("rebind.attacker:{}", r.port);
     let ext_token = bearer();
     for (headers, status, code) in [
         (vec![json], 401, "unauthorized"),
-        (vec![("Authorization", "Bearer sua_nope"), json], 401, "unauthorized"),
-        (vec![("Authorization", ext_token.as_str()), json], 401, "unauthorized"),
-        (vec![("Authorization", read.as_str()), json], 403, "insufficient_scope"),
-        (vec![("Authorization", write.as_str()), ("Origin", EXT), json], 403, "origin_refused"),
+        (
+            vec![("Authorization", "Bearer sua_nope"), json],
+            401,
+            "unauthorized",
+        ),
+        (
+            vec![("Authorization", ext_token.as_str()), json],
+            401,
+            "unauthorized",
+        ),
+        (
+            vec![("Authorization", read.as_str()), json],
+            403,
+            "insufficient_scope",
+        ),
+        (
+            vec![("Authorization", write.as_str()), ("Origin", EXT), json],
+            403,
+            "origin_refused",
+        ),
     ] {
         let reply = post_note(&r, &headers, body);
-        assert_eq!((reply.status, reply.json()["code"].as_str()), (status, Some(code)), "{headers:?}");
+        assert_eq!(
+            (reply.status, reply.json()["code"].as_str()),
+            (status, Some(code)),
+            "{headers:?}"
+        );
         assert_no_cors(&reply, code);
     }
-    for (k, v) in [("Origin", "https://evil.example"), ("Host", foreign.as_str())] {
+    for (k, v) in [
+        ("Origin", "https://evil.example"),
+        ("Host", foreign.as_str()),
+    ] {
         let reply = post_note(&r, &[("Authorization", &write), (k, v), json], body);
         assert_eq!(reply.status, 403, "{k}");
         assert_no_cors(&reply, k);
     }
-    assert!(archive::list_items(&r.host.0.archive).is_empty(), "nothing created by a refused request");
+    assert!(
+        archive::list_items(&r.host.0.archive).is_empty(),
+        "nothing created by a refused request"
+    );
 
     let created = post_note(&r, &[("Authorization", &write), json], body);
     assert_eq!(created.status, 201, "{}", created.body);
     assert_no_cors(&created, "201");
     assert_eq!(created.header("Cache-Control"), Some("no-store"));
     let id = created.json()["id"].as_str().unwrap().to_string();
-    assert_eq!(created.header("Location"), Some(format!("/archive/items/{id}").as_str()));
+    assert_eq!(
+        created.header("Location"),
+        Some(format!("/archive/items/{id}").as_str())
+    );
     assert_eq!(created.json()["source"], "api:Shortcuts");
     assert_eq!(created.json()["type"], "note");
-    assert!(!created.body.contains(r.host.0.archive.to_str().unwrap()), "no paths");
+    assert!(
+        !created.body.contains(r.host.0.archive.to_str().unwrap()),
+        "no paths"
+    );
     assert_eq!(*r.host.0.notes_created.lock().unwrap(), vec![id.clone()]);
     // Readable (and found) through the read routes.
     let location = created.header("Location").unwrap().to_string();
@@ -1956,7 +2677,13 @@ fn creating_a_note_is_guarded_like_every_archive_route() {
     assert_eq!(item.json()["meta"]["title"], "Da comprare");
     assert_eq!(item.json()["meta"]["tags"], serde_json::json!(["spesa"]));
     assert_eq!(item.json()["text"], "\n# Da comprare\n\nLatte e caffè.\n");
-    let found = http(r.port, "GET", "/archive/items?q=caff%C3%A8&type=note", &[("Authorization", &read)], "");
+    let found = http(
+        r.port,
+        "GET",
+        "/archive/items?q=caff%C3%A8&type=note",
+        &[("Authorization", &read)],
+        "",
+    );
     assert_eq!(found.json()["items"][0]["id"], id.as_str());
     // Other writes don't exist.
     for (m, p) in [
@@ -1965,10 +2692,23 @@ fn creating_a_note_is_guarded_like_every_archive_route() {
         ("DELETE", location.clone()),
     ] {
         let reply = http(r.port, m, &p, &[("Authorization", &write), json], body);
-        assert_eq!((reply.status, reply.json()["code"].as_str()), (404, Some("not_found")), "{m} {p}");
+        assert_eq!(
+            (reply.status, reply.json()["code"].as_str()),
+            (404, Some("not_found")),
+            "{m} {p}"
+        );
     }
-    assert_eq!(post_note(&r, &[("Authorization", &write), json], "{").json()["code"], "invalid_json");
-    let with_query = http(r.port, "POST", "/archive/items?title=x", &[("Authorization", &write), json], body);
+    assert_eq!(
+        post_note(&r, &[("Authorization", &write), json], "{").json()["code"],
+        "invalid_json"
+    );
+    let with_query = http(
+        r.port,
+        "POST",
+        "/archive/items?title=x",
+        &[("Authorization", &write), json],
+        body,
+    );
     assert_eq!(with_query.status, 400);
     assert_eq!(archive::list_items(&r.host.0.archive).len(), 1);
 }
@@ -1988,11 +2728,21 @@ fn a_note_body_over_1_mib_is_refused_without_reading_it() {
                 r.port
             ),
         );
-        assert_eq!((reply.status, reply.json()["code"].as_str()), (413, Some("too_large")), "{len}");
+        assert_eq!(
+            (reply.status, reply.json()["code"].as_str()),
+            (413, Some("too_large")),
+            "{len}"
+        );
         assert!(healthy(r.port));
     }
-    let fits = format!(r#"{{"text": "{}"}}"#, "a".repeat(archive_write::MAX_BODY_BYTES - 64));
-    assert_eq!(post_note(&r, &[("Authorization", &write)], &fits).status, 201);
+    let fits = format!(
+        r#"{{"text": "{}"}}"#,
+        "a".repeat(archive_write::MAX_BODY_BYTES - 64)
+    );
+    assert_eq!(
+        post_note(&r, &[("Authorization", &write)], &fits).status,
+        201
+    );
 }
 
 #[test]
@@ -2004,7 +2754,10 @@ fn note_cleanup_follows_the_settings_and_never_uses_an_external_profile() {
     let body = r#"{"text": "ciao mondo", "cleanup": true}"#;
     // The default local profile: cleaned.
     let local = post_note(&r, &auth, body);
-    assert_eq!((local.status, local.json()["cleaned"].as_bool()), (201, Some(true)));
+    assert_eq!(
+        (local.status, local.json()["cleaned"].as_bool()),
+        (201, Some(true))
+    );
     assert_eq!(local.json()["title"], "CIAO MONDO");
     // An external profile the user opted in to for dictation: refused.
     {
@@ -2024,9 +2777,20 @@ fn note_cleanup_follows_the_settings_and_never_uses_an_external_profile() {
     }
     let calls = r.host.0.calls.load(Ordering::SeqCst);
     let external = post_note(&r, &auth, body);
-    assert_eq!((external.status, external.json()["code"].as_str()), (409, Some("cleanup_external")));
-    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), calls, "nothing cleaned");
-    assert_eq!(post_note(&r, &auth, r#"{"text": "ciao mondo"}"#).status, 201, "without cleanup it works");
+    assert_eq!(
+        (external.status, external.json()["code"].as_str()),
+        (409, Some("cleanup_external"))
+    );
+    assert_eq!(
+        r.host.0.calls.load(Ordering::SeqCst),
+        calls,
+        "nothing cleaned"
+    );
+    assert_eq!(
+        post_note(&r, &auth, r#"{"text": "ciao mondo"}"#).status,
+        201,
+        "without cleanup it works"
+    );
     // Cleanup off in Settings: refused too.
     {
         let mut s = r.host.0.settings.lock().unwrap();
@@ -2034,7 +2798,10 @@ fn note_cleanup_follows_the_settings_and_never_uses_an_external_profile() {
         s.cleanup_level = crate::settings::CleanupLevel::None;
     }
     let off = post_note(&r, &auth, body);
-    assert_eq!((off.status, off.json()["code"].as_str()), (409, Some("cleanup_off")));
+    assert_eq!(
+        (off.status, off.json()["code"].as_str()),
+        (409, Some("cleanup_off"))
+    );
     assert_eq!(archive::list_items(&r.host.0.archive).len(), 2);
 }
 
@@ -2045,7 +2812,13 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
     let (write, _) = add_archive_token(&r, "clipper", &[Scope::Write]);
     let body = r#"{"text": "clipboard"}"#;
     let key = "6f1c2b1e-0d7a-4b8e-9c55-1f0a2b3c4d5e";
-    let with_key = |body: &str| post_note(&r, &[("Authorization", &write), ("Idempotency-Key", key)], body);
+    let with_key = |body: &str| {
+        post_note(
+            &r,
+            &[("Authorization", &write), ("Idempotency-Key", key)],
+            body,
+        )
+    };
     let first = with_key(body);
     assert_eq!(first.status, 201);
     let again = with_key(body);
@@ -2055,7 +2828,10 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
     assert_eq!(again.header("Idempotent-Replayed"), Some("true"));
     assert_eq!(archive::list_items(&r.host.0.archive).len(), 1);
     let changed = with_key(r#"{"text": "other"}"#);
-    assert_eq!((changed.status, changed.json()["code"].as_str()), (422, Some("idempotency_mismatch")));
+    assert_eq!(
+        (changed.status, changed.json()["code"].as_str()),
+        (422, Some("idempotency_mismatch"))
+    );
 
     // Creations have their own, tighter limit (the first note used one).
     let mut created = 1;
@@ -2068,8 +2844,18 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
         assert!(created < 100, "never limited");
     };
     assert_eq!(created, archive_write::CREATE_BURST as usize);
-    assert_eq!((limited.status, limited.json()["code"].as_str()), (429, Some("rate_limited")));
-    assert!(limited.header("Retry-After").unwrap().parse::<u64>().unwrap() >= 1);
+    assert_eq!(
+        (limited.status, limited.json()["code"].as_str()),
+        (429, Some("rate_limited"))
+    );
+    assert!(
+        limited
+            .header("Retry-After")
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            >= 1
+    );
     assert_no_cors(&limited, "429");
     // A replay creates nothing, so it still answers.
     assert_eq!(with_key(body).status, 201);

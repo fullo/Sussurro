@@ -47,8 +47,8 @@ pub use store::{
     update_meta, Item, ItemSummary, SegmentEdit, SpeakerEdit,
 };
 pub use types::{
-    Channel, DocSpeaker, ItemMeta, ItemType, Participant, Segment, SegmentsFile, SessionState,
-    Word, SESSION_KEY,
+    Channel, DocSpeaker, ItemMeta, ItemType, OverlapSpan, Participant, Segment, SegmentsFile,
+    SessionState, Word, SESSION_KEY,
 };
 
 /// File name of the search index inside the app data dir.

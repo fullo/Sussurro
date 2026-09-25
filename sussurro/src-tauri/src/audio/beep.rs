@@ -26,8 +26,7 @@ pub fn beep(freq: f32, dur_ms: u64) {
                     // Linear fade-in/out over 15% of the clip avoids clicks.
                     let progress = (n / total).min(1.0);
                     let envelope = (progress / 0.15).min(1.0) * ((1.0 - progress) / 0.15).min(1.0);
-                    let sample =
-                        (n * freq * std::f32::consts::TAU / rate).sin() * 0.12 * envelope;
+                    let sample = (n * freq * std::f32::consts::TAU / rate).sin() * 0.12 * envelope;
                     for s in frame.iter_mut() {
                         *s = sample;
                     }

@@ -201,7 +201,11 @@ impl Params {
         let pairs = parse_query(query).ok_or_else(|| Reply::bad("malformed query string"))?;
         // The unknown key is not echoed: say what is accepted instead.
         if pairs.iter().any(|(k, _)| !known.contains(&k.as_str())) {
-            let known = if known.is_empty() { vec!["none"] } else { known.to_vec() };
+            let known = if known.is_empty() {
+                vec!["none"]
+            } else {
+                known.to_vec()
+            };
             return Err(Reply::bad(&format!(
                 "unknown query parameter; this route accepts: {}",
                 known.join(", ")
@@ -211,7 +215,11 @@ impl Params {
     }
 
     fn all(&self, key: &str) -> Vec<&str> {
-        self.0.iter().filter(|(k, _)| k == key).map(|(_, v)| v.as_str()).collect()
+        self.0
+            .iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .collect()
     }
 
     fn one(&self, key: &str) -> Result<Option<&str>, Reply> {
@@ -250,13 +258,22 @@ fn page(params: &Params) -> Result<(usize, usize), Reply> {
         None => DEFAULT_LIMIT,
         Some(v) => match v.trim().parse::<usize>() {
             Ok(n) if (1..=MAX_LIMIT).contains(&n) => n,
-            _ => return Err(Reply::bad(&format!("`limit` must be a number from 1 to {MAX_LIMIT}"))),
+            _ => {
+                return Err(Reply::bad(&format!(
+                    "`limit` must be a number from 1 to {MAX_LIMIT}"
+                )))
+            }
         },
     };
     let offset = match params.one("cursor")? {
         None => 0,
-        Some(c) => decode_cursor(c.trim())
-            .ok_or_else(|| Reply::error(400, "bad_cursor", "invalid cursor: pass `next_cursor` as returned"))?,
+        Some(c) => decode_cursor(c.trim()).ok_or_else(|| {
+            Reply::error(
+                400,
+                "bad_cursor",
+                "invalid cursor: pass `next_cursor` as returned",
+            )
+        })?,
     };
     Ok((offset, limit))
 }
@@ -266,7 +283,11 @@ fn slice<T>(rows: Vec<T>, offset: usize, limit: usize) -> (Vec<T>, Option<String
     let total = rows.len();
     let end = offset.saturating_add(limit).min(total);
     let next = (end < total).then(|| encode_cursor(end));
-    let page = rows.into_iter().skip(offset).take(end.saturating_sub(offset)).collect();
+    let page = rows
+        .into_iter()
+        .skip(offset)
+        .take(end.saturating_sub(offset))
+        .collect();
     (page, next)
 }
 
@@ -283,7 +304,9 @@ fn day(v: &str, key: &str) -> Result<String, Reply> {
 fn item_filters(params: &Params, emails: bool) -> Result<(String, SearchFilters, bool), Reply> {
     let q = params.one("q")?.unwrap_or("").to_string();
     if q.chars().count() > MAX_QUERY_CHARS {
-        return Err(Reply::bad(&format!("`q` is too long (at most {MAX_QUERY_CHARS} characters)")));
+        return Err(Reply::bad(&format!(
+            "`q` is too long (at most {MAX_QUERY_CHARS} characters)"
+        )));
     }
     let mut f = SearchFilters {
         names_only: !emails,
@@ -291,16 +314,27 @@ fn item_filters(params: &Params, emails: bool) -> Result<(String, SearchFilters,
     };
     for t in params.all("type") {
         f.types.push(
-            ItemType::parse(t).ok_or_else(|| Reply::bad("`type` must be note, meeting or transcription"))?,
+            ItemType::parse(t)
+                .ok_or_else(|| Reply::bad("`type` must be note, meeting or transcription"))?,
         );
     }
     let values = |key: &str| -> Vec<String> {
-        params.all(key).into_iter().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string).collect()
+        params
+            .all(key)
+            .into_iter()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .collect()
     };
     f.tags = values("tag");
     f.categories = values("category");
     f.participants = values("participant_key");
-    for (key, list) in [("tag", &f.tags), ("category", &f.categories), ("participant_key", &f.participants)] {
+    for (key, list) in [
+        ("tag", &f.tags),
+        ("category", &f.categories),
+        ("participant_key", &f.participants),
+    ] {
         if list.len() > archive::facets::MAX_VALUES {
             return Err(Reply::bad(&format!(
                 "too many `{key}` values (at most {})",
@@ -416,22 +450,39 @@ fn check_item(archive_dir: &Path, id: &str) -> Result<(), Reply> {
 
 fn read_item(archive_dir: &Path, id: &str) -> Result<archive::Item, Reply> {
     check_item(archive_dir, id)?;
-    archive::read_item(archive_dir, id)
-        .map_err(|_| Reply::error(422, "unreadable_item", "the item exists but could not be read (invalid frontmatter?)"))
+    archive::read_item(archive_dir, id).map_err(|_| {
+        Reply::error(
+            422,
+            "unreadable_item",
+            "the item exists but could not be read (invalid frontmatter?)",
+        )
+    })
 }
 
 fn get_items(archive_dir: &Path, index: &Path, auth: &Authorized, query: &str) -> Reply {
     let known = [
-        "q", "type", "tag", "category", "participant", "participant_key", "from", "to", "date", "today",
-        "facets", "limit", "cursor",
+        "q",
+        "type",
+        "tag",
+        "category",
+        "participant",
+        "participant_key",
+        "from",
+        "to",
+        "date",
+        "today",
+        "facets",
+        "limit",
+        "cursor",
     ];
     let result = (|| {
         let params = Params::new(query, &known)?;
         let (offset, limit) = page(&params)?;
         let (q, filters, with_facets) = item_filters(&params, auth.has(Scope::People))?;
-        let (rows, facets) =
-            archive::with_index(archive_dir, index, |idx| idx.search_rows(&q, &filters, with_facets))
-                .map_err(|_| Reply::internal())?;
+        let (rows, facets) = archive::with_index(archive_dir, index, |idx| {
+            idx.search_rows(&q, &filters, with_facets)
+        })
+        .map_err(|_| Reply::internal())?;
         let total = rows.len();
         let (rows, next) = slice(rows, offset, limit);
         let mut body = json!({
@@ -507,10 +558,18 @@ fn get_export(archive_dir: &Path, auth: &Authorized, id: &str, query: &str) -> R
             .ok_or_else(|| Reply::bad("`format` must be md, txt, srt or vtt"))?;
         let item = read_item(archive_dir, id)?;
         if format.is_subtitles() && item.meta.item_type == ItemType::Note {
-            return Err(Reply::error(422, "unsupported_format", archive::export::NOTE_SUBTITLES_ERROR));
+            return Err(Reply::error(
+                422,
+                "unsupported_format",
+                archive::export::NOTE_SUBTITLES_ERROR,
+            ));
         }
         let mut text = archive::export::export_item(archive_dir, id, format).map_err(|_| {
-            Reply::error(422, "unsupported_format", "this item has nothing to export in that format yet")
+            Reply::error(
+                422,
+                "unsupported_format",
+                "this item has nothing to export in that format yet",
+            )
         })?;
         if format == ExportFormat::Md && !auth.has(Scope::People) {
             text = md_without_emails(&text)?;
@@ -556,7 +615,11 @@ fn get_document(archive_dir: &Path, id: &str, name: &str, query: &str) -> Reply 
     let result = (|| {
         Params::new(query, &[])?;
         if companion::validate_companion_name(name).is_err() {
-            return Err(Reply::error(400, "invalid_name", "invalid document name: a .md file of the item, not the transcript"));
+            return Err(Reply::error(
+                400,
+                "invalid_name",
+                "invalid document name: a .md file of the item, not the transcript",
+            ));
         }
         read_item(archive_dir, id)?;
         let doc = companion::read_companion(archive_dir, id, name)
@@ -595,7 +658,11 @@ fn get_people(archive_dir: &Path, auth: &Authorized, query: &str) -> Reply {
         let params = Params::new(query, &["limit", "cursor"])?;
         let (offset, limit) = page(&params)?;
         let people = archive::people::list_people(archive_dir).map_err(|_| {
-            Reply::error(422, "unreadable_people", "the People registry could not be read")
+            Reply::error(
+                422,
+                "unreadable_people",
+                "the People registry could not be read",
+            )
         })?;
         let total = people.len();
         let (people, next) = slice(people, offset, limit);
@@ -624,7 +691,13 @@ fn get_people(archive_dir: &Path, auth: &Authorized, query: &str) -> Reply {
 
 /// Answer an authorized archive request. `url` is the request target
 /// (path and query, as sent); `index` is the search index file.
-pub fn handle(archive_dir: &Path, index: &Path, auth: &Authorized, method: &str, url: &str) -> Reply {
+pub fn handle(
+    archive_dir: &Path,
+    index: &Path,
+    auth: &Authorized,
+    method: &str,
+    url: &str,
+) -> Reply {
     let (path, query) = url.split_once('?').unwrap_or((url, ""));
     let reply = match parse_route(method, path) {
         ArchiveRoute::Items => get_items(archive_dir, index, auth, query),
@@ -649,11 +722,19 @@ mod tests {
     const PERSON_EMAIL: &str = "bob@example.org";
 
     fn read() -> Authorized {
-        Authorized { id: "r".into(), name: "reader".into(), scopes: vec![Scope::Read] }
+        Authorized {
+            id: "r".into(),
+            name: "reader".into(),
+            scopes: vec![Scope::Read],
+        }
     }
 
     fn people_scope() -> Authorized {
-        Authorized { id: "rp".into(), name: "people".into(), scopes: vec![Scope::Read, Scope::People] }
+        Authorized {
+            id: "rp".into(),
+            name: "people".into(),
+            scopes: vec![Scope::Read, Scope::People],
+        }
     }
 
     struct Fx {
@@ -675,8 +756,14 @@ mod tests {
             source: "browser:meet.google.com".into(),
             tags: vec!["release".into()],
             participants: vec![
-                Participant { name: "Anna Rossi".into(), email: Some(EMAIL.into()) },
-                Participant { name: "Carlo".into(), email: None },
+                Participant {
+                    name: "Anna Rossi".into(),
+                    email: Some(EMAIL.into()),
+                },
+                Participant {
+                    name: "Carlo".into(),
+                    email: None,
+                },
             ],
             ..Default::default()
         };
@@ -738,7 +825,13 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        Fx { _tmp: tmp, archive, index, meeting, note }
+        Fx {
+            _tmp: tmp,
+            archive,
+            index,
+            meeting,
+            note,
+        }
     }
 
     fn get(f: &Fx, auth: &Authorized, url: &str) -> Reply {
@@ -779,10 +872,22 @@ mod tests {
         assert_eq!(parse_route("HEAD", "/archive/items/"), Items);
         assert_eq!(parse_route("GET", "/archive/people"), People);
         let id = "2026/09/2026-09-24-weekly-sync";
-        assert_eq!(parse_route("GET", &format!("/archive/items/{id}")), Item(id.into()));
-        assert_eq!(parse_route("GET", "/archive/items/2026%2F09%2F2026-09-24-weekly-sync"), Item(id.into()));
-        assert_eq!(parse_route("GET", &format!("/archive/items/{id}/export")), Export(id.into()));
-        assert_eq!(parse_route("GET", &format!("/archive/items/{id}/documents")), Documents(id.into()));
+        assert_eq!(
+            parse_route("GET", &format!("/archive/items/{id}")),
+            Item(id.into())
+        );
+        assert_eq!(
+            parse_route("GET", "/archive/items/2026%2F09%2F2026-09-24-weekly-sync"),
+            Item(id.into())
+        );
+        assert_eq!(
+            parse_route("GET", &format!("/archive/items/{id}/export")),
+            Export(id.into())
+        );
+        assert_eq!(
+            parse_route("GET", &format!("/archive/items/{id}/documents")),
+            Documents(id.into())
+        );
         assert_eq!(
             parse_route("GET", &format!("/archive/items/{id}/documents/document.md")),
             Document(id.into(), "document.md".into())
@@ -791,7 +896,11 @@ mod tests {
             parse_route("GET", "/archive/items/a%2Fb/documents/my%20notes.md"),
             Document("a/b".into(), "my notes.md".into())
         );
-        for bad in ["/archive/items/%zz", "/archive/items/%zz/export", "/archive/items/x/documents/%ff"] {
+        for bad in [
+            "/archive/items/%zz",
+            "/archive/items/%zz/export",
+            "/archive/items/x/documents/%ff",
+        ] {
             assert_eq!(parse_route("GET", bad), BadId, "{bad}");
         }
         for (m, p) in [
@@ -850,16 +959,34 @@ mod tests {
         assert_eq!(only("/archive/items?type=note"), vec![f.note.clone()]);
         assert_eq!(only("/archive/items?type=note&type=MEETING").len(), 2);
         assert_eq!(only("/archive/items?tag=Release"), vec![f.meeting.clone()]);
-        assert_eq!(only("/archive/items?participant=anna%20rossi"), vec![f.meeting.clone()]);
-        assert_eq!(only("/archive/items?from=2026-09-21&to=2026-09-30"), vec![f.meeting.clone()]);
-        assert_eq!(only("/archive/items?date=week&today=2026-09-24"), vec![f.meeting.clone()]);
+        assert_eq!(
+            only("/archive/items?participant=anna%20rossi"),
+            vec![f.meeting.clone()]
+        );
+        assert_eq!(
+            only("/archive/items?from=2026-09-21&to=2026-09-30"),
+            vec![f.meeting.clone()]
+        );
+        assert_eq!(
+            only("/archive/items?date=week&today=2026-09-24"),
+            vec![f.meeting.clone()]
+        );
         assert_eq!(only("/archive/items?q=caff"), vec![f.note.clone()]);
         let hit = get(&f, &read(), "/archive/items?q=roadmap");
-        assert!(json_of(&hit)["items"][0]["snippet"].as_str().unwrap().contains("**"));
+        assert!(json_of(&hit)["items"][0]["snippet"]
+            .as_str()
+            .unwrap()
+            .contains("**"));
 
         let faceted = json_of(&get(&f, &read(), "/archive/items?facets=true"));
         assert_eq!(faceted["facets"]["total"], 2);
-        assert_eq!(faceted["facets"]["types"]["values"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            faceted["facets"]["types"]["values"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
         assert_eq!(faceted["facets"]["tags"]["truncated"], false);
         let key = faceted["facets"]["participants"]["values"]
             .as_array()
@@ -870,7 +997,10 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        assert_eq!(only(&format!("/archive/items?participant_key={key}")), vec![f.meeting.clone()]);
+        assert_eq!(
+            only(&format!("/archive/items?participant_key={key}")),
+            vec![f.meeting.clone()]
+        );
     }
 
     #[test]
@@ -904,7 +1034,11 @@ mod tests {
         unique.dedup();
         assert_eq!(unique.len(), 7, "no item twice");
         // A cursor past the end is an empty page, not an error.
-        let past = get(&f, &read(), &format!("/archive/items?cursor={}", encode_cursor(1000)));
+        let past = get(
+            &f,
+            &read(),
+            &format!("/archive/items?cursor={}", encode_cursor(1000)),
+        );
         assert!(ids(&past).is_empty());
         assert_eq!(json_of(&past)["next_cursor"], Value::Null);
         // Bounds.
@@ -930,7 +1064,10 @@ mod tests {
         assert_eq!(get(&f, &read(), &long).status, 400);
         let too_many = format!(
             "/archive/items?{}",
-            (0..=archive::facets::MAX_VALUES).map(|i| format!("tag=t{i}")).collect::<Vec<_>>().join("&")
+            (0..=archive::facets::MAX_VALUES)
+                .map(|i| format!("tag=t{i}"))
+                .collect::<Vec<_>>()
+                .join("&")
         );
         assert_eq!(get(&f, &read(), &too_many).status, 400);
         for c in ["nope", "c1.1", "zz"] {
@@ -949,9 +1086,18 @@ mod tests {
         assert_eq!(v["id"], f.meeting.as_str());
         assert_eq!(v["meta"]["type"], "meeting");
         assert_eq!(v["meta"]["source"], "browser:meet.google.com");
-        assert_eq!(v["meta"]["participants"], json!([{"name": "Anna Rossi"}, {"name": "Carlo"}]));
-        assert!(v["text"].as_str().unwrap().contains("**[00:12:03] Anna Rossi:** Parliamo della roadmap."));
-        assert_eq!(v["speakers"], json!([{"id": "voice:1", "label": "Anna Rossi"}]));
+        assert_eq!(
+            v["meta"]["participants"],
+            json!([{"name": "Anna Rossi"}, {"name": "Carlo"}])
+        );
+        assert!(v["text"]
+            .as_str()
+            .unwrap()
+            .contains("**[00:12:03] Anna Rossi:** Parliamo della roadmap."));
+        assert_eq!(
+            v["speakers"],
+            json!([{"id": "voice:1", "label": "Anna Rossi"}])
+        );
         assert_eq!(
             v["lines"],
             json!([{"id": 0, "start_ms": 723000, "end_ms": 725000, "channel": "remote", "speaker": "voice:1", "text": "Parliamo della roadmap."}])
@@ -972,11 +1118,26 @@ mod tests {
             assert!(!body.contains(forbidden), "{forbidden} in {body}");
         }
         // With the people scope, the participant's email.
-        let full = json_of(&get(&f, &people_scope(), &format!("/archive/items/{}", f.meeting)));
-        assert_eq!(full["meta"]["participants"][0], json!({"name": "Anna Rossi", "email": EMAIL}));
+        let full = json_of(&get(
+            &f,
+            &people_scope(),
+            &format!("/archive/items/{}", f.meeting),
+        ));
+        assert_eq!(
+            full["meta"]["participants"][0],
+            json!({"name": "Anna Rossi", "email": EMAIL})
+        );
         assert!(!full.to_string().contains("embedding"));
         // Also through %2F.
-        assert_eq!(get(&f, &read(), &format!("/archive/items/{}", f.meeting.replace('/', "%2F"))).status, 200);
+        assert_eq!(
+            get(
+                &f,
+                &read(),
+                &format!("/archive/items/{}", f.meeting.replace('/', "%2F"))
+            )
+            .status,
+            200
+        );
     }
 
     #[test]
@@ -986,16 +1147,31 @@ mod tests {
         for id in ["2026/09/nope", "nope", "2026/09"] {
             for suffix in ["", "/export", "/documents", "/documents/document.md"] {
                 let r = get(&f, &read(), &format!("/archive/items/{id}{suffix}"));
-                assert_eq!((r.status, code(&r).as_str()), (404, "not_found"), "{id}{suffix}");
+                assert_eq!(
+                    (r.status, code(&r).as_str()),
+                    (404, "not_found"),
+                    "{id}{suffix}"
+                );
                 assert!(!text_of(&r).contains(id), "the id is not echoed");
             }
         }
-        for id in ["..%2Fsecret", ".sussurro", "2026/../..", "%2Fetc%2Fpasswd", "a%5Cb", "C:%2Fx", "a%00b"] {
+        for id in [
+            "..%2Fsecret",
+            ".sussurro",
+            "2026/../..",
+            "%2Fetc%2Fpasswd",
+            "a%5Cb",
+            "C:%2Fx",
+            "a%00b",
+        ] {
             let r = get(&f, &read(), &format!("/archive/items/{id}"));
             assert_eq!((r.status, code(&r).as_str()), (400, "invalid_id"), "{id}");
         }
         // Unknown parameters on the item routes too.
-        assert_eq!(get(&f, &read(), &format!("/archive/items/{}?x=1", f.meeting)).status, 400);
+        assert_eq!(
+            get(&f, &read(), &format!("/archive/items/{}?x=1", f.meeting)).status,
+            400
+        );
     }
 
     /// Voice profiles (#241, P13) live in the app data dir, next to the
@@ -1006,7 +1182,9 @@ mod tests {
         let f = fixture();
         // Two more meetings with Anna's voice (256-d embeddings) linked to
         // her, so she gets a ready profile.
-        let emb: Vec<f32> = (0..crate::speakers::model::EMBEDDING_DIM).map(|i| 0.001_234_567 * (i as f32 + 1.0)).collect();
+        let emb: Vec<f32> = (0..crate::speakers::model::EMBEDDING_DIM)
+            .map(|i| 0.001_234_567 * (i as f32 + 1.0))
+            .collect();
         for day in [21, 22] {
             let meta = ItemMeta {
                 item_type: ItemType::Meeting,
@@ -1016,7 +1194,12 @@ mod tests {
                 ..Default::default()
             };
             let segs = SegmentsFile {
-                speakers: vec![DocSpeaker { id: "voice:1".into(), label: "Anna Rossi".into(), person_id: Some("p-anna".into()), ..Default::default() }],
+                speakers: vec![DocSpeaker {
+                    id: "voice:1".into(),
+                    label: "Anna Rossi".into(),
+                    person_id: Some("p-anna".into()),
+                    ..Default::default()
+                }],
                 segments: vec![Segment {
                     id: 0,
                     channel: Channel::Remote,
@@ -1036,22 +1219,42 @@ mod tests {
         assert!(status.ready);
         let profile = std::fs::read_to_string(store.dir().join("p-anna.json")).unwrap();
         let centroid: Value = serde_json::from_str::<Value>(&profile).unwrap()["centroid"].clone();
-        let needles: Vec<String> = centroid.as_array().unwrap().iter().map(|x| x.to_string()).filter(|x| x.len() > 6).collect();
+        let needles: Vec<String> = centroid
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.to_string())
+            .filter(|x| x.len() > 6)
+            .collect();
         assert!(needles.len() > 100);
 
         let all = people_scope();
         let items = ids(&get(&f, &all, "/archive/items?facets=true"));
         assert_eq!(items.len(), 4);
-        let mut bodies = vec![text_of(&get(&f, &all, "/archive/items?facets=true")), text_of(&get(&f, &all, "/archive/people"))];
+        let mut bodies = vec![
+            text_of(&get(&f, &all, "/archive/items?facets=true")),
+            text_of(&get(&f, &all, "/archive/people")),
+        ];
         for id in &items {
             bodies.push(text_of(&get(&f, &all, &format!("/archive/items/{id}"))));
-            bodies.push(text_of(&get(&f, &all, &format!("/archive/items/{id}/documents"))));
+            bodies.push(text_of(&get(
+                &f,
+                &all,
+                &format!("/archive/items/{id}/documents"),
+            )));
             for fmt in ["md", "txt", "srt", "vtt"] {
-                bodies.push(text_of(&get(&f, &all, &format!("/archive/items/{id}/export?format={fmt}"))));
+                bodies.push(text_of(&get(
+                    &f,
+                    &all,
+                    &format!("/archive/items/{id}/export?format={fmt}"),
+                )));
             }
         }
         for body in &bodies {
-            assert!(!body.contains("centroid") && !body.contains("voices"), "{body}");
+            assert!(
+                !body.contains("centroid") && !body.contains("voices"),
+                "{body}"
+            );
             assert!(needles.iter().all(|n| !body.contains(n.as_str())), "{body}");
         }
     }
@@ -1060,58 +1263,114 @@ mod tests {
     fn exports_every_format_and_leaves_emails_out_without_the_people_scope() {
         let f = fixture();
         let export = |auth: &Authorized, id: &str, fmt: &str| {
-            get(&f, auth, &format!("/archive/items/{id}/export?format={fmt}"))
+            get(
+                &f,
+                auth,
+                &format!("/archive/items/{id}/export?format={fmt}"),
+            )
         };
         let md = export(&read(), &f.meeting, "md");
         assert_eq!(md.status, 200);
-        let Body::File { content_type, filename, text } = &md.body else { panic!("a file") };
+        let Body::File {
+            content_type,
+            filename,
+            text,
+        } = &md.body
+        else {
+            panic!("a file")
+        };
         assert!(content_type.starts_with("text/markdown"));
         assert!(filename.ends_with("weekly-sync.md"), "{filename}");
-        assert!(text.contains("Anna Rossi") && !text.contains(EMAIL), "{text}");
+        assert!(
+            text.contains("Anna Rossi") && !text.contains(EMAIL),
+            "{text}"
+        );
         assert!(text.contains("Parliamo della roadmap."));
         // The people scope gets the file as stored.
-        let stored = std::fs::read_to_string(f.archive.join(&f.meeting).join("transcript.md")).unwrap();
+        let stored =
+            std::fs::read_to_string(f.archive.join(&f.meeting).join("transcript.md")).unwrap();
         assert!(stored.contains(EMAIL));
         assert_eq!(text_of(&export(&people_scope(), &f.meeting, "md")), stored);
         // Without emails in the frontmatter the file is as stored for anyone.
-        let note_stored = std::fs::read_to_string(f.archive.join(&f.note).join("transcript.md")).unwrap();
+        let note_stored =
+            std::fs::read_to_string(f.archive.join(&f.note).join("transcript.md")).unwrap();
         assert_eq!(text_of(&export(&read(), &f.note, "md")), note_stored);
         assert_eq!(
-            text_of(&get(&f, &read(), &format!("/archive/items/{}/export", f.note))),
+            text_of(&get(
+                &f,
+                &read(),
+                &format!("/archive/items/{}/export", f.note)
+            )),
             note_stored,
             "md by default"
         );
 
-        assert_eq!(text_of(&export(&read(), &f.meeting, "txt")), "[00:12:03] Anna Rossi: Parliamo della roadmap.\n");
+        assert_eq!(
+            text_of(&export(&read(), &f.meeting, "txt")),
+            "[00:12:03] Anna Rossi: Parliamo della roadmap.\n"
+        );
         assert!(text_of(&export(&read(), &f.meeting, "srt")).contains("00:12:03,000 --> "));
         assert!(text_of(&export(&read(), &f.meeting, "VTT")).starts_with("WEBVTT"));
         let note_srt = export(&read(), &f.note, "srt");
-        assert_eq!((note_srt.status, code(&note_srt).as_str()), (422, "unsupported_format"));
+        assert_eq!(
+            (note_srt.status, code(&note_srt).as_str()),
+            (422, "unsupported_format")
+        );
         for fmt in ["docx", "wav", "json"] {
             assert_eq!(export(&read(), &f.meeting, fmt).status, 400, "{fmt}");
         }
-        assert_eq!(get(&f, &read(), &format!("/archive/items/{}/export?format=md&path=x", f.meeting)).status, 400);
+        assert_eq!(
+            get(
+                &f,
+                &read(),
+                &format!("/archive/items/{}/export?format=md&path=x", f.meeting)
+            )
+            .status,
+            400
+        );
     }
 
     #[test]
     fn companion_documents_are_listed_and_read_by_name_only() {
         let f = fixture();
-        let list = json_of(&get(&f, &read(), &format!("/archive/items/{}/documents", f.meeting)));
+        let list = json_of(&get(
+            &f,
+            &read(),
+            &format!("/archive/items/{}/documents", f.meeting),
+        ));
         assert_eq!(list["documents"].as_array().unwrap().len(), 1);
         assert_eq!(list["documents"][0]["name"], "document.md");
         assert_eq!(list["documents"][0]["title"], "Minutes");
-        assert!(list["documents"][0].get("text").is_none(), "no bodies in the list");
-        let none = json_of(&get(&f, &read(), &format!("/archive/items/{}/documents", f.note)));
+        assert!(
+            list["documents"][0].get("text").is_none(),
+            "no bodies in the list"
+        );
+        let none = json_of(&get(
+            &f,
+            &read(),
+            &format!("/archive/items/{}/documents", f.note),
+        ));
         assert_eq!(none["documents"], json!([]));
 
-        let doc = get(&f, &read(), &format!("/archive/items/{}/documents/document.md", f.meeting));
+        let doc = get(
+            &f,
+            &read(),
+            &format!("/archive/items/{}/documents/document.md", f.meeting),
+        );
         assert_eq!(doc.status, 200);
         let d = json_of(&doc);
         assert_eq!(d["meta"]["recipe"], "formatted-document");
         assert!(d["text"].as_str().unwrap().contains("Roadmap agreed."));
 
-        let missing = get(&f, &read(), &format!("/archive/items/{}/documents/other.md", f.meeting));
-        assert_eq!((missing.status, code(&missing).as_str()), (404, "not_found"));
+        let missing = get(
+            &f,
+            &read(),
+            &format!("/archive/items/{}/documents/other.md", f.meeting),
+        );
+        assert_eq!(
+            (missing.status, code(&missing).as_str()),
+            (404, "not_found")
+        );
         for name in [
             "transcript.md",
             ".hidden.md",
@@ -1121,8 +1380,16 @@ mod tests {
             "audio.wav",
             ".sussurro%2Fsegments.json",
         ] {
-            let r = get(&f, &read(), &format!("/archive/items/{}/documents/{name}", f.meeting));
-            assert_eq!((r.status, code(&r).as_str()), (400, "invalid_name"), "{name}");
+            let r = get(
+                &f,
+                &read(),
+                &format!("/archive/items/{}/documents/{name}", f.meeting),
+            );
+            assert_eq!(
+                (r.status, code(&r).as_str()),
+                (400, "invalid_name"),
+                "{name}"
+            );
         }
     }
 
@@ -1134,8 +1401,14 @@ mod tests {
         let v = json_of(&r);
         assert_eq!(v["total"], 2);
         assert_eq!(v["emails"], false);
-        assert_eq!(v["people"][0], json!({"id": "p-anna", "name": "Anna Rossi", "aliases": []}));
-        assert_eq!(v["people"][1], json!({"id": "p-bob", "name": "Bob", "aliases": ["Roberto"]}));
+        assert_eq!(
+            v["people"][0],
+            json!({"id": "p-anna", "name": "Anna Rossi", "aliases": []})
+        );
+        assert_eq!(
+            v["people"][1],
+            json!({"id": "p-bob", "name": "Bob", "aliases": ["Roberto"]})
+        );
         let body = text_of(&r);
         for forbidden in [PERSON_EMAIL, "\"email\"", "voice", "centroid", "0.25"] {
             assert!(!body.contains(forbidden), "{forbidden} in {body}");
@@ -1144,12 +1417,19 @@ mod tests {
         let v = json_of(&full);
         assert_eq!(v["emails"], true);
         assert_eq!(v["people"][1]["email"], PERSON_EMAIL);
-        assert!(!text_of(&full).contains("centroid"), "unknown fields never served");
+        assert!(
+            !text_of(&full).contains("centroid"),
+            "unknown fields never served"
+        );
         // Paged like the items.
         let page = json_of(&get(&f, &read(), "/archive/people?limit=1"));
         assert_eq!(page["people"].as_array().unwrap().len(), 1);
         let next = page["next_cursor"].as_str().unwrap().to_string();
-        let rest = json_of(&get(&f, &read(), &format!("/archive/people?limit=1&cursor={next}")));
+        let rest = json_of(&get(
+            &f,
+            &read(),
+            &format!("/archive/people?limit=1&cursor={next}"),
+        ));
         assert_eq!(rest["people"][0]["name"], "Bob");
         assert_eq!(rest["next_cursor"], Value::Null);
         assert_eq!(get(&f, &read(), "/archive/people?limit=500").status, 400);
@@ -1157,7 +1437,10 @@ mod tests {
         // An unreadable registry says so, without a path.
         std::fs::write(f.archive.join(".sussurro").join("people.json"), "not json").unwrap();
         let broken = get(&f, &read(), "/archive/people");
-        assert_eq!((broken.status, code(&broken).as_str()), (422, "unreadable_people"));
+        assert_eq!(
+            (broken.status, code(&broken).as_str()),
+            (422, "unreadable_people")
+        );
         assert!(!text_of(&broken).contains(f.archive.to_str().unwrap()));
     }
 
@@ -1166,12 +1449,19 @@ mod tests {
     fn an_email_is_never_an_oracle_without_the_people_scope() {
         let f = fixture();
         for q in [EMAIL, "example", "anna%40example.com"] {
-            let hits = |auth: &Authorized| json_of(&get(&f, auth, &format!("/archive/items?q={q}")))["total"].clone();
+            let hits = |auth: &Authorized| {
+                json_of(&get(&f, auth, &format!("/archive/items?q={q}")))["total"].clone()
+            };
             assert_eq!(hits(&read()), 0, "{q}");
             assert_eq!(hits(&people_scope()), 1, "{q}");
         }
         let by = |auth: &Authorized| {
-            json_of(&get(&f, auth, &format!("/archive/items?participant={EMAIL}")))["total"].clone()
+            json_of(&get(
+                &f,
+                auth,
+                &format!("/archive/items?participant={EMAIL}"),
+            ))["total"]
+                .clone()
         };
         assert_eq!(by(&read()), 0);
         assert_eq!(by(&people_scope()), 1);
@@ -1193,7 +1483,15 @@ mod tests {
         }
         let appdata = f.index.parent().unwrap().to_string_lossy().into_owned();
         let root = f.archive.to_string_lossy().into_owned();
-        for forbidden in [EMAIL, PERSON_EMAIL, "embedding", "0.12345", "archive-index", &appdata, &root] {
+        for forbidden in [
+            EMAIL,
+            PERSON_EMAIL,
+            "embedding",
+            "0.12345",
+            "archive-index",
+            &appdata,
+            &root,
+        ] {
             assert!(!all.contains(forbidden), "{forbidden}");
         }
     }
@@ -1208,7 +1506,11 @@ mod tests {
         assert_eq!((r.status, code(&r).as_str()), (500, "internal"));
         assert!(!text_of(&r).contains(blocked.to_str().unwrap()));
         // An item with broken YAML is there, but unreadable.
-        std::fs::write(f.archive.join(&f.note).join("transcript.md"), "---\ntitle: [unclosed\n---\n").unwrap();
+        std::fs::write(
+            f.archive.join(&f.note).join("transcript.md"),
+            "---\ntitle: [unclosed\n---\n",
+        )
+        .unwrap();
         let r = get(&f, &read(), &format!("/archive/items/{}", f.note));
         assert_eq!((r.status, code(&r).as_str()), (422, "unreadable_item"));
         // Bodies over the cap become a 422.

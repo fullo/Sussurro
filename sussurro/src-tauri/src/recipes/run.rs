@@ -58,7 +58,10 @@ pub struct RunOutput {
 /// A profile a recipe can run on at all: it names a model.
 pub fn check_profile(profile: &LlmProfile) -> Result<()> {
     if profile.model.trim().is_empty() {
-        bail!("the profile “{}” has no model — choose one in Recipes → LLM profiles", profile.name);
+        bail!(
+            "the profile “{}” has no model — choose one in Recipes → LLM profiles",
+            profile.name
+        );
     }
     Ok(())
 }
@@ -109,7 +112,14 @@ pub fn preview(
     question: Option<&str>,
     profile: &LlmProfile,
 ) -> Result<ExternalRunPreview> {
-    preview_with(archive, id, recipe, question, profile, &RunOptions::default())
+    preview_with(
+        archive,
+        id,
+        recipe,
+        question,
+        profile,
+        &RunOptions::default(),
+    )
 }
 
 /// [`preview`] for a run with `opts` (participant emails included or not).
@@ -124,15 +134,24 @@ pub fn preview_with(
     let item = crate::archive::read_item(archive, id)?;
     let input = item_input(&item);
     let participants = participant_lines(&item.meta, opts.include_emails);
-    let people_chars = if participants.is_empty() { 0 } else { participants.join(", ").chars().count() };
-    let chars = input.iter().map(|l| l.format().chars().count() + 1).sum::<usize>()
+    let people_chars = if participants.is_empty() {
+        0
+    } else {
+        participants.join(", ").chars().count()
+    };
+    let chars = input
+        .iter()
+        .map(|l| l.format().chars().count() + 1)
+        .sum::<usize>()
         + recipe.prompt.chars().count()
         + people_chars;
     let emails_available = item
         .meta
         .participants
         .iter()
-        .filter(|p| !p.name.trim().is_empty() && p.email.as_deref().is_some_and(|e| !e.trim().is_empty()))
+        .filter(|p| {
+            !p.name.trim().is_empty() && p.email.as_deref().is_some_and(|e| !e.trim().is_empty())
+        })
         .count();
     Ok(ExternalRunPreview {
         item_id: id.to_string(),
@@ -151,7 +170,11 @@ pub fn preview_with(
         speakers: speaker_names(&input),
         participants: participants.len(),
         emails_available,
-        emails_sent: if opts.include_emails { emails_available } else { 0 },
+        emails_sent: if opts.include_emails {
+            emails_available
+        } else {
+            0
+        },
     })
 }
 
@@ -163,8 +186,16 @@ fn send_entry(recipe: &Recipe, profile: &LlmProfile, now: &str) -> ExternalSend 
         host: profile.host(),
         profile: profile.name.trim().to_string(),
         model: profile.model.trim().to_string(),
-        kind: if question { SendKind::Question } else { SendKind::Recipe },
-        recipe: if question { String::new() } else { recipe.id.clone() },
+        kind: if question {
+            SendKind::Question
+        } else {
+            SendKind::Recipe
+        },
+        recipe: if question {
+            String::new()
+        } else {
+            recipe.id.clone()
+        },
     }
 }
 
@@ -221,7 +252,18 @@ pub fn run_on_item(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<RunOutput> {
-    run_on_item_with(archive, id, recipe, profile, consent, model, now, cancel, progress, &RunOptions::default())
+    run_on_item_with(
+        archive,
+        id,
+        recipe,
+        profile,
+        consent,
+        model,
+        now,
+        cancel,
+        progress,
+        &RunOptions::default(),
+    )
 }
 
 /// [`run_on_item`] with the run's options (#143). Also refused, before
@@ -272,22 +314,37 @@ pub fn run_on_item_with(
         progress,
     )?;
     match recipe.target {
-        RecipeTarget::Answer => Ok(RunOutput { file: None, answer: Some(out) }),
+        RecipeTarget::Answer => Ok(RunOutput {
+            file: None,
+            answer: Some(out),
+        }),
         RecipeTarget::CompanionDocument => {
             let meta = CompanionMeta {
                 title: format!("{} — {}", item.meta.title.trim(), recipe.name.trim()),
-                generated_by: format!("{} / {} / {}", recipe.name.trim(), profile.name.trim(), profile.model.trim()),
+                generated_by: format!(
+                    "{} / {} / {}",
+                    recipe.name.trim(),
+                    profile.name.trim(),
+                    profile.model.trim()
+                ),
                 recipe: recipe.id.clone(),
                 profile: profile.name.trim().to_string(),
                 model: profile.model.trim().to_string(),
                 external: profile.external,
-                host: if profile.external { profile.host() } else { String::new() },
+                host: if profile.external {
+                    profile.host()
+                } else {
+                    String::new()
+                },
                 date: now.to_string(),
                 transcript: TRANSCRIPT_FILE.to_string(),
                 extra: Default::default(),
             };
             let file = write_companion(archive, id, &companion_file_name(recipe), &meta, &out)?;
-            Ok(RunOutput { file: Some(file), answer: None })
+            Ok(RunOutput {
+                file: Some(file),
+                answer: None,
+            })
         }
     }
 }
@@ -321,10 +378,18 @@ impl Runs {
     }
 
     /// [`Runs::begin`] for a free question (shown in the run's status).
-    pub fn begin_with(&self, item_id: &str, recipe: &Recipe, question: Option<&str>) -> Result<Arc<AtomicBool>> {
+    pub fn begin_with(
+        &self,
+        item_id: &str,
+        recipe: &Recipe,
+        question: Option<&str>,
+    ) -> Result<Arc<AtomicBool>> {
         let mut map = self.running.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(r) = map.get(item_id) {
-            bail!("“{}” is already running on this item — wait for it or cancel it", r.status.recipe_name);
+            bail!(
+                "“{}” is already running on this item — wait for it or cancel it",
+                r.status.recipe_name
+            );
         }
         let cancel = Arc::new(AtomicBool::new(false));
         map.insert(
@@ -344,18 +409,31 @@ impl Runs {
     }
 
     pub fn set_progress(&self, item_id: &str, p: Progress) {
-        if let Some(r) = self.running.lock().unwrap_or_else(|e| e.into_inner()).get_mut(item_id) {
+        if let Some(r) = self
+            .running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(item_id)
+        {
             r.status.progress = Some(p);
         }
     }
 
     pub fn end(&self, item_id: &str) {
-        self.running.lock().unwrap_or_else(|e| e.into_inner()).remove(item_id);
+        self.running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(item_id);
     }
 
     /// Ask the run on `item_id` to stop; false when none runs there.
     pub fn cancel(&self, item_id: &str) -> bool {
-        match self.running.lock().unwrap_or_else(|e| e.into_inner()).get(item_id) {
+        match self
+            .running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(item_id)
+        {
             Some(r) => {
                 r.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
                 true
@@ -397,7 +475,11 @@ mod tests {
             ..Default::default()
         };
         let segs = SegmentsFile {
-            speakers: vec![DocSpeaker { id: "meet:anna".into(), label: "Anna".into(), ..Default::default() }],
+            speakers: vec![DocSpeaker {
+                id: "meet:anna".into(),
+                label: "Anna".into(),
+                ..Default::default()
+            }],
             segments: vec![
                 Segment {
                     id: 0,
@@ -407,7 +489,13 @@ mod tests {
                     text: "Mando il file venerdì.".into(),
                     ..Default::default()
                 },
-                Segment { id: 1, start_ms: 70_000, end_ms: 72_000, text: "Ok.".into(), ..Default::default() },
+                Segment {
+                    id: 1,
+                    start_ms: 70_000,
+                    end_ms: 72_000,
+                    text: "Ok.".into(),
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         };
@@ -415,7 +503,14 @@ mod tests {
     }
 
     fn local() -> LlmProfile {
-        LlmProfile::new("local", "Local", CleanupApi::Ollama, "http://localhost:11434", "", "llama3.2:3b")
+        LlmProfile::new(
+            "local",
+            "Local",
+            CleanupApi::Ollama,
+            "http://localhost:11434",
+            "",
+            "llama3.2:3b",
+        )
     }
 
     fn recipe(i: usize) -> Recipe {
@@ -428,9 +523,25 @@ mod tests {
         let archive = tmp.path().join("Sussurro");
         let id = meeting(&archive);
         let model = FakeModel::new("**tl;dr:** Anna manda il file.\n\n# Weekly sync\n");
-        let out = run_on_item(&archive, &id, &recipe(0), &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {})
-            .unwrap();
-        assert_eq!(out, RunOutput { file: Some("document.md".into()), answer: None });
+        let out = run_on_item(
+            &archive,
+            &id,
+            &recipe(0),
+            &local(),
+            None,
+            &model,
+            NOW,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            RunOutput {
+                file: Some("document.md".into()),
+                answer: None
+            }
+        );
 
         // Speaker-aware input: timestamps and labels, header, Italian.
         let calls = model.calls.borrow();
@@ -438,11 +549,17 @@ mod tests {
         assert!(system.contains("Write in Italian."));
         assert!(system.contains("speaker's name"));
         let user = model.user(0);
-        assert!(user.contains("[00:01:01] Anna: Mando il file venerdì.\n[00:01:10] Ok."), "{user}");
+        assert!(
+            user.contains("[00:01:01] Anna: Mando il file venerdì.\n[00:01:10] Ok."),
+            "{user}"
+        );
         assert!(user.contains("Title: Weekly sync\nKind: meeting"));
 
         let raw = std::fs::read_to_string(archive.join(&id).join("document.md")).unwrap();
-        assert!(raw.contains("generated_by: Formatted document / Local / llama3.2:3b\n"), "{raw}");
+        assert!(
+            raw.contains("generated_by: Formatted document / Local / llama3.2:3b\n"),
+            "{raw}"
+        );
         assert!(raw.contains("transcript: transcript.md\n"));
         assert!(raw.contains("[the transcript](transcript.md)"));
         let doc = read_companion(&archive, &id, "document.md").unwrap();
@@ -458,8 +575,23 @@ mod tests {
         let archive = tmp.path().join("Sussurro");
         let id = meeting(&archive);
         let model = FakeModel::new("- [ ] Mandare il file — Anna, venerdì");
-        run_on_item(&archive, &id, &recipe(2), &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
-        let files: Vec<_> = list_companions(&archive, &id).unwrap().into_iter().map(|d| d.file).collect();
+        run_on_item(
+            &archive,
+            &id,
+            &recipe(2),
+            &local(),
+            None,
+            &model,
+            NOW,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap();
+        let files: Vec<_> = list_companions(&archive, &id)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.file)
+            .collect();
         assert_eq!(files, ["action-items.md"]);
     }
 
@@ -476,17 +608,58 @@ mod tests {
             ..Default::default()
         };
         let model = FakeModel::new("Anna.");
-        let out = run_on_item(&archive, &id, &ask, &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
-        assert_eq!(out, RunOutput { file: None, answer: Some("Anna.".into()) });
+        let out = run_on_item(
+            &archive,
+            &id,
+            &ask,
+            &local(),
+            None,
+            &model,
+            NOW,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            RunOutput {
+                file: None,
+                answer: Some("Anna.".into())
+            }
+        );
         assert!(list_companions(&archive, &id).unwrap().is_empty());
     }
 
     fn work() -> LlmProfile {
-        LlmProfile::new("work", "Work", CleanupApi::Openai, "https://api.example.com/v1", "k", "gpt")
+        LlmProfile::new(
+            "work",
+            "Work",
+            CleanupApi::Openai,
+            "https://api.example.com/v1",
+            "k",
+            "gpt",
+        )
     }
 
-    fn run(archive: &Path, id: &str, r: &Recipe, p: &LlmProfile, g: Option<&ConsentGrant>, m: &FakeModel) -> Result<RunOutput> {
-        run_on_item(archive, id, r, p, g, m, NOW, &AtomicBool::new(false), &mut |_| {})
+    fn run(
+        archive: &Path,
+        id: &str,
+        r: &Recipe,
+        p: &LlmProfile,
+        g: Option<&ConsentGrant>,
+        m: &FakeModel,
+    ) -> Result<RunOutput> {
+        run_on_item(
+            archive,
+            id,
+            r,
+            p,
+            g,
+            m,
+            NOW,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
     }
 
     /// #122: without a confirmation an external run is refused before
@@ -500,10 +673,23 @@ mod tests {
         let model = FakeModel::new("never");
         let err = run(&archive, &id, &recipe(1), &work(), None, &model).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("external profile") && msg.contains("api.example.com") && msg.contains("Confirm"), "{msg}");
-        assert!(model.calls.borrow().is_empty(), "nothing may reach the model");
+        assert!(
+            msg.contains("external profile")
+                && msg.contains("api.example.com")
+                && msg.contains("Confirm"),
+            "{msg}"
+        );
+        assert!(
+            model.calls.borrow().is_empty(),
+            "nothing may reach the model"
+        );
         assert!(list_companions(&archive, &id).unwrap().is_empty());
-        assert!(crate::archive::external::read_log(&archive, &id).unwrap().is_empty(), "nothing was sent");
+        assert!(
+            crate::archive::external::read_log(&archive, &id)
+                .unwrap()
+                .is_empty(),
+            "nothing was sent"
+        );
 
         // A local URL marked external by hand needs the confirmation too.
         let mut lan = local();
@@ -524,7 +710,9 @@ mod tests {
         let id = meeting(&archive);
         let store = crate::llm::consent::ConsentStore::default();
         let for_summary = RunTarget::new(&id, &recipe(1), &work());
-        let grant = store.consume(&store.issue(for_summary.clone()), &for_summary).unwrap();
+        let grant = store
+            .consume(&store.issue(for_summary.clone()), &for_summary)
+            .unwrap();
         let model = FakeModel::new("never");
         // Another recipe.
         assert!(run(&archive, &id, &recipe(2), &work(), Some(&grant), &model).is_err());
@@ -537,7 +725,9 @@ mod tests {
         moved.set_base_url("https://llm.other.example/v1");
         assert!(run(&archive, &id, &recipe(1), &moved, Some(&grant), &model).is_err());
         assert!(model.calls.borrow().is_empty());
-        assert!(crate::archive::external::read_log(&archive, &id).unwrap().is_empty());
+        assert!(crate::archive::external::read_log(&archive, &id)
+            .unwrap()
+            .is_empty());
     }
 
     /// With a matching grant the run goes out, is logged first (metadata
@@ -549,14 +739,19 @@ mod tests {
         let id = meeting(&archive);
         let store = crate::llm::consent::ConsentStore::default();
         let target = RunTarget::new(&id, &recipe(1), &work());
-        let grant = store.consume(&store.issue(target.clone()), &target).unwrap();
+        let grant = store
+            .consume(&store.issue(target.clone()), &target)
+            .unwrap();
         let model = FakeModel::new("- Anna manda il file.");
         let out = run(&archive, &id, &recipe(1), &work(), Some(&grant), &model).unwrap();
         assert_eq!(out.file.as_deref(), Some("summary.md"));
         assert_eq!(model.calls.borrow().len(), 1);
 
         let raw = std::fs::read_to_string(archive.join(&id).join("summary.md")).unwrap();
-        assert!(raw.contains("external: true\n") && raw.contains("host: api.example.com\n"), "{raw}");
+        assert!(
+            raw.contains("external: true\n") && raw.contains("host: api.example.com\n"),
+            "{raw}"
+        );
         let log = crate::archive::external::read_log(&archive, &id).unwrap();
         assert_eq!(log.len(), 1);
         assert_eq!(
@@ -570,19 +765,45 @@ mod tests {
                 recipe: "summary".into(),
             }
         );
-        let log_raw = std::fs::read_to_string(archive.join(&id).join(".sussurro/external-log.json")).unwrap();
-        assert!(!log_raw.contains("Mando il file"), "the log never holds content");
-        assert_eq!(crate::archive::read_item(&archive, &id).unwrap().external_hosts, ["api.example.com"]);
+        let log_raw =
+            std::fs::read_to_string(archive.join(&id).join(".sussurro/external-log.json")).unwrap();
+        assert!(
+            !log_raw.contains("Mando il file"),
+            "the log never holds content"
+        );
+        assert_eq!(
+            crate::archive::read_item(&archive, &id)
+                .unwrap()
+                .external_hosts,
+            ["api.example.com"]
+        );
 
         // A free question is logged as a question, without its text.
         let q = super::super::answer::question_recipe("Chi manda il file?").unwrap();
         let target = RunTarget::new(&id, &q, &work());
-        let grant = store.consume(&store.issue(target.clone()), &target).unwrap();
-        run(&archive, &id, &q, &work(), Some(&grant), &FakeModel::new("Anna.")).unwrap();
+        let grant = store
+            .consume(&store.issue(target.clone()), &target)
+            .unwrap();
+        run(
+            &archive,
+            &id,
+            &q,
+            &work(),
+            Some(&grant),
+            &FakeModel::new("Anna."),
+        )
+        .unwrap();
         let log = crate::archive::external::read_log(&archive, &id).unwrap();
-        assert_eq!((log[1].kind, log[1].recipe.as_str()), (SendKind::Question, ""));
-        let log_raw = std::fs::read_to_string(archive.join(&id).join(".sussurro/external-log.json")).unwrap();
-        assert!(!log_raw.contains("Chi manda"), "the log never holds the question");
+        assert_eq!(
+            (log[1].kind, log[1].recipe.as_str()),
+            (SendKind::Question, "")
+        );
+        let log_raw =
+            std::fs::read_to_string(archive.join(&id).join(".sussurro/external-log.json")).unwrap();
+        assert!(
+            !log_raw.contains("Chi manda"),
+            "the log never holds the question"
+        );
     }
 
     /// A local run leaves no trace of an external send.
@@ -591,11 +812,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("Sussurro");
         let id = meeting(&archive);
-        run(&archive, &id, &recipe(1), &local(), None, &FakeModel::new("ok")).unwrap();
+        run(
+            &archive,
+            &id,
+            &recipe(1),
+            &local(),
+            None,
+            &FakeModel::new("ok"),
+        )
+        .unwrap();
         let raw = std::fs::read_to_string(archive.join(&id).join("summary.md")).unwrap();
-        assert!(raw.contains("external: false\n") && !raw.contains("host:"), "{raw}");
-        assert!(crate::archive::external::read_log(&archive, &id).unwrap().is_empty());
-        assert!(crate::archive::read_item(&archive, &id).unwrap().external_hosts.is_empty());
+        assert!(
+            raw.contains("external: false\n") && !raw.contains("host:"),
+            "{raw}"
+        );
+        assert!(crate::archive::external::read_log(&archive, &id)
+            .unwrap()
+            .is_empty());
+        assert!(crate::archive::read_item(&archive, &id)
+            .unwrap()
+            .external_hosts
+            .is_empty());
     }
 
     #[test]
@@ -605,10 +842,18 @@ mod tests {
         let id = meeting(&archive);
         let p = preview(&archive, &id, &recipe(1), None, &work()).unwrap();
         assert_eq!(p.item_title, "Weekly sync");
-        assert_eq!((p.recipe_id.as_str(), p.recipe_name.as_str()), ("summary", "Summary"));
-        assert_eq!((p.host.as_str(), p.model.as_str(), p.profile_name.as_str()), ("api.example.com", "gpt", "Work"));
+        assert_eq!(
+            (p.recipe_id.as_str(), p.recipe_name.as_str()),
+            ("summary", "Summary")
+        );
+        assert_eq!(
+            (p.host.as_str(), p.model.as_str(), p.profile_name.as_str()),
+            ("api.example.com", "gpt", "Work")
+        );
         assert!(p.external);
-        let lines = "[00:01:01] Anna: Mando il file venerdì.\n[00:01:10] Ok.\n".chars().count();
+        let lines = "[00:01:01] Anna: Mando il file venerdì.\n[00:01:10] Ok.\n"
+            .chars()
+            .count();
         assert_eq!(p.chars, lines + recipe(1).prompt.chars().count());
         assert_eq!(p.approx_tokens, p.chars.div_ceil(4));
         assert!(preview(&archive, "2026/09/nope", &recipe(1), None, &work()).is_err());
@@ -623,24 +868,59 @@ mod tests {
         let id = meeting(&archive);
         let path = archive.join(&id).join("transcript.md");
         let doc = std::fs::read_to_string(&path).unwrap();
-        std::fs::write(&path, doc.replace("Mando il file venerdì.", "Mando il file lunedì.")).unwrap();
+        std::fs::write(
+            &path,
+            doc.replace("Mando il file venerdì.", "Mando il file lunedì."),
+        )
+        .unwrap();
         let model = FakeModel::new("ok");
-        run_on_item(&archive, &id, &recipe(1), &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        run_on_item(
+            &archive,
+            &id,
+            &recipe(1),
+            &local(),
+            None,
+            &model,
+            NOW,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap();
         let user = model.user(0);
-        assert!(user.contains("lunedì") && !user.contains("venerdì"), "{user}");
-        assert!(!user.contains("# Weekly sync"), "the title heading is not repeated");
+        assert!(
+            user.contains("lunedì") && !user.contains("venerdì"),
+            "{user}"
+        );
+        assert!(
+            !user.contains("# Weekly sync"),
+            "the title heading is not repeated"
+        );
     }
 
     #[test]
     fn a_recording_item_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("Sussurro");
-        let mut meta = ItemMeta { title: "Live".into(), date: NOW.into(), ..Default::default() };
+        let mut meta = ItemMeta {
+            title: "Live".into(),
+            date: NOW.into(),
+            ..Default::default()
+        };
         meta.set_session_state(Some(crate::archive::SessionState::Recording));
         let id = create_item(&archive, &meta, &SegmentsFile::default()).unwrap();
         let model = FakeModel::new("x");
-        assert!(run_on_item(&archive, &id, &recipe(1), &local(), None, &model, NOW, &AtomicBool::new(false), &mut |_| {})
-            .is_err());
+        assert!(run_on_item(
+            &archive,
+            &id,
+            &recipe(1),
+            &local(),
+            None,
+            &model,
+            NOW,
+            &AtomicBool::new(false),
+            &mut |_| {}
+        )
+        .is_err());
         assert!(model.calls.borrow().is_empty());
     }
 
@@ -650,11 +930,21 @@ mod tests {
         let flag = runs.begin("a", &recipe(0)).unwrap();
         assert!(runs.begin("a", &recipe(1)).is_err());
         assert!(runs.begin_with("b", &recipe(1), Some("Why?")).is_ok());
-        runs.set_progress("a", Progress { phase: engine::Phase::Map, done: 1, total: 3 });
+        runs.set_progress(
+            "a",
+            Progress {
+                phase: engine::Phase::Map,
+                done: 1,
+                total: 3,
+            },
+        );
         let list = runs.list();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].progress.unwrap().done, 1);
-        assert_eq!((list[0].question.as_deref(), list[1].question.as_deref()), (None, Some("Why?")));
+        assert_eq!(
+            (list[0].question.as_deref(), list[1].question.as_deref()),
+            (None, Some("Why?"))
+        );
         assert!(runs.cancel("a"));
         assert!(flag.load(std::sync::atomic::Ordering::SeqCst));
         runs.end("a");
@@ -672,11 +962,21 @@ mod tests {
         let archive = tmp.path().join("Sussurro");
         let id = meeting(&archive);
         let profile = local();
-        let model = ProfileModel { profile: profile.clone() };
+        let model = ProfileModel {
+            profile: profile.clone(),
+        };
         for r in builtin_recipes() {
-            let out = run_on_item(&archive, &id, &r, &profile, None, &model, NOW, &AtomicBool::new(false), &mut |p| {
-                println!("{}: {p:?}", r.name)
-            })
+            let out = run_on_item(
+                &archive,
+                &id,
+                &r,
+                &profile,
+                None,
+                &model,
+                NOW,
+                &AtomicBool::new(false),
+                &mut |p| println!("{}: {p:?}", r.name),
+            )
             .unwrap();
             let doc = read_companion(&archive, &id, out.file.as_deref().unwrap()).unwrap();
             println!("---- {} ----\n{}", doc.file, doc.body);
@@ -695,12 +995,36 @@ mod tests {
         find_recipe(&[], MEETING_MINUTES_ID).unwrap()
     }
 
-    fn with(opts: RunOptions, archive: &Path, id: &str, r: &Recipe, p: &LlmProfile, m: &FakeModel) -> Result<RunOutput> {
-        run_on_item_with(archive, id, r, p, None, m, NOW, &AtomicBool::new(false), &mut |_| {}, &opts)
+    fn with(
+        opts: RunOptions,
+        archive: &Path,
+        id: &str,
+        r: &Recipe,
+        p: &LlmProfile,
+        m: &FakeModel,
+    ) -> Result<RunOutput> {
+        run_on_item_with(
+            archive,
+            id,
+            r,
+            p,
+            None,
+            m,
+            NOW,
+            &AtomicBool::new(false),
+            &mut |_| {},
+            &opts,
+        )
     }
 
     fn all_text(m: &FakeModel) -> String {
-        m.calls.borrow().iter().flatten().filter_map(|x| x["content"].as_str()).collect::<Vec<_>>().join("\n")
+        m.calls
+            .borrow()
+            .iter()
+            .flatten()
+            .filter_map(|x| x["content"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -710,16 +1034,33 @@ mod tests {
         let f = corpus::fixture("it-standup");
         let id = f.create(&archive);
         let model = FakeModel::new("## Partecipanti\n- Marco Bianchi");
-        let out = with(RunOptions::default(), &archive, &id, &minutes(), &local(), &model).unwrap();
+        let out = with(
+            RunOptions::default(),
+            &archive,
+            &id,
+            &minutes(),
+            &local(),
+            &model,
+        )
+        .unwrap();
         assert_eq!(out.file.as_deref(), Some("meeting-minutes.md"));
         assert_eq!(model.calls.borrow().len(), 1, "a short meeting is one call");
-        let system = model.calls.borrow()[0][0]["content"].as_str().unwrap().to_string();
-        assert!(system.contains("only to the speaker who said it") && system.contains("never guess who they are"));
+        let system = model.calls.borrow()[0][0]["content"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            system.contains("only to the speaker who said it")
+                && system.contains("never guess who they are")
+        );
         assert!(system.contains("Write in Italian."));
         let user = model.user(0);
         assert!(user.starts_with("Task:\nWrite the minutes of this meeting"));
         assert!(user.contains("Participants: Marco Bianchi, Giulia Verdi, Paolo Neri\nSpeakers: Marco Bianchi, Giulia Verdi, Voice 1\n"), "{user}");
-        assert!(user.contains("[00:00:46] Voice 1: Io però non rilascerei"), "Voice N passed as-is");
+        assert!(
+            user.contains("[00:00:46] Voice 1: Io però non rilascerei"),
+            "Voice N passed as-is"
+        );
         assert!(!all_text(&model).contains('@'), "names only by default");
         let doc = read_companion(&archive, &id, "meeting-minutes.md").unwrap();
         assert_eq!(doc.meta.recipe, MEETING_MINUTES_ID);
@@ -735,11 +1076,24 @@ mod tests {
         let names = FakeModel::new("## Anna Rossi\n- a");
         with(RunOptions::default(), &archive, &id, &who, &local(), &names).unwrap();
         let sent = all_text(&names);
-        assert!(!sent.contains("anna@example.com") && !sent.contains('@'), "{sent}");
+        assert!(
+            !sent.contains("anna@example.com") && !sent.contains('@'),
+            "{sent}"
+        );
         assert!(sent.contains("Participants: Anna Rossi, Ben Carter, Chris Doyle\n"));
 
         let emails = FakeModel::new("## Anna Rossi\n- a");
-        with(RunOptions { include_emails: true }, &archive, &id, &who, &local(), &emails).unwrap();
+        with(
+            RunOptions {
+                include_emails: true,
+            },
+            &archive,
+            &id,
+            &who,
+            &local(),
+            &emails,
+        )
+        .unwrap();
         let sent = all_text(&emails);
         assert!(
             sent.contains("Participants: Anna Rossi <anna@example.com>, Ben Carter <ben.carter@example.com>, Chris Doyle\n"),
@@ -748,9 +1102,25 @@ mod tests {
 
         // The confirmation dialog's summary says the same.
         let p = preview(&archive, &id, &who, None, &work()).unwrap();
-        assert_eq!((p.participants, p.emails_available, p.emails_sent), (3, 2, 0));
-        assert_eq!(p.speakers, ["Anna Rossi", "Ben Carter", "Chris Doyle", "Voice 2"]);
-        let pe = preview_with(&archive, &id, &who, None, &work(), &RunOptions { include_emails: true }).unwrap();
+        assert_eq!(
+            (p.participants, p.emails_available, p.emails_sent),
+            (3, 2, 0)
+        );
+        assert_eq!(
+            p.speakers,
+            ["Anna Rossi", "Ben Carter", "Chris Doyle", "Voice 2"]
+        );
+        let pe = preview_with(
+            &archive,
+            &id,
+            &who,
+            None,
+            &work(),
+            &RunOptions {
+                include_emails: true,
+            },
+        )
+        .unwrap();
         assert_eq!((pe.emails_available, pe.emails_sent), (2, 2));
         assert!(pe.chars > p.chars, "the emails are counted");
     }
@@ -765,17 +1135,45 @@ mod tests {
         let names = RunTarget::new(&id, &minutes(), &work());
         let grant = store.consume(&store.issue(names.clone()), &names).unwrap();
         let model = FakeModel::new("never");
-        let opts = RunOptions { include_emails: true };
-        let r = run_on_item_with(&archive, &id, &minutes(), &work(), Some(&grant), &model, NOW, &AtomicBool::new(false), &mut |_| {}, &opts);
+        let opts = RunOptions {
+            include_emails: true,
+        };
+        let r = run_on_item_with(
+            &archive,
+            &id,
+            &minutes(),
+            &work(),
+            Some(&grant),
+            &model,
+            NOW,
+            &AtomicBool::new(false),
+            &mut |_| {},
+            &opts,
+        );
         assert!(r.is_err());
         assert!(model.calls.borrow().is_empty());
-        assert!(crate::archive::external::read_log(&archive, &id).unwrap().is_empty());
+        assert!(crate::archive::external::read_log(&archive, &id)
+            .unwrap()
+            .is_empty());
 
         let with_emails = names.with_emails(true);
-        let grant = store.consume(&store.issue(with_emails.clone()), &with_emails).unwrap();
-        let model = FakeModel::new("## Attendees\n- Anna Rossi <anna@example.com>");
-        run_on_item_with(&archive, &id, &minutes(), &work(), Some(&grant), &model, NOW, &AtomicBool::new(false), &mut |_| {}, &opts)
+        let grant = store
+            .consume(&store.issue(with_emails.clone()), &with_emails)
             .unwrap();
+        let model = FakeModel::new("## Attendees\n- Anna Rossi <anna@example.com>");
+        run_on_item_with(
+            &archive,
+            &id,
+            &minutes(),
+            &work(),
+            Some(&grant),
+            &model,
+            NOW,
+            &AtomicBool::new(false),
+            &mut |_| {},
+            &opts,
+        )
+        .unwrap();
         assert!(all_text(&model).contains("<anna@example.com>"));
     }
 
@@ -784,40 +1182,84 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("Sussurro");
         // A meeting whose lines name nobody.
-        let plain = ItemMeta { item_type: ItemType::Meeting, title: "Plain".into(), date: NOW.into(), ..Default::default() };
+        let plain = ItemMeta {
+            item_type: ItemType::Meeting,
+            title: "Plain".into(),
+            date: NOW.into(),
+            ..Default::default()
+        };
         let segs = SegmentsFile {
-            segments: vec![Segment { id: 0, start_ms: 0, end_ms: 900, text: "Hello.".into(), ..Default::default() }],
+            segments: vec![Segment {
+                id: 0,
+                start_ms: 0,
+                end_ms: 900,
+                text: "Hello.".into(),
+                ..Default::default()
+            }],
             ..Default::default()
         };
         let no_speakers = create_item(&archive, &plain, &segs).unwrap();
         // A note with the user's own voice: notes never count.
-        let note = ItemMeta { item_type: ItemType::Note, title: "Idea".into(), date: NOW.into(), ..Default::default() };
+        let note = ItemMeta {
+            item_type: ItemType::Note,
+            title: "Idea".into(),
+            date: NOW.into(),
+            ..Default::default()
+        };
         let segs = SegmentsFile {
-            speakers: vec![DocSpeaker { id: "you".into(), label: "You".into(), ..Default::default() }],
-            segments: vec![Segment { id: 0, speaker_id: Some("you".into()), text: "An idea.".into(), ..Default::default() }],
+            speakers: vec![DocSpeaker {
+                id: "you".into(),
+                label: "You".into(),
+                ..Default::default()
+            }],
+            segments: vec![Segment {
+                id: 0,
+                speaker_id: Some("you".into()),
+                text: "An idea.".into(),
+                ..Default::default()
+            }],
             ..Default::default()
         };
         let note_id = create_item(&archive, &note, &segs).unwrap();
         for id in [&no_speakers, &note_id] {
-            assert!(!item_has_speakers(&crate::archive::read_item(&archive, id).unwrap()));
+            assert!(!item_has_speakers(
+                &crate::archive::read_item(&archive, id).unwrap()
+            ));
             for r in [minutes(), find_recipe(&[], WHO_SAID_WHAT_ID).unwrap()] {
                 let model = FakeModel::new("never");
-                let err = with(RunOptions::default(), &archive, id, &r, &local(), &model).unwrap_err();
+                let err =
+                    with(RunOptions::default(), &archive, id, &r, &local(), &model).unwrap_err();
                 assert!(format!("{err:#}").contains("names its speakers"), "{err:#}");
                 assert!(model.calls.borrow().is_empty());
             }
             // The general recipes still run there.
-            with(RunOptions::default(), &archive, id, &recipe(1), &local(), &FakeModel::new("ok")).unwrap();
+            with(
+                RunOptions::default(),
+                &archive,
+                id,
+                &recipe(1),
+                &local(),
+                &FakeModel::new("ok"),
+            )
+            .unwrap();
         }
         // Every corpus item has speakers, also once edited outside Sussurro.
         for f in corpus::all() {
             let id = f.create(&archive);
-            assert!(item_has_speakers(&crate::archive::read_item(&archive, &id).unwrap()), "{}", f.name);
+            assert!(
+                item_has_speakers(&crate::archive::read_item(&archive, &id).unwrap()),
+                "{}",
+                f.name
+            );
             let path = archive.join(&id).join("transcript.md");
             let raw = std::fs::read_to_string(&path).unwrap();
             std::fs::write(&path, format!("{raw}\nA line added by hand.\n")).unwrap();
             let item = crate::archive::read_item(&archive, &id).unwrap();
-            assert!(item.edited_externally && item_has_speakers(&item), "{}", f.name);
+            assert!(
+                item.edited_externally && item_has_speakers(&item),
+                "{}",
+                f.name
+            );
         }
     }
 
@@ -833,22 +1275,51 @@ mod tests {
         small.context_tokens = crate::llm::profile::MIN_CONTEXT_TOKENS;
         let mut model = FakeModel::new("## Attendees\n- Anna Rossi");
         model.map_reply = Box::new(|i| format!("- [00:00:0{}] Anna Rossi: note {i}", i % 10));
-        with(RunOptions::default(), &archive, &id, &minutes(), &small, &model).unwrap();
+        with(
+            RunOptions::default(),
+            &archive,
+            &id,
+            &minutes(),
+            &small,
+            &model,
+        )
+        .unwrap();
         let calls = model.calls.borrow().len();
-        let maps: Vec<String> = (0..calls).map(|i| model.user(i)).filter(|u| u.starts_with("This is part ")).collect();
+        let maps: Vec<String> = (0..calls)
+            .map(|i| model.user(i))
+            .filter(|u| u.starts_with("This is part "))
+            .collect();
         assert!(maps.len() > 1, "{} map calls", maps.len());
         let turn_starts: Vec<String> = {
             let item = crate::archive::read_item(&archive, &id).unwrap();
             let input = item_input(&item);
-            super::super::chunk::speaker_turns(&input).iter().map(|t| t[0].format()).collect()
+            super::super::chunk::speaker_turns(&input)
+                .iter()
+                .map(|t| t[0].format())
+                .collect()
         };
         for u in &maps {
-            assert!(u.contains("Speakers: Anna Rossi, Ben Carter, Chris Doyle, Voice 2\n"), "every chunk knows every speaker");
-            let first = u.split("\">\n").nth(1).unwrap().lines().find(|l| l.starts_with('[')).unwrap();
-            assert!(turn_starts.iter().any(|t| t == first), "chunk starts mid-turn: {first}");
+            assert!(
+                u.contains("Speakers: Anna Rossi, Ben Carter, Chris Doyle, Voice 2\n"),
+                "every chunk knows every speaker"
+            );
+            let first = u
+                .split("\">\n")
+                .nth(1)
+                .unwrap()
+                .lines()
+                .find(|l| l.starts_with('['))
+                .unwrap();
+            assert!(
+                turn_starts.iter().any(|t| t == first),
+                "chunk starts mid-turn: {first}"
+            );
         }
         let reduce = model.user(calls - 1);
-        assert!(reduce.starts_with("Task:\nWrite the minutes") && reduce.contains("keep that attribution exactly"));
+        assert!(
+            reduce.starts_with("Task:\nWrite the minutes")
+                && reduce.contains("keep that attribution exactly")
+        );
     }
 
     /// Needs a running Ollama with the model pulled (default llama3.2:3b;
@@ -862,7 +1333,8 @@ mod tests {
     #[test]
     #[ignore]
     fn live_meeting_recipes_on_ollama() {
-        let url = std::env::var("SUSSURRO_LIVE_URL").unwrap_or_else(|_| "http://localhost:11434".into());
+        let url =
+            std::env::var("SUSSURRO_LIVE_URL").unwrap_or_else(|_| "http://localhost:11434".into());
         let name = std::env::var("SUSSURRO_LIVE_MODEL").unwrap_or_else(|_| "llama3.2:3b".into());
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path().join("Sussurro");
@@ -871,22 +1343,42 @@ mod tests {
             let id = f.create(&archive);
             let known = f.people();
             for window in [0, crate::llm::profile::MIN_CONTEXT_TOKENS] {
-                let mut profile = LlmProfile::new("local", "Local", CleanupApi::Ollama, &url, "", &name);
+                let mut profile =
+                    LlmProfile::new("local", "Local", CleanupApi::Ollama, &url, "", &name);
                 profile.context_tokens = window;
-                let model = ProfileModel { profile: profile.clone() };
+                let model = ProfileModel {
+                    profile: profile.clone(),
+                };
                 let tag = format!("{} / window {}", f.name, profile.effective_context_tokens());
                 for r in [minutes(), find_recipe(&[], WHO_SAID_WHAT_ID).unwrap()] {
                     let mut steps = 0;
-                    let out = run_on_item(&archive, &id, &r, &profile, None, &model, NOW, &AtomicBool::new(false), &mut |_| {
-                        steps += 1
-                    })
+                    let out = run_on_item(
+                        &archive,
+                        &id,
+                        &r,
+                        &profile,
+                        None,
+                        &model,
+                        NOW,
+                        &AtomicBool::new(false),
+                        &mut |_| steps += 1,
+                    )
                     .unwrap();
-                    let doc = read_companion(&archive, &id, out.file.as_deref().unwrap()).unwrap().body;
-                    println!("==== {tag} · {} ({steps} progress events) ====\n{doc}\n", r.name);
+                    let doc = read_companion(&archive, &id, out.file.as_deref().unwrap())
+                        .unwrap()
+                        .body;
+                    println!(
+                        "==== {tag} · {} ({steps} progress events) ====\n{doc}\n",
+                        r.name
+                    );
                     if r.id == MEETING_MINUTES_ID {
                         match corpus::section(&doc, &corpus::ATTENDEES) {
                             None => problems.push(format!("{tag}: no attendees section")),
-                            Some(body) if !body.iter().any(|l| known.iter().any(|k| l.contains(k.as_str()))) => {
+                            Some(body)
+                                if !body
+                                    .iter()
+                                    .any(|l| known.iter().any(|k| l.contains(k.as_str()))) =>
+                            {
                                 problems.push(format!("{tag}: the attendees name nobody known"))
                             }
                             _ => {}
@@ -899,7 +1391,9 @@ mod tests {
                             None => {}
                             Some(owners) => {
                                 for o in owners.iter().filter(|o| !corpus::owner_known(o, &known)) {
-                                    problems.push(format!("{tag}: action owner “{o}” is not a speaker or participant"));
+                                    problems.push(format!(
+                                        "{tag}: action owner “{o}” is not a speaker or participant"
+                                    ));
                                 }
                             }
                         }
@@ -907,13 +1401,19 @@ mod tests {
                         let speakers = f.speakers();
                         for h in corpus::h2_names(&doc) {
                             if !corpus::owner_known(&h, &speakers) {
-                                problems.push(format!("{tag}: “Who said what” section for unknown “{h}”"));
+                                problems.push(format!(
+                                    "{tag}: “Who said what” section for unknown “{h}”"
+                                ));
                             }
                         }
                     }
                 }
             }
         }
-        assert!(problems.is_empty(), "structural problems:\n{}", problems.join("\n"));
+        assert!(
+            problems.is_empty(),
+            "structural problems:\n{}",
+            problems.join("\n")
+        );
     }
 }
