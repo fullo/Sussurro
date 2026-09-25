@@ -79,6 +79,12 @@ rustfft = "6.4"
 # LLM profile API keys live in the OS credential store (#159). keyring-core is
 # the API; one native store crate per OS below (all MIT OR Apache-2.0).
 keyring-core = "1"
+# Saved audio as Ogg Opus (0.11, #247, P16/E15): libopus 1.6 through `opus`
+# (MIT/Apache-2.0) over `opusic-sys` (BSD-3; bundles libopus, built with
+# CMake like whisper.cpp and linked statically), and the pure-Rust `ogg`
+# muxer (BSD-3).
+opus = "0.4"
+ogg = "0.9"
 
 # GPU acceleration per platform: Vulkan on Windows (needs the Vulkan SDK at
 # build time), Metal on macOS (ships with Xcode). Linux stays CPU-only by
