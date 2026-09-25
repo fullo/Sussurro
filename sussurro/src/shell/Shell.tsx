@@ -124,6 +124,15 @@ export function Shell({ ctl }: { ctl: Ctl }) {
     [setScreen],
   );
 
+  // A script created a note (`POST /archive/items`, #251): the Library
+  // shows it, without moving the selection.
+  useEffect(() => {
+    const unlisten = listen<string>("archive-item-created", () => refreshLibrary());
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, [refreshLibrary]);
+
   // "Open in Sussurro" from the browser extension (#126,
   // `POST /items/{id}/open`): the app comes to the front on that item.
   useEffect(() => {

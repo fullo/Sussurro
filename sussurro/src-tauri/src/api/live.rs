@@ -780,6 +780,8 @@ mod tests {
     /// A host whose meetings never start (the state machine alone).
     struct NoMeetings;
 
+    impl crate::api::archive_write::NoteHost for NoMeetings {}
+
     impl Host for NoMeetings {
         fn config(&self) -> ApiConfig {
             ApiConfig::default()
@@ -863,6 +865,8 @@ mod tests {
     /// A host whose meetings start (the run itself is not needed: the
     /// source is dropped) with an archive in a temp dir.
     struct Meetings(PathBuf);
+
+    impl crate::api::archive_write::NoteHost for Meetings {}
 
     impl Host for Meetings {
         fn config(&self) -> ApiConfig {

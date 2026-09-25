@@ -219,6 +219,21 @@ project decisions here, not in per-machine memory.**
   are a 400; internal errors are a fixed message (anyhow errors name
   paths); bodies ≤ 16 MiB; ≤ 2 archive requests at once (`ARCHIVE_SLOTS`,
   503) so scripts can't starve the extension's workers.
+- **Archive API write route (0.11, #251, P15)** (`api/archive_write.rs`):
+  `POST /archive/items` (`write` scope) creates a **note** from a JSON body
+  (`text`, `title?`, `tags?`, `categories?`, `cleanup?`; ≤ 1 MiB,
+  declared length checked before reading, UTF-8, `application/json` or no
+  Content-Type, unknown fields 400) with `source: api:<token name>`, date
+  now, no audio/speakers, one segment per paragraph (raw = as sent), indexed
+  at once; the UI refreshes on `archive-item-created`. **Cleanup through
+  the API only on a local cleanup profile**: an external one is refused
+  (409 `cleanup_external`) even with the user's cleanup opt-in — that
+  consent (#122) can't be given by a script; the gate is re-checked on the
+  same settings clone that cleans. Its own creation limit on top of the
+  token's (per token burst 10 then 30/min, all tokens burst 30 then
+  60/min), and `Idempotency-Key` per token, 1 h, in memory (same body →
+  same item, `replayed: true`; other body → 422; pending → 409). The only
+  write in 0.11 — metadata edits and audio uploads stay out.
 - **System audio + mic (0.10 step 1, #139)** (`sources/system.rs`):
   *New → System audio + mic* (it records other people: the #136 notice
   asks first). The mic and **any second input

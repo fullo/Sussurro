@@ -26,9 +26,11 @@
 //! token with the right scope (`Authorization: Bearer sua_…`, [`tokens`]).
 //! Any browser `Origin` is refused there — extensions too — and no CORS
 //! header is ever sent. The read routes (#250) are in [`archive`]; the
-//! note-from-text write route comes with #251.
+//! one write route, `POST /archive/items` (a note from text, #251), is in
+//! [`archive_write`].
 
 pub mod archive;
+pub mod archive_write;
 pub mod auth;
 pub mod export;
 pub mod guard;
@@ -44,8 +46,9 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::state::AppState;
 
 /// What the API needs from the app. [`AppHost`] in the app; tests run the
-/// real server on a fake one.
-pub trait Host: Send + Sync + 'static {
+/// real server on a fake one. `POST /archive/items` needs a little more
+/// ([`archive_write::NoteHost`]: cleanup, telling the UI).
+pub trait Host: archive_write::NoteHost + Send + Sync + 'static {
     fn config(&self) -> ApiConfig;
     /// An archive token passed [`tokens::authorize`]: record its last use
     /// ([`tokens::touch`] decides when that is worth a save). Hosts without
@@ -252,6 +255,16 @@ pub fn parse_url(url: &str) -> (&str, HashMap<String, String>) {
 ///   `write` otherwise; `people` for emails). No CORS header, ever. Errors
 ///   carry a stable `code`. Tokens are created in Settings → Scripting,
 ///   shown once, stored only as hashes, revocable at once, and never logged.
+/// - Archive write route (#251, [`archive_write`]; P15's one write):
+///   `POST /archive/items` creates a *note* from text with the `write`
+///   scope — JSON body ≤ 1 MiB (declared length checked before reading),
+///   UTF-8 only, unknown fields refused; `source: api:<token name>`, no
+///   audio, no speakers. Creations are rate-limited on top of the general
+///   limit (per token: burst 10, then 30/min; all tokens: burst 30, then
+///   60/min), and an optional `Idempotency-Key` (per token, 1 h, in memory)
+///   returns the item it made before. `cleanup: true` runs **only on a
+///   local cleanup profile**: an external one is refused even with the
+///   user's cleanup opt-in (#122), whose consent a script can't give.
 /// - Archive read routes (#250, [`archive`]; read-only in 0.11, P15): ids
 ///   go through the archive's own id check and confinement, no route takes
 ///   a path, and responses are built field by field — never an embedding,
@@ -355,6 +368,8 @@ struct Ctx {
     archive_limiter: tokens::RateLimiter,
     /// See [`ARCHIVE_SLOTS`].
     archive_slots: guard::Slots,
+    /// `POST /archive/items`: creation limits and idempotency keys (#251).
+    archive_write: archive_write::WriteState,
 }
 
 /// Answer requests on [`WORKERS`] threads until the server is dropped or
@@ -368,6 +383,7 @@ pub fn serve(server: tiny_http::Server, host: Arc<dyn Host>) {
         slow: guard::Slots::new(SLOW_SLOTS),
         archive_limiter: tokens::RateLimiter::default(),
         archive_slots: guard::Slots::new(ARCHIVE_SLOTS),
+        archive_write: archive_write::WriteState::default(),
     });
     let workers: Vec<_> = (0..WORKERS)
         .map(|_| {
@@ -570,20 +586,74 @@ fn handle_archive(ctx: &Arc<Ctx>, request: tiny_http::Request, method: &str, url
 /// and never a CORS header.
 const ARCHIVE_HEADERS: [(&str, &str); 2] = [("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff")];
 
-/// The archive routes, for an authorized request ([`archive::handle`]; the
-/// write route comes with #251 and checks `auth.has(…)` like the people
-/// route does for emails).
-fn archive_route(ctx: &Arc<Ctx>, request: tiny_http::Request, auth: &tokens::Authorized, method: &str, url: &str) {
-    let reply = match ctx.archive_slots.try_take() {
-        None => {
-            let mut r = archive::Reply::error(503, "busy", "too many archive requests at once, retry later");
-            r.headers.push(("Retry-After", "1".to_string()));
-            r
+fn archive_busy() -> archive::Reply {
+    let mut r = archive::Reply::error(503, "busy", "too many archive requests at once, retry later");
+    r.headers.push(("Retry-After", "1".to_string()));
+    r
+}
+
+/// `POST /archive/items` (#251): the body is read (capped, before taking
+/// an archive slot, so a slow upload holds none), then
+/// [`archive_write::create`].
+fn create_note(ctx: &Arc<Ctx>, request: &mut tiny_http::Request, auth: &tokens::Authorized, url: &str) -> archive::Reply {
+    if url.split_once('?').is_some_and(|(_, q)| !q.is_empty()) {
+        return archive::Reply::error(400, "bad_request", "unknown query parameter; this route accepts: none");
+    }
+    let cap = archive_write::MAX_BODY_BYTES;
+    let too_large = || archive::Reply::error(413, "too_large", &format!("the body is too large (at most {} MiB)", cap >> 20));
+    let declared = request.body_length();
+    // Before `as_reader()`, which tells an `Expect: 100-continue` client
+    // to send the body.
+    if declared.is_some_and(|n| n > cap) {
+        return too_large();
+    }
+    let deadline = std::time::Instant::now() + guard::BODY_DEADLINE;
+    let body = match guard::read_capped(request.as_reader(), declared, cap, deadline) {
+        Ok(b) => b,
+        Err(guard::BodyError::TooLarge) => return too_large(),
+        Err(guard::BodyError::Empty) => {
+            return archive::Reply::error(400, "invalid_json", "the body must be a UTF-8 JSON object")
         }
-        Some(_slot) => match (ctx.host.archive_dir(), ctx.host.archive_index()) {
-            (Ok(dir), Ok(index)) => archive::handle(&dir, &index, auth, method, url),
-            _ => archive::Reply::internal(),
-        },
+        Err(guard::BodyError::Io) => return archive::Reply::error(400, "bad_request", "could not read the body"),
+        Err(guard::BodyError::TooSlow) => {
+            return archive::Reply::error(408, "too_slow", "the body did not arrive in time")
+        }
+    };
+    let content_type = header(request, "Content-Type");
+    let key = header(request, "Idempotency-Key");
+    let Some(_slot) = ctx.archive_slots.try_take() else {
+        return archive_busy();
+    };
+    match (ctx.host.archive_dir(), ctx.host.archive_index()) {
+        (Ok(dir), Ok(index)) => archive_write::create(
+            &*ctx.host,
+            &dir,
+            &index,
+            auth,
+            &body,
+            content_type.as_deref(),
+            key.as_deref(),
+            &ctx.archive_write,
+            std::time::Instant::now(),
+        ),
+        _ => archive::Reply::internal(),
+    }
+}
+
+/// The archive routes, for an authorized request: `POST /archive/items`
+/// ([`archive_write`], #251), else the read routes ([`archive::handle`]).
+fn archive_route(ctx: &Arc<Ctx>, mut request: tiny_http::Request, auth: &tokens::Authorized, method: &str, url: &str) {
+    let path = url.split_once('?').map_or(url, |(p, _)| p);
+    let reply = if archive_write::is_create(method, path) {
+        create_note(ctx, &mut request, auth, url)
+    } else {
+        match ctx.archive_slots.try_take() {
+            None => archive_busy(),
+            Some(_slot) => match (ctx.host.archive_dir(), ctx.host.archive_index()) {
+                (Ok(dir), Ok(index)) => archive::handle(&dir, &index, auth, method, url),
+                _ => archive::Reply::internal(),
+            },
+        }
     };
     let mut headers: Vec<(&str, String)> = ARCHIVE_HEADERS.iter().map(|(k, v)| (*k, v.to_string())).collect();
     headers.extend(reply.headers.iter().cloned());
@@ -766,6 +836,34 @@ fn upgrade_live(host: &Arc<dyn Host>, request: tiny_http::Request, auth: live::L
 }
 
 // ---- the app's host ----------------------------------------------------------
+
+impl archive_write::NoteHost for AppHost {
+    fn note_cleanup_gate(&self) -> Result<(), archive_write::CleanupRefused> {
+        let state = self.app.state::<AppState>();
+        let s = state.settings.lock().unwrap();
+        archive_write::cleanup_gate(s.cleanup_active(), s.cleanup_llm().external)
+    }
+
+    fn clean_note(&self, paragraphs: &[String]) -> Result<Vec<String>, archive_write::CleanupRefused> {
+        let state = self.app.state::<AppState>();
+        // Checked and cleaned with the same settings: a profile switched to
+        // an external one meanwhile is refused, never used.
+        let settings = state.settings.lock().unwrap().clone();
+        archive_write::cleanup_gate(settings.cleanup_active(), settings.cleanup_llm().external)?;
+        let mut previous: Option<&str> = None;
+        let mut out = Vec::with_capacity(paragraphs.len());
+        for p in paragraphs {
+            out.push(crate::cleanup::ollama::cleanup_with_context(&settings, previous, p));
+            previous = Some(p);
+        }
+        Ok(out)
+    }
+
+    fn note_created(&self, id: &str) {
+        // The Library refreshes (it doesn't change the selection).
+        let _ = self.app.emit_to("main", "archive-item-created", id.to_string());
+    }
+}
 
 /// [`Host`] backed by the running app.
 pub struct AppHost {

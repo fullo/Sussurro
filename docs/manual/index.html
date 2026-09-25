@@ -558,10 +558,10 @@ curl "http://127.0.0.1:4525/history?n=10&amp;q=sussurro"</code></pre>
 </ul>
 
 <h3 id="archive-api">The archive API</h3>
-<p>Scripts can list, search, read and export your whole archive under <code>/archive/…</code> with a token of their own. In 0.11 it only reads.</p>
+<p>Scripts can list, search, read and export your whole archive under <code>/archive/…</code> with a token of their own, and add a note from text (the only write in 0.11).</p>
 <ol>
   <li>In Settings → <b>Scripting</b>, switch on <span class="ui">Archive API</span> (off by default, applies at once; the local API must be on too).</li>
-  <li>Under <span class="ui">New token</span>, give it the name of the script and pick its scopes: <b>Read</b> (items, search, exports, companion documents, people's names) and, only if the script needs them, <b>People's emails</b> (participants' and People's emails).</li>
+  <li>Under <span class="ui">New token</span>, give it the name of the script and pick its scopes: <b>Read</b> (items, search, exports, companion documents, people's names), only if the script needs them <b>People's emails</b> (participants' and People's emails), and <b>Write</b> to create notes (a Write-only token can add notes but read nothing).</li>
   <li>Copy the token: it is shown only once, and Sussurro keeps only a fingerprint of it. Put it in an environment variable, not in the script.</li>
 </ol>
 <pre><code>export SUSSURRO_TOKEN=sua_...        # from Settings → Scripting
@@ -595,17 +595,36 @@ curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/people"</code></pr
     <tr><td><code>GET /archive/items/{id}/export?format=md|txt|srt|vtt</code></td><td>The same exports as the Export menu, as a file. Notes have no subtitles.</td></tr>
     <tr><td><code>GET /archive/items/{id}/documents</code>, <code>…/documents/{name}</code></td><td>The companion documents (recipe output and saved answers).</td></tr>
     <tr><td><code>GET /archive/people</code></td><td>The People registry: id, name, aliases; <code>email</code> with the People's emails scope.</td></tr>
+    <tr><td><code>POST /archive/items</code> (Write)</td><td>Creates a note from text: <code>201</code> with <code>Location</code>, the new item's <code>id</code>, <code>location</code>, title, date, source, tags and categories.</td></tr>
   </tbody>
 </table>
 <p>Filters of <code>/archive/items</code>: <code>q</code> (full text), <code>type</code>, <code>tag</code>, <code>category</code> and <code>participant_key</code> (repeat them for “any of”; participant keys come from the facets), <code>participant</code> (an exact name), <code>from</code> and <code>to</code> (<code>YYYY-MM-DD</code>), <code>date</code> (<code>today</code>, <code>week</code>, <code>month</code>, <code>year</code>, <code>older</code>; send your local <code>today=</code>), <code>limit</code> (1–200, 50 by default) and <code>cursor</code>. An unknown parameter is a <code>400</code>, so a typo never widens a search.</p>
 <ul>
-  <li>Every error is JSON with a <code>code</code> a script can check: <code>unauthorized</code> (401: no token, or a wrong or revoked one), <code>insufficient_scope</code> (403), <code>archive_api_off</code>, <code>origin_refused</code>, <code>not_found</code>, <code>invalid_id</code>, <code>bad_request</code>, <code>bad_cursor</code>, <code>rate_limited</code> (429, with <code>Retry-After</code>), <code>busy</code> (503).</li>
+  <li>Every error is JSON with a <code>code</code> a script can check: <code>unauthorized</code> (401: no token, or a wrong or revoked one), <code>insufficient_scope</code> (403), <code>archive_api_off</code>, <code>origin_refused</code>, <code>not_found</code>, <code>invalid_id</code>, <code>bad_request</code>, <code>bad_cursor</code>, <code>rate_limited</code> (429, with <code>Retry-After</code>), <code>busy</code> (503); creating a note has a few more (below).</li>
   <li>Never served, whatever the token: speaker embeddings, voice profiles, saved audio, file paths and anything from the app's own data folder.</li>
   <li>Without the People's emails scope, emails are left out of items and of the <code>.md</code> export's frontmatter, and neither <code>q</code> nor <code>participant</code> can match one — so a script can't test whether an address is in your archive. <code>q</code> then doesn't look at participants: use <code>participant=</code> for a name.</li>
   <li>Browsers are refused, extensions included, and no CORS header is ever sent: the archive API is for scripts only. The token goes in the <code>Authorization</code> header, never in the URL.</li>
   <li>Bounded: a token gets a burst of 60 requests, then 10 per second; a page holds at most 200 items; an answer is at most 16 MiB; at most two archive requests run at once, so a busy script never stalls the browser extension.</li>
   <li>Revoke a token in Settings → Scripting: the very next request with it gets a <code>401</code>. Each token shows when it was last used, so you can tell whether a script still needs it.</li>
 </ul>
+<h4 id="archive-api-notes">A note from text</h4>
+<pre><code># a note from text (Write scope); curl 7.82 or later for --json
+curl --json '{"title": "Idea", "text": "Try the release on Linux first.", "tags": ["idea"]}' \
+  -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items"
+# → 201 Created, Location: /archive/items/2026/09/2026-09-25-idea
+
+# the clipboard → a note (macOS pbpaste; Linux: wl-paste, or xclip -o -selection clipboard)
+pbpaste | jq -Rs '{text: ., tags: ["clipboard"]}' |
+  curl -sS --retry 3 --json @- -H "Authorization: Bearer $SUSSURRO_TOKEN" \
+    -H "Idempotency-Key: $(uuidgen)" "$API/archive/items"</code></pre>
+<p>The body is JSON (<code>Content-Type: application/json</code>, UTF-8, at most 1 MiB): <code>text</code> (required; paragraphs are split on blank lines), <code>title</code> (otherwise the first words of the text), <code>tags</code> and <code>categories</code> (lists of up to 50), and <code>cleanup</code> (<code>true</code> to clean it like a dictation). An unknown field is a <code>400</code>. The note is an ordinary archive item — <code>type: note</code>, <code>source: api:&lt;token name&gt;</code>, dated now, no audio, no speakers — and appears in the Library at once.</p>
+<ul>
+  <li><b>Cleanup only on a local profile.</b> When Settings → Cleanup uses a profile whose server is off this computer, <code>cleanup: true</code> is refused (<code>409</code>, <code>cleanup_external</code>) — even if you allowed that profile for dictation: that consent is given in the app for the app's own sends, and a script can't give it. With cleanup off it is <code>409</code> <code>cleanup_off</code>. Without <code>cleanup</code> nothing leaves the app. Cleanup takes at most 64 KiB of text (<code>413</code>, <code>too_long_for_cleanup</code>).</li>
+  <li><b>Idempotency-Key</b> (optional; 1–255 visible ASCII characters, a UUID is fine): the same key with the same body within an hour answers the note it created before (<code>"replayed": true</code> and <code>Idempotent-Replayed: true</code>) instead of adding another, so retrying after a timeout never duplicates a note. The same key with another body is a <code>422</code> (<code>idempotency_mismatch</code>); a key whose first request is still running is a <code>409</code> (<code>idempotency_in_progress</code>). Keys are per token and kept in memory: restarting Sussurro forgets them.</li>
+  <li><b>A creation limit</b> on top of the token's own: a burst of 10 notes per token, then 30 a minute; for all tokens together a burst of 30, then 60 a minute (<code>429</code>, <code>rate_limited</code>, <code>Retry-After</code>). A runaway script can't fill your archive.</li>
+  <li>Other errors: <code>invalid_json</code>, <code>bad_request</code>, <code>unsupported_media_type</code> (<code>415</code>: send <code>application/json</code>), <code>too_large</code> (<code>413</code>), <code>invalid_idempotency_key</code>.</li>
+</ul>
+<p><b>macOS Shortcuts</b>: <span class="ui">Get Clipboard</span>, then <span class="ui">Get Contents of URL</span> with the URL <code>http://127.0.0.1:4525/archive/items</code>, Method <code>POST</code>, a header <code>Authorization</code> = <code>Bearer sua_…</code>, and Request Body <span class="ui">JSON</span> with a <code>text</code> field set to the clipboard. Shortcuts has no environment variables, so the token is stored in the shortcut: give it the <b>Write</b> scope only. Or run the pipeline above in <span class="ui">Run Shell Script</span> with the token from the Keychain (store it once with <code>security add-generic-password -a "$USER" -s sussurro-archive -w</code>, read it with <code>security find-generic-password -s sussurro-archive -w</code>).</p>
 <p class="more">More: <a href="../blog/local-api.html">The local API</a></p>
 <a class="top-link" href="#main">↑ Contents</a>
 </section>

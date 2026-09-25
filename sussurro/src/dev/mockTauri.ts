@@ -16,7 +16,8 @@
    Dictionary & snippets manager), ?tokens=3 (archive API tokens already
    listed in Settings → Scripting), ?calendar=1 (a private calendar link
    saved in Settings → Calendar, for a meeting's "Add attendees from
-   calendar…"). */
+   calendar…"), ?api_note=1 (a script's `POST /archive/items` lands a
+   note 3 s after load: the Library refreshes). */
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { normalizeScopes, tokenNameError, type ArchiveScope, type ArchiveTokenInfo } from "../lib/archiveTokens";
@@ -645,6 +646,21 @@ const FAKE_LINES = [
 ];
 
 const ev = (name: string, payload: unknown) => emit(name, payload);
+
+/** `?api_note=1`: a note from the archive API (#251) — `source: api:<token
+ *  name>`, one segment per paragraph, then `archive-item-created`. */
+if (params.get("api_note")) {
+  window.setTimeout(() => {
+    const itemId = `2026/09/${new Date().toISOString().slice(0, 10)}-da-comprare`;
+    const text = ["Latte, caffè e pane.", "Passare in farmacia prima delle sette."];
+    items.push({
+      id: itemId,
+      meta: meta("Da comprare", "note", new Date().toISOString(), "", "api:Shortcuts", { language: "", engine: "", tags: ["spesa"] }),
+      segments: text.map((t, i) => ({ id: i, start_ms: i * 2000, end_ms: i * 2000, raw: t, text: t })),
+    });
+    ev("archive-item-created", itemId);
+  }, 3000);
+}
 
 function micTick() {
   if (!mic) return;

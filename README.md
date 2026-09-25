@@ -411,16 +411,17 @@ token and accept only browser-extension origins, never a web page, and
 dictations or other transcriptions. `settings.json`, which holds the pairing
 token, is readable only by your user on macOS and Linux.
 
-### Archive API (read-only)
+### Archive API
 
 Scripts can list, search, read and export your whole archive under
-`/archive/…`, with a token of their own. Turn on **Archive API** in Settings
-→ Scripting (off by default, applies at once; the local API must be on too)
-and create a token there. It is shown once: keep it in an environment
-variable, never in the script. Scopes: **Read** (items, search, exports,
-companion documents, people's names) and **People's emails** (adds
-participants' and People's emails). In 0.11 the archive API only reads
-(creating a note from text is next).
+`/archive/…`, and add a note from text, with a token of their own. Turn on
+**Archive API** in Settings → Scripting (off by default, applies at once;
+the local API must be on too) and create a token there. It is shown once:
+keep it in an environment variable, never in the script. Scopes: **Read**
+(items, search, exports, companion documents, people's names), **People's
+emails** (adds participants' and People's emails) and **Write** (create a
+note from text — the only write in 0.11; a Write-only token can add notes
+but read nothing).
 
 ```bash
 export SUSSURRO_TOKEN=sua_...        # from Settings → Scripting
@@ -457,6 +458,63 @@ counts, `limit` (1–200, default 50) and `cursor`. Unknown parameters are a
 `400`. Every error is JSON with a stable `code` (`unauthorized`,
 `insufficient_scope`, `not_found`, `invalid_id`, `bad_cursor`,
 `rate_limited`, …).
+
+#### A note from text (`POST /archive/items`)
+
+```bash
+# a note from text (Write scope); curl ≥ 7.82 for --json
+curl --json '{"title": "Idea", "text": "Try the release on Linux first.", "tags": ["idea"]}' \
+  -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items"
+# → 201, Location: /archive/items/2026/09/2026-09-25-idea
+#   {"id":"2026/09/2026-09-25-idea","location":"/archive/items/2026/09/2026-09-25-idea",
+#    "type":"note","title":"Idea","source":"api:clipper","cleaned":false,"replayed":false,…}
+
+# the clipboard → a note (macOS pbpaste; Linux: wl-paste, or xclip -o -selection clipboard)
+pbpaste | jq -Rs '{text: ., tags: ["clipboard"]}' |
+  curl -sS --retry 3 --json @- -H "Authorization: Bearer $SUSSURRO_TOKEN" \
+    -H "Idempotency-Key: $(uuidgen)" "$API/archive/items"
+```
+
+The body is JSON (`Content-Type: application/json`, UTF-8, at most 1 MiB):
+`text` (required; paragraphs are split on blank lines), `title` (else the
+first words of the text), `tags`, `categories`, and `cleanup` (`true` to
+clean it like a dictation). The note is a normal archive item: `type:
+note`, `source: api:<token name>`, dated now, no audio and no speakers; the
+Library shows it at once. Unknown fields are a `400`.
+
+- **Cleanup runs only on a local cleanup profile.** If Settings → Cleanup
+  uses a profile whose server is off this computer, `cleanup: true` is
+  refused (`409`, `cleanup_external`) even when you allowed that profile for
+  dictation: that consent is given in the app, for the app's own sends, and
+  a script can't give it. With cleanup off it is `409` `cleanup_off`.
+  Without `cleanup` nothing is ever sent anywhere. Cleanup takes at most 64
+  KiB of text (`413`, `too_long_for_cleanup`).
+- **Idempotency-Key** (optional, any 1–255 visible ASCII characters, a UUID
+  is fine): the same key with the same body within an hour answers the note
+  it created before (`"replayed": true`, `Idempotent-Replayed: true`)
+  instead of adding another, so a retry after a timeout never duplicates a
+  note. The same key with another body is a `422` (`idempotency_mismatch`).
+  Keys are per token and kept in memory (a restart forgets them).
+- **Rate limit for creating notes**, on top of the token's own: a burst of
+  10 notes per token, then 30 a minute; 30 and then 60 a minute for all
+  tokens together (`429`, `rate_limited`, with `Retry-After`) — a runaway
+  script can't fill your archive.
+- **macOS Shortcuts**: *Get Clipboard* → *Get Contents of URL* with URL
+  `http://127.0.0.1:4525/archive/items`, Method `POST`, a header
+  `Authorization` = `Bearer sua_…`, and Request Body *JSON* with `text` =
+  the clipboard. Shortcuts has no environment variables, so the token sits
+  in the shortcut: give it the **Write** scope only (it can add notes, not
+  read your archive). Or use *Run Shell Script* with the pipeline above and
+  read the token from the Keychain (store it once with `security
+  add-generic-password -a "$USER" -s sussurro-archive -w`, which asks for
+  it; read it with `security find-generic-password -s sussurro-archive
+  -w`).
+
+Errors of this route: `invalid_json`, `bad_request`,
+`unsupported_media_type` (`415`), `too_large` (`413`),
+`too_long_for_cleanup`, `cleanup_external`, `cleanup_off`,
+`invalid_idempotency_key`, `idempotency_mismatch`,
+`idempotency_in_progress` (`409`, retry shortly), `rate_limited`.
 
 What it never gives out: speaker embeddings, voice profiles, saved audio,
 file paths or anything from the app's own data folder. Without the People's

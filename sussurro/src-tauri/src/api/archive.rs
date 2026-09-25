@@ -148,8 +148,8 @@ fn decode_piece(s: &str) -> Option<String> {
     super::percent_decode(s).filter(|d| !d.is_empty())
 }
 
-/// Pure: method + raw path → route. Only `GET`/`HEAD` exist here (writes
-/// come with #251).
+/// Pure: method + raw path → route. Only `GET`/`HEAD` exist here (the one
+/// write, `POST /archive/items`, is [`super::archive_write`], #251).
 pub fn parse_route(method: &str, path: &str) -> ArchiveRoute {
     if !(method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")) {
         return ArchiveRoute::NotFound;
@@ -649,11 +649,11 @@ mod tests {
     const PERSON_EMAIL: &str = "bob@example.org";
 
     fn read() -> Authorized {
-        Authorized { id: "r".into(), scopes: vec![Scope::Read] }
+        Authorized { id: "r".into(), name: "reader".into(), scopes: vec![Scope::Read] }
     }
 
     fn people_scope() -> Authorized {
-        Authorized { id: "rp".into(), scopes: vec![Scope::Read, Scope::People] }
+        Authorized { id: "rp".into(), name: "people".into(), scopes: vec![Scope::Read, Scope::People] }
     }
 
     struct Fx {

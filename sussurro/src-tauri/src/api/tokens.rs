@@ -391,6 +391,9 @@ impl Denied {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Authorized {
     pub id: String,
+    /// The token's name: a note created with it records `source: api:<name>`
+    /// (#251).
+    pub name: String,
     pub scopes: Vec<Scope>,
 }
 
@@ -427,6 +430,7 @@ pub fn authorize(
     }
     Ok(Authorized {
         id: token.id.clone(),
+        name: token.name.clone(),
         scopes: token.scopes.clone(),
     })
 }

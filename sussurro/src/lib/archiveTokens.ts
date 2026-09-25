@@ -65,9 +65,13 @@ export function toggleScope(scopes: ArchiveScope[], scope: ArchiveScope, on: boo
 }
 
 /** A first request to try, with the token in an environment variable (so
- *  it doesn't end up in the shell history). */
-export function curlExample(port: number): string {
-  return `curl -H "Authorization: Bearer $SUSSURRO_TOKEN" http://127.0.0.1:${port}/archive/items`;
+ *  it doesn't end up in the shell history): a list with Read, else (a
+ *  Write-only token, #251) a note from text. */
+export function curlExample(port: number, scopes: ArchiveScope[] = ["read"]): string {
+  const url = `http://127.0.0.1:${port}/archive/items`;
+  if (!scopes.includes("read") && scopes.includes("write"))
+    return `curl --json '{"text": "Hello from a script"}' -H "Authorization: Bearer $SUSSURRO_TOKEN" ${url}`;
+  return `curl -H "Authorization: Bearer $SUSSURRO_TOKEN" ${url}`;
 }
 
 /** What the Archive API row says under its switch. */

@@ -137,6 +137,8 @@ struct Inner {
     /// `archive_dir` waits while this is set (#250 worker slots).
     block_archive: AtomicBool,
     archive_waiting: AtomicUsize,
+    /// Notes `POST /archive/items` created (#251).
+    notes_created: Mutex<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -155,6 +157,22 @@ fn fake_transcribe(samples: &[f32], _language: &str) -> anyhow::Result<TimedTran
         language: Some("en".into()),
         ..Default::default()
     })
+}
+
+/// The real cleanup gate on the fake's settings; "cleans" by uppercasing.
+impl archive_write::NoteHost for TestHost {
+    fn note_cleanup_gate(&self) -> Result<(), archive_write::CleanupRefused> {
+        let s = self.0.settings.lock().unwrap();
+        archive_write::cleanup_gate(s.cleanup_active(), s.cleanup_llm().external)
+    }
+    fn clean_note(&self, paragraphs: &[String]) -> Result<Vec<String>, archive_write::CleanupRefused> {
+        self.note_cleanup_gate()?;
+        self.0.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(paragraphs.iter().map(|p| p.to_uppercase()).collect())
+    }
+    fn note_created(&self, id: &str) {
+        self.0.notes_created.lock().unwrap().push(id.to_string());
+    }
 }
 
 impl Host for TestHost {
@@ -281,6 +299,7 @@ fn start_server_with(limits: Option<tiny_http::Limits>) -> Running {
         tokens_used: Mutex::new(Vec::new()),
         block_archive: AtomicBool::new(false),
         archive_waiting: AtomicUsize::new(0),
+        notes_created: Mutex::new(Vec::new()),
     }));
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     if let Some(limits) = limits {
@@ -1497,12 +1516,12 @@ fn archive_scopes_are_enforced_per_method() {
     assert!(denied.header("WWW-Authenticate").unwrap().contains("scope=\"write\""));
     let denied = get(&write);
     assert_eq!((denied.status, denied.json()["code"].as_str()), (403, Some("insufficient_scope")));
-    // Authorized: reads answer (#250); writes come with #251.
+    // Authorized: reads answer (#250), writes create a note (#251).
     for reply in [get(&read), get(&all)] {
         assert_eq!(reply.status, 200, "authorized");
     }
     for reply in [post(&write), post(&all)] {
-        assert_eq!(reply.json()["code"], "not_found", "authorized");
+        assert_eq!(reply.status, 201, "authorized: {}", reply.body);
     }
     let del = http(r.port, "DELETE", "/archive/items/x", &[("Authorization", &read)], "");
     assert_eq!(del.status, 403, "anything but GET/HEAD needs write");
@@ -1753,4 +1772,181 @@ fn archive_requests_share_a_bounded_number_of_workers() {
         assert_eq!(h.join().unwrap(), 200);
     }
     assert_eq!(http(r.port, "GET", "/archive/people", &[("Authorization", &read)], "").status, 200);
+}
+
+// ---- archive write route (#251) ---------------------------------------------
+
+fn post_note(r: &Running, headers: &[(&str, &str)], body: &str) -> Reply {
+    http(r.port, "POST", "/archive/items", headers, body)
+}
+
+/// `POST /archive/items`: refused without the switch, a token, the `write`
+/// scope, or with any browser Origin or a foreign Host — before the body
+/// is looked at; with them, a note in the archive, readable and indexed.
+#[test]
+fn creating_a_note_is_guarded_like_every_archive_route() {
+    let r = start_server();
+    let (write, _) = add_archive_token(&r, "Shortcuts", &[Scope::Write]);
+    let (read, _) = add_archive_token(&r, "reader", &[Scope::Read, Scope::People]);
+    let body = r#"{"title": "Da comprare", "text": "Latte e caffè.", "tags": ["spesa"]}"#;
+    let json = ("Content-Type", "application/json");
+
+    let off = post_note(&r, &[("Authorization", &write), json], body);
+    assert_eq!((off.status, off.json()["code"].as_str()), (403, Some("archive_api_off")));
+    r.host.0.config.lock().unwrap().archive = true;
+    let foreign = format!("rebind.attacker:{}", r.port);
+    let ext_token = bearer();
+    for (headers, status, code) in [
+        (vec![json], 401, "unauthorized"),
+        (vec![("Authorization", "Bearer sua_nope"), json], 401, "unauthorized"),
+        (vec![("Authorization", ext_token.as_str()), json], 401, "unauthorized"),
+        (vec![("Authorization", read.as_str()), json], 403, "insufficient_scope"),
+        (vec![("Authorization", write.as_str()), ("Origin", EXT), json], 403, "origin_refused"),
+    ] {
+        let reply = post_note(&r, &headers, body);
+        assert_eq!((reply.status, reply.json()["code"].as_str()), (status, Some(code)), "{headers:?}");
+        assert_no_cors(&reply, code);
+    }
+    for (k, v) in [("Origin", "https://evil.example"), ("Host", foreign.as_str())] {
+        let reply = post_note(&r, &[("Authorization", &write), (k, v), json], body);
+        assert_eq!(reply.status, 403, "{k}");
+        assert_no_cors(&reply, k);
+    }
+    assert!(archive::list_items(&r.host.0.archive).is_empty(), "nothing created by a refused request");
+
+    let created = post_note(&r, &[("Authorization", &write), json], body);
+    assert_eq!(created.status, 201, "{}", created.body);
+    assert_no_cors(&created, "201");
+    assert_eq!(created.header("Cache-Control"), Some("no-store"));
+    let id = created.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(created.header("Location"), Some(format!("/archive/items/{id}").as_str()));
+    assert_eq!(created.json()["source"], "api:Shortcuts");
+    assert_eq!(created.json()["type"], "note");
+    assert!(!created.body.contains(r.host.0.archive.to_str().unwrap()), "no paths");
+    assert_eq!(*r.host.0.notes_created.lock().unwrap(), vec![id.clone()]);
+    // Readable (and found) through the read routes.
+    let location = created.header("Location").unwrap().to_string();
+    let item = http(r.port, "GET", &location, &[("Authorization", &read)], "");
+    assert_eq!(item.status, 200);
+    assert_eq!(item.json()["meta"]["title"], "Da comprare");
+    assert_eq!(item.json()["meta"]["tags"], serde_json::json!(["spesa"]));
+    assert_eq!(item.json()["text"], "\n# Da comprare\n\nLatte e caffè.\n");
+    let found = http(r.port, "GET", "/archive/items?q=caff%C3%A8&type=note", &[("Authorization", &read)], "");
+    assert_eq!(found.json()["items"][0]["id"], id.as_str());
+    // Other writes don't exist.
+    for (m, p) in [
+        ("POST", format!("/archive/items/{id}")),
+        ("PUT", "/archive/items".to_string()),
+        ("DELETE", location.clone()),
+    ] {
+        let reply = http(r.port, m, &p, &[("Authorization", &write), json], body);
+        assert_eq!((reply.status, reply.json()["code"].as_str()), (404, Some("not_found")), "{m} {p}");
+    }
+    assert_eq!(post_note(&r, &[("Authorization", &write), json], "{").json()["code"], "invalid_json");
+    let with_query = http(r.port, "POST", "/archive/items?title=x", &[("Authorization", &write), json], body);
+    assert_eq!(with_query.status, 400);
+    assert_eq!(archive::list_items(&r.host.0.archive).len(), 1);
+}
+
+#[test]
+fn a_note_body_over_1_mib_is_refused_without_reading_it() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().archive = true;
+    let (write, _) = add_archive_token(&r, "clipper", &[Scope::Write]);
+    // Declared lengths over the cap (just over, and absurd): answered
+    // without the body.
+    for len in [archive_write::MAX_BODY_BYTES + 1, 9_223_372_036_854_775_807] {
+        let (_s, reply) = raw(
+            r.port,
+            &format!(
+                "POST /archive/items HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: {write}\r\nContent-Length: {len}\r\n\r\n",
+                r.port
+            ),
+        );
+        assert_eq!((reply.status, reply.json()["code"].as_str()), (413, Some("too_large")), "{len}");
+        assert!(healthy(r.port));
+    }
+    let fits = format!(r#"{{"text": "{}"}}"#, "a".repeat(archive_write::MAX_BODY_BYTES - 64));
+    assert_eq!(post_note(&r, &[("Authorization", &write)], &fits).status, 201);
+}
+
+#[test]
+fn note_cleanup_follows_the_settings_and_never_uses_an_external_profile() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().archive = true;
+    let (write, _) = add_archive_token(&r, "clipper", &[Scope::Write]);
+    let auth = [("Authorization", write.as_str())];
+    let body = r#"{"text": "ciao mondo", "cleanup": true}"#;
+    // The default local profile: cleaned.
+    let local = post_note(&r, &auth, body);
+    assert_eq!((local.status, local.json()["cleaned"].as_bool()), (201, Some(true)));
+    assert_eq!(local.json()["title"], "CIAO MONDO");
+    // An external profile the user opted in to for dictation: refused.
+    {
+        let mut s = r.host.0.settings.lock().unwrap();
+        let mut p = crate::llm::LlmProfile::new(
+            "work",
+            "Work",
+            crate::settings::CleanupApi::Openai,
+            "https://llm.example.com/v1",
+            "",
+            "m",
+        );
+        p.cleanup_opt_in = p.host();
+        assert!(p.external && p.cleanup_allowed());
+        s.llm_profiles.push(p);
+        s.cleanup_profile = "work".into();
+    }
+    let calls = r.host.0.calls.load(Ordering::SeqCst);
+    let external = post_note(&r, &auth, body);
+    assert_eq!((external.status, external.json()["code"].as_str()), (409, Some("cleanup_external")));
+    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), calls, "nothing cleaned");
+    assert_eq!(post_note(&r, &auth, r#"{"text": "ciao mondo"}"#).status, 201, "without cleanup it works");
+    // Cleanup off in Settings: refused too.
+    {
+        let mut s = r.host.0.settings.lock().unwrap();
+        s.cleanup_profile = crate::llm::LOCAL_PROFILE_ID.into();
+        s.cleanup_level = crate::settings::CleanupLevel::None;
+    }
+    let off = post_note(&r, &auth, body);
+    assert_eq!((off.status, off.json()["code"].as_str()), (409, Some("cleanup_off")));
+    assert_eq!(archive::list_items(&r.host.0.archive).len(), 2);
+}
+
+#[test]
+fn notes_are_idempotent_by_key_and_rate_limited() {
+    let r = start_server();
+    r.host.0.config.lock().unwrap().archive = true;
+    let (write, _) = add_archive_token(&r, "clipper", &[Scope::Write]);
+    let body = r#"{"text": "clipboard"}"#;
+    let key = "6f1c2b1e-0d7a-4b8e-9c55-1f0a2b3c4d5e";
+    let with_key = |body: &str| post_note(&r, &[("Authorization", &write), ("Idempotency-Key", key)], body);
+    let first = with_key(body);
+    assert_eq!(first.status, 201);
+    let again = with_key(body);
+    assert_eq!(again.status, 201);
+    assert_eq!(again.json()["id"], first.json()["id"]);
+    assert_eq!(again.json()["replayed"], true);
+    assert_eq!(again.header("Idempotent-Replayed"), Some("true"));
+    assert_eq!(archive::list_items(&r.host.0.archive).len(), 1);
+    let changed = with_key(r#"{"text": "other"}"#);
+    assert_eq!((changed.status, changed.json()["code"].as_str()), (422, Some("idempotency_mismatch")));
+
+    // Creations have their own, tighter limit (the first note used one).
+    let mut created = 1;
+    let limited = loop {
+        let reply = post_note(&r, &[("Authorization", &write)], body);
+        if reply.status != 201 {
+            break reply;
+        }
+        created += 1;
+        assert!(created < 100, "never limited");
+    };
+    assert_eq!(created, archive_write::CREATE_BURST as usize);
+    assert_eq!((limited.status, limited.json()["code"].as_str()), (429, Some("rate_limited")));
+    assert!(limited.header("Retry-After").unwrap().parse::<u64>().unwrap() >= 1);
+    assert_no_cors(&limited, "429");
+    // A replay creates nothing, so it still answers.
+    assert_eq!(with_key(body).status, 201);
+    assert_eq!(archive::list_items(&r.host.0.archive).len(), created);
 }
