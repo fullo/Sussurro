@@ -177,8 +177,8 @@ export function DocumentTab({
 
   // Meeting recipes only where the transcript names its speakers (#143).
   const docRecipes = useMemo(
-    () => recipesFor(recipes, settings, item).filter((r) => r.target === "companion_document"),
-    [recipes, settings, item],
+    () => recipesFor(recipes, item).filter((r) => r.target === "companion_document"),
+    [recipes, item],
   );
   const emailCount = participantEmails(item);
   const recipe = docRecipes.find((r) => r.id === recipeId) ?? docRecipes[0] ?? null;

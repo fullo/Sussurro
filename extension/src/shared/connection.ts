@@ -8,8 +8,8 @@
                                (`subtitles`: the app's setting, #129)
    - 401                     → wrong or missing token (or never paired in the app)
    - 403                     → origin refused (should not happen from the extension)
-   - 404                     → meetings are off (E12: the route doesn't exist), or
-                               a Sussurro older than 0.9
+   - 404                     → a Sussurro without the extension routes (older
+                               than the meetings release)
    - connection refused      → the app isn't running, or its local API is off,
                                or it listens on another port */
 import { PROTOCOL_VERSION, appUrl, authHeaders, protocolCompatible, type Pairing } from "./pairing";
@@ -24,19 +24,18 @@ export type ConnectionResult =
   | { kind: "not_running" }
   | { kind: "timeout" }
   /** Something answers on the port but the browser blocked the reply
-   *  (no host permission for 127.0.0.1, or a CORS preflight refused — as
-   *  when meetings are off and the extension lacks host access). */
+   *  (no host permission for 127.0.0.1, or a CORS preflight refused). */
   | { kind: "blocked" }
   | { kind: "bad_token" }
   | { kind: "forbidden" }
-  | { kind: "meetings_disabled" }
+  | { kind: "app_outdated" }
   | { kind: "unexpected"; status: number };
 
 /** Map an HTTP answer of `GET /app/version`. Pure. */
 export function classifyResponse(status: number, body: unknown): ConnectionResult {
   if (status === 401) return { kind: "bad_token" };
   if (status === 403) return { kind: "forbidden" };
-  if (status === 404) return { kind: "meetings_disabled" };
+  if (status === 404) return { kind: "app_outdated" };
   if (status === 200 && body && typeof body === "object") {
     const { app, protocol, protocol_min, subtitles } = body as { app?: unknown; protocol?: unknown; protocol_min?: unknown; subtitles?: unknown };
     if (typeof app === "string" && typeof protocol === "number") {
@@ -127,7 +126,7 @@ export function describeResult(r: ConnectionResult, port: number): ResultMessage
         ok: false,
         title: "The browser blocked the connection",
         detail:
-          "Sussurro seems to be running, but the reply was blocked. Check that meetings are enabled in Sussurro → Settings → Browser extension, and that this extension may access 127.0.0.1 (its site access / permissions).",
+          "Sussurro seems to be running, but the reply was blocked. Check that this extension may access 127.0.0.1 (its site access / permissions).",
       };
     case "bad_token":
       return {
@@ -142,12 +141,11 @@ export function describeResult(r: ConnectionResult, port: number): ResultMessage
         title: "Sussurro refused this extension",
         detail: "The request's origin was not accepted. Reload the extension and try again.",
       };
-    case "meetings_disabled":
+    case "app_outdated":
       return {
         ok: false,
-        title: "Meetings are off in Sussurro",
-        detail:
-          "Turn on Meetings in Sussurro → Settings → Browser extension. (If there is no such setting, update Sussurro: meetings need version 0.9 or later.)",
+        title: "This Sussurro can't record meetings",
+        detail: "The app on this port has no browser-extension support: update Sussurro to the latest version.",
       };
     case "unexpected":
       return {

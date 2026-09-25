@@ -17,7 +17,7 @@ describe("toAppCheck", () => {
   });
 
   it("retries only what may fix itself, and words everything", () => {
-    const all: AppProblem[] = ["not_paired", "not_running", "timeout", "blocked", "bad_token", "forbidden", "meetings_disabled", "protocol_mismatch", "unexpected"];
+    const all: AppProblem[] = ["not_paired", "not_running", "timeout", "blocked", "bad_token", "forbidden", "app_outdated", "protocol_mismatch", "unexpected"];
     expect(all.filter((p) => !isFatal(p))).toEqual(["not_running", "timeout", "unexpected"]);
     for (const p of all) expect(problemText(p)).toBeTruthy();
   });

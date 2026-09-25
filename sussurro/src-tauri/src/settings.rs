@@ -193,12 +193,6 @@ pub struct Settings {
     /// unknown keys) and dropped by the next save.
     #[serde(default = "Onboarding::upgrade")]
     pub onboarding: Onboarding,
-    /// 0.9 meetings (E12): the browser-extension routes of the local API
-    /// (`/app/version`, `/live`, `/items/…`) answer only when this is on,
-    /// and so do meeting speaker labels ("Voice N") and the speaker panel on
-    /// meetings (#130). Transcriptions don't need it (P11, #134).
-    /// Removed when 0.9 ships (#138).
-    pub meetings_enabled: bool,
     /// Pairing token of the browser extension (E6): `Authorization: Bearer`
     /// on HTTP, `?token=` on the `/live` WebSocket. Empty = not paired yet.
     /// Only the backend sets it ([`Settings::regenerate_extension_token`]);
@@ -253,7 +247,6 @@ impl Default for Settings {
             output_file: String::new(),
             archive_dir: String::new(),
             onboarding: Onboarding::Welcome,
-            meetings_enabled: false,
             extension_token: String::new(),
             subtitles: SubtitlesMode::OnRequest,
             save_audio: false,
@@ -654,6 +647,29 @@ mod tests {
         assert!(!serde_json::to_string(&s).unwrap().contains("command_hotkey"));
     }
 
+    /// #138: meetings are always on; a settings.json from the 0.9 preview
+    /// still carries `meetings_enabled` (either value). It must load with
+    /// the other fields kept and the key must be gone after the next save.
+    #[test]
+    fn legacy_meetings_enabled_is_ignored_and_dropped_on_save() {
+        for flag in ["true", "false"] {
+            let legacy = format!(
+                r#"{{"hotkey":"Alt+Space","meetings_enabled":{flag},"extension_token":"abc","save_audio":true}}"#
+            );
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            std::fs::write(&path, &legacy).unwrap();
+            let loaded = Settings::load(&path);
+            assert_eq!(loaded.hotkey, "Alt+Space", "load() must not fall back to defaults");
+            assert_eq!(loaded.extension_token, "abc");
+            assert!(loaded.save_audio);
+            loaded.save(&path).unwrap();
+            let saved = std::fs::read_to_string(&path).unwrap();
+            assert!(!saved.contains("meetings_enabled"), "{saved}");
+            assert_eq!(Settings::load(&path), loaded);
+        }
+    }
+
     /// Settings files written before 0.7 have no `archive_dir`: they must
     /// still load (serde default) and get the default archive location.
     #[test]
@@ -801,12 +817,11 @@ mod tests {
         );
     }
 
-    /// #126: meetings stay off and unpaired until the user opts in; the
-    /// token is generated once and replaced only on request.
+    /// #126: the extension is unpaired until the user pairs it; the token
+    /// is generated once and replaced only on request.
     #[test]
-    fn meetings_are_off_and_unpaired_by_default() {
+    fn extension_is_unpaired_by_default() {
         let s: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
-        assert!(!s.meetings_enabled);
         assert!(s.extension_token.is_empty());
         let mut s = Settings::default();
         let first = s.ensure_extension_token().unwrap();

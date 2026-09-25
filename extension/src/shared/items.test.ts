@@ -54,7 +54,7 @@ describe("item routes", () => {
     const r = await exportItem(PAIRING, ID, "srt", refused.f);
     expect(r).toEqual({ ok: false, error: "Sussurro can't export it: notes have no subtitles." });
     expect(describeFailure(401, null)).toMatch(/Pair the extension again/);
-    expect(describeFailure(404, { error: "unknown endpoint" })).toMatch(/Meetings are off/);
+    expect(describeFailure(404, { error: "unknown endpoint" })).toMatch(/update the app/);
     expect(describeFailure(404, { error: "no item 2026/09/x" })).toMatch(/deleted or moved/);
     expect(describeFailure(500, null)).toBe("Sussurro answered with HTTP 500.");
     for (const s of [401, 403, 404, 500]) expect(describeFailure(s, { error: TOKEN })).not.toContain(TOKEN);

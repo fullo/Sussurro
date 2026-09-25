@@ -55,6 +55,26 @@ manifest (`latest.json`). Publish by un-drafting.
 - Never force-move an existing release tag — bump the patch version instead.
 - The `v0.2.0` draft release is kept intentionally; do not delete it.
 
+### Build-only check (no release)
+
+Run the Release workflow manually on main to verify the three-OS build
+without publishing:
+
+```bash
+gh workflow run release.yml --ref main     # or Actions → Release → Run workflow
+```
+
+Off a tag, the run builds exactly what a tag builds (Windows, macOS, Linux,
+with the sidecar and the extension zips) but creates **no tag and no
+release**: `tauri-action` gets an empty `tagName`/`releaseName`, which makes it
+build only. Instead of release assets, each OS uploads its
+`…/release/bundle/` directory (installers, updater archives and their `.sig`
+files, signed with `TAURI_SIGNING_PRIVATE_KEY` as usual) and the extension job
+uploads its zips, as workflow artifacts kept for **3 days**. No `latest.json`
+is produced — tauri-action only writes it into a release. Dispatching on a
+**tag** ref behaves exactly like pushing that tag. It costs the same Actions
+minutes as a real release.
+
 ## Updater signing key (one-time setup)
 
 The updater artifacts are signed with a minisign key **kept outside the repo**.

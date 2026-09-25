@@ -132,13 +132,6 @@ export function devicesProblem(
   return null;
 }
 
-/** Whether the tab is offered: behind the 0.9 meetings preview (it records
- *  other people, E12), and always while its session runs so it can be
- *  stopped even if the preview was switched off meanwhile. */
-export function systemTabVisible(meetingsEnabled: boolean, running: boolean): boolean {
-  return meetingsEnabled || running;
-}
-
 const KEY = "systemAudioDevice";
 
 /** The last system device used (a per-window convenience). */

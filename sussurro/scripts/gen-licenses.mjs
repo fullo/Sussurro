@@ -1,9 +1,18 @@
-// Generates src/licenses.json — the third-party license list shown in the
+// Generates public/licenses.json — the third-party license list shown in the
 // About dialog. Reads the *actual* resolved dependencies (Rust crates via
 // `cargo metadata`, npm production deps via `npm ls`) and bundles each
 // package's license + full license text, so the About page works offline.
 //
 // Regenerate after changing dependencies:  npm run licenses
+//
+// With `--extension` it writes the browser extension's list instead
+// (extension/src/options/licenses.json, shown on the extension's options
+// page, #138): the npm production deps of extension/ only — the extension
+// has no Rust, models or binaries. Run it from extension/ as
+// `npm run licenses` (needs `npm ci` there first).
+//
+// Dev dependencies (build tools, test runners, type packages) are never
+// listed: they are not shipped. Both modes check it and fail otherwise.
 //
 // Not run at build time on purpose — keeps the release/CI pipeline unchanged
 // (see CLAUDE.md "keep CI simple"). The generated file is committed.
@@ -14,6 +23,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const EXTENSION = resolve(ROOT, "..", "extension");
+const EXTENSION_MODE = process.argv.includes("--extension");
 const LICENSE_FILE_RE = /^(LICEN[CS]E|COPYING|NOTICE|UNLICENSE)/i;
 
 // --- SPDX expression handling -------------------------------------------------
@@ -176,14 +187,14 @@ function rustCrates() {
     );
 }
 
-function npmPackages() {
+function npmPackages(root = ROOT) {
   // --parseable prints the install path of every (production) dependency.
   let paths;
   try {
     paths = execFileSync(
       "npm",
       ["ls", "--all", "--omit=dev", "--parseable"],
-      { cwd: ROOT, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" },
+      { cwd: root, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" },
     );
   } catch (e) {
     // `npm ls` exits non-zero on peer-dep warnings but still prints paths.
@@ -193,7 +204,7 @@ function npmPackages() {
   const out = [];
   for (const dir of paths.split("\n").map((s) => s.trim()).filter(Boolean)) {
     const manifest = join(dir, "package.json");
-    if (!existsSync(manifest) || dir === ROOT) continue;
+    if (!existsSync(manifest) || dir === root) continue;
     let pkg;
     try {
       pkg = JSON.parse(readFileSync(manifest, "utf8"));
@@ -285,39 +296,79 @@ function bundledBinaries() {
   return out;
 }
 
+/** Fails when a direct dev dependency of `root` made it into the list:
+ *  `npm ls --omit=dev` should never return one, and none of them ships.
+ *  (A dev dependency that is also a production one isn't dev-only.) */
+function assertNoDevOnly(root, npm) {
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  const prod = new Set(Object.keys(pkg.dependencies || {}));
+  const devOnly = new Set(Object.keys(pkg.devDependencies || {}).filter((d) => !prod.has(d)));
+  const leaked = npm.filter((p) => devOnly.has(p.name)).map((p) => p.name);
+  if (leaked.length) {
+    throw new Error(`dev dependencies in the licence list of ${root}: ${leaked.join(", ")}`);
+  }
+  if (prod.size && !npm.length) {
+    throw new Error(`no npm packages found in ${root}: run \`npm ci\` there first`);
+  }
+}
+
 const byName = (a, b) =>
   a.name.localeCompare(b.name) || a.version.localeCompare(b.version);
+
+/** Deduplicates license texts by content: Apache-2.0 (identical
+ *  everywhere) collapses to one entry, while MIT texts — which embed each
+ *  project's own copyright line — stay distinct. */
+function withSharedTexts(collected) {
+  const texts = [];
+  const textIndex = new Map();
+  const packages = collected.map((p) => {
+    let textId = -1;
+    if (p.text) {
+      if (!textIndex.has(p.text)) {
+        textIndex.set(p.text, texts.length);
+        texts.push(p.text);
+      }
+      textId = textIndex.get(p.text);
+    }
+    return {
+      name: p.name,
+      version: p.version,
+      license: p.license,
+      spdx: p.spdx,
+      repository: p.repository,
+      ecosystem: p.ecosystem,
+      textId,
+    };
+  });
+  return { packages, texts };
+}
+
+if (EXTENSION_MODE) {
+  const npm = npmPackages(EXTENSION).sort(byName);
+  assertNoDevOnly(EXTENSION, npm);
+  const { packages, texts } = withSharedTexts(npm);
+  writeFileSync(
+    join(EXTENSION, "src", "options", "licenses.json"),
+    JSON.stringify({ packages, texts }, null, 1) + "\n",
+  );
+  console.log(
+    `Wrote extension/src/options/licenses.json — ${packages.length} npm packages, ` +
+      `${texts.length} unique license texts`,
+  );
+  process.exit(0);
+}
+
+const appNpm = npmPackages().sort(byName);
+assertNoDevOnly(ROOT, appNpm);
 const collected = [
   ...rustCrates().sort(byName),
-  ...npmPackages().sort(byName),
+  ...appNpm,
   ...downloadedModels(),
   ...bundledBinaries(),
 ];
 
-// Deduplicate license texts by content: Apache-2.0 (identical everywhere)
-// collapses to one entry, while MIT texts — which embed each project's own
-// copyright line — stay distinct. Cuts the file size to a fraction.
-const texts = [];
-const textIndex = new Map();
-const packages = collected.map((p) => {
-  let textId = -1;
-  if (p.text) {
-    if (!textIndex.has(p.text)) {
-      textIndex.set(p.text, texts.length);
-      texts.push(p.text);
-    }
-    textId = textIndex.get(p.text);
-  }
-  return {
-    name: p.name,
-    version: p.version,
-    license: p.license,
-    spdx: p.spdx,
-    repository: p.repository,
-    ecosystem: p.ecosystem,
-    textId,
-  };
-});
+// Shared texts cut the file size to a fraction.
+const { packages, texts } = withSharedTexts(collected);
 
 const rust = packages.filter((p) => p.ecosystem === "rust").length;
 const models = packages.filter((p) => p.ecosystem === "model").length;

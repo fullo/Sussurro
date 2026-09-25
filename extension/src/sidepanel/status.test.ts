@@ -36,8 +36,8 @@ describe("panelView", () => {
 
   it("explains problems and lets the user try again", () => {
     expect(panelView(state({ app: { ok: false, problem: "not_running" } }))).toMatchObject({ tone: "problem", canStart: true });
-    const err = panelView(state({ phase: "error", problem: "meetings_disabled" }));
-    expect(err.line).toMatch(/Meetings are off/);
+    const err = panelView(state({ phase: "error", problem: "app_outdated" }));
+    expect(err.line).toMatch(/update the app/);
     expect(err.canStart).toBe(true);
     expect(panelView(state({ phase: "error", message: "boom" })).line).toBe("boom");
   });

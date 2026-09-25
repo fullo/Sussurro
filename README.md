@@ -141,6 +141,92 @@ the wordmark is hollow when idle and painted red while recording.
 - **Copy diagnostics** — a footer button copies version + OS + configuration
   for bug reports (configuration only — never dictated text or dictionary).
 
+## Browser extension (meetings)
+
+The Sussurro browser extension records web meetings — **Google Meet,
+Microsoft Teams and Zoom in the browser** — and streams them to the Sussurro
+app on the same computer, which transcribes them live into a *Meeting* in
+your Library. It works in Chrome, Edge and Brave (116 or later) and Firefox
+(128 or later). Meetings need no switch in the app: pair the extension and
+it can record.
+
+### Install
+
+The extension is not in the browser stores yet. Every
+[release](https://github.com/fullo/Sussurro/releases) carries two zips,
+`sussurro-extension-chrome-<version>.zip` and
+`sussurro-extension-firefox-<version>.zip`; use the one with the same
+version as your app.
+
+- **Chrome, Edge, Brave — load unpacked**: unzip it into a folder you keep,
+  open `chrome://extensions` (`edge://extensions`, `brave://extensions`),
+  turn on **Developer mode**, click **Load unpacked** and pick that folder.
+  To update, replace the folder's content and press the reload icon on the
+  extension's card.
+- **Firefox — temporary add-on**: open `about:debugging#/runtime/this-firefox`,
+  click **Load Temporary Add-on…** and pick the zip. Firefox removes a
+  temporary add-on when it quits, so load it again after a restart.
+
+In either browser, if the extension has no access to a meeting site its
+panel offers **Allow access**.
+
+Building it from source: [`extension/README.md`](extension/README.md).
+
+### Pair it with the app
+
+1. In Sussurro, open **Settings → Browser extension**. The extension talks to
+   the app through the local API on `127.0.0.1`: the card says whether it is
+   listening, and offers to turn it on (it applies when Sussurro restarts).
+2. Click **Copy pairing code** — one string with the port and a secret token.
+3. Open the extension's options (right-click its toolbar button →
+   *Options*), paste the code and click **Save and test**.
+
+Treat the code like a password. **Regenerate token…** in the same card
+invalidates the old one at once; every browser you paired must then be
+paired again.
+
+### What it captures
+
+- **Nothing until you press Start recording** in the extension's side panel
+  (Chrome) or sidebar (Firefox) on the meeting tab. While it records, the
+  toolbar button shows a red **REC** badge on that tab; Stop, closing the tab
+  or leaving the page ends the recording, and the app keeps what it
+  received.
+- **Two channels**: your microphone (what the page sends) is always
+  **You**; everyone else (the call's incoming audio, mixed) is told apart by
+  voice as **Voice 1, Voice 2…**, which you can rename or link to People in
+  the document. The page's own audio is never changed or muted.
+- The audio goes **only to the Sussurro app on this computer**; the side
+  panel mirrors the live transcript, and offers *Open in Sussurro*, *Copy as
+  text* and (with subtitles *on request*) *Create .srt*. A `.wav` is saved
+  only if *Save audio* is on in Settings. If the connection drops, the extension reconnects and the rest
+  of the call becomes a new item.
+
+### Meet names
+
+On **Google Meet** the extension also reads the participants' names from the
+page and matches them to who is speaking, so remote lines are named instead
+of *Voice N*, and the participants join the item's frontmatter (with their
+email if they are in People). It reads the page's structure only, never
+clicks or opens panels, and when it can't read the names reliably it stops
+and says so rather than guess: those lines stay *Voice N*. Meet changes its
+page often, so this is the part most likely to need an update. **Teams and
+Zoom** get *You* and *Voice N* only.
+
+### Privacy and consent
+
+The extension sends audio and page events only to the Sussurro app at
+`127.0.0.1`, using the pairing token; the app refuses web pages even when
+they know the token, and nothing goes to any other server. It has no
+analytics. It asks for storage, access to the meeting sites and to
+`127.0.0.1`, and on Chrome the side panel plus the tab-capture fallback
+(used only when a page plays the call audio in a way the extension can't
+otherwise reach).
+
+Recording a meeting records other people: read
+[Recording meetings and consent](#recording-meetings-and-consent). The side
+panel shows the same notice as the app before your first recording.
+
 ## Privacy
 
 Speech-to-text always runs on your device, and the default LLM profile is
@@ -206,6 +292,10 @@ curl "http://127.0.0.1:4525/history?n=10&q=sussurro"
 Loopback-only means no network exposure, but any process on your machine can
 call it — that's why it ships disabled.
 
+The same API serves the [browser extension](#browser-extension-meetings):
+its routes (`/app/version`, `/live`, `/items/…`) always need the pairing
+token and accept only browser-extension origins, never a web page.
+
 ## Roadmap
 
 Current version **0.4.1**. Full detail (and standing decisions) in
@@ -234,8 +324,7 @@ Current version **0.4.1**. Full detail (and standing decisions) in
   SmartScreen prompt (*More info → Run anyway*). Signing is on the roadmap
   (Windows via SignPath; macOS Developer ID later). The **updater** artifacts
   are always signed with the project's own key, independent of OS signing.
-- **Recording a desktop call** (meetings preview, *New → System audio +
-  mic*) records your microphone and **this computer's sound** with nothing
+- **Recording a desktop call** (*New → System audio + mic*) records your microphone and **this computer's sound** with nothing
   to install: WASAPI loopback on Windows, a Core Audio process tap on
   macOS 14.2+ (macOS asks once for the System Audio Recording permission),
   the default output's monitor on Linux (PulseAudio/PipeWire, needs
@@ -292,6 +381,9 @@ terms — contact [DarumaHQ.it](https://darumahq.it).
 
 Bundled third-party components keep their own (permissive/compatible) licenses;
 see the in-app About dialog or [`sussurro/public/licenses.json`](sussurro/public/licenses.json).
+The browser extension lists its own (React, `webextension-polyfill`) in the
+About section of its options page
+([`extension/src/options/licenses.json`](extension/src/options/licenses.json)).
 
 ### Third-party binaries
 
