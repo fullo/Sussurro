@@ -3,9 +3,15 @@
 //!
 //! **Client → app**
 //! - Text frames, JSON with a `type`:
-//!   - `start {title, url, platform, rate, channels}` — begin a meeting:
-//!     `rate` is the browser's sample rate (8–192 kHz), `channels` how many
-//!     logical channels the client will send (1 or 2: `mic`, `remote`).
+//!   - `start {title, url, platform, rate, channels, language?}` — begin a
+//!     meeting: `rate` is the browser's sample rate (8–192 kHz), `channels`
+//!     how many logical channels the client will send (1 or 2: `mic`,
+//!     `remote`). `language` (#288, optional and additive: no protocol
+//!     bump) is the meeting's language, an ISO 639-1 code or `auto`,
+//!     checked against the active engine's languages (`GET
+//!     /app/languages`); missing, the dictation's language setting
+//!     applies. One the engine doesn't offer (or malformed) falls back to
+//!     that setting with a `warning` — the meeting still starts.
 //!   - `speaker_active {name, t}` — the meeting page shows `name` speaking;
 //!     `t` is milliseconds since `start` on the client's audio clock
 //!     (the position in the audio it sent on this connection). From
@@ -106,6 +112,9 @@ pub struct StartInfo {
     pub platform: String,
     pub rate: u32,
     pub channels: u8,
+    /// #288: the meeting's language; older clients send none.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 /// A validated `start`.
@@ -120,6 +129,10 @@ pub struct Start {
     pub platform: String,
     pub rate: u32,
     pub channels: u8,
+    /// The run's language (#288): a code the engine offers or `auto`;
+    /// `None` = the dictation setting. Set from [`meeting_language`] by
+    /// the connection (it knows the engine), never by [`validate_start`].
+    pub language: Option<String>,
 }
 
 impl Start {
@@ -317,7 +330,34 @@ pub fn validate_start(info: &StartInfo) -> Result<Start, ProtocolError> {
         platform,
         rate: info.rate,
         channels: info.channels,
+        language: None,
     })
+}
+
+/// The `start`'s `language` (#288) for an engine offering `set`:
+/// `Ok(None)` when absent or empty (the dictation setting applies),
+/// `Ok(Some("auto"))` to detect, `Ok(Some(code))` for a code the engine
+/// offers (`en-US` reads as `en`); an error for anything else — the caller
+/// warns and falls back to the dictation setting.
+pub fn meeting_language(
+    requested: Option<&str>,
+    set: crate::stt::languages::LanguageSet,
+) -> Result<Option<String>, ProtocolError> {
+    use crate::stt::languages::{normalize, AUTO};
+    let Some(raw) = requested.map(str::trim).filter(|l| !l.is_empty()) else {
+        return Ok(None);
+    };
+    let Some(code) = normalize(raw) else {
+        return Err(bad("language must be an ISO 639-1 code or \"auto\""));
+    };
+    if code == AUTO || set.supports(&code) {
+        Ok(Some(code))
+    } else {
+        Err(bad(format!(
+            "{} does not transcribe language \"{code}\"",
+            set.engine_label()
+        )))
+    }
 }
 
 /// Validate a `speaker_active` time: milliseconds, finite, not negative.
@@ -558,6 +598,7 @@ mod tests {
             platform: "Meet".into(),
             rate,
             channels,
+            language: None,
         }
     }
 
@@ -707,6 +748,42 @@ mod tests {
         // Only the host is kept: userinfo, port and path go.
         let s = validate_start(&info(48_000, 2, "https://u:p@x.example:8443/../a")).unwrap();
         assert_eq!(s.host, "x.example");
+    }
+
+    #[test]
+    fn start_language_is_optional_and_checked_against_the_engine() {
+        use crate::stt::languages::LanguageSet;
+        // An older client sends none: the dictation setting applies.
+        let ClientMessage::Start(old) =
+            parse_control(r#"{"type":"start","url":"https://meet.google.com/x","rate":48000,"channels":2}"#)
+                .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(old.language, None);
+        assert_eq!(validate_start(&old).unwrap().language, None, "set by the connection only");
+        let ClientMessage::Start(new) = parse_control(
+            r#"{"type":"start","url":"https://meet.google.com/x","rate":48000,"channels":2,"language":"en"}"#,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert_eq!(new.language.as_deref(), Some("en"));
+
+        let w = LanguageSet::Whisper;
+        assert_eq!(meeting_language(None, w), Ok(None));
+        assert_eq!(meeting_language(Some("  "), w), Ok(None));
+        assert_eq!(meeting_language(Some("en"), w), Ok(Some("en".into())));
+        assert_eq!(meeting_language(Some("EN-us"), w), Ok(Some("en".into())));
+        assert_eq!(meeting_language(Some("auto"), w), Ok(Some("auto".into())));
+        assert_eq!(meeting_language(Some("ja"), w), Ok(Some("ja".into())));
+        // Not one the engine offers, or not a code at all.
+        assert!(meeting_language(Some("ja"), LanguageSet::Parakeet).is_err());
+        assert_eq!(meeting_language(Some("auto"), LanguageSet::Parakeet), Ok(Some("auto".into())));
+        assert!(meeting_language(Some("it"), LanguageSet::WhisperEnglish).is_err());
+        assert!(meeting_language(Some("xx"), w).is_err());
+        let e = meeting_language(Some("english"), w).unwrap_err();
+        assert!(e.0.contains("ISO 639-1"), "{e}");
     }
 
     #[test]

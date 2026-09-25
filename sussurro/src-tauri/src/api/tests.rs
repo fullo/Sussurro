@@ -28,6 +28,9 @@ fn routes_map_method_and_path() {
     assert_eq!(route("GET", "/clean"), Route::NotFound); // wrong method
     assert_eq!(route("POST", "/nope"), Route::NotFound);
     assert_eq!(route("GET", "/app/version"), Route::AppVersion);
+    assert_eq!(route("GET", "/app/languages"), Route::AppLanguages);
+    assert_eq!(route("OPTIONS", "/app/languages"), Route::Preflight);
+    assert_eq!(route("POST", "/app/languages"), Route::NotFound);
     assert_eq!(route("GET", "/live"), Route::Live);
     assert_eq!(route("POST", "/live"), Route::NotFound);
     assert_eq!(
@@ -70,6 +73,7 @@ fn routes_map_method_and_path() {
 fn only_the_extension_routes_are_meeting_routes() {
     for r in [
         Route::AppVersion,
+        Route::AppLanguages,
         Route::Live,
         Route::OpenItem("x".into()),
         Route::ExportItem("x".into()),
@@ -139,6 +143,9 @@ struct Inner {
     archive_waiting: AtomicUsize,
     /// Notes `POST /archive/items` created (#251).
     notes_created: Mutex<Vec<String>>,
+    /// The language each meeting segment was transcribed and cleaned
+    /// with (#288): `stt:<lang>` / `cleanup:<lang>`.
+    languages_seen: Mutex<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -233,12 +240,19 @@ impl Host for TestHost {
             let no_model = |_: PathBuf| -> crate::speakers::tracker::EmbedderLoader {
                 Box::new(|| Err(anyhow::anyhow!("no speaker model in tests")))
             };
+            let (stt_seen, clean_seen) = (inner.clone(), inner.clone());
             let _ = crate::engine::session::run_request_with_speakers(
                 &inner.settings,
                 &inner.paths,
                 req,
-                fake_transcribe,
-                |_: &Settings, _: Option<&str>, raw: &str| format!("{raw}."),
+                move |samples: &[f32], language: &str| {
+                    stt_seen.languages_seen.lock().unwrap().push(format!("stt:{language}"));
+                    fake_transcribe(samples, language)
+                },
+                move |s: &Settings, _: Option<&str>, raw: &str| {
+                    clean_seen.languages_seen.lock().unwrap().push(format!("cleanup:{}", s.language));
+                    format!("{raw}.")
+                },
                 |_: &std::path::Path| {
                     Box::new(EnergyDetector::default()) as Box<dyn crate::engine::segmenter::SpeechDetector>
                 },
@@ -285,6 +299,7 @@ fn start_server_with(limits: Option<tiny_http::Limits>) -> Running {
         config: Mutex::new(ApiConfig {
             extension_token: TOKEN.into(),
             scripting: true,
+            dictation_language: "en".into(),
             ..Default::default()
         }),
         settings: Mutex::new(settings),
@@ -300,6 +315,7 @@ fn start_server_with(limits: Option<tiny_http::Limits>) -> Running {
         block_archive: AtomicBool::new(false),
         archive_waiting: AtomicUsize::new(0),
         notes_created: Mutex::new(Vec::new()),
+        languages_seen: Mutex::new(Vec::new()),
     }));
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     if let Some(limits) = limits {
@@ -790,6 +806,114 @@ fn a_websocket_meeting_becomes_an_archive_item() {
 }
 
 #[test]
+fn app_languages_lists_the_engine_languages_for_the_extension_only() {
+    use crate::stt::languages::LanguageSet;
+    let r = start_server();
+    let auth = bearer();
+    let get = |headers: &[(&str, &str)]| http(r.port, "GET", "/app/languages", headers, "");
+    let ok = get(&[("Authorization", &auth), ("Origin", EXT)]);
+    assert_eq!(ok.status, 200);
+    assert_eq!(ok.header("Access-Control-Allow-Origin"), Some(EXT));
+    let v = ok.json();
+    assert_eq!(v["engine"], "whisper");
+    assert_eq!(v["default"], "en", "the dictation's language");
+    let langs = v["languages"].as_array().unwrap();
+    assert_eq!(langs.len(), 99);
+    assert!(langs.iter().any(|l| l["code"] == "it" && l["name"] == "Italiano"), "{v}");
+    assert!(!langs.iter().any(|l| l["code"] == "auto"), "auto is implied");
+    // It follows the engine and the dictation setting.
+    {
+        let mut c = r.host.0.config.lock().unwrap();
+        c.languages = LanguageSet::Parakeet;
+        c.dictation_language = "IT-it".into();
+    }
+    let v = get(&[("Authorization", &auth), ("Origin", EXT)]).json();
+    assert_eq!((v["engine"].as_str(), v["default"].as_str()), (Some("parakeet"), Some("it")));
+    assert_eq!(v["languages"].as_array().unwrap().len(), 25);
+    r.host.0.config.lock().unwrap().dictation_language = String::new();
+    assert_eq!(get(&[("Authorization", &auth)]).json()["default"], "auto");
+    // Behind the extension token, extension origins only (#126, #215).
+    assert_eq!(get(&[("Origin", EXT)]).status, 401);
+    assert_eq!(get(&[("Authorization", "Bearer 00")]).status, 401);
+    assert_eq!(get(&[("Authorization", &auth), ("Origin", "https://evil.example")]).status, 403);
+    let pre = http(r.port, "OPTIONS", "/app/languages", &[("Origin", EXT)], "");
+    assert_eq!(pre.status, 204);
+}
+
+/// One short meeting over `/live` whose `start` carries `extra` JSON
+/// fields: the item id and the warnings the app sent.
+fn short_meeting(port: u16, extra: &str) -> (String, Vec<String>) {
+    let mut ws = ws_connect(port, TOKEN, Some(EXT)).expect("upgrade");
+    read_json(&mut ws).unwrap();
+    ws.send(Message::text(format!(
+        r#"{{"type":"start","title":"Sync","url":"https://meet.google.com/abc-defg-hij","platform":"meet","rate":48000,"channels":2{extra}}}"#
+    )))
+    .unwrap();
+    // 4 s: the remote side speaks 0.5–2.5 s.
+    for n in 0..200usize {
+        let t = n as f32 * 0.02;
+        let amp = if (0.5..2.5).contains(&t) { 0.4 } else { 0.0 };
+        ws.send(Message::binary(protocol::encode_audio_frame(0, n as u32, &frame_48k(n * 960, 0.0))))
+            .unwrap();
+        ws.send(Message::binary(protocol::encode_audio_frame(1, n as u32, &frame_48k(n * 960, amp))))
+            .unwrap();
+    }
+    ws.send(Message::text(r#"{"type":"stop"}"#)).unwrap();
+    let mut warnings = Vec::new();
+    let mut done = None;
+    while let Some(m) = read_json(&mut ws) {
+        if m["type"] != "status" {
+            continue;
+        }
+        assert_ne!(m["state"], "error", "{m}");
+        if m["state"] == "warning" {
+            warnings.push(m["message"].as_str().unwrap_or_default().to_string());
+        }
+        if m["state"] == "done" {
+            done = m["item_id"].as_str().map(str::to_string);
+        }
+    }
+    (done.expect("done with an item"), warnings)
+}
+
+#[test]
+fn a_meeting_runs_in_the_language_the_side_panel_chose() {
+    let r = start_server();
+    let seen = || std::mem::take(&mut *r.host.0.languages_seen.lock().unwrap());
+    // The dictation setting is English; the panel chose Italian (#288):
+    // the STT hint, the cleanup and the frontmatter all take it.
+    let (id, warnings) = short_meeting(r.port, r#","language":"it""#);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let item = archive::read_item(&r.host.0.archive, &id).unwrap();
+    assert_eq!(item.meta.language, "it");
+    let langs = seen();
+    assert!(langs.contains(&"stt:it".to_string()) && langs.contains(&"cleanup:it".to_string()), "{langs:?}");
+    assert!(langs.iter().all(|l| l.ends_with(":it")), "{langs:?}");
+    assert_eq!(r.host.0.settings.lock().unwrap().language, "en", "the global setting is untouched");
+
+    // An older extension sends none: the dictation's language.
+    let (id, warnings) = short_meeting(r.port, "");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(archive::read_item(&r.host.0.archive, &id).unwrap().meta.language, "en");
+    assert!(seen().iter().all(|l| l.ends_with(":en")));
+
+    // A language the engine doesn't offer: warned, dictation language.
+    r.host.0.config.lock().unwrap().languages = crate::stt::languages::LanguageSet::Parakeet;
+    let (id, warnings) = short_meeting(r.port, r#","language":"ja""#);
+    assert!(warnings.iter().any(|w| w.contains("\"ja\"")), "{warnings:?}");
+    assert_eq!(archive::read_item(&r.host.0.archive, &id).unwrap().meta.language, "en");
+    seen();
+
+    // Auto-detect: the cleanup and the frontmatter take the language the
+    // STT detected (#218; the fake detects English).
+    let (id, _) = short_meeting(r.port, r#","language":"auto""#);
+    assert_eq!(archive::read_item(&r.host.0.archive, &id).unwrap().meta.language, "en");
+    let langs = seen();
+    assert!(langs.contains(&"stt:auto".to_string()), "{langs:?}");
+    assert!(langs.contains(&"cleanup:en".to_string()), "fake STT detects en: {langs:?}");
+}
+
+#[test]
 fn a_dropped_connection_still_keeps_the_meeting() {
     let r = start_server();
     let mut ws = ws_connect(r.port, TOKEN, Some(EXT)).expect("upgrade");
@@ -921,6 +1045,7 @@ fn a_foreign_host_is_refused_on_every_route() {
             ("POST", "/clean"),
             ("POST", "/transcribe?ext=wav"),
             ("GET", "/app/version"),
+            ("GET", "/app/languages"),
             ("GET", "/items/2026/09/x/export"),
             ("POST", "/items/2026/09/x/open"),
             ("OPTIONS", "/app/version"),
