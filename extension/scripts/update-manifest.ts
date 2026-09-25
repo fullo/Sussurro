@@ -6,8 +6,11 @@
  * Run it AFTER the GitHub release v<version> is published: with no path it
  * downloads the signed .xpi from the release (a draft's assets are not
  * public, so this also proves the link Firefox will follow works), checks
- * its version and gecko id, and writes the entry — update_link and the
- * SHA-256 update_hash — into docs/extension/updates.json. Commit that file
+ * its version, gecko id and minimum Firefox (it must match
+ * manifest.firefox.json's strict_min_version, #234), and writes the entry —
+ * update_link, the SHA-256 update_hash and that strict_min_version — into
+ * docs/extension/updates.json, leaving the other versions' entries as
+ * published. Commit that file
  * on a branch and merge it: GitHub Pages then serves it at the manifest's
  * update_url, and installed copies update on their next check.
  * Runs directly under Node's type stripping (Node >= 24).
@@ -19,6 +22,7 @@ import { addUpdate, checkVersion, entryForXpi, updateLink, validateManifest } fr
 
 const EXT = dirname(dirname(fileURLToPath(import.meta.url)));
 const FILE = join(EXT, "..", "docs", "extension", "updates.json");
+const TEMPLATE = join(EXT, "manifest.firefox.json");
 
 const [versionArg, xpiPath] = process.argv.slice(2);
 if (!versionArg) {
@@ -37,7 +41,10 @@ try {
     if (!res.ok) throw new Error(`${url}: HTTP ${res.status} (is release v${version} published, with its .xpi?)`);
     bytes = new Uint8Array(await res.arrayBuffer());
   }
-  const entry = entryForXpi(bytes, version);
+  // The new entry carries the minimum Firefox the .xpi declares, which must
+  // be the current manifest's (#234): published entries keep their own.
+  const minVersion: string = JSON.parse(readFileSync(TEMPLATE, "utf8")).browser_specific_settings.gecko.strict_min_version;
+  const entry = entryForXpi(bytes, version, undefined, minVersion);
   const manifest = addUpdate(validateManifest(JSON.parse(readFileSync(FILE, "utf8"))), entry);
   writeFileSync(FILE, JSON.stringify(manifest, null, 2) + "\n");
   console.log(`${relative(process.cwd(), FILE)}: v${version} → ${entry.update_link} (${entry.update_hash})`);

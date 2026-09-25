@@ -118,12 +118,23 @@ export function readXpi(bytes: Uint8Array): { version: string; id?: string; stri
 }
 
 /** The update entry for a signed .xpi's bytes, cross-checked against the
- *  version it is published as. */
-export function entryForXpi(bytes: Uint8Array, version: string, id: string = GECKO_ID): UpdateEntry {
+ *  version it is published as. The entry's `strict_min_version` is the
+ *  one the .xpi itself declares, so Firefox never offers an update the
+ *  installed browser would then refuse to install (0.10.0 required 128;
+ *  later versions require 140, #234). When `minVersion` is given (the
+ *  current `manifest.firefox.json`'s), the .xpi must declare exactly that:
+ *  a mismatch means a stale or foreign build. Entries already in the
+ *  manifest are never rewritten (see addUpdate). */
+export function entryForXpi(bytes: Uint8Array, version: string, id: string = GECKO_ID, minVersion?: string): UpdateEntry {
   const v = checkVersion(version);
   const xpi = readXpi(bytes);
   if (xpi.version !== v) throw new Error(`the .xpi is version ${xpi.version}, not ${v}`);
   if (xpi.id !== id) throw new Error(`the .xpi's gecko id is ${xpi.id ?? "missing"}, not ${id}`);
+  if (minVersion !== undefined && xpi.strict_min_version !== minVersion) {
+    throw new Error(
+      `the .xpi requires Firefox ${xpi.strict_min_version ?? "(no minimum)"}, but manifest.firefox.json says ${minVersion}: is it a stale build?`,
+    );
+  }
   const entry: UpdateEntry = { version: v, update_link: updateLink(v), update_hash: updateHash(bytes) };
   if (xpi.strict_min_version) entry.browser_specific_settings = { gecko: { strict_min_version: xpi.strict_min_version } };
   return entry;
