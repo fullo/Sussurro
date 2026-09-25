@@ -74,6 +74,14 @@ pub trait SegmentStt: Send {
 /// Must never fail: on any problem it returns `raw`.
 pub trait Cleaner: Send + Sync {
     fn clean(&self, previous: Option<&str>, raw: &str) -> String;
+
+    /// [`Cleaner::clean`] knowing the language the STT detected for this
+    /// segment (`None` = not reported), so the cleanup prompt can name that
+    /// language's fillers (#218). The default ignores it.
+    fn clean_detected(&self, previous: Option<&str>, raw: &str, detected: Option<&str>) -> String {
+        let _ = detected;
+        self.clean(previous, raw)
+    }
 }
 
 /// Receives the engine's events (Tauri in the app, a Vec in tests).
@@ -308,25 +316,33 @@ struct ExternalLogCleaner<'a> {
     logged: std::sync::Mutex<Option<bool>>,
 }
 
+impl ExternalLogCleaner<'_> {
+    /// Whether text may be sent: the entry is recorded on the first call.
+    fn allowed(&self) -> bool {
+        let mut logged = self.logged.lock().unwrap_or_else(|e| e.into_inner());
+        *logged.get_or_insert_with(|| {
+            match archive::external::record(&self.archive, &self.item_id, &self.entry) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!(
+                        "engine: could not record the external cleanup of {} — keeping raw text, nothing sent ({e:#})",
+                        self.item_id
+                    );
+                    false
+                }
+            }
+        })
+    }
+}
+
 impl Cleaner for ExternalLogCleaner<'_> {
     fn clean(&self, previous: Option<&str>, raw: &str) -> String {
-        let allowed = {
-            let mut logged = self.logged.lock().unwrap_or_else(|e| e.into_inner());
-            *logged.get_or_insert_with(|| {
-                match archive::external::record(&self.archive, &self.item_id, &self.entry) {
-                    Ok(()) => true,
-                    Err(e) => {
-                        eprintln!(
-                            "engine: could not record the external cleanup of {} — keeping raw text, nothing sent ({e:#})",
-                            self.item_id
-                        );
-                        false
-                    }
-                }
-            })
-        };
-        if allowed {
-            self.inner.clean(previous, raw)
+        self.clean_detected(previous, raw, None)
+    }
+
+    fn clean_detected(&self, previous: Option<&str>, raw: &str, detected: Option<&str>) -> String {
+        if self.allowed() {
+            self.inner.clean_detected(previous, raw, detected)
         } else {
             raw.to_string()
         }
@@ -1028,7 +1044,11 @@ pub fn build_segment(
     } else {
         raw.clone()
     };
-    let text = cleaner.clean(previous, &input).trim().to_string();
+    let detected = transcript.language.as_deref().filter(|l| !l.trim().is_empty());
+    let text = cleaner
+        .clean_detected(previous, &input, detected)
+        .trim()
+        .to_string();
     let text = if text.is_empty() { input } else { text };
     Some(Segment {
         id,
