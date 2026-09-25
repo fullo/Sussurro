@@ -156,7 +156,8 @@ pub struct Settings {
     pub output_language: String,
     /// Voice shortcuts: dictating exactly a cue pastes its text instead.
     pub snippets: Vec<Snippet>,
-    /// Show a live partial transcript in the overlay while speaking.
+    /// Show a live partial transcript in the overlay while speaking. On by
+    /// default where Whisper runs on the GPU, off on a CPU-only build (#98).
     pub live_preview: bool,
     /// Per-app tone rules (Wispr-style tone matching).
     pub app_styles: Vec<AppStyle>,
@@ -240,7 +241,7 @@ impl Default for Settings {
             language: "auto".into(),
             output_language: String::new(),
             snippets: Vec::new(),
-            live_preview: true,
+            live_preview: crate::stt::WHISPER_GPU,
             app_styles: Vec::new(),
             models_dir: String::new(),
             input_device: String::new(),
@@ -593,6 +594,16 @@ mod tests {
         assert!(!s.autostart);
         // Qwen3-ASR is optional, never the default (#152).
         assert_eq!(s.engine, SttEngine::Whisper);
+        // Live preview (#98): on where Whisper has a GPU, off on CPU-only.
+        assert_eq!(s.live_preview, crate::stt::WHISPER_GPU);
+    }
+
+    #[test]
+    fn an_existing_settings_file_keeps_its_live_preview_choice() {
+        let s: Settings = serde_json::from_str(r#"{"live_preview": true}"#).unwrap();
+        assert!(s.live_preview);
+        let s: Settings = serde_json::from_str(r#"{"live_preview": false}"#).unwrap();
+        assert!(!s.live_preview);
     }
 
     #[test]

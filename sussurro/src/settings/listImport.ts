@@ -1,10 +1,12 @@
-/* Bulk import for the Personal dictionary (.txt) and Snippets (.csv).
-   The file is picked by a native dialog opened from Rust (`pick_import_file`,
-   #156): no path crosses IPC, the backend only hands back the picked file's
-   name and text. Parsing and merging stay here and in ../utils. */
+/* Bulk import and export for the Personal dictionary (.txt) and Snippets
+   (.csv). The file is picked by a native dialog opened from Rust
+   (`pick_import_file`, #156; `save_list_export`, #99): no path crosses IPC,
+   the backend only hands back the picked file's name and text. Parsing,
+   merging and formatting stay here, in ../utils and ../lib/personalization. */
 
 import { invoke } from "@tauri-apps/api/core";
 import type { Ctl } from "../hooks/useAppController";
+import { exportDictionaryTxt, exportSnippetsCsv } from "../lib/personalization";
 import {
   describeDictionaryMerge,
   describeSnippetMerge,
@@ -64,4 +66,30 @@ export async function importSnippets(ctl: Ctl): Promise<void> {
   } catch (e) {
     setBusy(String(e));
   }
+}
+
+/* ---------- Export (#99) ----------
+   The text is built here in the same format the import reads, then handed
+   to `save_list_export`, which opens the save dialog from Rust and writes
+   it. Resolves after the user saved or cancelled. */
+
+async function saveExport(ctl: Ctl, kind: ImportKind, contents: string, what: string): Promise<void> {
+  if (!contents) {
+    ctl.flash(`Nothing to export: the ${what} list is empty.`);
+    return;
+  }
+  try {
+    const name = await invoke<string | null>("save_list_export", { kind, contents });
+    if (name) ctl.flash(`Exported to ${name}.`);
+  } catch (e) {
+    ctl.setBusy(String(e));
+  }
+}
+
+export function exportDictionary(ctl: Ctl): Promise<void> {
+  return saveExport(ctl, "dictionary", exportDictionaryTxt(ctl.settings.dictionary), "dictionary");
+}
+
+export function exportSnippets(ctl: Ctl): Promise<void> {
+  return saveExport(ctl, "snippets", exportSnippetsCsv(ctl.settings.snippets), "snippet");
 }

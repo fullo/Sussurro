@@ -1,18 +1,33 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { AdvancedGroup, Card, Switch, Tip } from "../components/ui";
 import type { CardProps } from "./DictationCard";
 
 export function BehaviorCard({ ctl }: CardProps) {
   const { settings, setSettings, save } = ctl;
+  /** Whisper runs on the GPU in this build (null until known). */
+  const [whisperGpu, setWhisperGpu] = useState<boolean | null>(null);
+  useEffect(() => {
+    invoke<boolean>("whisper_gpu").then(setWhisperGpu).catch(() => setWhisperGpu(null));
+  }, []);
+  const cpuWhisper = whisperGpu === false && settings.engine === "whisper";
   return (
     <Card title={<>Behavior <span className="via">feedback & extras</span></>}>
       <div className="field">
         <div className="field-label">
-          <span>Live preview <Tip text="While you speak, the overlay shows a rolling partial transcript (re-transcribed every ~1.2s). Costs extra GPU/CPU during recording; the pasted text always comes from the final, full-quality pass." /></span>
-          <small>partial transcript in the overlay</small>
+          <span>Live preview <Tip text="While you speak, the overlay shows the words heard so far: solid once two passes agree, faded while the model may still change them, and only the last lines of a long dictation. The model re-reads the recording every ~1.2 s, less often as it grows, so the preview never takes more than about a third of the engine's time. The pasted text always comes from the final, full-quality pass. The level bar in the overlay shows whether the microphone hears you, with or without the preview." /></span>
+          <small>{cpuWhisper ? "off by default here: Whisper runs on the CPU" : "partial transcript in the overlay"}</small>
+          {cpuWhisper && settings.live_preview && (
+            <small className="model-note">
+              This build runs Whisper on the CPU, so each preview pass competes with your dictation and the text may
+              arrive later. Turn it off if dictation feels slow, or use Parakeet, which is fast on the CPU.
+            </small>
+          )}
         </div>
         <Switch
           checked={settings.live_preview}
+          label="Live preview"
           onChange={(v) => save({ ...settings, live_preview: v })}
         />
       </div>
