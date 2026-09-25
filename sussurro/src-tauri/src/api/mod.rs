@@ -9,8 +9,10 @@
 //! - `GET /app/version` → `{app, protocol, subtitles}` handshake; `subtitles`
 //!   is the subtitles setting (`on_request` | `always`, #133), so the side
 //!   panel offers "Create .srt" only when the app doesn't write it itself
-//!   (#129)
-//! - `WS /live?token=` → a meeting session ([`live`], [`protocol`])
+//!   (#129); `live_auth: "message"` says `/live` accepts the token as its
+//!   first message (#217)
+//! - `WS /live` (`?token=`, or `auth {token}` first) → a meeting session
+//!   ([`live`], [`protocol`])
 //! - `POST /items/{id}/open` → the app comes to the front on that item
 //! - `GET /items/{id}/export?format=md|txt|srt|vtt` → [`export`]
 //!
@@ -330,10 +332,11 @@ fn handle_meeting(
     }
     if route == Route::Live {
         let token = params.get("token").and_then(|t| percent_decode(t));
-        if let Err(d) = auth::check_ws(&config.extension_token, token.as_deref(), origin.as_deref()) {
-            return deny(request, d);
-        }
-        return upgrade_live(host, request);
+        // `?token=`, or (#217) the token in the first message.
+        return match live::authorize(&config.extension_token, token.as_deref(), origin.as_deref()) {
+            Ok(auth) => upgrade_live(host, request, auth),
+            Err(d) => deny(request, d),
+        };
     }
     let authorization = header(&request, "Authorization");
     if let Err(d) = auth::check_http(
@@ -352,6 +355,8 @@ fn handle_meeting(
                 "protocol": protocol::PROTOCOL_VERSION,
                 "protocol_min": protocol::MIN_PROTOCOL,
                 "subtitles": config.subtitles,
+                // `/live` takes `auth {token}` as its first message (#217).
+                "live_auth": "message",
             }),
             &cors,
         ),
@@ -430,7 +435,7 @@ pub fn websocket_accept(
     Ok(tungstenite::handshake::derive_accept_key(key.as_bytes()))
 }
 
-fn upgrade_live(host: &Arc<dyn Host>, request: tiny_http::Request) {
+fn upgrade_live(host: &Arc<dyn Host>, request: tiny_http::Request, auth: live::LiveAuth) {
     let accept = match websocket_accept(
         header(&request, "Upgrade").as_deref(),
         header(&request, "Sec-WebSocket-Version").as_deref(),
@@ -458,7 +463,7 @@ fn upgrade_live(host: &Arc<dyn Host>, request: tiny_http::Request) {
             tungstenite::protocol::Role::Server,
             Some(live::ws_config()),
         );
-        live::serve(ws, &*host);
+        live::serve(ws, &*host, auth);
     });
 }
 
