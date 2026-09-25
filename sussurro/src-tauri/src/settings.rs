@@ -448,13 +448,18 @@ impl Settings {
     ///
     /// API keys kept in the OS credential store are left out (#159): see
     /// [`Settings::for_disk`].
+    ///
+    /// The file holds the extension token and any fallback API keys (#215):
+    /// it is written atomically (a temp file in the same folder, then a
+    /// rename over the old one) and, on Unix, with mode 0600 — so a save
+    /// also tightens a file an older version left world-readable.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
         let json = serde_json::to_string_pretty(&self.for_disk())
             .map_err(|e| std::io::Error::other(format!("serialize settings: {e}")))?;
-        std::fs::write(path, json)
+        write_private_atomic(path, json.as_bytes())
     }
 
     /// The settings as `settings.json` stores them (#159): a profile whose
@@ -473,6 +478,46 @@ impl Settings {
         }
         out
     }
+}
+
+/// Write `bytes` to `path` atomically, readable by the owner only on Unix
+/// (0600; Windows keeps the profile folder's ACL): a temp file next to
+/// `path` is written, synced and renamed over it. A failed write leaves the
+/// old file as it was and removes the temp file.
+pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "settings.json".into());
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_file_name(format!(".{name}.{}.{n}.tmp", std::process::id()));
+    let write = || -> std::io::Result<()> {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&tmp)?;
+        // The umask can only remove bits, but make the mode explicit anyway.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    };
+    let result = write();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Whether a user-entered cleanup endpoint URL points at this machine:
@@ -557,6 +602,39 @@ mod tests {
         };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
+    }
+
+    /// #215: settings.json holds the extension token (and fallback API
+    /// keys): owner-only on Unix, also when an older build left it 0644,
+    /// written atomically (no temp file left behind).
+    #[test]
+    fn save_writes_an_owner_only_file_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let s = Settings {
+            extension_token: "secret".into(),
+            ..Default::default()
+        };
+        s.save(&path).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{mode:o}");
+        }
+        assert_eq!(Settings::load(&path).extension_token, "secret");
+        s.save(&path).unwrap();
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["settings.json"]);
     }
 
     /// Settings always serialize, so the serde-error branch of save() is not
