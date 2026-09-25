@@ -12,6 +12,19 @@ export function SortSelect({ value, onChange, label }: { value: ListSort; onChan
   );
 }
 
+/** "Removed … · Undo" after a delete: the managers delete without asking,
+ *  so the last removal can be taken back until the list changes again. */
+export function UndoBar({ message, onUndo }: { message: string; onUndo: () => void }) {
+  return (
+    <div className="lm-selection" role="status">
+      <span>{message}</span>
+      <button type="button" className="btn-ghost" onClick={onUndo}>
+        Undo
+      </button>
+    </div>
+  );
+}
+
 /** Previous / next pages for a long list; nothing when it fits on one page. */
 export function Pager({
   page,

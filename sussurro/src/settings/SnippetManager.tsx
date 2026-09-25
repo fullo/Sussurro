@@ -5,7 +5,7 @@ import { fmtCount } from "../lib/format";
 import { duplicateCueCount, pageOf, removeIndices, snippetDraftIssues, snippetRows, type ListSort } from "../lib/personalization";
 import type { SnippetEntry } from "../utils";
 import { exportSnippets, importSnippets } from "./listImport";
-import { Pager, SortSelect } from "./listControls";
+import { Pager, SortSelect, UndoBar } from "./listControls";
 
 /** First line of a snippet's text, for the table. */
 const preview = (text: string) => text.trim().split(/\r?\n/)[0];
@@ -29,7 +29,17 @@ export function SnippetManager({ ctl }: { ctl: Ctl }) {
   const shown = pageOf(rows, page);
   useEffect(() => setPage(0), [deferredQuery, sort]);
 
-  const commit = (next: SnippetEntry[]) => save({ ...settings, snippets: next });
+  /** The last removal, undoable until the list changes again. */
+  const [undo, setUndo] = useState<{ message: string; previous: SnippetEntry[]; after: string } | null>(null);
+  const listKey = (list: SnippetEntry[]) => JSON.stringify(list);
+
+  /** Save the new list; `removed` names a removal that Undo can revert. */
+  const commit = async (next: SnippetEntry[], removed?: string) => {
+    const previous = snippets;
+    const ok = await save({ ...settings, snippets: next });
+    if (ok) setUndo(removed ? { message: removed, previous, after: listKey(next) } : null);
+    return ok;
+  };
 
   const saveEdit = async () => {
     if (!editing) return;
@@ -44,7 +54,7 @@ export function SnippetManager({ ctl }: { ctl: Ctl }) {
   const remove = async (index: number) => {
     const cue = snippets[index].cue;
     if (editing?.index === index) setEditing(null);
-    if (await commit(removeIndices(snippets, [index]))) ctl.flash(`Removed the snippet “${cue}”.`, 3000);
+    await commit(removeIndices(snippets, [index]), `Removed the snippet “${cue}”.`);
   };
 
   const editor = (index: number) =>
@@ -104,6 +114,10 @@ export function SnippetManager({ ctl }: { ctl: Ctl }) {
       </div>
 
       {editor(-1)}
+
+      {undo && undo.after === listKey(snippets) && (
+        <UndoBar message={undo.message} onUndo={() => commit(undo.previous)} />
+      )}
 
       {snippets.length > 0 && (
         <div className="lm-controls">

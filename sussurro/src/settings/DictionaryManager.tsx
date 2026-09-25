@@ -15,7 +15,7 @@ import {
 } from "../lib/personalization";
 import { describeDictionaryMerge } from "../utils";
 import { exportDictionary, importDictionary } from "./listImport";
-import { Pager, SortSelect } from "./listControls";
+import { Pager, SortSelect, UndoBar } from "./listControls";
 
 const EDIT_ERRORS: Record<WordEditError, string> = {
   empty: "An entry can't be empty. Use Delete to remove it.",
@@ -48,7 +48,17 @@ export function DictionaryManager({ ctl }: { ctl: Ctl }) {
   useEffect(() => setPage(0), [deferredQuery, sort]);
   useEffect(() => setSelected(new Set()), [words]);
 
-  const commit = (dictionary: string[]) => save({ ...settings, dictionary });
+  /** The last removal, until the next change: deletes have no confirmation,
+   *  so they can be undone instead. */
+  const [undo, setUndo] = useState<{ message: string; previous: string[]; after: string } | null>(null);
+
+  /** Save the new list; `removed` names a removal that Undo can revert. */
+  const commit = async (dictionary: string[], removed?: string) => {
+    const previous = words;
+    const ok = await save({ ...settings, dictionary });
+    if (ok) setUndo(removed ? { message: removed, previous, after: dictionary.join("\n") } : null);
+    return ok;
+  };
 
   const add = async (text: string) => {
     const r = addDictionaryWords(words, text);
@@ -75,14 +85,12 @@ export function DictionaryManager({ ctl }: { ctl: Ctl }) {
   const remove = async (indices: Iterable<number>) => {
     const list = [...indices];
     if (list.length === 0) return;
-    if (await commit(removeIndices(words, list))) {
-      ctl.flash(`Removed ${list.length === 1 ? `“${words[list[0]]}”` : `${fmtCount(list.length)} words`}.`, 3000);
-    }
+    await commit(removeIndices(words, list), `Removed ${list.length === 1 ? `“${words[list[0]]}”` : `${fmtCount(list.length)} words`}.`);
   };
 
   const dedupe = async () => {
     const r = dedupeDictionary(words);
-    if (r.removed > 0 && (await commit(r.words))) ctl.flash(`Removed ${fmtCount(r.removed)} duplicate or blank entries.`, 3000);
+    if (r.removed > 0) await commit(r.words, `Removed ${fmtCount(r.removed)} duplicate or blank ${r.removed === 1 ? "entry" : "entries"}.`);
   };
 
   const pageIndices = shown.rows.map((r) => r.index);
@@ -178,6 +186,8 @@ export function DictionaryManager({ ctl }: { ctl: Ctl }) {
               Add
             </button>
           </form>
+
+          {undo && undo.after === words.join("\n") && <UndoBar message={undo.message} onUndo={() => commit(undo.previous)} />}
 
           {selected.size > 0 && (
             <div className="lm-selection" role="region" aria-label="Selection">
