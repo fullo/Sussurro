@@ -233,7 +233,7 @@ pub fn encode_cursor(offset: usize) -> String {
 
 /// Pure: the offset of a cursor made by [`encode_cursor`].
 pub fn decode_cursor(cursor: &str) -> Option<usize> {
-    if cursor.len() % 2 != 0 || cursor.len() > 64 {
+    if !cursor.len().is_multiple_of(2) || cursor.len() > 64 {
         return None;
     }
     let bytes: Vec<u8> = (0..cursor.len())

@@ -342,6 +342,8 @@ pub const SLOW_SLOTS: usize = 2;
 /// Archive requests running at once (#250): a script firing requests in
 /// parallel can't take every worker from the extension.
 pub const ARCHIVE_SLOTS: usize = 2;
+// A worker always stays free for the extension.
+const _: () = assert!(ARCHIVE_SLOTS < WORKERS);
 
 /// What every worker shares.
 struct Ctx {

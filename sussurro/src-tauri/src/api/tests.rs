@@ -1725,7 +1725,6 @@ fn archive_reads_answer_json_pages_and_files() {
 /// worker from the extension; the rest get 503 + Retry-After.
 #[test]
 fn archive_requests_share_a_bounded_number_of_workers() {
-    assert!(ARCHIVE_SLOTS < WORKERS, "a worker always stays free for the extension");
     let r = start_server();
     r.host.0.config.lock().unwrap().archive = true;
     let (read, _) = add_archive_token(&r, "reader", &[Scope::Read]);
