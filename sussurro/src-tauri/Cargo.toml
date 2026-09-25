@@ -130,3 +130,11 @@ dbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] 
 [dev-dependencies]
 tempfile = "3.27.0"
 
+# The local API's HTTP server, patched in-tree (#223): an absurd
+# `Content-Length` made upstream 0.12.0 allocate the declared size when a
+# request dropped with its body unread (abort), and header lines, header
+# counts, chunk-size lines and connections had no limit. See
+# vendor/tiny_http/Cargo.toml and the security notes of `api::spawn`.
+[patch.crates-io]
+tiny_http = { path = "vendor/tiny_http" }
+
