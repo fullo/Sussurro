@@ -136,7 +136,8 @@ pub struct ItemMeta {
         deserialize_with = "lenient_opt_string"
     )]
     pub duration: Option<String>,
-    /// `mic` | `file:<name>` | `url:<link>` | `browser:<host>` | `system`.
+    /// `mic` | `file:<name>` | `url:<link>` | `browser:<host>` | `system` |
+    /// `api:<token name>` (a note from the archive API, #251).
     #[serde(default, deserialize_with = "lenient_string")]
     pub source: String,
     #[serde(default, deserialize_with = "lenient_string")]
