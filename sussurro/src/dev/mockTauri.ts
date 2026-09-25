@@ -10,6 +10,7 @@
    credential store: the profile editor's clear-text key warning). */
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { version as pkgVersion } from "../../package.json";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
 import { DATE_BUCKETS, localToday, type DateBucket, type Facets, type FacetValue } from "../lib/facets";
@@ -1472,7 +1473,7 @@ function handle(cmd: string, a: Args): unknown {
         ? { name: "snippets.csv", contents: 'cue,text\nfirma,"Un saluto,\nFrancesco"\nindirizzo,Via Roma 1\n' }
         : { name: "dictionary.txt", contents: "Sussurro\nTauri\nwhisper.cpp\n" };
     case "plugin:app|version":
-      return "0.7.0-dev";
+      return `${pkgVersion}-dev`;
     case "plugin:dialog|open": {
       const o = (a.options ?? {}) as { directory?: boolean };
       return o.directory ? "/Users/demo/Obsidian/Vault/Sussurro" : "/Users/demo/Recordings/memo-idee-onboarding.m4a";
