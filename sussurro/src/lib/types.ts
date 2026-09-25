@@ -188,6 +188,12 @@ export interface Settings {
    *  speaker panel suggests a person for an unlinked "Voice N". Absent
    *  before 0.11 = on (the backend default). */
   voice_suggestions?: boolean;
+  /** Read aloud (#255, P24): the experimental text-to-speech module,
+   *  Settings → Experimental. Off by default; absent = off. */
+  tts_enabled?: boolean;
+  /** Read aloud: the voice per language code (`it` → `giovanni`); a
+   *  language without an entry uses its default voice. */
+  tts_voices?: Record<string, string>;
 }
 
 /** Saved audio file format (#247): 16-bit WAV or Ogg Opus at 24 kb/s. */
@@ -699,4 +705,49 @@ export interface RecipeFinished {
   host?: string;
   error: string | null;
   cancelled: boolean;
+}
+
+/** Read aloud (#255): one voice of a language, `tts_status`. */
+export interface TtsVoice {
+  id: string;
+  label: string;
+  /** Where the recording comes from, with its licence. */
+  source: string;
+  bytes: number;
+  downloaded: boolean;
+  /** The language's voice (the user's pick, else the default). */
+  selected: boolean;
+}
+
+/** Read aloud (#255): one language's model and voices. */
+export interface TtsLanguage {
+  code: string;
+  label: string;
+  variant: string;
+  model_bytes: number;
+  model_downloaded: boolean;
+  voices: TtsVoice[];
+}
+
+/** Read aloud (#255): a download in progress, also event
+ *  `tts-download-progress` (null payload when it ends). */
+export interface TtsDownloadProgress {
+  language: string;
+  voice: string | null;
+  file: string;
+  done_bytes: number;
+  total_bytes: number;
+}
+
+/** Read aloud (#255): what Models → Voices shows. */
+export interface TtsStatus {
+  enabled: boolean;
+  engine: string;
+  licence: string;
+  attribution: string;
+  languages: TtsLanguage[];
+  bytes_on_disk: number;
+  downloading: TtsDownloadProgress | null;
+  /** Language whose model is in memory now. */
+  loaded: string | null;
 }

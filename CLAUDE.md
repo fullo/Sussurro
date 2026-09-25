@@ -742,6 +742,36 @@ project decisions here, not in per-machine memory.**
   "1" before a noun stays "uno" (no gender guess). Fixtures: the #236
   bake-off text set in `tts/testdata/` — re-run the English listening
   test (P18) on this module's output.
+- **Read-aloud engine (0.12, #255, P18/P24/E16/E22)** (`tts/`): Pocket
+  TTS through the app's `ort` — never Python, sherpa-onnx or a GPL
+  phonemizer (the tokenizer is a hand-written SentencePiece unigram reader,
+  checked id-for-id against `sentencepiece` in the live test). Italian
+  **24-layer** + English models, **fp32 only** (int8 diverges), the four
+  speaking graphs of `KevinAHM/pocket-tts-onnx` @`58a6d00c` — **never
+  `mimi_encoder.onnx`** (cloning); voice states from
+  `kyutai/pocket-tts-without-voice-cloning` @`e81d79e8`, the revision whose
+  tokenizer is byte-identical to the export's (mixing revisions = EOS at
+  step 1). Every file pinned by size + SHA-256 in `tts/catalog.rs`
+  (fail-closed, `.part` removed on failure/cancel); only voices whose
+  recordings allow commercial use (CC0 / CC BY 4.0: no `jean`/`cosette`).
+  Layout `<models>/pocket-tts/<bundle>/…` + `voices/<id>.safetensors`.
+  **P24**: `Settings.tts_enabled` off by default (Settings → Experimental);
+  `tts_download`/`tts_preview` refuse while off; downloads only from the
+  user's click in Models → Voices after an inline confirmation showing size
+  + licence; turning it off cancels a download, unloads the engine, clears
+  previews and the UI offers `tts_delete` of everything. `tts_voices` =
+  voice per language (unknown picks dropped by `normalize`). One engine
+  loaded at a time (`tts::service`), unloaded after 5 min idle on the
+  shared idle thread. Previews are temporary WAVs (`<app data>/tts-preview/`,
+  swept at startup) served by `sussurro-audio:` under `tts-preview/` — no
+  CSP change. WAVs carry a `LIST/INFO` "synthetic speech" comment; the
+  watermark is #264. Generation per #254 chunk, re-cut at 50 tokens; voice
+  and decoder state restart per piece; temperature 0.7, fixed seed (same
+  text = same audio). Live test (`tts::live_tests`, env vars in the file)
+  on the M1 Pro at 2 threads: Italian RTF ≈ 1.2–1.4, English ≈ 0.4; Whisper
+  heard 91 % / 86 % of the words. `licenses.json` has the CC-BY entry
+  (`scripts/gen-licenses.mjs`); regenerate with a real `npm ci` install (a
+  symlinked `node_modules` makes `npm ls` list dev deps).
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at

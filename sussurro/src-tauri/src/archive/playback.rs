@@ -206,7 +206,7 @@ pub struct Reply {
 }
 
 impl Reply {
-    fn error(status: u16, msg: &str) -> Self {
+    pub fn error(status: u16, msg: &str) -> Self {
         Self {
             status,
             headers: vec![("Content-Type", "text/plain; charset=utf-8".into())],

@@ -7,9 +7,11 @@ import { BundledProblem, UseBundledButton } from "../settings/BundledLlm";
 import { cleanupGate } from "../lib/privacy";
 import { cleanupLabel } from "./labels";
 import type { SectionId } from "./SettingsScreen";
+import { ReadAloudCard } from "./ReadAloudCard";
 
 /** Models: engine and model choice and download (the same fields as the
- *  onboarding's model step — shared components, not a copy). */
+ *  onboarding's model step — shared components, not a copy), and the
+ *  experimental read-aloud voices (#255). */
 export function ModelsScreen({
   ctl,
   onOpenSettings,
@@ -105,6 +107,8 @@ export function ModelsScreen({
           )}
           <BundledProblem ctl={ctl} />
         </Card>
+
+        <ReadAloudCard ctl={ctl} onOpenExperimental={() => onOpenSettings("experimental")} />
 
         <Card title={<>Cleanup <span className="via">LLM profile</span></>}>
           <p className="card-hint">
