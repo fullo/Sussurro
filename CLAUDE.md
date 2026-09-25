@@ -698,6 +698,24 @@ project decisions here, not in per-machine memory.**
   again in that document; a "You" that stops being the best match goes
   back to "Voice N". The centroid is also the 0.13 own-voice cloning
   reference (not built).
+- **TTS text preparation (0.12, #254)** (`tts/text/`, pure, no engine,
+  no dependency added): `prepare(markdown, Lang, &PrepOptions) ->
+  Vec<Chunk{index, text, pause_after}>` is the only entry point #255/#256
+  need. Markdown → blocks (frontmatter, code, link targets dropped;
+  headings get a `Section` pause; tables read "Header: cell" row by row or
+  skipped; transcript lines read "Anna: text", the name only when the
+  speaker changes, or without it; timestamps never), then per-language
+  normalisation for `it`/`en` only (any other language: markup and URLs
+  cleaned, numbers left as written), then greedy sentence packing.
+  Default chunk **160 characters** (`DEFAULT_MAX_CHUNK_CHARS`, min 40):
+  Pocket TTS conditions on ≤ 50 tokens of a 4,000-piece SentencePiece
+  vocabulary (~3.2–3.5 chars/token), so a chunk stays one Pocket
+  generation; #255 should still count tokens. English numbers use the US
+  form without "and", years as years (`eighteen sixty-one`), `a.m.`/`p.m.`
+  as "ay em"/"pee em", ambiguous `3/4/2026` as month-first; Italian
+  "1" before a noun stays "uno" (no gender guess). Fixtures: the #236
+  bake-off text set in `tts/testdata/` — re-run the English listening
+  test (P18) on this module's output.
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at
