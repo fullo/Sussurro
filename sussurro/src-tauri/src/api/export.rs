@@ -40,11 +40,34 @@ pub enum ExportError {
     /// The item can't be exported that way (subtitles of a note, nothing
     /// transcribed yet) or could not be read: 422.
     Refused(anyhow::Error),
+    /// Not recorded by the extension (#215): 403 with
+    /// `code: "not_extension_item"`, which the extension explains.
+    NotExtensionItem,
 }
 
-/// The export of item `id` in `format`.
+/// The `code` of a refusal for an item the extension didn't record.
+pub const NOT_EXTENSION_ITEM: &str = "not_extension_item";
+
+/// The extension reaches only the items it recorded (`source:
+/// browser:<host>`, #215): a leaked pairing code must not expose the notes,
+/// dictations and transcriptions of the rest of the archive.
+pub fn extension_may_access(source: &str) -> bool {
+    source.starts_with("browser:")
+}
+
+/// Item `id` exists and the extension may open or export it.
+pub fn check_access(archive_dir: &Path, id: &str) -> Result<(), ExportError> {
+    let item = archive::read_item(archive_dir, id).map_err(ExportError::NotFound)?;
+    if extension_may_access(&item.meta.source) {
+        Ok(())
+    } else {
+        Err(ExportError::NotExtensionItem)
+    }
+}
+
+/// The export of item `id` in `format`, for the extension ([`check_access`]).
 pub fn render(archive_dir: &Path, id: &str, format: ExportFormat) -> Result<Export, ExportError> {
-    archive::read_item(archive_dir, id).map_err(ExportError::NotFound)?;
+    check_access(archive_dir, id)?;
     let body = archive::export::export_item(archive_dir, id, format).map_err(ExportError::Refused)?;
     let folder = id.rsplit('/').next().unwrap_or("transcript");
     Ok(Export {
@@ -60,11 +83,15 @@ mod tests {
     use crate::archive::{create_item, Channel, ItemMeta, ItemType, Segment, SegmentsFile};
 
     fn item(archive: &Path, item_type: ItemType) -> String {
+        item_from(archive, item_type, "browser:meet.google.com")
+    }
+
+    fn item_from(archive: &Path, item_type: ItemType, source: &str) -> String {
         let meta = ItemMeta {
             item_type,
             title: "Weekly sync".into(),
             date: "2026-09-24T10:00:00+02:00".into(),
-            source: "browser:meet.google.com".into(),
+            source: source.into(),
             ..Default::default()
         };
         let segs = SegmentsFile {
@@ -123,5 +150,29 @@ mod tests {
             render(&archive, "../etc", ExportFormat::Txt),
             Err(ExportError::NotFound(_))
         ));
+    }
+
+    /// #215: only what the extension recorded; the rest of the archive
+    /// (notes, dictations, files, links, system audio) is refused.
+    #[test]
+    fn only_items_the_extension_recorded_are_reachable() {
+        assert!(extension_may_access("browser:meet.google.com"));
+        assert!(extension_may_access("browser:teams.microsoft.com"));
+        for s in ["mic", "file:/Users/x/a.mp3", "url:https://x.example", "system", "", "Browser:x", " browser:x"] {
+            assert!(!extension_may_access(s), "{s}");
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let meeting = item(&archive, ItemType::Meeting);
+        assert!(check_access(&archive, &meeting).is_ok());
+        for source in ["mic", "file:/tmp/a.wav", "system"] {
+            let other = item_from(&archive, ItemType::Note, source);
+            assert!(matches!(check_access(&archive, &other), Err(ExportError::NotExtensionItem)));
+            assert!(matches!(
+                render(&archive, &other, ExportFormat::Md),
+                Err(ExportError::NotExtensionItem)
+            ));
+        }
+        assert!(matches!(check_access(&archive, "2026/09/nope"), Err(ExportError::NotFound(_))));
     }
 }
