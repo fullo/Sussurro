@@ -84,6 +84,7 @@ impl Sessions {
 
     /// The session ended (done, failed or cancelled).
     pub fn end(&self, id: u64) {
+        crate::diagnostics::forget_session(id);
         if self.running.lock().unwrap().remove(&id).is_some() {
             self.active.fetch_sub(1, Ordering::SeqCst);
         }
