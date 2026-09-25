@@ -732,6 +732,95 @@ mod tests {
         assert!(!label_you(&mut f, "mic", &you()));
     }
 
+    // ---- in the archive ----
+
+    fn archived(archive: &Path, source: &str) -> String {
+        use crate::archive::{create_item, ItemMeta, ItemType};
+        let meta = ItemMeta {
+            item_type: ItemType::Meeting,
+            title: "In the room".into(),
+            date: "2026-09-25T10:00:00+02:00".into(),
+            source: source.into(),
+            ..Default::default()
+        };
+        let mut file = room(0.8);
+        for s in &mut file.segments {
+            s.raw = s.text.clone();
+        }
+        create_item(archive, &meta, &file).unwrap()
+    }
+
+    #[test]
+    fn find_and_redetect_label_you_in_the_archive_but_keep_user_names() {
+        use crate::archive::store::{edit_speakers, label_own_voice, redetect_with_own_voice};
+        use crate::archive::{read_item, SpeakerEdit};
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = archived(archive, "mic");
+        let (item, found) = label_own_voice(archive, &id, &you()).unwrap();
+        assert!(found);
+        let you_sp = item
+            .segments
+            .speakers
+            .iter()
+            .find(|s| s.id == "voice:2")
+            .unwrap();
+        assert_eq!(
+            (you_sp.label.as_str(), you_sp.own_voice),
+            ("You", Some(true))
+        );
+        assert!(
+            std::fs::read_to_string(archive.join(&id).join("transcript.md"))
+                .unwrap()
+                .contains("You")
+        );
+
+        // Re-detect keeps "You" on the voice that still matches…
+        let item = redetect_with_own_voice(archive, &id, &you()).unwrap();
+        assert!(item
+            .segments
+            .speakers
+            .iter()
+            .any(|s| s.own_voice == Some(true)));
+        // …but once the user renames it, "You" never comes back.
+        let voice = item
+            .segments
+            .speakers
+            .iter()
+            .find(|s| s.own_voice == Some(true))
+            .unwrap()
+            .id
+            .clone();
+        edit_speakers(
+            archive,
+            &id,
+            SpeakerEdit::Rename {
+                speaker_id: voice.clone(),
+                label: "Marco".into(),
+            },
+        )
+        .unwrap();
+        redetect_with_own_voice(archive, &id, &you()).unwrap();
+        let (item, found) = label_own_voice(archive, &id, &you()).unwrap();
+        assert!(!found);
+        let sp = item
+            .segments
+            .speakers
+            .iter()
+            .find(|s| s.id == voice)
+            .unwrap();
+        assert_eq!(sp.label, "Marco");
+        assert_eq!(read_item(archive, &id).unwrap().segments, item.segments);
+    }
+
+    #[test]
+    fn find_is_refused_where_the_mic_is_you_already() {
+        let tmp = tempfile::tempdir().unwrap();
+        let id = archived(tmp.path(), "browser:meet.google.com");
+        let e = crate::archive::store::label_own_voice(tmp.path(), &id, &you()).unwrap_err();
+        assert!(e.to_string().contains("own channel"), "{e}");
+    }
+
     // ---- the file ----
 
     fn store() -> (tempfile::TempDir, OwnVoiceStore) {
