@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>The local API — Sussurro Blog</title>
-<meta name="description" content="Script Sussurro: clean text, transcribe files, query history and read the archive over loopback." />
+<meta name="description" content="Script Sussurro: clean text, transcribe files, query history, read the archive and add notes to it over loopback." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -17,7 +17,7 @@
 <meta property="og:site_name" content="Sussurro" />
 <meta property="og:type" content="article" />
 <meta property="og:title" content="The local API — Sussurro Blog" />
-<meta property="og:description" content="Script Sussurro: clean text, transcribe files, query history and read the archive over loopback." />
+<meta property="og:description" content="Script Sussurro: clean text, transcribe files, query history, read the archive and add notes to it over loopback." />
 <meta property="og:url" content="https://fullo.github.io/Sussurro/blog/local-api.html" />
 <meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
 <meta property="og:image:width" content="1200" />
@@ -26,9 +26,9 @@
 <meta property="article:author" content="DarumaHQ" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="The local API — Sussurro Blog" />
-<meta name="twitter:description" content="Script Sussurro: clean text, transcribe files, query history and read the archive over loopback." />
+<meta name="twitter:description" content="Script Sussurro: clean text, transcribe files, query history, read the archive and add notes to it over loopback." />
 <meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"The local API","description":"Script Sussurro: clean text, transcribe files, query history and read the archive over loopback.","url":"https://fullo.github.io/Sussurro/blog/local-api.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-07-06","dateModified":"2026-09-25","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/local-api.html"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"The local API","description":"Script Sussurro: clean text, transcribe files, query history, read the archive and add notes to it over loopback.","url":"https://fullo.github.io/Sussurro/blog/local-api.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-07-06","dateModified":"2026-09-25","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/local-api.html"}</script>
 <!-- seo:end -->
 </head>
 <body>
@@ -90,11 +90,30 @@ curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items/2026/09/2026
 
 # People: names and aliases (emails only with the People's emails scope)
 curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/people"</code></pre>
-    <p>Lists come in pages of up to 200 with an opaque <code>next_cursor</code> to send back; every error is JSON with a <code>code</code> (<code>unauthorized</code>, <code>insufficient_scope</code>, <code>not_found</code>, <code>rate_limited</code>…). The <a href="../manual/index.html#archive-api">manual</a> lists every route and filter. For now the archive API only reads; creating a note from text comes next.</p>
+    <p>Lists come in pages of up to 200 with an opaque <code>next_cursor</code> to send back; every error is JSON with a <code>code</code> (<code>unauthorized</code>, <code>insufficient_scope</code>, <code>not_found</code>, <code>rate_limited</code>…). The <a href="../manual/index.html#archive-api">manual</a> lists every route and filter.</p>
 
     <div class="callout">
       <span class="k">What it never gives out</span>
       <p>Speaker embeddings, voice profiles, saved audio, file paths or anything from the app's own data folder — whatever the token. Without the <em>People's emails</em> scope, emails are left out of items and of the markdown export, and a search can't match one either, so a script can't even test whether an address is in your archive. Browsers are refused outright, extensions included, and no CORS header is ever sent. Each token has a rate limit (a burst of 60, then 10 a second), at most two archive requests run at once so the browser extension is never starved, and revoking a token applies to the very next request.</p>
+    </div>
+
+    <h2>Adding a note (0.11)</h2>
+    <p>One route writes: <code>POST /archive/items</code> turns text into a note, which is what most automations want — the clipboard, a share sheet or a shortcut into your archive. It needs a token with the <strong>Write</strong> scope (a Write-only token can add notes but read nothing, which is what you want in a shortcut):</p>
+    <pre><code># a note from text (Write scope); curl 7.82 or later for --json
+curl --json '{"title": "Idea", "text": "Try the release on Linux first.", "tags": ["idea"]}' \
+  -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/items"
+# → 201 Created, Location: /archive/items/2026/09/2026-09-25-idea
+
+# the clipboard → a note (macOS pbpaste; Linux: wl-paste, or xclip -o -selection clipboard)
+pbpaste | jq -Rs '{text: ., tags: ["clipboard"]}' |
+  curl -sS --retry 3 --json @- -H "Authorization: Bearer $SUSSURRO_TOKEN" \
+    -H "Idempotency-Key: $(uuidgen)" "$API/archive/items"</code></pre>
+    <p>The body is JSON: <code>text</code> (paragraphs split on blank lines), and optionally <code>title</code> (else the first words), <code>tags</code>, <code>categories</code> and <code>cleanup</code>. The note is an ordinary item — <code>type: note</code>, <code>source: api:&lt;token name&gt;</code>, dated now — and the Library shows it at once. The answer is <code>201 Created</code> with a <code>Location</code> you can <code>GET</code> with a Read token.</p>
+    <p>On macOS the same works from <strong>Shortcuts</strong>: <em>Get Clipboard</em>, then <em>Get Contents of URL</em> (POST to <code>http://127.0.0.1:4525/archive/items</code>, header <code>Authorization: Bearer sua_…</code>, a JSON body with <code>text</code> set to the clipboard). Shortcuts can't read environment variables, so the token lives in the shortcut: that's why it should be Write-only.</p>
+
+    <div class="callout">
+      <span class="k">Cleanup stays on this computer</span>
+      <p><code>"cleanup": true</code> cleans the note like a dictation, but only on a <em>local</em> cleanup profile. If Settings → Cleanup points at a server off this computer, the request is refused (<code>409 cleanup_external</code>) even when you allowed that profile for dictation: you gave that consent in the app, for the app's own sends, and a script can't give it for you. Without <code>cleanup</code> the text is only written to your archive. Retrying is safe with an <code>Idempotency-Key</code>: the same key and body within an hour return the note already made instead of a second one. And creating notes has its own limit (a burst of 10, then 30 a minute per token), so a script stuck in a loop can't fill your archive.</p>
     </div>
 
     <h2>What you can build</h2>
@@ -104,6 +123,7 @@ curl -H "Authorization: Bearer $SUSSURRO_TOKEN" "$API/archive/people"</code></pr
       <li>An editor plugin that pipes selected text through your cleanup prompt.</li>
       <li>A script that pulls the last <em>n</em> dictations into your notes.</li>
       <li>A nightly job that copies this week's meeting minutes into your wiki, or a video pipeline that fetches the <code>.srt</code> of a transcription.</li>
+      <li>A keyboard shortcut that saves the clipboard as a tagged note.</li>
     </ul>
 
     <div class="callout">
