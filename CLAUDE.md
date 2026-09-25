@@ -611,6 +611,35 @@ project decisions here, not in per-machine memory.**
   rules on every hop, pinning, no proxy, 20 MB cap); local hosts always
   refused (no "allow local" for calendars). The `.ics` picker opens from
   Rust with the list import's file guards.
+- **Voice profiles (0.11, #241, P12/P13/E13)** (`speakers/profiles.rs`
+  pure, `speakers/voices.rs` files): opt-in per person, built **only from
+  confirmed lines** — lines of document speakers the user linked to the
+  person (`SpeakerEdit::Link`; a line moved away drops out by itself).
+  **One pooled centroid per person** (duration-weighted mean of the
+  L2-normalised line embeddings, 256-d only) + ms per condition (`close`:
+  remote/system channel, or the mic of a `browser:`/`system` item;
+  `room`: mic elsewhere, and `file` — unknown acoustics take the stricter
+  rule) + document ids; no per-mic centroids (spike #235). Ready at
+  **60 s from 2 documents** (P12; the spike found 30 s nearly as good —
+  maintainer's call). `suggest()`: best ready profile only, cosine ≥ 0.65
+  and margin ≥ 0.05 over the runner-up (none = 0), **0.75 when the voice
+  is room-mic and the profile has room lines**; ties by person id.
+  Storage: `<app data>/voices/<person id>.json` (dir 0700, file 0600,
+  `write_private_atomic`), **the file's existence is the opt-in** (kept
+  on this machine, not in `people.json`: the archive syncs, and a second
+  machine turns it on again → rebuild from the archive). Ids outside
+  `[A-Za-z0-9_-]{1,64}` get no profile. Enable = one full archive scan
+  (`read_linked_segments` byte-checks `"person_id"` before parsing);
+  speaker edits, Identify voices, a deleted line or item →
+  `document_changed` in the background (re-reads the profile's documents
+  + the changed one, so it equals a full rebuild). Forget one / off /
+  person deleted or merged away / *Forget all voices* = real delete (not
+  the trash). Vectors never reach the UI (`VoiceStatus` only), the API,
+  exports, diagnostics or logs (`Debug` prints sizes). Commands:
+  `voices_status`, `voice_status`, `voice_set_enabled`, `voices_rebuild`,
+  `voice_forget`, `voices_forget_all`. Overlap lines (#244) are to be
+  excluded once segments carry the flag. Suggestions UI is #242, "You"
+  #243.
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at

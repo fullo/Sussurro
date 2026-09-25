@@ -308,9 +308,10 @@ speaker can be linked to a People entry (`person_id`). "Re-detect" clusters
 a document offline. Nothing crosses documents today.
 
 **Enrolment.** For a person with *Recognise this voice* on, the app collects
-the lines of every speaker linked to that person across the archive (index
-query on `person_id`), groups them by recording condition (channel and
-source kind), and writes centroids to `<app data>/voices/<person id>.json`.
+the lines of every speaker linked to that person across the archive (a
+scan of the items' `segments.json` on `person_id`), and writes one pooled
+centroid (E13) with the seconds per recording condition (channel and
+source kind) to `<app data>/voices/<person id>.json`.
 Lines the user moved away from that speaker are excluded; lines with
 overlap (4.3) are excluded. Minimums per P12.
 
@@ -798,11 +799,12 @@ Track A, hosted on the project site); submit and answer the reviewers.
 
 ```rust
 // <app data>/voices/<person id>.json  (0600; never in the archive)
-struct VoiceProfile { version: u32, person_id: String, enabled: bool,
+// As built in #241 (E13): the file existing = *Recognise this voice* on.
+struct VoiceProfile { version: u32, person_id: String,
                       model: String /* "wespeaker-resnet34-lm" */,
-                      centroids: Vec<Centroid>, updated: String }
-struct Centroid { condition: String /* "mic" | "remote" | "system" | "file" */,
-                  vector: Vec<f32>, speech_ms: u64, documents: Vec<String> }
+                      centroid: Vec<f32> /* one pooled, L2-normalised; empty = no lines yet */,
+                      speech_ms: u64, close_ms: u64, room_ms: u64,
+                      documents: Vec<String> /* ids only, sorted */, updated: String }
 
 // settings — archive API tokens (hash only)
 struct ArchiveToken { id: String, name: String, sha256: String,

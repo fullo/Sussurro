@@ -997,6 +997,64 @@ mod tests {
         assert_eq!(get(&f, &read(), &format!("/archive/items/{}?x=1", f.meeting)).status, 400);
     }
 
+    /// Voice profiles (#241, P13) live in the app data dir, next to the
+    /// index: no archive route ever serves them, even with every scope.
+    #[test]
+    fn voice_profiles_are_never_served() {
+        use crate::speakers::voices::VoiceStore;
+        let f = fixture();
+        // Two more meetings with Anna's voice (256-d embeddings) linked to
+        // her, so she gets a ready profile.
+        let emb: Vec<f32> = (0..crate::speakers::model::EMBEDDING_DIM).map(|i| 0.001_234_567 * (i as f32 + 1.0)).collect();
+        for day in [21, 22] {
+            let meta = ItemMeta {
+                item_type: ItemType::Meeting,
+                title: format!("Standup {day}"),
+                date: format!("2026-09-{day}T09:00:00+02:00"),
+                source: "browser:meet.google.com".into(),
+                ..Default::default()
+            };
+            let segs = SegmentsFile {
+                speakers: vec![DocSpeaker { id: "voice:1".into(), label: "Anna Rossi".into(), person_id: Some("p-anna".into()), ..Default::default() }],
+                segments: vec![Segment {
+                    id: 0,
+                    channel: Channel::Remote,
+                    start_ms: 0,
+                    end_ms: 40_000,
+                    speaker_id: Some("voice:1".into()),
+                    text: "Ciao a tutti.".into(),
+                    embedding: Some(emb.clone()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            archive::create_item(&f.archive, &meta, &segs).unwrap();
+        }
+        let store = VoiceStore::in_app_data(f.index.parent().unwrap());
+        let status = store.enable(&f.archive, "p-anna").unwrap();
+        assert!(status.ready);
+        let profile = std::fs::read_to_string(store.dir().join("p-anna.json")).unwrap();
+        let centroid: Value = serde_json::from_str::<Value>(&profile).unwrap()["centroid"].clone();
+        let needles: Vec<String> = centroid.as_array().unwrap().iter().map(|x| x.to_string()).filter(|x| x.len() > 6).collect();
+        assert!(needles.len() > 100);
+
+        let all = people_scope();
+        let items = ids(&get(&f, &all, "/archive/items?facets=true"));
+        assert_eq!(items.len(), 4);
+        let mut bodies = vec![text_of(&get(&f, &all, "/archive/items?facets=true")), text_of(&get(&f, &all, "/archive/people"))];
+        for id in &items {
+            bodies.push(text_of(&get(&f, &all, &format!("/archive/items/{id}"))));
+            bodies.push(text_of(&get(&f, &all, &format!("/archive/items/{id}/documents"))));
+            for fmt in ["md", "txt", "srt", "vtt"] {
+                bodies.push(text_of(&get(&f, &all, &format!("/archive/items/{id}/export?format={fmt}"))));
+            }
+        }
+        for body in &bodies {
+            assert!(!body.contains("centroid") && !body.contains("voices"), "{body}");
+            assert!(needles.iter().all(|n| !body.contains(n.as_str())), "{body}");
+        }
+    }
+
     #[test]
     fn exports_every_format_and_leaves_emails_out_without_the_people_scope() {
         let f = fixture();

@@ -25,7 +25,7 @@ import { version as pkgVersion } from "../../package.json";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
 import { DATE_BUCKETS, localToday, type DateBucket, type Facets, type FacetValue } from "../lib/facets";
-import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Participant, Person, Recipe, Segment, Settings } from "../lib/types";
+import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Participant, Person, Recipe, Segment, Settings, VoiceStatus } from "../lib/types";
 import type { CalendarAttendee, CalendarLinkStatus, CalendarMatch, PlannedAttendee } from "../lib/calendar";
 import { nameFromEmail } from "../lib/participants";
 
@@ -367,6 +367,32 @@ let people: Person[] = params.get("empty")
       { id: "p-anna2", name: "Anna R.", email: "a.rossi@studio.example", aliases: [] },
     ];
 let personSeq = 0;
+
+/* ---------- Voice profiles (#241) ---------- */
+// Mirrors speakers::voices: a profile exists = "Recognise this voice" on.
+// Faked numbers only — the real vectors never reach the UI.
+const MIN_VOICE_MS = 60_000;
+const MIN_VOICE_DOCS = 2;
+const voices = new Map<string, VoiceStatus>(
+  params.get("empty") ? [] : [["p-anna", mockVoice("p-anna", 184_000, 3)]],
+);
+
+function mockVoice(personId: string, speechMs: number, documents: number): VoiceStatus {
+  return {
+    person_id: personId,
+    enabled: true,
+    speech_ms: speechMs,
+    documents,
+    ready: speechMs >= MIN_VOICE_MS && documents >= MIN_VOICE_DOCS,
+    min_speech_ms: MIN_VOICE_MS,
+    min_documents: MIN_VOICE_DOCS,
+    updated: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+  };
+}
+
+function voiceOff(personId: string): VoiceStatus {
+  return { ...mockVoice(personId, 0, 0), enabled: false, ready: false, updated: "" };
+}
 
 // ---- Calendar attendees (#252) ----
 /** The saved private ICS link's host (`?calendar=1`: one is saved). The
@@ -1432,6 +1458,7 @@ function handle(cmd: string, a: Args): unknown {
     case "people_delete": {
       if (!people.some((p) => p.id === a.id)) throw "that person is no longer in People";
       people = people.filter((p) => p.id !== a.id);
+      voices.delete(String(a.id));
       return null;
     }
     case "people_merge": {
@@ -1440,7 +1467,35 @@ function handle(cmd: string, a: Args): unknown {
       if (!into || !from.length) throw "that person is no longer in People";
       const merged = mergePreview(into, from);
       people = people.filter((p) => !from.includes(p)).map((p) => (p.id === into.id ? merged : p));
+      for (const p of from) voices.delete(p.id);
       return merged;
+    }
+    case "voices_status":
+      return [...voices.values()].sort((x, y) => x.person_id.localeCompare(y.person_id));
+    case "voice_status":
+      return voices.get(String(a.personId)) ?? voiceOff(String(a.personId));
+    case "voice_set_enabled": {
+      const id = String(a.personId);
+      if (!a.enabled) {
+        voices.delete(id);
+        return voiceOff(id);
+      }
+      if (!people.some((p) => p.id === id)) throw "that person is no longer in People";
+      // Built "from the archive": the person's linked lines, faked.
+      const linked = items.filter((s) => s.speakers?.some((sp) => sp.person_id === id)).length;
+      const v = mockVoice(id, linked * 45_000, linked);
+      voices.set(id, v);
+      return v;
+    }
+    case "voices_rebuild":
+      for (const [id, v] of voices) voices.set(id, mockVoice(id, v.speech_ms, v.documents));
+      return [...voices.values()];
+    case "voice_forget":
+      return voices.delete(String(a.personId));
+    case "voices_forget_all": {
+      const n = voices.size;
+      voices.clear();
+      return n;
     }
     case "archive_update_segment":
     case "archive_delete_segment": {

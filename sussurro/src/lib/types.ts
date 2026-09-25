@@ -260,6 +260,23 @@ export interface Person {
   aliases: string[];
 }
 
+/** A person's voice profile as the UI sees it (#241, `voice_status`,
+ *  `voices_status`): never the voiceprint itself, which stays in the app
+ *  data dir. `enabled` = *Recognise this voice* is on; `ready` = enough
+ *  confirmed speech (`min_speech_ms`) from enough documents
+ *  (`min_documents`) to make suggestions. */
+export interface VoiceStatus {
+  person_id: string;
+  enabled: boolean;
+  speech_ms: number;
+  documents: number;
+  ready: boolean;
+  min_speech_ms: number;
+  min_documents: number;
+  /** RFC 3339 time of the last build; "" when off. */
+  updated: string;
+}
+
 /** Frontmatter of transcript.md. Unknown keys (Obsidian aliases…) ride along
  *  flattened and must be sent back untouched on update. */
 export interface ItemMeta {
