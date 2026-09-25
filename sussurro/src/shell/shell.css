@@ -634,6 +634,31 @@ button.pchip-name:hover { text-decoration: underline; }
 .notice-warn { color: var(--warn); background: var(--warn-soft); border: 1px solid var(--warn-border); }
 .notice-warn code { font-family: var(--f-mono); font-size: 0.95em; }
 .notice-live { color: var(--brand-text); background: var(--brand-soft); border: 1px solid var(--brand); }
+/* Attendees from calendar (#252). */
+.cal-open { font-size: 12.5px; color: var(--c-text-light); text-decoration: underline; text-underline-offset: 2px; }
+.cal-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 18px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--c-surface);
+  font-size: 13px;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cal-head h3 { margin: 0; font-size: 13px; color: var(--c-dark); }
+.cal-sources { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cal-error { margin: 0; color: var(--warn); }
+.cal-note { margin: 0; font-size: 12px; color: var(--warn); }
+.cal-result { display: flex; flex-direction: column; gap: 8px; }
+.cal-result > p { margin: 0; }
+.cal-events, .cal-attendees { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 6px 10px 8px; border: 1px solid var(--border); border-radius: var(--radius); }
+.cal-events legend, .cal-attendees legend { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--c-text-light); padding: 0 4px; }
+.cal-attendees .check-row input:disabled + span { color: var(--c-text-light); }
 .doc-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 24px; }
 .doc-body { white-space: pre-wrap; font-family: var(--f-serif); font-size: 15px; line-height: 1.55; margin: 8px; color: var(--c-dark); }
 .confirm-modal { width: min(440px, 100%); gap: 8px; }

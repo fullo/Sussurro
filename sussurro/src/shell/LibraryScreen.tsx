@@ -21,6 +21,7 @@ import { audioBadge } from "../lib/audio";
 import type { ItemSummary } from "../lib/types";
 import { DocumentPane } from "./DocumentPane";
 import { LibraryFacets } from "./LibraryFacets";
+import type { SectionId } from "./SettingsScreen";
 
 /** Debounced copy of a value (search as you type without a query per key). */
 function useDebounced<T>(value: T, ms: number): T {
@@ -40,6 +41,7 @@ export function LibraryScreen({
   onChanged,
   onCount,
   onNew,
+  onOpenSettings,
 }: {
   ctl: Ctl;
   selectedId: string | null;
@@ -49,6 +51,8 @@ export function LibraryScreen({
   onChanged: () => void;
   onCount: (n: number) => void;
   onNew: () => void;
+  /** Open a Settings section (the calendar panel links to its settings). */
+  onOpenSettings?: (s: SectionId) => void;
 }) {
   const [query, setQuery] = useState("");
   /** Type chips + facets (#135), remembered across screens and restarts. */
@@ -249,6 +253,7 @@ export function LibraryScreen({
               id={selected}
               version={version}
               onChanged={onChanged}
+              onOpenSettings={onOpenSettings}
               onDeleted={() => {
                 onSelect(null);
                 onChanged();

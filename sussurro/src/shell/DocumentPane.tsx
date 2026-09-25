@@ -12,11 +12,13 @@ import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import type { Item, ItemMeta, Participant } from "../lib/types";
 import { AudioBar } from "./AudioBar";
 import { AudioTab, type AudioSeek } from "./AudioTab";
+import { CalendarAttendees } from "./CalendarAttendees";
 import { ChipEditor } from "./ChipEditor";
 import { ContextPane, useDrawerLayout, type ContextStatus } from "./ContextPane";
 import { DocumentTab } from "./DocumentTab";
 import { ParticipantEditor } from "./ParticipantEditor";
 import { languageLabel } from "./labels";
+import type { SectionId } from "./SettingsScreen";
 
 /** Source label for the header: "microphone", "file memo.m4a". */
 function sourceLabel(source: string): string {
@@ -32,14 +34,19 @@ export function DocumentPane({
   version,
   onChanged,
   onDeleted,
+  onOpenSettings,
 }: {
   ctl: Ctl;
   id: string;
   version: number;
   onChanged: () => void;
   onDeleted: () => void;
+  onOpenSettings?: (s: SectionId) => void;
 }) {
   const [item, setItem] = useState<Item | null>(null);
+  /** "Add attendees from calendar…" panel (#252). */
+  const [calOpen, setCalOpen] = useState(false);
+  useEffect(() => setCalOpen(false), [id]);
   const [error, setError] = useState("");
   const [title, setTitle] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -317,7 +324,30 @@ export function DocumentPane({
             />
           </>
         )}
+        {meta.type === "meeting" && !item.recording && !calOpen && (
+          <>
+            <span className="opt-k" aria-hidden="true" />
+            <div>
+              <button type="button" className="link-btn cal-open" onClick={() => setCalOpen(true)}>
+                Add attendees from calendar…
+              </button>
+            </div>
+          </>
+        )}
       </div>
+
+      {calOpen && meta.type === "meeting" && !item.recording && (
+        <CalendarAttendees
+          ctl={ctl}
+          item={item}
+          onItem={(updated) => {
+            setItem(updated);
+            onChanged();
+          }}
+          onClose={() => setCalOpen(false)}
+          onOpenSettings={onOpenSettings ? () => onOpenSettings("calendar") : undefined}
+        />
+      )}
 
       <AudioBar
         ctl={ctl}

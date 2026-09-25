@@ -14,7 +14,9 @@
    final pass; ?overlay=long stays on the long text while recording),
    ?dict=5000 (a dictionary and snippet list that large, for the
    Dictionary & snippets manager), ?tokens=3 (archive API tokens already
-   listed in Settings → Scripting). */
+   listed in Settings → Scripting), ?calendar=1 (a private calendar link
+   saved in Settings → Calendar, for a meeting's "Add attendees from
+   calendar…"). */
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { normalizeScopes, tokenNameError, type ArchiveScope, type ArchiveTokenInfo } from "../lib/archiveTokens";
@@ -22,7 +24,9 @@ import { version as pkgVersion } from "../../package.json";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
 import { DATE_BUCKETS, localToday, type DateBucket, type Facets, type FacetValue } from "../lib/facets";
-import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Person, Recipe, Segment, Settings } from "../lib/types";
+import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Participant, Person, Recipe, Segment, Settings } from "../lib/types";
+import type { CalendarAttendee, CalendarLinkStatus, CalendarMatch, PlannedAttendee } from "../lib/calendar";
+import { nameFromEmail } from "../lib/participants";
 
 const params = new URLSearchParams(window.location.search);
 
@@ -352,6 +356,85 @@ let people: Person[] = params.get("empty")
       { id: "p-anna2", name: "Anna R.", email: "a.rossi@studio.example", aliases: [] },
     ];
 let personSeq = 0;
+
+// ---- Calendar attendees (#252) ----
+/** The saved private ICS link's host (`?calendar=1`: one is saved). The
+ *  mock, like the backend, never hands the link itself back. */
+let calendarHost: string | null = params.get("calendar") === "1" ? "calendar.google.com" : null;
+
+function calendarStatus(): CalendarLinkStatus {
+  const available = params.get("keychain") !== "0";
+  return {
+    saved: available && !!calendarHost,
+    host: available ? calendarHost : null,
+    store_available: available,
+    store_name: "the macOS Keychain",
+    error: available ? "" : "no credential store: platform failure",
+  };
+}
+
+/** Mirrors calendar::plan_attendees for the mock's fixed attendee list. */
+function mockPlan(existing: Participant[], attendees: CalendarAttendee[]): PlannedAttendee[] {
+  return attendees.map((a) => {
+    const email = a.email ?? linkEmail(people, { name: a.name ?? "" }) ?? null;
+    const name = a.name ?? (a.email ? personFor(people, { name: "", email: a.email })?.name ?? nameFromEmail(a.email) : "");
+    const byEmail = existing.find((p) => p.email && email && p.email.toLowerCase() === email.toLowerCase());
+    const byName = existing.find((p) => nameKey(p.name) === nameKey(name));
+    const action: PlannedAttendee["action"] = byEmail || (byName && (byName.email || !email)) ? "listed" : byName ? "complete_email" : "add";
+    return {
+      name,
+      email,
+      action,
+      email_from_people: !a.email && !!email,
+      in_people: !!personFor(people, { name, email: email ?? undefined }),
+      declined: a.declined,
+      organizer: a.organizer,
+    };
+  });
+}
+
+function mockCalendarMatch(s: Stored, source: string): CalendarMatch {
+  const start = Date.parse(s.meta.date);
+  const [h, m, sec] = (s.meta.duration ?? "0:0:0").split(":").map(Number);
+  const minutes = Math.round(((h || 0) * 3600 + (m || 0) * 60 + (sec || 0)) / 60);
+  const iso = (t: number) => new Date(t).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const attendees: CalendarAttendee[] = [
+    { name: "Anna Rossi", email: "anna@example.com", declined: false, organizer: true },
+    { name: "Marco Bianchi", email: "marco@example.com", declined: false, organizer: false },
+    { name: "Giulia Verdi", email: "giulia.verdi@example.com", declined: false, organizer: false },
+    { name: null, email: "sara.colombo@example.org", declined: false, organizer: false },
+    { name: "Paolo Neri", email: "paolo@example.com", declined: true, organizer: false },
+  ];
+  return {
+    source,
+    events_read: 42,
+    candidates: [
+      {
+        uid: "weekly",
+        title: `${s.meta.title} (calendar)`,
+        start: iso(start - 2 * 60000),
+        end: iso(start + 60 * 60000),
+        all_day: false,
+        overlaps: true,
+        overlap_minutes: Math.min(minutes, 58),
+        attendees,
+        plan: mockPlan(s.meta.participants, attendees),
+      },
+      {
+        uid: "lunch",
+        title: "Lunch",
+        start: iso(start + 90 * 60000),
+        end: iso(start + 150 * 60000),
+        all_day: false,
+        overlaps: false,
+        overlap_minutes: 0,
+        attendees: [],
+        plan: [],
+      },
+    ],
+    notes: [],
+  };
+}
 
 function cleanPerson(p: Person): Person {
   const name = p.name.trim().replace(/\s+/g, " ");
@@ -1254,6 +1337,54 @@ function handle(cmd: string, a: Args): unknown {
       }
       s.meta = { ...next, participants };
       return toItem(s);
+    }
+    case "calendar_link_status":
+      return calendarStatus();
+    case "calendar_link_save": {
+      if (params.get("keychain") === "0")
+        throw "the link could not be saved in the macOS Keychain (unavailable); import the calendar as an .ics file instead";
+      const link = String(a.link ?? "").trim().replace(/^webcals?:\/\//i, "https://");
+      let host = "";
+      try {
+        host = new URL(link).hostname;
+      } catch {
+        throw "not a valid link — a calendar link starts with https:// or webcal://";
+      }
+      if (/^(localhost|127\.|10\.|192\.168\.)/.test(host))
+        throw `${host} is on this computer or the local network, and Sussurro doesn't fetch calendar links there — export the calendar as an .ics file and import that instead`;
+      calendarHost = host;
+      return calendarStatus();
+    }
+    case "calendar_link_remove":
+      calendarHost = null;
+      return calendarStatus();
+    case "calendar_events_from_file":
+    case "calendar_events_from_link": {
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      if (cmd === "calendar_events_from_link" && !calendarHost) throw "no calendar link is saved: add one in Settings → Calendar";
+      const found = mockCalendarMatch(s, cmd === "calendar_events_from_file" ? "team-calendar.ics" : calendarHost ?? "");
+      return new Promise((r) => setTimeout(() => r(found), 400));
+    }
+    case "calendar_add_attendees": {
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      let added = 0;
+      let completed = 0;
+      const list = s.meta.participants.slice();
+      for (const p of a.attendees as PlannedAttendee[]) {
+        if (p.email && list.some((q) => q.email?.toLowerCase() === p.email?.toLowerCase())) continue;
+        const at = list.findIndex((q) => nameKey(q.name) === nameKey(p.name));
+        if (p.action === "add" && at < 0) {
+          list.push(p.email ? { name: p.name, email: p.email } : { name: p.name });
+          added++;
+        } else if (p.action === "complete_email" && at >= 0 && p.email && !list[at].email) {
+          list[at] = { ...list[at], email: p.email };
+          completed++;
+        }
+      }
+      s.meta = { ...s.meta, participants: list };
+      return { item: toItem(s), added, completed };
     }
     case "people_list":
       return sortedPeople();
