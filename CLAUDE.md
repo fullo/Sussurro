@@ -982,8 +982,10 @@ single-narrator read-aloud; every generated audio file is marked (metadata
 + watermark that can't be switched off); cloning only the user's own voice
 in 0.13.0, consenting others later; **0.13 ships only after a lawyer's
 written review (#261)**; store listings AMO → Chrome → Edge. **P18 (default
-TTS engine) is postponed** until the listening test of spike #236; #255,
-#256 and #264 wait on it. Issues that still need the maintainer (accounts,
+TTS engine, decided after the #236 listening test)**: Pocket TTS — Italian
+24-layer + English model — file generation only, not real time; the
+English test is redone after #254, with Qwen3-TTS as the English fallback
+on GPU Macs; Qwen3-TTS stays the 0.13 cloning engine. Issues that still need the maintainer (accounts,
 legal review) carry `needs maintainer`. Milestones and epics:
 `Phase V0 — Voices spikes` (#274, spikes #235–#240), `0.11 — Known voices`
 (#275), `0.12 — Read aloud` (#276), `0.13 — Your voice, with consent`
