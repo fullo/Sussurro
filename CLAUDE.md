@@ -347,6 +347,18 @@ project decisions here, not in per-machine memory.**
   permission). The background must never import page code (React,
   `@sussurro/transcript`): Chrome's service worker has no DOM, and the
   extension build fails if `background.js` uses `document`.
+- **Meeting language (#288)** (`stt/languages.rs`,
+  `extension/src/shared/language.ts`): the side panel's Language menu
+  (Auto-detect + the active engine's languages by native name from the
+  token route `GET /app/languages`: Whisper 99, `*.en` model `en`,
+  Parakeet 25, Qwen3-ASR 29 codes) sends `start.language` — additive, the
+  protocol stays 2. The app makes it the run's `RunOptions.language` (STT
+  hint, frontmatter `language`, #218 cleanup fillers); missing = dictation
+  setting; a code the engine doesn't offer falls back to it with a
+  `warning` (never refuses the meeting). The extension remembers the choice
+  per platform in `storage.local` `meetingLanguage` (not a secret), first
+  time = the app's dictation language; greyed while recording, shown in
+  the recording header; an app without the route (404) gets no selector.
 - **Meet names (0.9, #131, P8)** (`speakers/names.rs`,
   `extension/src/content/meet/`): layer 1 mic = "You", layer 2 names on
   **Meet only** (Teams/Zoom: layers 1 + 3), layer 3 Voice N. The page's

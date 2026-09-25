@@ -49,8 +49,23 @@ body {
 /* Capture controls (side panel, #128). */
 .tone-live { border-color: var(--brand); color: var(--c-text); background: var(--brand-soft); }
 .tone-problem { border-color: var(--border-strong); color: var(--c-dark); }
-.capture-controls { display: flex; gap: 8px; }
+.capture-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .capture-controls .btn { font-weight: 600; }
+/* The meeting's language (#288), next to Start. */
+.lang-select { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--c-text-light); }
+.lang-select select {
+  font: inherit;
+  font-size: 13px;
+  max-width: 180px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--c-surface);
+  color: var(--c-text);
+}
+.lang-select select:disabled { opacity: 0.6; }
+.lang-select select:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.rec-language { margin: 0; font-size: 12.5px; color: var(--c-text-light); }
 .meters { display: flex; flex-direction: column; gap: 6px; }
 .meter { display: grid; grid-template-columns: 52px 1fr; gap: 2px 8px; align-items: center; font-size: 12.5px; }
 .meter-label { font-family: var(--f-mono); color: var(--c-text-light); }
