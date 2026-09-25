@@ -649,11 +649,11 @@ mod tests {
     const PERSON_EMAIL: &str = "bob@example.org";
 
     fn read() -> Authorized {
-        Authorized { id: "r".into(), scopes: vec![Scope::Read] }
+        Authorized { id: "r".into(), name: "reader".into(), scopes: vec![Scope::Read] }
     }
 
     fn people_scope() -> Authorized {
-        Authorized { id: "rp".into(), scopes: vec![Scope::Read, Scope::People] }
+        Authorized { id: "rp".into(), name: "people".into(), scopes: vec![Scope::Read, Scope::People] }
     }
 
     struct Fx {
