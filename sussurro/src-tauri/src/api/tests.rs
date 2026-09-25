@@ -207,6 +207,11 @@ struct Running {
 }
 
 fn start_server() -> Running {
+    start_server_with(None)
+}
+
+/// The real server; `limits` replaces tiny_http's default [`tiny_http::Limits`].
+fn start_server_with(limits: Option<tiny_http::Limits>) -> Running {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
@@ -242,6 +247,9 @@ fn start_server() -> Running {
         slow_running: AtomicUsize::new(0),
     }));
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    if let Some(limits) = limits {
+        server.set_limits(limits);
+    }
     let port = server.server_addr().to_ip().unwrap().port();
     let h: Arc<dyn Host> = Arc::new(host.clone());
     std::thread::spawn(move || serve(server, h));
@@ -1065,3 +1073,278 @@ fn the_item_routes_reach_only_extension_items() {
     );
     assert_eq!(http(r.port, "POST", &format!("/items/{meeting}/open"), &h, "").status, 200);
 }
+
+// ---- #223: hostile framing against the (vendored, patched) tiny_http -------
+
+/// Resident memory of this process, KiB.
+#[cfg(unix)]
+fn rss_kib() -> u64 {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .expect("ps");
+    String::from_utf8_lossy(&out.stdout).trim().parse().expect("rss")
+}
+
+/// Send a raw request head (CRLFs included), then read one reply.
+fn raw(port: u16, head: &str) -> (TcpStream, Reply) {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.write_all(head.as_bytes()).unwrap();
+    let reply = read_reply(&mut s);
+    (s, reply)
+}
+
+/// After a reply, does the server end the connection (EOF or reset within
+/// 5 s) instead of waiting to read the rest of a body?
+fn server_closes(s: &mut TcpStream) -> bool {
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    let mut buf = [0u8; 1024];
+    loop {
+        match s.read(&mut buf) {
+            Ok(0) => return true,
+            Ok(_) => continue,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                return false
+            }
+            Err(_) => return true,
+        }
+    }
+}
+
+/// Send `prefix`, then `filler` over and over (at most `max` bytes in all)
+/// from another thread while this one reads the reply. Returns the reply
+/// (status 0 if the connection was reset first) and the bytes the server
+/// let the client write before it ended the connection.
+fn flood(port: u16, prefix: String, filler: &'static [u8], max: usize) -> (Reply, usize) {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let mut w = s.try_clone().unwrap();
+    let writer = std::thread::spawn(move || {
+        let mut sent = 0;
+        if w.write_all(prefix.as_bytes()).is_err() {
+            return sent;
+        }
+        sent += prefix.len();
+        let block: Vec<u8> = filler.iter().copied().cycle().take(64 * 1024).collect();
+        while sent < max {
+            let n = block.len().min(max - sent);
+            if w.write_all(&block[..n]).is_err() {
+                break;
+            }
+            sent += n;
+        }
+        sent
+    });
+    let reply = read_reply(&mut s);
+    let _ = s.shutdown(std::net::Shutdown::Both);
+    (reply, writer.join().unwrap())
+}
+
+/// The API still answers normally.
+fn healthy(port: u16) -> bool {
+    http(port, "GET", "/history", &[], "").status == 200
+}
+
+/// #223: upstream tiny_http 0.12.0 read an unfinished body into a buffer of
+/// the size the client declared when the request dropped: this very test
+/// aborted the whole process with `memory allocation of
+/// 9223372036854775807 bytes failed` (and `100000000000000`), and
+/// `18446744073709551615` panicked. Now every route answers without
+/// reading or allocating the body, and closes the connection.
+#[test]
+fn an_absurd_content_length_is_answered_without_reading_it() {
+    let r = start_server();
+    let port = r.port;
+    #[cfg(unix)]
+    let before = rss_kib();
+    let local = format!("127.0.0.1:{port}");
+    for len in ["9223372036854775807", "18446744073709551615", "100000000000000", "10000000000"] {
+        for (method, path, host, extra, status) in [
+            // Answered without reading the body (a GET with one).
+            ("GET", "/history", local.as_str(), "", 200),
+            // Refused: over the cap, with and without `Expect`.
+            ("POST", "/clean", &local, "", 413),
+            ("POST", "/transcribe?ext=wav", &local, "Expect: 100-continue\r\n", 413),
+            ("GET", "/nope", &local, "", 404),
+            ("POST", "/clean", "rebind.attacker", "", 403),
+            ("POST", "/clean", &local, "Origin: https://evil.example\r\n", 403),
+        ] {
+            let (mut s, reply) = raw(
+                port,
+                &format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n{extra}Content-Length: {len}\r\n\r\n"),
+            );
+            assert_eq!(reply.status, status, "{method} {path} {extra:?} Content-Length: {len}");
+            assert!(server_closes(&mut s), "closed, not drained: {method} {path} {len}");
+        }
+    }
+    // A length that does not fit, or that is not a number, is a 400 — not
+    // "no body" with the body then read as the next request.
+    for len in ["18446744073709551616", "-1", "+5", "0x10", "5, 6"] {
+        let (mut s, reply) = raw(
+            port,
+            &format!("POST /clean HTTP/1.1\r\nHost: {local}\r\nContent-Length: {len}\r\n\r\nGET /history HTTP/1.1\r\n\r\n"),
+        );
+        assert_eq!(reply.status, 400, "Content-Length: {len}");
+        assert!(server_closes(&mut s));
+    }
+    assert!(healthy(port));
+    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0, "no host call");
+    #[cfg(unix)]
+    {
+        let grown = rss_kib().saturating_sub(before);
+        assert!(grown < 256 * 1024, "RSS grew {grown} KiB");
+    }
+}
+
+/// #223: a body that never finishes arriving holds neither a worker nor a
+/// slot. Routes that don't read a body answer at once and close; an upload
+/// that stops mid-way gets 408 after the socket timeout.
+#[test]
+fn a_body_that_never_arrives_holds_no_worker() {
+    let r = start_server_with(Some(tiny_http::Limits {
+        io_timeout: Some(std::time::Duration::from_secs(1)),
+        ..Default::default()
+    }));
+    let port = r.port;
+    // Twice as many silent 10 GB "uploads" as there are workers.
+    let held: Vec<TcpStream> = (0..WORKERS * 2)
+        .map(|_| {
+            let (s, reply) = raw(
+                port,
+                &format!("GET /history HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 10000000000\r\n\r\npartial"),
+            );
+            assert_eq!(reply.status, 200);
+            s
+        })
+        .collect();
+    let t = std::time::Instant::now();
+    let v = http(port, "GET", "/app/version", &[("Authorization", &bearer()), ("Origin", EXT)], "");
+    assert_eq!(v.status, 200);
+    assert!(t.elapsed() < std::time::Duration::from_secs(2), "{:?}", t.elapsed());
+    // An upload under the cap that stops arriving: 408.
+    let t = std::time::Instant::now();
+    let (_s, reply) = raw(
+        port,
+        &format!("POST /transcribe?ext=wav HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 104857600\r\n\r\nRIFF"),
+    );
+    assert_eq!(reply.status, 408, "{}", reply.body);
+    assert!(t.elapsed() < std::time::Duration::from_secs(10), "{:?}", t.elapsed());
+    // Chunked: a chunk announced, never sent.
+    let (_s2, reply) = raw(
+        port,
+        &format!("POST /clean HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nTransfer-Encoding: chunked\r\n\r\nfffff\r\nab"),
+    );
+    assert_eq!(reply.status, 408, "{}", reply.body);
+    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0);
+    // Both slow slots are free again.
+    for _ in 0..SLOW_SLOTS + 1 {
+        assert_eq!(http(port, "POST", "/clean", &[], "hello").status, 200);
+    }
+    drop(held);
+}
+
+/// #223: headers, header lines and chunk-size lines are bounded — upstream
+/// buffered a line until its CRLF and any number of headers, so a local
+/// process could grow the app's memory without limit. The floods offer up
+/// to 1 GiB; the server ends the connection after its limit.
+#[test]
+fn oversized_heads_and_framing_lines_are_cut_short() {
+    let r = start_server();
+    let port = r.port;
+    #[cfg(unix)]
+    let before = rss_kib();
+    const GIB: usize = 1 << 30;
+    // What the server reads before it stops, plus socket buffers.
+    const STOPPED: usize = 64 << 20;
+    let host = format!("Host: 127.0.0.1:{port}\r\n");
+
+    // 101 short headers, all sent: 431. 100 in all still pass.
+    for (count, status) in [(101, 431), (100, 200)] {
+        let mut head = format!("GET /history HTTP/1.1\r\n{host}");
+        for i in 1..count {
+            head.push_str(&format!("X-{i}: v\r\n"));
+        }
+        head.push_str("\r\n");
+        assert_eq!(raw(port, &head).1.status, status, "{count} headers");
+    }
+
+    // 10k headers; a 1 MB header line; an endless header line; an endless
+    // request line; an endless chunk-size line.
+    let cases: [(String, &'static [u8], usize, u16); 5] = [
+        (format!("GET /history HTTP/1.1\r\n{host}"), b"X-H: v\r\n", 10_000 * 8, 431),
+        (format!("GET /history HTTP/1.1\r\n{host}X-Big: "), b"a", 1 << 20, 431),
+        (format!("GET /history HTTP/1.1\r\n{host}X-Big: "), b"a", GIB, 431),
+        ("GET /".to_string(), b"a", GIB, 431),
+        (
+            format!("POST /clean HTTP/1.1\r\n{host}Transfer-Encoding: chunked\r\n\r\n"),
+            b"1",
+            GIB,
+            400,
+        ),
+    ];
+    for (prefix, filler, max, status) in cases {
+        let what = format!("{prefix:?} + {:?} x {max}", String::from_utf8_lossy(filler));
+        let (reply, sent) = flood(port, prefix, filler, max);
+        // The answer, unless the reset for the unread rest overtook it.
+        assert!(reply.status == status || reply.status == 0, "{what}: {}", reply.status);
+        if max > STOPPED {
+            assert!(sent < STOPPED, "{what}: the server read on ({sent} bytes)");
+        }
+        assert!(healthy(port), "{what}");
+    }
+    assert_eq!(r.host.0.calls.load(Ordering::SeqCst), 0);
+    #[cfg(unix)]
+    {
+        let grown = rss_kib().saturating_sub(before);
+        assert!(grown < 256 * 1024, "RSS grew {grown} KiB");
+    }
+}
+
+/// #223: connections over the limit are closed as soon as they are
+/// accepted (each open one holds a thread); closing some frees room.
+#[test]
+fn connections_over_the_limit_are_closed_at_accept() {
+    let r = start_server_with(Some(tiny_http::Limits {
+        max_connections: 4,
+        ..Default::default()
+    }));
+    let port = r.port;
+    let idle: Vec<TcpStream> = (0..4).map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap()).collect();
+    // Let the accept thread count them.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let mut extra = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    assert!(server_closes(&mut extra), "the fifth connection is closed");
+    drop(idle);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let ok = write!(s, "GET /history HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").is_ok()
+            && read_reply(&mut s).status == 200;
+        if ok {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "room again once the idle ones close");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// #223: the socket timeout is for HTTP only — an upgraded `/live` stream
+/// waits for the extension's messages as long as it likes, while an idle
+/// keep-alive connection is closed.
+#[test]
+fn live_outlasts_the_http_timeout() {
+    let r = start_server_with(Some(tiny_http::Limits {
+        io_timeout: Some(std::time::Duration::from_millis(500)),
+        ..Default::default()
+    }));
+    let mut ws = ws_connect_bare(r.port, Some(EXT)).expect("upgrade");
+    ws.send(auth_message(TOKEN)).unwrap();
+    assert_eq!(read_json(&mut ws).unwrap()["state"], "ready");
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    ws.send(Message::text(r#"{"type":"ping"}"#)).unwrap();
+    assert_eq!(read_json(&mut ws).unwrap()["state"], "ready");
+    // Plain HTTP: an idle keep-alive connection ends after the timeout.
+    let (mut s, reply) = raw(r.port, &format!("GET /history HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\r\n", r.port));
+    assert_eq!(reply.status, 200);
+    assert!(server_closes(&mut s));
+}
+

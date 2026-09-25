@@ -176,7 +176,8 @@ pub fn parse_url(url: &str) -> (&str, HashMap<String, String>) {
 /// - The token-less scripting routes answer only with
 ///   `Settings.api_scripting` on (read per request); they never send CORS.
 /// - Bodies are capped (`/clean` 1 MiB, `/transcribe` 200 MiB): the declared
-///   length is checked before reading, the read goes through `take()`.
+///   length is checked before reading, the read goes through `take()`, and
+///   the whole body must arrive within [`guard::BODY_DEADLINE`].
 /// - A small worker pool ([`WORKERS`]) answers requests; `/clean` and
 ///   `/transcribe` hold one of [`SLOW_SLOTS`] slots (503 when none is free),
 ///   so they can't stall the extension's `/app/version` or `/live`. A
@@ -193,14 +194,31 @@ pub fn parse_url(url: &str) -> (&str, HashMap<String, String>) {
 ///   ([`auth`]); an unpaired app (no token) accepts nothing there.
 /// - `settings.json` (it holds the token) is written 0600 on Unix.
 ///
-/// Residual, from tiny_http 0.12: a request that declared a body is read to
-/// its end when it is dropped (to keep the connection in step), into a
-/// buffer the size of what is left. Refusals of such requests are answered
-/// on a short-lived thread of their own (bounded, [`MAX_DETACHED`]), so a
-/// client that keeps sending can't hold a worker. A browser always declares
-/// the real length; only a local process can declare an absurd one, and
-/// tiny_http's discard can then fail its allocation — a local process can
-/// end the app anyway.
+/// - The HTTP layer itself (#223): tiny_http 0.12.0 is vendored with
+///   patches (`vendor/tiny_http`, each marked `Sussurro (#223)`), because
+///   upstream trusted the client's framing. Measured on upstream against
+///   this server: `Content-Length: 9223372036854775807` on `GET /history`
+///   **aborted the app** (`memory allocation of 9223372036854775807 bytes
+///   failed`: dropping a request with its body unread read the rest into a
+///   buffer of the declared size); `18446744073709551615` panicked
+///   (`capacity overflow`); a 100 TB claim aborted too. Now:
+///   - a body dropped before its end is never read or allocated: the
+///     connection closes instead (so a refused upload that did not wait for
+///     `100 Continue` may see the connection reset rather than the answer);
+///   - request line + headers ≤ 64 KiB in ≤ 100 lines (else 431 and close);
+///     chunked framing lines ≤ 4 KiB, ≤ 64 trailers;
+///   - ambiguous framing (a `Content-Length` that isn't digits or doesn't
+///     fit, lengths that disagree, `Transfer-Encoding` not ending in
+///     `chunked` or next to a length) is a 400 and close;
+///   - at most 128 connections at once (more are closed at accept; each
+///     holds a thread), and a 30 s socket read/write timeout while a
+///     connection speaks HTTP — lifted on the `/live` upgrade, whose idle
+///     waits are the extension's own ([`live`]).
+///
+/// Residual: a local process can hold every connection (128 idle or
+/// trickling sockets, each re-arming the 30 s timeout) and so deny the API
+/// to the extension until it stops; it can't grow memory or crash the app
+/// that way. A local process can end the app by other means anyway.
 pub fn spawn(app: AppHandle, port: u16) {
     std::thread::spawn(move || {
         let Some(server) = bind(port) else { return };
@@ -250,12 +268,6 @@ pub const WORKERS: usize = 4;
 /// `/clean` and `/transcribe` running at once: the other workers stay free
 /// for the extension's routes and `/history`.
 pub const SLOW_SLOTS: usize = 2;
-/// Refusals answered off the workers at once (see the residual in
-/// [`spawn`]); beyond that, inline.
-pub const MAX_DETACHED: usize = 16;
-/// tiny_http reads a declared body up to this size before handing the
-/// request over: nothing left to drain.
-const READ_AHEAD: usize = 1024;
 
 /// What every worker shares.
 struct Ctx {
@@ -263,7 +275,6 @@ struct Ctx {
     /// The port the API listens on: the only one `Host` may name.
     port: u16,
     slow: guard::Slots,
-    detached: guard::Slots,
 }
 
 /// Answer requests on [`WORKERS`] threads until the server is dropped or
@@ -275,7 +286,6 @@ pub fn serve(server: tiny_http::Server, host: Arc<dyn Host>) {
         host,
         port,
         slow: guard::Slots::new(SLOW_SLOTS),
-        detached: guard::Slots::new(MAX_DETACHED),
     });
     let workers: Vec<_> = (0..WORKERS)
         .map(|_| {
@@ -296,34 +306,6 @@ pub fn serve(server: tiny_http::Server, host: Arc<dyn Host>) {
     }
 }
 
-/// Answer a refusal. A request whose declared body tiny_http hasn't read
-/// yet is answered on a thread of its own: dropping it reads the rest of
-/// that body, which a client could drag out.
-fn refuse(
-    ctx: &Arc<Ctx>,
-    request: tiny_http::Request,
-    status: u16,
-    body: serde_json::Value,
-    headers: &[(&'static str, String)],
-) {
-    if request.body_length().unwrap_or(0) > READ_AHEAD && ctx.detached.try_acquire() {
-        /// Frees the detached slot however the thread ends.
-        struct Release(Arc<Ctx>);
-        impl Drop for Release {
-            fn drop(&mut self) {
-                self.0.detached.release();
-            }
-        }
-        let (release, headers) = (Release(ctx.clone()), headers.to_vec());
-        std::thread::spawn(move || {
-            let _release = release;
-            respond_json_with(request, status, body, &headers);
-        });
-        return;
-    }
-    respond_json_with(request, status, body, headers);
-}
-
 fn body_error(e: guard::BodyError, cap: usize) -> (u16, serde_json::Value) {
     match e {
         guard::BodyError::TooLarge => (
@@ -332,6 +314,7 @@ fn body_error(e: guard::BodyError, cap: usize) -> (u16, serde_json::Value) {
         ),
         guard::BodyError::Empty => (400, serde_json::json!({"error": "empty body"})),
         guard::BodyError::Io => (400, serde_json::json!({"error": "could not read the body"})),
+        guard::BodyError::TooSlow => (408, serde_json::json!({"error": "the body did not arrive in time"})),
     }
 }
 
@@ -377,10 +360,10 @@ fn respond_json_with(
 fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
     // On every route, before anything else (#215).
     if !guard::host_allowed(header(&request, "Host").as_deref(), ctx.port) {
-        return refuse(ctx, request, 403, serde_json::json!({"error": "host not allowed"}), &[]);
+        return respond_json_with(request, 403, serde_json::json!({"error": "host not allowed"}), &[]);
     }
     if !guard::origin_allowed(header(&request, "Origin").as_deref()) {
-        return refuse(ctx, request, 403, serde_json::json!({"error": "origin not allowed"}), &[]);
+        return respond_json_with(request, 403, serde_json::json!({"error": "origin not allowed"}), &[]);
     }
     let host = &ctx.host;
     let url = request.url().to_string();
@@ -393,8 +376,7 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
         return handle_meeting(ctx, request, route, &params, &config);
     }
     if route.is_scripting() && !config.scripting {
-        return refuse(
-            ctx,
+        return respond_json_with(
             request,
             403,
             serde_json::json!({"error": "the scripting routes are off: turn on Settings → Behavior → Advanced → Scripting routes in Sussurro"}),
@@ -404,8 +386,7 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
     match route {
         Route::Clean | Route::Transcribe => {
             let Some(_slot) = ctx.slow.try_take() else {
-                return refuse(
-                    ctx,
+                return respond_json_with(
                     request,
                     503,
                     serde_json::json!({"error": "busy: too many /clean or /transcribe requests at once, retry later"}),
@@ -422,13 +403,18 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
             // client to send the body.
             if declared.is_some_and(|n| n > cap) {
                 let (status, body) = body_error(guard::BodyError::TooLarge, cap);
-                return refuse(ctx, request, status, body, &[]);
+                return respond_json_with(request, status, body, &[]);
             }
-            let bytes = match guard::read_capped(request.as_reader(), declared, cap) {
+            let bytes = match guard::read_capped(
+                request.as_reader(),
+                declared,
+                cap,
+                std::time::Instant::now() + guard::BODY_DEADLINE,
+            ) {
                 Ok(b) => b,
                 Err(e) => {
                     let (status, body) = body_error(e, cap);
-                    return refuse(ctx, request, status, body, &[]);
+                    return respond_json_with(request, status, body, &[]);
                 }
             };
             if route == Route::Clean {
@@ -455,8 +441,7 @@ fn handle(ctx: &Arc<Ctx>, mut request: tiny_http::Request) {
             respond_json(request, 200, host.history(&query, n));
         }
         _ => {
-            refuse(
-                ctx,
+            respond_json_with(
                 request,
                 404,
                 serde_json::json!({
@@ -480,7 +465,7 @@ fn handle_meeting(
     let origin = header(&request, "Origin");
     let cors = auth::cors_headers(origin.as_deref());
     let deny = |request: tiny_http::Request, d: auth::Denied| {
-        refuse(ctx, request, d.status(), serde_json::json!({"error": d.message()}), &cors)
+        respond_json_with(request, d.status(), serde_json::json!({"error": d.message()}), &cors)
     };
 
     if route == Route::Preflight {
@@ -520,7 +505,7 @@ fn handle_meeting(
                 }),
             ),
         };
-        refuse(ctx, request, status, body, &cors)
+        respond_json_with(request, status, body, &cors)
     };
     let archive = || {
         host.archive_dir()
@@ -543,7 +528,7 @@ fn handle_meeting(
         Route::OpenItem(id) => {
             let archive = match archive() {
                 Ok(a) => a,
-                Err((status, body)) => return refuse(ctx, request, status, body, &cors),
+                Err((status, body)) => return respond_json_with(request, status, body, &cors),
             };
             if let Err(e) = export::check_access(&archive, &id) {
                 return item_error(request, e);
@@ -555,8 +540,7 @@ fn handle_meeting(
         }
         Route::ExportItem(id) => {
             let Some(format) = export::parse_format(params.get("format").map(String::as_str)) else {
-                return refuse(
-                    ctx,
+                return respond_json_with(
                     request,
                     400,
                     serde_json::json!({"error": "format must be md, txt, srt or vtt"}),
@@ -565,7 +549,7 @@ fn handle_meeting(
             };
             let archive = match archive() {
                 Ok(a) => a,
-                Err((status, body)) => return refuse(ctx, request, status, body, &cors),
+                Err((status, body)) => return respond_json_with(request, status, body, &cors),
             };
             match export::render(&archive, &id, format) {
                 Ok(x) => {
@@ -581,7 +565,7 @@ fn handle_meeting(
                 Err(e) => item_error(request, e),
             }
         }
-        _ => refuse(ctx, request, 404, serde_json::json!({"error": "unknown endpoint"}), &[]),
+        _ => respond_json_with(request, 404, serde_json::json!({"error": "unknown endpoint"}), &[]),
     }
 }
 

@@ -14,18 +14,25 @@
 //! - **Bodies**: the declared `Content-Length` is checked against the
 //!   route's cap before a byte is read, then the body is read through
 //!   `take(cap + 1)` into a buffer that never grows past the cap — also
-//!   for chunked uploads, which declare no length.
+//!   for chunked uploads, which declare no length. The whole body must
+//!   arrive within [`BODY_DEADLINE`] (each read also times out after the
+//!   server's socket timeout, #223), so a client trickling bytes can't hold
+//!   a slot.
 //! - **Slots**: `/clean` and `/transcribe` hold one of a few slots while
 //!   they run; the rest of the worker pool stays free for the extension's
 //!   routes, so a slow transcription can't stall `/app/version` or `/live`.
 
 use std::io::Read;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 /// `POST /clean`: text, 1 MiB is far beyond any dictation.
 pub const CLEAN_MAX_BYTES: usize = 1 << 20;
 /// `POST /transcribe`: an audio file, 200 MiB (hours of compressed audio).
 pub const TRANSCRIBE_MAX_BYTES: usize = 200 << 20;
+/// A whole body, however it trickles in (#223). 200 MiB over loopback
+/// takes seconds.
+pub const BODY_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Is `host` (the `Host` header) this API's own loopback name and port?
 /// Case-insensitive; the port may be left out only when it is 80.
@@ -59,12 +66,20 @@ pub enum BodyError {
     Empty,
     /// The connection failed mid-body: 400.
     Io,
+    /// Not all there by the deadline, or a read timed out: 408.
+    TooSlow,
 }
 
 /// Read a request body of at most `cap` bytes. A declared length over the
 /// cap is refused without reading; otherwise at most `cap + 1` bytes are
-/// read, and the buffer never holds (or reserves) more than that.
-pub fn read_capped(reader: &mut dyn Read, declared: Option<usize>, cap: usize) -> Result<Vec<u8>, BodyError> {
+/// read, and the buffer never holds (or reserves) more than that. Past
+/// `deadline` (checked between reads) the read stops.
+pub fn read_capped(
+    reader: &mut dyn Read,
+    declared: Option<usize>,
+    cap: usize,
+    deadline: Instant,
+) -> Result<Vec<u8>, BodyError> {
     if declared.is_some_and(|n| n > cap) {
         return Err(BodyError::TooLarge);
     }
@@ -78,10 +93,16 @@ pub fn read_capped(reader: &mut dyn Read, declared: Option<usize>, cap: usize) -
     let mut chunk = [0u8; 16 * 1024];
     let mut limited = reader.take(limit as u64);
     loop {
+        if Instant::now() > deadline {
+            return Err(BodyError::TooSlow);
+        }
         let n = match limited.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                return Err(BodyError::TooSlow)
+            }
             Err(_) => return Err(BodyError::Io),
         };
         let needed = buf.len() + n;
@@ -191,6 +212,10 @@ mod tests {
         }
     }
 
+    fn later() -> Instant {
+        Instant::now() + BODY_DEADLINE
+    }
+
     /// Counts what is pulled from it; endless unless `len` is set.
     struct Source {
         pulled: usize,
@@ -210,10 +235,10 @@ mod tests {
     #[test]
     fn a_declared_length_over_the_cap_is_refused_without_reading() {
         let mut src = Source { pulled: 0, len: None };
-        assert_eq!(read_capped(&mut src, Some(1_000_001), 1_000_000), Err(BodyError::TooLarge));
+        assert_eq!(read_capped(&mut src, Some(1_000_001), 1_000_000, later()), Err(BodyError::TooLarge));
         assert_eq!(src.pulled, 0);
         assert_eq!(
-            read_capped(&mut src, Some(usize::MAX), TRANSCRIBE_MAX_BYTES),
+            read_capped(&mut src, Some(usize::MAX), TRANSCRIBE_MAX_BYTES, later()),
             Err(BodyError::TooLarge)
         );
         assert_eq!(src.pulled, 0);
@@ -223,11 +248,11 @@ mod tests {
     fn an_endless_body_stops_one_byte_past_the_cap() {
         // Chunked: no declared length, the sender never stops.
         let mut src = Source { pulled: 0, len: None };
-        assert_eq!(read_capped(&mut src, None, 100_000), Err(BodyError::TooLarge));
+        assert_eq!(read_capped(&mut src, None, 100_000, later()), Err(BodyError::TooLarge));
         assert_eq!(src.pulled, 100_001, "never reads past cap + 1");
         // A lying length (fewer declared than sent) is cut the same way.
         let mut src = Source { pulled: 0, len: None };
-        assert_eq!(read_capped(&mut src, Some(10), 100_000), Err(BodyError::TooLarge));
+        assert_eq!(read_capped(&mut src, Some(10), 100_000, later()), Err(BodyError::TooLarge));
         assert!(src.pulled <= 100_001);
     }
 
@@ -236,13 +261,40 @@ mod tests {
         let cap = 300_000;
         for (declared, len) in [(None, cap), (Some(cap), cap), (None, 1), (Some(5), 5), (None, 70_000)] {
             let mut src = Source { pulled: 0, len: Some(len) };
-            let body = read_capped(&mut src, declared, cap).unwrap();
+            let body = read_capped(&mut src, declared, cap, later()).unwrap();
             assert_eq!(body.len(), len);
             assert!(body.capacity() <= cap + 1, "{} reserved for {len}", body.capacity());
         }
         let mut empty = Source { pulled: 0, len: Some(0) };
-        assert_eq!(read_capped(&mut empty, None, cap), Err(BodyError::Empty));
-        assert_eq!(read_capped(&mut empty, Some(0), cap), Err(BodyError::Empty));
+        assert_eq!(read_capped(&mut empty, None, cap, later()), Err(BodyError::Empty));
+        assert_eq!(read_capped(&mut empty, Some(0), cap, later()), Err(BodyError::Empty));
+    }
+
+    /// A client trickling its body stops at the deadline; a read the
+    /// socket timed out ends it the same way (#223).
+    #[test]
+    fn a_body_that_does_not_arrive_in_time_is_refused() {
+        struct Trickle(usize);
+        impl Read for Trickle {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                std::thread::sleep(Duration::from_millis(5));
+                self.0 += 1;
+                buf[0] = b'a';
+                Ok(1)
+            }
+        }
+        let mut src = Trickle(0);
+        let deadline = Instant::now() + Duration::from_millis(100);
+        assert_eq!(read_capped(&mut src, Some(1000), 1000, deadline), Err(BodyError::TooSlow));
+        assert!(src.0 < 100, "stopped at the deadline, after {} reads", src.0);
+
+        struct TimedOut;
+        impl Read for TimedOut {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::WouldBlock.into())
+            }
+        }
+        assert_eq!(read_capped(&mut TimedOut, Some(10), 100, later()), Err(BodyError::TooSlow));
     }
 
     #[test]
