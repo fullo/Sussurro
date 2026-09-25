@@ -1024,14 +1024,15 @@ pub async fn diagnostics(app: AppHandle, state: State<'_, AppState>) -> Result<S
         );
         let _ = writeln!(
             r,
-            "History retention: {} · Local API: {} (port {})",
+            "History retention: {} · Local API: {} (port {}, scripting routes {})",
             if settings.history_retention_days == 0 {
                 "forever".to_string()
             } else {
                 format!("{} days", settings.history_retention_days)
             },
             if settings.api_enabled { "on" } else { "off" },
-            settings.api_port
+            settings.api_port,
+            if settings.api_scripting { "on" } else { "off" }
         );
         Ok(r)
     })

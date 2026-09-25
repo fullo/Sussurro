@@ -65,6 +65,7 @@ const settings: Settings = {
   history_retention_days: 0,
   api_enabled: false,
   api_port: 4525,
+  api_scripting: false,
   output_file: "",
   archive_dir: "",
   // #115: the preview opens on the workspace; `?onboarding=welcome` or

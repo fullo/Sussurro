@@ -178,9 +178,16 @@ pub struct Settings {
     pub prompt_overrides: PromptOverrides,
     /// Auto-delete history entries older than N days (0 = keep forever).
     pub history_retention_days: u32,
-    /// Local HTTP API on 127.0.0.1 for scripting (applied at startup).
+    /// Local HTTP API on 127.0.0.1 (applied at startup): the browser
+    /// extension's routes, and the scripting routes if [`Self::api_scripting`].
     pub api_enabled: bool,
     pub api_port: u16,
+    /// The token-less scripting routes (`/clean`, `/transcribe`, `/history`)
+    /// answer (#215); read on every request, so it applies at once. Off on a
+    /// new install (pairing the extension turns the API on, not these); a
+    /// settings file from before the switch takes `api_enabled`'s value
+    /// ([`Settings::load_migrating`]), so existing scripts keep working.
+    pub api_scripting: bool,
     /// Dictate-to-file mode: when set, completed dictations are APPENDED to
     /// this file (note-taking) instead of being pasted into the focused app.
     pub output_file: String,
@@ -244,6 +251,7 @@ impl Default for Settings {
             history_retention_days: 0,
             api_enabled: false,
             api_port: 4525,
+            api_scripting: false,
             output_file: String::new(),
             archive_dir: String::new(),
             onboarding: Onboarding::Welcome,
@@ -266,14 +274,24 @@ impl Settings {
     /// [`Settings::load`], also telling whether the file needed the pre-0.8
     /// → profiles migration (the caller then saves it once, so the file on
     /// disk has the new shape).
+    ///
+    /// Also migrated (and saved once): a file without `api_scripting` (#215)
+    /// keeps the scripting routes it had — on exactly when the API was on.
     pub fn load_migrating(path: &Path) -> (Self, bool) {
-        let Some(mut settings) = std::fs::read_to_string(path)
+        let Some(json) = std::fs::read_to_string(path)
             .ok()
-            .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         else {
             return (Self::default(), false);
         };
-        let migrated = settings.normalize();
+        let Ok(mut settings) = serde_json::from_value::<Settings>(json.clone()) else {
+            return (Self::default(), false);
+        };
+        let mut migrated = settings.normalize();
+        if json.is_object() && json.get("api_scripting").is_none() {
+            settings.api_scripting = settings.api_enabled;
+            migrated = true;
+        }
         (settings, migrated)
     }
 
@@ -908,6 +926,29 @@ mod tests {
         let second = s.regenerate_extension_token().unwrap();
         assert_ne!(second, first);
         assert_eq!(s.extension_token, second);
+    }
+
+    /// #215: the token-less scripting routes are off on a new install; a
+    /// settings file from before the switch keeps what it had (on exactly
+    /// when the API was on), and the migrated value is saved once.
+    #[test]
+    fn scripting_routes_are_opt_in_and_migrated_from_api_enabled() {
+        assert!(!Settings::default().api_scripting);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for (api_enabled, expected) in [(true, true), (false, false)] {
+            std::fs::write(&path, format!(r#"{{"api_enabled":{api_enabled},"api_port":4525}}"#)).unwrap();
+            let (s, migrated) = Settings::load_migrating(&path);
+            assert!(migrated, "the new key must be written once");
+            assert_eq!(s.api_scripting, expected);
+            s.save(&path).unwrap();
+            let (again, migrated_again) = Settings::load_migrating(&path);
+            assert!(!migrated_again);
+            assert_eq!(again.api_scripting, expected);
+        }
+        // Once the key exists, it is the user's choice, whatever the API.
+        std::fs::write(&path, r#"{"api_enabled":true,"api_scripting":false}"#).unwrap();
+        assert!(!Settings::load(&path).api_scripting);
     }
 
     /// #136: the recording notice shows until acknowledged; a settings file
