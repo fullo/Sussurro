@@ -157,7 +157,15 @@ pub fn run() {
                     if llm::bundled::global().stop_if_idle(llm::bundled::IDLE_STOP) {
                         eprintln!("bundled LLM stopped after 15 min idle");
                     }
+                    // Read aloud (#255): the TTS engine too, on its own clock.
+                    if tts::service::global().unload_if_idle() {
+                        eprintln!("read-aloud engine unloaded after idle");
+                    }
                 });
+            }
+            // Read-aloud previews are temporary (#255): none survives a restart.
+            if let Ok(data) = app.path().app_data_dir() {
+                tts::service::clear_previews(&data.join(tts::service::PREVIEW_DIR));
             }
             // Launched at login: live in the tray, don't pop the window.
             if std::env::args().any(|a| a == "--autostart") {
@@ -282,6 +290,11 @@ pub fn run() {
             commands::own_voice_find,
             commands::voice_suggestions,
             commands::voice_suggestion_dismiss,
+            commands::tts_status,
+            commands::tts_download,
+            commands::tts_cancel_download,
+            commands::tts_delete,
+            commands::tts_preview,
             commands::archive_export,
             commands::archive_subtitles_status,
             commands::archive_create_subtitles,

@@ -43,6 +43,9 @@ pub fn set_settings(
     // no store works, a key stays in settings.json (the editor warns).
     let prev = state.settings.lock().unwrap().clone();
     crate::secrets::sync_keys(&mut settings, &prev, &crate::secrets::OsStore);
+    if prev.tts_enabled && !settings.tts_enabled {
+        tts_turned_off(&app);
+    }
     {
         // The extension token (#126) and the archive tokens (#249) change
         // only through their own commands: taken from the settings in
@@ -1987,20 +1990,26 @@ pub fn serve_audio(
             body: Vec::new(),
         }
     } else {
-        let archive = match app.try_state::<AppState>() {
-            Some(state) => archive_paths(&state).map(|(dir, _)| dir),
-            None => Err("starting".to_string()),
-        };
         let range = request
             .headers()
             .get(tauri::http::header::RANGE)
             .and_then(|v| v.to_str().ok());
-        archive::playback::handle(
-            archive,
-            request.method().as_str(),
-            request.uri().path(),
-            range,
-        )
+        // Read-aloud previews (#255) live in app data, not in the archive.
+        match serve_tts_preview(app, request, range) {
+            Some(reply) => reply,
+            None => {
+                let archive = match app.try_state::<AppState>() {
+                    Some(state) => archive_paths(&state).map(|(dir, _)| dir),
+                    None => Err("starting".to_string()),
+                };
+                archive::playback::handle(
+                    archive,
+                    request.method().as_str(),
+                    request.uri().path(),
+                    range,
+                )
+            }
+        }
     };
     let mut response = tauri::http::Response::builder().status(reply.status);
     for (k, v) in &reply.headers {
@@ -2903,6 +2912,193 @@ pub fn recipe_reveal_document(
     app.opener()
         .reveal_item_in_dir(path)
         .map_err(|e| e.to_string())
+}
+
+
+// ---- Read aloud (0.12, #255, P18/P24): experimental, off by default ----
+
+/// The models folder, whether read aloud is on, and the voice picks.
+fn tts_context(state: &AppState) -> (PathBuf, bool, std::collections::BTreeMap<String, String>) {
+    let settings = state.settings.lock().unwrap();
+    (
+        crate::state::resolve_models_dir(&state.paths, &settings),
+        settings.tts_enabled,
+        settings.tts_voices.clone(),
+    )
+}
+
+/// The models folder, or why read aloud can't be used now (P24: it acts
+/// only while the module is on).
+fn tts_on(state: &AppState) -> Result<(PathBuf, std::collections::BTreeMap<String, String>), String> {
+    let (dir, enabled, picks) = tts_context(state);
+    if !enabled {
+        return Err("Read aloud is off — turn it on in Settings → Experimental.".into());
+    }
+    Ok((dir, picks))
+}
+
+fn tts_preview_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join(crate::tts::service::PREVIEW_DIR))
+        .map_err(|e| e.to_string())
+}
+
+/// Models → Voices: languages, voices, sizes, what is downloaded.
+#[tauri::command]
+pub async fn tts_status(state: State<'_, AppState>) -> Result<crate::tts::service::TtsStatus, String> {
+    let (dir, enabled, picks) = tts_context(&state);
+    blocking(move || Ok(crate::tts::service::global().status(&dir, enabled, &picks))).await
+}
+
+/// Download a language's model (when missing) and a voice — only on the
+/// user's click in Models → Voices, after the size and licence were shown,
+/// and only while the module is on (P24). `voice` defaults to the
+/// language's selected voice; `voice_only` skips the model. Progress goes
+/// out as `tts-download-progress` (null when the job ends).
+#[tauri::command]
+pub async fn tts_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    language: String,
+    voice: Option<String>,
+    voice_only: Option<bool>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    let (dir, picks) = tts_on(&state)?;
+    let lang = crate::tts::catalog::language(&language)
+        .ok_or_else(|| format!("no read-aloud model for '{language}'"))?;
+    let voice = voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
+    let emitter = app.clone();
+    let result = blocking(move || {
+        let fetch = crate::tts::models::HttpFetch::new()?;
+        let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let mut file = String::new();
+        crate::tts::service::global().download(
+            &fetch,
+            &dir,
+            lang.code,
+            &voice,
+            voice_only.unwrap_or(false),
+            &mut |p| {
+                // A few updates a second, and every new file.
+                if p.file != file || last.elapsed() >= std::time::Duration::from_millis(250) {
+                    file = p.file.clone();
+                    last = std::time::Instant::now();
+                    let _ = emitter.emit("tts-download-progress", p);
+                }
+            },
+        )
+    })
+    .await;
+    let _ = app.emit("tts-download-progress", Option::<()>::None);
+    result
+}
+
+/// Stop the read-aloud download in progress (its partial file is deleted).
+#[tauri::command]
+pub fn tts_cancel_download() {
+    crate::tts::service::global().cancel_download();
+}
+
+/// Delete read-aloud files: one voice, one language, or (no language)
+/// everything — also offered right after the module is turned off, so it
+/// works while off. The engine is unloaded first.
+#[tauri::command]
+pub async fn tts_delete(
+    state: State<'_, AppState>,
+    language: Option<String>,
+    voice: Option<String>,
+) -> Result<(), String> {
+    let (dir, _, _) = tts_context(&state);
+    blocking(move || {
+        let service = crate::tts::service::global();
+        if service.is_downloading() {
+            anyhow::bail!("a read-aloud download is running — cancel it first");
+        }
+        service.unload();
+        match language {
+            None => crate::tts::models::delete_all(&dir),
+            Some(code) => {
+                let lang = crate::tts::catalog::language(&code)
+                    .ok_or_else(|| anyhow::anyhow!("no read-aloud model for '{code}'"))?;
+                match voice {
+                    None => crate::tts::models::delete_language(&dir, lang),
+                    Some(id) => {
+                        let v = lang
+                            .voice(&id)
+                            .ok_or_else(|| anyhow::anyhow!("no voice '{id}'"))?;
+                        crate::tts::models::delete_voice(&dir, lang, v)
+                    }
+                }
+            }
+        }
+    })
+    .await
+}
+
+/// Read a sentence (the language's sample, or `text`, at most 400
+/// characters) with `voice` into a temporary WAV in app data. Returns its
+/// `sussurro-audio:` path (`tts-preview/preview-N.wav`).
+#[tauri::command]
+pub async fn tts_preview(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    language: String,
+    voice: Option<String>,
+    text: Option<String>,
+) -> Result<String, String> {
+    let (dir, picks) = tts_on(&state)?;
+    let lang = crate::tts::catalog::language(&language)
+        .ok_or_else(|| format!("no read-aloud model for '{language}'"))?;
+    let voice = voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
+    let preview_dir = tts_preview_dir(&app)?;
+    blocking(move || {
+        let name = crate::tts::service::global().preview(&dir, &preview_dir, lang.code, &voice, text.as_deref())?;
+        Ok(format!("{}{name}", crate::tts::service::PREVIEW_PREFIX))
+    })
+    .await
+}
+
+/// Read aloud was turned off (P24): cancel a download, drop the engine and
+/// the preview files. Off the calling thread (a render may hold the engine).
+pub fn tts_turned_off(app: &AppHandle) {
+    let service = crate::tts::service::global();
+    service.cancel_download();
+    let previews = tts_preview_dir(app).ok();
+    std::thread::spawn(move || {
+        service.unload();
+        if let Some(dir) = previews {
+            crate::tts::service::clear_previews(&dir);
+        }
+    });
+}
+
+/// A preview file of `sussurro-audio:` (`/tts-preview/preview-N.wav`), or
+/// `None` for any other path (archive audio).
+fn serve_tts_preview(
+    app: &AppHandle,
+    request: &tauri::http::Request<Vec<u8>>,
+    range: Option<&str>,
+) -> Option<archive::playback::Reply> {
+    let decoded = archive::playback::percent_decode(request.uri().path().trim_start_matches('/')).ok()?;
+    let name = crate::tts::service::preview_file_name(&decoded)?;
+    let head = match request.method().as_str() {
+        "GET" => false,
+        "HEAD" => true,
+        _ => return Some(archive::playback::Reply::error(405, "method not allowed")),
+    };
+    let Ok(dir) = tts_preview_dir(app) else {
+        return Some(archive::playback::Reply::error(503, "app data unavailable"));
+    };
+    let path = dir.join(name);
+    let is_file = std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file());
+    Some(if is_file {
+        archive::playback::serve_file(&path, range, head)
+    } else {
+        archive::playback::Reply::error(404, "not found")
+    })
 }
 
 #[cfg(test)]
