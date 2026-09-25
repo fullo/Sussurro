@@ -42,9 +42,18 @@ body.overlay-window #root {
   cursor: default;
 }
 
+/* The preview keeps its newest line in view: the text is already trimmed to
+   its last ~150 characters (lib/overlayText.ts), and if it still wraps past
+   three lines the flex end-alignment pushes the overflow out at the TOP. */
 .overlay-text {
   margin: 0;
   max-width: 90%;
+  max-height: calc(3 * 1.35em + 0.8rem);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
   font-family: Lora, Georgia, serif;
   font-size: 0.95rem;
   line-height: 1.35;
@@ -52,10 +61,30 @@ body.overlay-window #root {
   background: rgba(26, 26, 26, 0.85);
   border-radius: 12px;
   padding: 0.4rem 0.8rem;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+}
+.overlay-lines { display: block; }
+/* Words two passes agreed on: solid. The tail Whisper may still revise:
+   ghost (dimmer, italic). While the final pass runs, all of it is ghost —
+   the pasted text comes from that pass, not from the preview. */
+.overlay-settled { color: #f3f2ee; }
+.overlay-ghost { color: rgba(243, 242, 238, 0.58); font-style: italic; }
+.overlay-text.is-final-pass .overlay-settled { color: rgba(243, 242, 238, 0.58); }
+
+/* Input level: a short bar in the pill, so the user sees the mic hears them. */
+.overlay-meter {
+  width: 44px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.16);
   overflow: hidden;
+  flex: none;
+}
+.overlay-meter-fill {
+  display: block;
+  height: 100%;
+  background: #6fcf7a;
+  border-radius: 3px;
+  transition: width 90ms linear;
 }
 
 .overlay-dot {

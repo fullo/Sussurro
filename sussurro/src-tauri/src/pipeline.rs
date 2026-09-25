@@ -488,6 +488,19 @@ pub fn transcribe_batch(state: &AppState, samples: &[f32]) -> anyhow::Result<(St
     Ok((raw, cleaned))
 }
 
+/// Shortest pause between two live-preview passes.
+const PREVIEW_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1200);
+
+/// Pause before the next live-preview pass (#98). Each pass re-transcribes
+/// the whole recording, so it gets slower as the dictation grows: waiting at
+/// least twice the last pass keeps the preview to about a third of the
+/// engine's time (never less than 1.2 s apart). The final pass then waits
+/// for at most one preview pass in flight, and a slow machine gets a slower
+/// preview instead of a slower dictation.
+pub fn preview_interval(last_pass: std::time::Duration) -> std::time::Duration {
+    PREVIEW_MIN_INTERVAL.max(last_pass * 2)
+}
+
 /// Live preview: while the recording lasts, periodically re-transcribe the
 /// accumulated buffer and emit the partial text to the overlay. Best-effort —
 /// any failure just means no preview.
@@ -505,11 +518,18 @@ fn preview_loop(app: &AppHandle) {
     let raw_streaming = settings.cleanup_level == crate::settings::CleanupLevel::None
         && crate::cleanup::prompt::output_language_name(&settings.output_language).is_none();
     let mut last_len = 0usize;
+    let mut last_pass = std::time::Duration::ZERO;
 
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(1200));
-        if !state.recorder.lock().unwrap().is_recording() {
-            return;
+        // Sleep in short slices so the loop ends promptly when the
+        // recording stops, even after a long back-off.
+        let wait = preview_interval(last_pass);
+        let slept = std::time::Instant::now();
+        while slept.elapsed() < wait {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if !state.recorder.lock().unwrap().is_recording() {
+                return;
+            }
         }
         let Some(raw_samples) = state.recorder.lock().unwrap().snapshot_16k() else {
             continue;
@@ -534,8 +554,10 @@ fn preview_loop(app: &AppHandle) {
         else {
             return;
         };
-        if let Ok(text) = transcriber.transcribe(&samples, prompt.as_deref(), &settings.language)
-        {
+        let started = std::time::Instant::now();
+        let result = transcriber.transcribe(&samples, prompt.as_deref(), &settings.language);
+        last_pass = started.elapsed();
+        if let Ok(text) = result {
             if !text.is_empty() {
                 let _ = app.emit("partial-transcript", text.clone());
                 if streaming && raw_streaming {
@@ -721,6 +743,15 @@ fn process_recording(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_backs_off_when_passes_get_slow() {
+        use std::time::Duration;
+        assert_eq!(preview_interval(Duration::ZERO), Duration::from_millis(1200));
+        assert_eq!(preview_interval(Duration::from_millis(400)), Duration::from_millis(1200));
+        assert_eq!(preview_interval(Duration::from_millis(900)), Duration::from_millis(1800));
+        assert_eq!(preview_interval(Duration::from_secs(3)), Duration::from_secs(6));
+    }
 
     #[test]
     fn overlay_shows_for_dictation_and_for_a_live_meeting() {

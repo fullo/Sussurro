@@ -310,6 +310,13 @@ pub fn mic_level(state: State<'_, AppState>) -> f32 {
     state.recorder.lock().unwrap().level().unwrap_or(0.0)
 }
 
+/// Whisper runs on the GPU in this build (Metal / Vulkan). Settings uses it
+/// to explain the live preview's cost on a CPU-only build (#98).
+#[tauri::command]
+pub fn whisper_gpu() -> bool {
+    crate::stt::WHISPER_GPU
+}
+
 #[tauri::command]
 pub fn model_is_downloaded(state: State<'_, AppState>) -> bool {
     let settings = state.settings.lock().unwrap();
@@ -488,6 +495,50 @@ pub async fn pick_import_file(
         crate::config_io::load_import_file(&path, kind)
             .map(Some)
             .map_err(|e| format!("could not read file: {e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Export the dictionary (.txt) or the snippets (.csv) (#99): like
+/// `pick_import_file`, the native save dialog opens FROM RUST, so no path
+/// crosses IPC — the webview hands over only the text (built in the import
+/// format) and gets back the written file's name, or `None` if the user
+/// cancelled. Main window only.
+#[tauri::command]
+pub async fn save_list_export(
+    window: tauri::WebviewWindow,
+    kind: crate::config_io::ImportKind,
+    contents: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    crate::config_io::check_import_caller(window.label())?;
+    if contents.len() > crate::config_io::MAX_EXPORT_BYTES {
+        return Err("export is too large (max 16 MB)".into());
+    }
+    let dialog = window
+        .dialog()
+        .file()
+        .set_title(kind.export_title())
+        .set_file_name(kind.export_file_name())
+        .add_filter(kind.filter_name(), &[kind.extension()])
+        .set_parent(&window);
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(picked) = dialog.blocking_save_file() else {
+            return Ok(None);
+        };
+        let path = picked
+            .into_path()
+            .map_err(|e| format!("could not write file: {e}"))?;
+        let written = crate::config_io::write_list_export(&path, kind, &contents)
+            .map_err(|e| format!("could not write file: {e:#}"))?;
+        Ok(Some(
+            written
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ))
     })
     .await
     .map_err(|e| e.to_string())?
