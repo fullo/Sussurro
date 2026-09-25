@@ -17,6 +17,7 @@ import { PersonalizationCard } from "../settings/PersonalizationCard";
 import { ScriptingCard } from "../settings/ScriptingCard";
 import { SetupBanner } from "../settings/SetupBanner";
 import { SpeechOptionsCard } from "../settings/SpeechCard";
+import { CompressAllField } from "./CompressAudio";
 import { sttLabel } from "./labels";
 
 export type SectionId =
@@ -195,7 +196,7 @@ function ArchiveCard({ ctl }: { ctl: Ctl }) {
       </div>
       <div className="field">
         <div className="field-label">
-          <span>Saved audio format <Tip text="Opus is about 10× smaller than WAV (about 11 MB per hour instead of 115 MB) with no difference for transcription or voice labels. Applies to audio saved from now on; items saved earlier keep their files. Playing Opus in the Audio tab needs Windows, or macOS 15.4 or later, for now." /></span>
+          <span>Saved audio format <Tip text="Opus is about 10× smaller than WAV (about 11 MB per hour instead of 115 MB) with no difference for transcription or voice labels, and plays everywhere in the Audio tab. Applies to audio saved from now on; items saved earlier keep their files — use Compress audio below to convert them." /></span>
           <small>about {AUDIO_MB_PER_HOUR[savedAudioFormat(settings)]} MB per hour of audio</small>
         </div>
         <select
@@ -207,6 +208,7 @@ function ArchiveCard({ ctl }: { ctl: Ctl }) {
           <option value="opus">Opus (compressed, 10× smaller)</option>
         </select>
       </div>
+      <CompressAllField ctl={ctl} />
       <div className="field">
         <div className="field-label">
           <span>Subtitles <Tip text="For meetings and transcriptions (notes never get subtitles): transcript.srt, next to the transcript, with at most two short rows per subtitle. Automatically, it is written and kept up to date every time the transcript is saved — but never over a transcript.srt you edited yourself. Otherwise, use Create .srt or Export in the document's side panel." /></span>
