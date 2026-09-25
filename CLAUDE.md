@@ -788,8 +788,40 @@ fixes from them ship as 0.10.x patch releases.
 - **Track E** — **done**: pinned `llama-server` sidecar (b11146), Qwen3-ASR
   1.7B engine (optional, never default), *Local (bundled)* LLM profile
   (Qwen3 1.7B).
-- **Future (tracked, not built)**: voice recognition after training,
-  text-to-speech, voice cloning with consent (#146).
+- **Future → planned (2026-09-25)**: voice recognition, text-to-speech and
+  voice cloning with consent moved from #146 (still open as the umbrella)
+  into the voices plan below.
+
+### 0.11–0.13 — voices (planned 2026-09-25; decisions P12–P23 pending)
+
+Plan, research and checklists:
+`docs/superpowers/plans/2026-09-25-sussurro-voices.md`. Product decisions
+P12–P23 are **proposals awaiting the maintainer**; issues that depend on one
+carry `needs maintainer` and are not `agent-ready`. Milestones and epics:
+`Phase V0 — Voices spikes` (#274, spikes #235–#240), `0.11 — Known voices`
+(#275), `0.12 — Read aloud` (#276), `0.13 — Your voice, with consent`
+(#277), `Track A — Accounts and stores` (#278).
+
+- **0.11 — Known voices**: suggest-only voice recognition from confirmed
+  speaker links (profiles in app data, never in the archive: GDPR art. 9),
+  own-voice enrolment, overlap-aware Re-detect (pyannote segmentation-3.0,
+  MIT, through `ort`), Teams/Zoom web names, Ogg Opus saved audio (WebKit
+  plays Ogg Opus only from macOS 15.4, so older macOS needs a decode path),
+  archive HTTP API with scoped hashed tokens (every browser Origin refused),
+  calendar attendees from ICS.
+- **0.12 — Read aloud**: local TTS (default candidate Kyutai Pocket TTS,
+  MIT + CC-BY-4.0, native Italian; decided by a bake-off + listening test),
+  every generated file marked (watermark + metadata: AI Act art. 50 applies
+  from 2 Aug 2026).
+- **0.13 — Your voice, with consent**: own voice first; live consent with a
+  nonce, transcript + voice match; never cloned from files, meetings or the
+  archive; gated by a lawyer's review.
+- **Track A**: store listings (Chrome, Edge, AMO listed), privacy policy
+  page, Google/Microsoft calendar OAuth — maintainer accounts.
+- Licence rule for all of it: code **and** weights must allow commercial
+  use (dual-licence goal). Excluded: F5-TTS, XTTS-v2 (CPML), Fish-Speech,
+  Spark-TTS (non-commercial), IndexTTS2, Higgs Audio (custom), DiariZen
+  (CC BY-NC); no in-process GPL phonemizer (espeak-ng).
 
 ### Candidate / not committed
 

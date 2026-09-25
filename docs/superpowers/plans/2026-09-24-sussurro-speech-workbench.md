@@ -729,6 +729,15 @@ needs these changes before PR 4 of 0.7:
 
 ## 12. Future track (recorded, not implemented)
 
+> **2026-09-25: now planned.** The maintainer decided to start this track.
+> Its plan, with research, proposed decisions P12–P23 and engineering
+> decisions E13–E22, is
+> [`2026-09-25-sussurro-voices.md`](2026-09-25-sussurro-voices.md):
+> Phase V0 spikes (#274), 0.11 Known voices (#275), 0.12 Read aloud (#276),
+> 0.13 Your voice, with consent (#277) and Track A accounts and stores
+> (#278). #146 stays open as the umbrella. The list below is kept as it was
+> written.
+
 - **Voice recognition after training**: persisted voice profiles built from
   the embeddings stored since 0.9, a minimum number of confirmed segments
   before a voice is suggested, per-profile delete. Voiceprints are
