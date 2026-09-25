@@ -184,6 +184,26 @@ const voice = (n: number): DocSpeaker => ({ id: `voice:${n}`, label: `Voice ${n}
 /** The preview's stand-in for the tracker (#134): two voices taking turns. */
 const mockVoiceOf = (segmentId: number) => `voice:${(segmentId % 2) + 1}`;
 
+/** Mirrors speakers::overlap::assign_second_speakers (#244): each overlap
+ *  span names the nearest line of the same channel (≤ 60 s away) whose
+ *  speaker is not the line's own. */
+function assignSecondSpeakers(s: Stored) {
+  const voiced = s.segments.filter((x) => x.speaker_id && !x.stt_error).sort((a, b) => a.start_ms - b.start_ms || a.id - b.id);
+  s.segments = s.segments.map((x) => {
+    if (!x.overlap?.length) return x;
+    const overlap = x.overlap.map((o) => {
+      let best: { gap: number; id?: string } | null = null;
+      for (const y of voiced) {
+        if ((y.channel ?? "mic") !== (x.channel ?? "mic") || y.speaker_id === x.speaker_id) continue;
+        const gap = y.end_ms <= o.start_ms ? o.start_ms - y.end_ms : y.start_ms >= o.end_ms ? y.start_ms - o.end_ms : 0;
+        if (gap <= 60_000 && (!best || gap < best.gap)) best = { gap, id: y.speaker_id };
+      }
+      return { start_ms: o.start_ms, end_ms: o.end_ms, ...(best?.id ? { speaker_id: best.id } : {}) };
+    });
+    return { ...x, overlap };
+  });
+}
+
 /** "Identify voices" on a stored transcription, as engine::identify does. */
 function labelVoices(s: Stored) {
   const truth: Record<number, string> = {};
@@ -298,7 +318,13 @@ let items: Stored[] = params.get("empty")
         return {
           id: "2026/09/riunione-in-sala-roadmap-0-9",
           meta: meta("Riunione in sala — roadmap 0.9", "meeting", at(1, 10, 0), "00:12:40", "mic", { categories: ["team"] }),
-          segments: lines.map((l, i) => ({ ...l, speaker_id: i === 5 ? "voice:2" : truth[i] })),
+          // Line 3 starts while Voice 3 is still talking (#244): its
+          // overlap span names Voice 3 as the second speaker.
+          segments: lines.map((l, i) => ({
+            ...l,
+            speaker_id: i === 5 ? "voice:2" : truth[i],
+            ...(i === 3 ? { overlap: [{ start_ms: l.start_ms, end_ms: l.start_ms + 900, speaker_id: "voice:3" }] } : {}),
+          })),
           speakers: [voice(1), { ...voice(2), label: "Anna" }, voice(3)],
           voiceOf: Object.fromEntries(truth.map((v, i) => [i, v])),
           // One channel, saved (#141): the Audio tab's "Play only" (#142).
@@ -1688,6 +1714,8 @@ function handle(cmd: string, a: Args): unknown {
         const used = new Set(s.segments.map((x) => x.speaker_id));
         s.speakers = speakers.filter((x) => used.has(x.id));
       }
+      // Who else speaks in an overlapped line follows the new voices (#244).
+      assignSecondSpeakers(s);
       return toItem(s);
     }
     case "archive_voice_map": {
