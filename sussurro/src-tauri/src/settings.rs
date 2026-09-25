@@ -242,6 +242,16 @@ pub struct Settings {
     /// only for people the user turned *Recognise this voice* on for; off
     /// stops every suggestion without deleting a profile.
     pub voice_suggestions: bool,
+    /// *Read aloud* (Settings → Experimental, #255, P24): the experimental
+    /// text-to-speech module. Off by default; while off, no read-aloud
+    /// model is downloaded, loaded or used, and turning it off unloads the
+    /// engine and cancels a download.
+    pub tts_enabled: bool,
+    /// Read aloud: the voice per language code (`"it"` → `"giovanni"`),
+    /// picked in Models → Voices. A language without an entry uses its
+    /// default voice; unknown codes or voices are dropped on load and save
+    /// ([`crate::tts::service::normalize_voices`]).
+    pub tts_voices: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for Settings {
@@ -288,6 +298,8 @@ impl Default for Settings {
             saved_audio_format: crate::archive::audio::AudioFormat::default(),
             meeting_notice_seen: false,
             voice_suggestions: true,
+            tts_enabled: false,
+            tts_voices: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -378,6 +390,7 @@ impl Settings {
             self.cleanup_profile = self.llm_profiles[0].id.clone();
         }
         crate::recipes::normalize_user_recipes(&mut self.recipes);
+        crate::tts::service::normalize_voices(&mut self.tts_voices);
         migrated
     }
 
@@ -1112,6 +1125,28 @@ mod tests {
         assert!(!off.voice_suggestions);
         let back: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
         assert!(!back.voice_suggestions, "round-trips through settings.json");
+    }
+
+    /// #255 (P24): read aloud is off unless turned on, a file from before
+    /// 0.12 has it off, and only known voice picks survive a load.
+    #[test]
+    fn read_aloud_is_off_by_default_and_keeps_known_voices() {
+        assert!(!Settings::default().tts_enabled);
+        assert!(Settings::default().tts_voices.is_empty());
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Alt+Space"}"#).unwrap();
+        assert!(!old.tts_enabled);
+        let mut on: Settings = serde_json::from_str(
+            r#"{"tts_enabled":true,"tts_voices":{"it":"marius","en":"jean","xx":"alba"}}"#,
+        )
+        .unwrap();
+        on.normalize();
+        assert!(on.tts_enabled);
+        assert_eq!(
+            on.tts_voices,
+            std::collections::BTreeMap::from([("it".to_string(), "marius".to_string())])
+        );
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
+        assert_eq!(back.tts_voices, on.tts_voices, "round-trips through settings.json");
     }
 
     /// A settings.json exactly as 0.6.3 writes it (every field, pretty

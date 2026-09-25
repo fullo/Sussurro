@@ -3,8 +3,24 @@
 //! user's explicit request. The rest of the app never depends on it.
 //!
 //! - [`text`]: an archive item's markdown → speakable, normalised sentence
-//!   chunks for Italian and English (#254). Pure and engine-independent;
-//!   the Pocket TTS engine (#255, P18) and read-aloud (#256) consume its
-//!   [`text::Chunk`]s.
+//!   chunks for Italian and English (#254). Pure and engine-independent.
+//! - [`engine`]: the [`engine::TtsEngine`] seam, rendering chunks with
+//!   their pauses, and the WAV writer (#255).
+//! - [`pocket`]: Kyutai's Pocket TTS (P18) through the app's `ort` — the
+//!   Italian 24-layer and the English model, fp32 ONNX graphs (E16 a).
+//! - [`catalog`] / [`models`]: the pinned files and voices, and their
+//!   download (on request only), verification and deletion.
+//! - [`service`]: the loaded engine, its idle unload, the preview.
+//!
+//! File generation only, not real-time playback (P18). Read-aloud of
+//! archive items and the marking of generated files are #256 and #264.
 
+pub mod catalog;
+pub mod engine;
+pub mod models;
+pub mod pocket;
+pub mod service;
 pub mod text;
+
+#[cfg(test)]
+mod live_tests;
