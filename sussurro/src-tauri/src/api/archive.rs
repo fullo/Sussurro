@@ -148,8 +148,8 @@ fn decode_piece(s: &str) -> Option<String> {
     super::percent_decode(s).filter(|d| !d.is_empty())
 }
 
-/// Pure: method + raw path → route. Only `GET`/`HEAD` exist here (writes
-/// come with #251).
+/// Pure: method + raw path → route. Only `GET`/`HEAD` exist here (the one
+/// write, `POST /archive/items`, is [`super::archive_write`], #251).
 pub fn parse_route(method: &str, path: &str) -> ArchiveRoute {
     if !(method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")) {
         return ArchiveRoute::NotFound;
