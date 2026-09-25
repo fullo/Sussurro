@@ -687,6 +687,7 @@ mod tests {
                 color: "#f00".into(),
                 person_id: Some("p-anna".into()),
                 label_before_link: Some("Voice 1".into()),
+                own_voice: None,
             }],
             segments: vec![Segment {
                 id: 0,

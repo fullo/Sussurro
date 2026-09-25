@@ -290,6 +290,13 @@ pub struct DocSpeaker {
     /// the label (the user had named the speaker) or there is no link.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label_before_link: Option<String>,
+    /// Own-voice labelling (0.11, #243, P14): `Some(true)` = this voice was
+    /// labelled "You" automatically because it matched the user's enrolled
+    /// voice; `Some(false)` = the user renamed or linked a voice labelled
+    /// that way, so it is never labelled "You" automatically again in this
+    /// document. `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub own_voice: Option<bool>,
 }
 
 /// `.sussurro/segments.json`.
@@ -402,6 +409,7 @@ mod tests {
                 color: "#f00".into(),
                 person_id: None,
                 label_before_link: None,
+                own_voice: None,
             }],
             segments: vec![Segment {
                 id: 1,

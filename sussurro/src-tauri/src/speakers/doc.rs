@@ -56,6 +56,7 @@ pub fn voice_speaker(n: u32) -> DocSpeaker {
         color: voice_color(n),
         person_id: None,
         label_before_link: None,
+        own_voice: None,
     }
 }
 
@@ -67,6 +68,7 @@ pub fn you_speaker() -> DocSpeaker {
         color: YOU_COLOR.to_string(),
         person_id: None,
         label_before_link: None,
+        own_voice: None,
     }
 }
 
@@ -91,6 +93,7 @@ pub fn meet_speaker(name: &str, k: usize) -> DocSpeaker {
         color: VOICE_COLORS[VOICE_COLORS.len() - 1 - k % VOICE_COLORS.len()].to_string(),
         person_id: None,
         label_before_link: None,
+        own_voice: None,
     }
 }
 
@@ -195,6 +198,14 @@ pub fn rename_speaker(file: &mut SegmentsFile, speaker_id: &str, label: &str) ->
     };
     // A name chosen by hand is the one an unlink keeps.
     sp.label_before_link = None;
+    // Renaming a voice labelled "You" automatically is the user's call:
+    // it is never labelled "You" automatically again (#243).
+    if sp.own_voice == Some(true) {
+        sp.own_voice = Some(false);
+        if let Some(n) = voice_number(speaker_id) {
+            sp.color = voice_color(n);
+        }
+    }
     Ok(())
 }
 
@@ -212,6 +223,10 @@ pub fn default_label(id: &str) -> Option<String> {
 
 /// Whether the user named this speaker (its label is not the default).
 pub fn renamed(sp: &DocSpeaker) -> bool {
+    // "You" from the own-voice match (#243) is not the user's choice.
+    if sp.own_voice == Some(true) {
+        return false;
+    }
     default_label(&sp.id).is_none_or(|d| name_key(&d) != name_key(&sp.label))
 }
 
@@ -233,6 +248,16 @@ pub fn link_speaker(
         .iter_mut()
         .find(|s| s.id == speaker_id)
         .ok_or_else(|| anyhow::anyhow!("no speaker '{speaker_id}' in this document"))?;
+    // A voice labelled "You" automatically (#243) that the user links to
+    // someone is not the user: it goes back to "Voice N" first and is never
+    // labelled "You" automatically again.
+    if sp.own_voice == Some(true) {
+        sp.own_voice = Some(false);
+        if let Some(n) = voice_number(&sp.id) {
+            sp.label = voice_label(n);
+            sp.color = voice_color(n);
+        }
+    }
     let old_label = sp.label.clone();
     if sp.person_id.as_deref() != Some(person.id.as_str()) {
         if sp.person_id.is_some() {
