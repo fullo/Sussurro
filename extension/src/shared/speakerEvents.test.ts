@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FRAME_SAMPLES } from "./frame";
-import { MAX_PENDING, SpeakerRelay, frameToMs, perfToFrame, sanitizePageSpeaker, type PageSpeakerMsg } from "./speakerEvents";
+import { MAX_PENDING, MAX_SPEAKER_IDS, SpeakerRelay, frameToMs, perfToFrame, sanitizePageSpeaker, type PageSpeakerMsg } from "./speakerEvents";
 
 const RATE = 48_000;
 /** Page frames in `ms` at 48 kHz. */
@@ -91,5 +91,26 @@ describe("speaker relay", () => {
     r.begin(RATE);
     for (let i = 0; i < MAX_PENDING + 10; i++) r.page(active(`csrc:${i}`, i), true);
     expect(r.frame(0, 0)).toHaveLength(MAX_PENDING);
+  });
+
+  it("caps the speakers it keeps and drops repeated participant lists (#217)", () => {
+    const r = new SpeakerRelay();
+    r.begin(RATE);
+    r.frame(0, 0);
+    for (let i = 0; i < MAX_SPEAKER_IDS + 50; i++) r.page({ type: "speaker_name", id: `csrc:${i}`, name: `P${i}` }, true);
+    expect(r.page({ type: "speaker_name", id: "csrc:new", name: "X" }, true)).toEqual([]);
+    expect(r.page({ type: "speaker_name", id: "csrc:1", name: "Renamed" }, true)).toHaveLength(1);
+    for (let i = 0; i < MAX_SPEAKER_IDS; i++) r.page(active(`csrc:${i}`, 1), true);
+    expect(r.page(active("csrc:new", 1), true)).toEqual([]);
+    expect(r.page(active("csrc:3", 2), true)).toHaveLength(1);
+    const replay = r.begin(RATE);
+    expect(replay.filter((m) => m.type === "speaker_name")).toHaveLength(MAX_SPEAKER_IDS);
+    // The same participants again: nothing to send; a change is sent.
+    r.frame(0, 0);
+    const list = (names: string[]): PageSpeakerMsg => ({ type: "participants", names });
+    expect(r.page(list(["Anna", "Bo"]), true)).toHaveLength(1);
+    expect(r.page(list(["Anna", "Bo"]), true)).toEqual([]);
+    expect(r.page(list(["Anna", "Bo"]), false)).toEqual([]);
+    expect(r.page(list(["Anna"]), true)).toEqual([{ type: "participants", names: ["Anna"] }]);
   });
 });

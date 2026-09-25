@@ -76,6 +76,11 @@ export function rms16(pcm: Int16Array): number {
   return Math.sqrt(ss / pcm.length) / 32768;
 }
 
+/** Frames one producer jump may skip at most (~64 s at 48 kHz): the app
+ *  fills at most 60 s per gap anyway, and a page must not make one block
+ *  stand for hours (#217). */
+export const MAX_SKIP_FRAMES = 1500;
+
 /**
  * Per-connection `seq` numbering in the background. Frames reach it from
  * different producers over a meeting (the page's worklet, the Chrome
@@ -96,7 +101,7 @@ export class SeqCounter {
     const prev = this.last.get(key);
     this.last.set(key, producerSeq);
     // A forward jump in the producer's own counter = frames it never sent.
-    if (prev !== undefined && producerSeq > prev + 1) this.skip(channel, producerSeq - prev - 1);
+    if (prev !== undefined && producerSeq > prev + 1) this.skip(channel, Math.min(producerSeq - prev - 1, MAX_SKIP_FRAMES));
     const seq = this.next[channel];
     this.next[channel] = (seq + 1) >>> 0;
     return seq;
