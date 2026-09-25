@@ -12,6 +12,7 @@ import { DictationCard } from "../settings/DictationCard";
 import { ExtensionCard } from "../settings/ExtensionCard";
 import { HistoryCard } from "../settings/HistoryCard";
 import { PersonalizationCard } from "../settings/PersonalizationCard";
+import { ScriptingCard } from "../settings/ScriptingCard";
 import { SetupBanner } from "../settings/SetupBanner";
 import { SpeechOptionsCard } from "../settings/SpeechCard";
 import { sttLabel } from "./labels";
@@ -25,6 +26,7 @@ export type SectionId =
   | "history"
   | "archive"
   | "extension"
+  | "scripting"
   | "diagnostics"
   | "about";
 
@@ -37,12 +39,14 @@ const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "history", label: "Dictation history" },
   { id: "archive", label: "Archive" },
   { id: "extension", label: "Browser extension" },
+  { id: "scripting", label: "Scripting" },
   { id: "diagnostics", label: "Diagnostics" },
   { id: "about", label: "About" },
 ];
 
 /** Settings: one section at a time — dictation, speech, cleanup, dictionary,
- *  behavior, history, archive, browser extension, diagnostics and About. */
+ *  behavior, history, archive, browser extension, scripting, diagnostics
+ *  and About. */
 export function SettingsScreen({
   ctl,
   section,
@@ -118,6 +122,7 @@ export function SettingsScreen({
           {section === "history" && <HistoryCard ctl={ctl} />}
           {section === "archive" && <ArchiveCard ctl={ctl} />}
           {section === "extension" && <ExtensionCard ctl={ctl} />}
+          {section === "scripting" && <ScriptingCard ctl={ctl} />}
           {section === "diagnostics" && <DiagnosticsCard ctl={ctl} />}
           {section === "about" && <AboutCard ctl={ctl} onAbout={onAbout} onRunSetup={onRunSetup} />}
         </div>
