@@ -1,10 +1,10 @@
-/* Reading the Meet page through a selector set (#131): which tiles exist,
- * whose they are, which one is the user's, which are lit as speaking.
- * Read-only (never clicks, never opens panels), no layout reads, no text
- * matching on labels. Pure over a DOM root — unit tested on synthetic
- * fixtures. */
-import { cleanName, tileKey } from "./names";
-import type { AttrStrategy, FindStrategy, SelectorSet } from "./selectors/types";
+/* Reading a meeting page through a selector set (#131; Teams/Zoom
+ * #245/#246): which tiles exist, whose they are, which one is the user's,
+ * which are lit as speaking. Read-only (never clicks, never opens panels),
+ * no layout reads, no text matching on labels. Pure over a DOM root — unit
+ * tested on synthetic fixtures. */
+import { cleanName, tileKey } from "./guard";
+import type { AttrStrategy, FindStrategy, SelectorSet } from "./selectors";
 
 export interface Tile {
   /** `tile:<hash>` of the participant id. */
@@ -24,6 +24,12 @@ export interface DomProbe {
   rejectedNames: number;
   /** The user's own name, when the self tile shows one. */
   selfName: string | null;
+  /** Tiles carrying a speaking indicator at all, lit or not (the attribute
+   *  of a speaking strategy that reads a value exists): a UI variant
+   *  without the indicator shows as low coverage (#239). */
+  indicated: number;
+  /** A `pause` element is on the page (the lit tile can't be trusted). */
+  paused: boolean;
 }
 
 function queryAll(root: ParentNode, css: string): Element[] {
@@ -64,6 +70,13 @@ function firstAttr(tile: Element, list: AttrStrategy[]): string | null {
   return null;
 }
 
+/** Whether the tile has an element carrying the attribute of a speaking
+ *  strategy that reads a value ("present" strategies can't tell an unlit
+ *  indicator from a missing one). */
+function hasIndicator(tile: Element, list: AttrStrategy[]): boolean {
+  return list.some((s) => s.test !== "present" && within(tile, s.css).some((el) => el.hasAttribute(s.attr)));
+}
+
 function firstFind(root: ParentNode, list: FindStrategy[]): { name: string; els: Element[] } | null {
   for (const s of list) {
     const els = queryAll(root, s.css);
@@ -78,8 +91,10 @@ export function probe(root: ParentNode, set: SelectorSet): DomProbe {
   const tiles: Tile[] = [];
   let rejectedNames = 0;
   let selfName: string | null = null;
+  let indicated = 0;
+  const paused = !!(set.hooks.pause?.length && firstFind(root, set.hooks.pause));
   const found = firstFind(root, set.hooks.tile);
-  if (!found) return { set: set.id, tiles, matched, rejectedNames, selfName };
+  if (!found) return { set: set.id, tiles, matched, rejectedNames, selfName, indicated, paused };
   matched.tile = found.name;
   // Nested matches (a tile inside a tile) count once, as the outer one.
   const outer = found.els.filter((el) => !found.els.some((o) => o !== el && o.contains(el)));
@@ -102,6 +117,7 @@ export function probe(root: ParentNode, set: SelectorSet): DomProbe {
     if (selfBy) matched.selfMarker ??= selfBy;
     const speakingBy = firstAttr(el, set.hooks.speaking);
     if (speakingBy) matched.speaking ??= speakingBy;
+    if (hasIndicator(el, set.hooks.speaking)) indicated++;
     let name: string | null = null;
     for (const s of set.hooks.tileName) {
       const leaf = within(el, s.css).find((n) => (n.textContent ?? "").trim());
@@ -114,7 +130,7 @@ export function probe(root: ParentNode, set: SelectorSet): DomProbe {
     if (selfBy && name) selfName = name;
     tiles.push({ key, name, self: !!selfBy, speaking: !!speakingBy });
   }
-  return { set: set.id, tiles, matched, rejectedNames, selfName };
+  return { set: set.id, tiles, matched, rejectedNames, selfName, indicated, paused };
 }
 
 /** Whether a set fits the page (its fingerprint passes). */
@@ -131,7 +147,7 @@ export function pickSet(root: ParentNode, sets: readonly SelectorSet[]): { set: 
     if (fits(p, set)) return { set, probe: p };
     first ??= { set, probe: p };
   }
-  if (!first) throw new Error("no Meet selector set");
+  if (!first) throw new Error("no selector set");
   return first;
 }
 

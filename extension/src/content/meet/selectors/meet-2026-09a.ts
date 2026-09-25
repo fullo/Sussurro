@@ -10,7 +10,7 @@
  * synthetic fixture for it. Until then the health check decides at run
  * time: a hook that does not match reports "names unavailable" and the
  * app keeps "Voice N". No class names on purpose. */
-import type { SelectorSet } from "./types";
+import type { SelectorSet } from "../../names/selectors";
 
 export const MEET_2026_09A: SelectorSet = {
   id: "meet-2026-09a",

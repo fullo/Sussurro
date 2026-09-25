@@ -1,0 +1,21 @@
+<!doctype html>
+<!-- Synthetic fixture (#245): the Teams UI variant without a voice-level
+     outline (#239: one of the variants served in the same tenant has
+     none). Wrappers, ids and names read as in `stage-3.html`, but no tile
+     carries a speaking indicator: the coverage check must report the
+     speaking hook broken ("names unavailable") instead of guessing. -->
+<html>
+  <body>
+    <div role="main">
+      <div data-tid="participant-stream" data-participant-id="8:orgid:0000-ada" data-is-local="true">
+        <span data-tid="participant-name">Ada Test</span>
+      </div>
+      <div data-tid="participant-stream" data-participant-id="8:orgid:0000-bruno">
+        <span data-tid="participant-name">Bruno Esempio</span>
+      </div>
+      <div data-tid="participant-stream" data-participant-id="8:orgid:0000-chiara">
+        <span data-tid="participant-name">Chiara Prova</span>
+      </div>
+    </div>
+  </body>
+</html>
