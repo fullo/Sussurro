@@ -19,7 +19,7 @@ the repo was **private** the endpoint 404'd for anonymous clients. **Once the
 repo is public (v0.5.0), the updater works immediately** — no further change.
 
 **Go-live steps:** (1) GitHub → *Settings → General → Danger Zone → Change
-visibility → Public*. (2) Confirm the latest release (currently v0.4.1) is
+visibility → Public*. (2) Confirm the newest release is
 **published, not draft**. (3) Smoke-test: install an older build, click *Check
 for updates*, confirm it fetches and installs the newer version.
 
@@ -53,6 +53,10 @@ Silicon) and Linux, published as a **draft** release together with the updater
 manifest (`latest.json`). Publish by un-drafting.
 
 - Never force-move an existing release tag — bump the patch version instead.
+- **Release notes** for users live in `docs/releases/<version>.md`
+  (e.g. [`releases/0.10.0.md`](releases/0.10.0.md)): what's new, removed
+  features, upgrade notes and known limits. Paste them into the GitHub
+  release body when un-drafting.
 - The `v0.2.0` draft release is kept intentionally; do not delete it.
 
 ### Build-only check (no release)
@@ -138,7 +142,7 @@ Then hand-write `latest.json` with the per-platform `signature` (from each
 `.sig`) + download URL, and `gh release create` / `gh release upload` the
 assets. Add the `darwin-aarch64` entry once the macOS assets are up.
 
-## Planned signing (v0.5.0, go-public)
+## Signing options (if the no-signing decision is revisited)
 
 - macOS **Developer ID signing + notarization** — ad-hoc today, so Gatekeeper
   blocks public users.
