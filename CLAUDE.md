@@ -324,6 +324,15 @@ project decisions here, not in per-machine memory.**
   `content_security_policy` (the MV3 default upgrades `ws://127.0.0.1`).
   `extension/e2e/` (Playwright, runs in CI) proves both channels in
   Chromium + Firefox against a local call; real platforms stay manual (#184).
+  **Hosts and frames (#287)**: Teams is matched on `teams.microsoft.com`,
+  `teams.live.com` and `teams.cloud.microsoft` (org tenants from
+  2026-09-30); Meet/Teams scripts run top-frame only, Zoom's
+  (`*.zoom.us/wc/*`) with `all_frames` because its meeting is a same-origin
+  `/wc/` iframe (no about:blank/origin fallback). The background arms
+  **one frame per tab** (`background/frames.ts`: peer connection first,
+  a higher tier replaces the pick) and drops other frames' audio; only the
+  top frame answers `page:info`. `MEETING_MATCHES` = `TOP_FRAME_MATCHES` +
+  `ALL_FRAMES_MATCHES` in `shared/platform.ts`, pinned by the manifest test.
 - **Extension side panel (0.9, #129)** (`extension/src/sidepanel/`,
   `extension/src/shared/live.ts`): a live mirror only (E3). The background
   keeps each tab's transcript (pure reducer over the app's `/live`

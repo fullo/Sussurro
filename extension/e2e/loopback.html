@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- A fake meeting page for the capture harness (#287): a loopback call
+     inside the page (peer A sends a 300 Hz tone, peer B receives it), so the
+     hook sees a sent track (mic channel) and a received one (remote
+     channel). Served by Playwright routes at the Teams cloud host
+     (https://teams.cloud.microsoft/…) and as Zoom's meeting iframe
+     (https://app.zoom.us/wc/e2e/meeting), so the shipped content-script
+     patterns match it. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>e2e loopback</title>
+  </head>
+  <body>
+    <button id="join">Join</button>
+    <audio id="out" autoplay></audio>
+    <script>
+      window.callState = () => ({ joined: !!window.pcs });
+      document.getElementById("join").onclick = async () => {
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        osc.frequency.value = 300;
+        const dst = ctx.createMediaStreamDestination();
+        osc.connect(dst);
+        osc.start();
+        const a = new RTCPeerConnection();
+        const b = new RTCPeerConnection();
+        a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
+        b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
+        b.ontrack = (e) => {
+          document.getElementById("out").srcObject = e.streams[0] || new MediaStream([e.track]);
+        };
+        a.addTrack(dst.stream.getAudioTracks()[0], dst.stream);
+        await a.setLocalDescription(await a.createOffer());
+        await b.setRemoteDescription(a.localDescription);
+        await b.setLocalDescription(await b.createAnswer());
+        await a.setRemoteDescription(b.localDescription);
+        window.pcs = [a, b];
+      };
+    </script>
+  </body>
+</html>
