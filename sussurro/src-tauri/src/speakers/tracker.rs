@@ -308,10 +308,13 @@ impl Tracker {
         let Some(names) = self.options.names.clone() else {
             return 0;
         };
+        // Lines older than what the timeline still holds keep the name
+        // the live pass gave them (#217: old intervals age out).
+        let horizon = names.forgotten_before().unwrap_or(0);
         let mut changed = 0;
         for i in 0..file.segments.len() {
             let seg = &file.segments[i];
-            if !self.options.names_on(seg.channel) || seg.stt_error.is_some() {
+            if !self.options.names_on(seg.channel) || seg.stt_error.is_some() || seg.start_ms < horizon {
                 continue;
             }
             let want = match names.attribute(seg.start_ms, seg.end_ms) {
