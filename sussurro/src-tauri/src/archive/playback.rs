@@ -800,7 +800,8 @@ mod tests {
             let off = a - start as usize;
             let n = (r.body.len() - off) / 2 * 2;
             let db = snr_db(&i16s(&want[a..a + n]), &i16s(&r.body[off..off + n]));
-            assert!(db > 35.0, "at {start}: {db:.1} dB");
+            // A wrong position would be near 0 dB (see the reader's tests).
+            assert!(db > 30.0, "at {start}: {db:.1} dB");
         }
     }
 

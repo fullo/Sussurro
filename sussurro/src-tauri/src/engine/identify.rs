@@ -5,7 +5,9 @@
 //! file, since the audio itself is never kept (P9). The original file is
 //! known only for file transcriptions made from this version on
 //! ([`super::source_files`]); a link's download is deleted after the run
-//! and re-downloading it is out of scope.
+//! and re-downloading it is out of scope. Without the original file, the
+//! audio saved with the item (when Save audio was on; WAV or Opus, #248)
+//! serves instead.
 
 use super::source_files::{self, Entry, FileState};
 use crate::archive::{self, Channel, ItemType, SegmentsFile};
@@ -339,7 +341,10 @@ mod tests {
         for &(voice, secs) in parts {
             let n = (secs * 16_000.0) as usize;
             let amp = voice.map_or(0.0, |v| 0.2 * (v as f32 + 1.0));
-            out.extend((0..n).map(|i| amp * ((i as f32) * 0.07).sin()));
+            // 100 ms fades: a lossy copy (saved Opus, #248) then keeps the
+            // peak the fake embedder keys on (a hard onset overshoots).
+            let fade = |i: usize| (i.min(n - i) as f32 / 1_600.0).min(1.0);
+            out.extend((0..n).map(|i| amp * fade(i) * ((i as f32) * 0.07).sin()));
         }
         out
     }
@@ -542,6 +547,15 @@ mod tests {
             let mut w = archive::opus::OpusWriter::create_capped(&saved, u64::MAX).unwrap();
             w.write(&audio).unwrap();
             w.finish().unwrap();
+            // The decoded lines keep their level well inside the fake
+            // embedder's bands (0.2 → voice 1, 0.4 → voice 2; edges ±0.1).
+            let (pcm, _) = archive::opus::decode_file(&saved).unwrap();
+            for (seg, want) in file.segments.iter().take(4).zip([0.2f32, 0.4, 0.2, 0.4]) {
+                let a = ms_to_samples(seg.start_ms) as usize;
+                let b = ms_to_samples(seg.end_ms) as usize;
+                let peak = pcm[a..b].iter().fold(0f32, |m, x| m.max(x.abs()));
+                assert!((peak - want).abs() < 0.06, "line {}: peak {peak}", seg.id);
+            }
             let vs = voice_source(&archive_dir, &store, &id).unwrap();
             assert!(vs.available && vs.saved_audio, "{vs:?}");
             assert_eq!(vs.file_name, "audio.opus");
