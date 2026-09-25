@@ -16,7 +16,11 @@
  *   counters checked, error text bounded — before it costs the background
  *   or the app anything (both cap it again).
  * - The runtime port closing (tab navigating, extension reloaded, service
- *   worker gone) disarms the hook: no capture without a listener. */
+ *   worker gone) disarms the hook: no capture without a listener.
+ * - On Zoom it also runs in the page's frames (the meeting is an iframe,
+ *   #287): every frame connects on `page:connect` and reports its hook's
+ *   state at once; the background arms one frame per tab. Only the top
+ *   frame answers `page:info` (the panel describes the tab). */
 import browser, { type Runtime } from "webextension-polyfill";
 import { offerPort } from "../shared/handshake";
 import { detectPlatform } from "../shared/platform";
@@ -26,6 +30,8 @@ import type { PageSpeakerMsg } from "../shared/speakerEvents";
 import { MAX_BLOCK_BYTES, MAX_ERROR_CHARS, PAGE_AUDIO, PAGE_CONTROL, PAGE_EVENTS, RateLimiter, pageSeq } from "../shared/ratelimit";
 
 const platform = detectPlatform(location.href);
+/** `page:info` describes the tab: the top frame answers it. */
+const topFrame = window === window.top;
 const targetOrigin = location.origin === "null" ? "*" : location.origin;
 const mainPort = offerPort(window, targetOrigin);
 
@@ -143,6 +149,8 @@ function connect() {
     drop(port);
     toMain({ t: "disarm" });
   });
+  // What the hook sees now: the background picks the frame to arm from it.
+  toMain({ t: "state?" });
   // The hook's watchdog stops capturing if we go quiet.
   keepalive = setInterval(() => toMain({ t: "state?" }), 2000);
 }
@@ -151,6 +159,7 @@ browser.runtime.onMessage.addListener((raw: unknown) => {
   const m = raw as ToPage;
   if (!m || typeof m !== "object") return undefined;
   if (m.type === "page:info") {
+    if (!topFrame) return undefined;
     const info: PageInfo = { platform, title: document.title, url: location.href, state };
     return Promise.resolve(info);
   }
