@@ -65,10 +65,10 @@
     <p>For the desktop Zoom or Teams apps, use <a href="system-audio.html">System audio + mic</a> instead.</p>
 
     <h2>Install</h2>
-    <p>The extension is not in the browser stores yet. Every <a href="https://github.com/fullo/Sussurro/releases">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and <code>sussurro-extension-firefox-&lt;version&gt;.zip</code>. Use the one with the same version as your app.</p>
+    <p>The extension is not in the browser stores yet. Every <a href="https://github.com/fullo/Sussurro/releases">release</a> carries <code>sussurro-extension-chrome-&lt;version&gt;.zip</code> and, for Firefox, the add-on signed by Mozilla, <code>sussurro-extension-firefox-&lt;version&gt;.xpi</code>. Use the one with the same version as your app.</p>
     <ul>
       <li><strong>Chrome, Edge, Brave</strong>: unzip it into a folder you keep. Open <code>chrome://extensions</code> (or <code>edge://</code>, <code>brave://</code>), turn on <strong>Developer mode</strong>, click <strong>Load unpacked</strong> and pick the folder. To update, replace the folder's content and press the reload icon on the extension's card.</li>
-      <li><strong>Firefox</strong>: open <code>about:debugging#/runtime/this-firefox</code>, click <strong>Load Temporary Add-on…</strong> and pick the zip. Firefox removes temporary add-ons when it quits, so load it again after a restart.</li>
+      <li><strong>Firefox</strong>: drag the <code>.xpi</code> onto a Firefox window (or <code>about:addons</code> → gear menu → <strong>Install Add-on From File…</strong>) and confirm. It stays installed and updates itself with each release.</li>
     </ul>
     <p>If the extension has no access to a meeting site, its panel offers <strong>Allow access</strong>.</p>
 

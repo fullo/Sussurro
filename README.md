@@ -220,19 +220,22 @@ it can record.
 ### Install
 
 The extension is not in the browser stores yet. Every
-[release](https://github.com/fullo/Sussurro/releases) carries two zips,
-`sussurro-extension-chrome-<version>.zip` and
-`sussurro-extension-firefox-<version>.zip`; use the one with the same
-version as your app.
+[release](https://github.com/fullo/Sussurro/releases) carries
+`sussurro-extension-chrome-<version>.zip` and, for Firefox, the add-on
+signed by Mozilla, `sussurro-extension-firefox-<version>.xpi`; use the one
+with the same version as your app.
 
 - **Chrome, Edge, Brave — load unpacked**: unzip it into a folder you keep,
   open `chrome://extensions` (`edge://extensions`, `brave://extensions`),
   turn on **Developer mode**, click **Load unpacked** and pick that folder.
   To update, replace the folder's content and press the reload icon on the
   extension's card.
-- **Firefox — temporary add-on**: open `about:debugging#/runtime/this-firefox`,
-  click **Load Temporary Add-on…** and pick the zip. Firefox removes a
-  temporary add-on when it quits, so load it again after a restart.
+- **Firefox — signed add-on**: open the `.xpi` in Firefox (drag it onto a
+  Firefox window, or *about:addons* → gear menu → **Install Add-on From
+  File…**) and confirm. It stays installed and updates itself when a new
+  release is out. (The unsigned `sussurro-extension-firefox-<version>.zip`
+  is for development: *about:debugging* → **Load Temporary Add-on…**, gone
+  when Firefox quits.)
 
 In either browser, if the extension has no access to a meeting site its
 panel offers **Allow access**.
@@ -434,8 +437,9 @@ token, is readable only by your user on macOS and Linux.
   Videos whose only audio is Opus or AC-3 are refused, because no ffmpeg is
   bundled. Links are capped at 2 GB and ignore system proxy settings (so the
   local-network check can't be bypassed).
-- **The browser extension is not in the stores yet.** Firefox loads it as a
-  temporary add-on, which is removed when Firefox quits.
+- **The browser extension is not in the stores yet.** Chrome, Edge and
+  Brave load it unpacked (Developer mode); Firefox installs the
+  Mozilla-signed `.xpi` from the release.
 - **Linux Wayland injection** goes through the XDG **RemoteDesktop portal**
   first (zero setup on KDE/GNOME; the OS asks for consent on first use, and
   KDE may ask again after a reboot, kde#480235). Fallbacks: `wtype`,
