@@ -787,7 +787,7 @@ project decisions here, not in per-machine memory.**
   shared idle thread. Previews are temporary WAVs (`<app data>/tts-preview/`,
   swept at startup) served by `sussurro-audio:` under `tts-preview/` — no
   CSP change. WAVs carry a `LIST/INFO` "synthetic speech" comment; the
-  watermark is #264. Generation per #254 chunk, re-cut at 50 tokens; voice
+  watermark is #257 (E17). Generation per #254 chunk, re-cut at 50 tokens; voice
   and decoder state restart per piece; temperature 0.7, fixed seed (same
   text = same audio). Live test (`tts::live_tests`, env vars in the file)
   on the M1 Pro at 2 threads: Italian RTF ≈ 1.2–1.4, English ≈ 0.4; Whisper
