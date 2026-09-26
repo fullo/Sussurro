@@ -4,17 +4,24 @@
 //! starts at the run's t = 0) and the same size/duration cap.
 //!
 //! **Encoding** (settled by spike V0-4, #238): libopus through the `opus`
-//! crate, 16 kHz mono, VOIP, 20 ms packets, VBR at [`BITRATE`] b/s,
-//! complexity 10 — about 10.7 MB per hour instead of 115 MB of WAV. The
-//! container is written by the pure-Rust `ogg` crate.
+//! crate, mono, VOIP, 20 ms packets, VBR, complexity 10. The container is
+//! written by the pure-Rust `ogg` crate. Two [`Profile`]s:
+//!
+//! - [`RECORDED`]: recorded audio, 16 kHz at [`BITRATE`] b/s — about
+//!   10.7 MB per hour instead of 115 MB of WAV;
+//! - [`SPEECH`] (#309): generated speech, at Pocket TTS's own 24 kHz so its
+//!   8–12 kHz band is kept, at [`SPEECH_BITRATE`] b/s (why that rate: see
+//!   the constant).
 //!
 //! **Granule positions** (RFC 7845) count 48 kHz samples, pre-skip
-//! included. The pre-skip is the encoder's lookahead × 3 (312 at 16 kHz):
-//! a decoder drops that many samples first, so decoded sample `i` is input
-//! sample `i` — the alignment the WAV files have. A page's granule is the
-//! natural one (`packets × 960`); at the end, zeros flush the lookahead and
-//! the last page's granule is `pre_skip + samples × 3` (end trimming), so a
-//! decoder returns exactly the recorded length.
+//! included. The pre-skip is the encoder's lookahead in 48 kHz samples (312
+//! at 16 kHz and at 24 kHz): a decoder drops that many samples first, so
+//! decoded sample `i` is input sample `i` — the alignment the WAV files
+//! have. A page's granule is the natural one (`packets × 960`); at the end,
+//! zeros flush the lookahead and the last page's granule is `pre_skip +
+//! samples × 48 000 / rate` (end trimming), so a decoder returns exactly
+//! the written length. The `OpusHead` input sample rate says which profile
+//! wrote the file; [`OpusReader::open_native`] decodes at that rate.
 //!
 //! **Crash safety**: a page is closed every [`PAGE_PACKETS`] packets (1 s)
 //! and the buffered writer is flushed then, so a crash loses at most about
@@ -32,15 +39,60 @@ use std::path::{Path, PathBuf};
 
 use super::audio::RATE;
 
-/// Target bitrate (E15: where the quality curve flattens for Whisper and
-/// the speaker embeddings).
+/// Target bitrate of recorded audio (E15: where the quality curve flattens
+/// for Whisper and the speaker embeddings).
 pub const BITRATE: i32 = 24_000;
+/// Sample rate of generated speech (#309): Pocket TTS's own, so nothing
+/// above 8 kHz is cut off.
+pub const SPEECH_RATE: u32 = 24_000;
+/// Bitrate of generated speech (#309). At 24 kHz libopus codes speech in
+/// hybrid mode: SILK for 0–8 kHz, CELT for 8–12 kHz. Its hybrid rate table
+/// (`compute_silk_rate_for_hybrid`) gives SILK 18 kb/s of a 24 kb/s total
+/// — less than the 24 kb/s the 0–8 kHz band gets at 16 kHz, so the added
+/// band would cost the core — and 22 kb/s of a 32 kb/s total, about what
+/// the core had, the rest for 8–12 kHz. Xiph's recommended settings put
+/// full-band speech at 28–40 kb/s. 32 kb/s is about 14.4 MB per hour of
+/// speech (a few MB per document).
+pub const SPEECH_BITRATE: i32 = 32_000;
 /// libopus complexity (E15; about 1 % of a core while recording).
 pub const COMPLEXITY: i32 = 10;
-/// Samples per packet: 20 ms at 16 kHz.
-pub const FRAME: usize = (RATE / 50) as usize;
-/// 48 kHz granule units per 16 kHz sample.
-const GRANULE_PER_SAMPLE: u64 = 48_000 / RATE as u64;
+/// Packet length, in milliseconds.
+const FRAME_MS: u32 = 20;
+/// Samples per packet of recorded audio: 20 ms at 16 kHz.
+pub const FRAME: usize = (RATE * FRAME_MS / 1000) as usize;
+
+/// What an Opus file is written for: its sample rate and bitrate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Profile {
+    pub rate: u32,
+    pub bitrate: i32,
+}
+
+/// Recorded audio: the archive's 16 kHz.
+pub const RECORDED: Profile = Profile {
+    rate: RATE,
+    bitrate: BITRATE,
+};
+/// Generated speech (#309).
+pub const SPEECH: Profile = Profile {
+    rate: SPEECH_RATE,
+    bitrate: SPEECH_BITRATE,
+};
+
+/// Rates [`OpusWriter`] writes (and [`repair`] accepts).
+const WRITER_RATES: [u32; 2] = [RATE, SPEECH_RATE];
+
+/// 48 kHz granule units per sample at `rate` (an Opus rate: 8, 12, 16, 24
+/// or 48 kHz).
+const fn granule_per_sample(rate: u32) -> u64 {
+    48_000 / rate as u64
+}
+
+/// Whether libopus decodes (and encodes) at `rate`.
+fn is_opus_rate(rate: u32) -> bool {
+    matches!(rate, 8_000 | 12_000 | 16_000 | 24_000 | 48_000)
+}
+
 /// Packets per Ogg page: one page per second of audio.
 pub const PAGE_PACKETS: u64 = 50;
 /// `fsync` every this many pages (~10 s), for power loss.
@@ -55,13 +107,13 @@ const FLAG_EOS: u8 = 0x04;
 const PAGE_HEADER: usize = 27;
 
 /// The `OpusHead` identification header (RFC 7845 §5.1): version 1, mono,
-/// our pre-skip, 16 kHz input, no gain, mapping family 0.
-fn opus_head(pre_skip: u16) -> Vec<u8> {
+/// our pre-skip, the input sample rate, no gain, mapping family 0.
+fn opus_head(pre_skip: u16, rate: u32) -> Vec<u8> {
     let mut h = b"OpusHead".to_vec();
     h.push(1);
     h.push(1);
     h.extend_from_slice(&pre_skip.to_le_bytes());
-    h.extend_from_slice(&RATE.to_le_bytes());
+    h.extend_from_slice(&rate.to_le_bytes());
     h.extend_from_slice(&0i16.to_le_bytes());
     h.push(0);
     h
@@ -121,21 +173,27 @@ pub fn read_tags(path: &Path) -> Result<Vec<(String, String)>> {
     parse_tags(&tags.data).with_context(|| format!("{}: malformed OpusTags", path.display()))
 }
 
-/// Our `OpusHead` (as [`opus_head`] writes it): its pre-skip, else `None`.
-fn parse_head(packet: &[u8]) -> Option<u16> {
-    (packet.len() == 19
-        && &packet[0..8] == b"OpusHead"
-        && packet[8] == 1
-        && packet[9] == 1
-        && packet[12..16] == RATE.to_le_bytes()
-        && packet[18] == 0)
-        .then(|| u16::from_le_bytes([packet[10], packet[11]]))
+/// Our `OpusHead` (as [`opus_head`] writes it, at one of the
+/// [`WRITER_RATES`]): its pre-skip and rate, else `None`.
+fn parse_head(packet: &[u8]) -> Option<(u16, u32)> {
+    if packet.len() != 19
+        || &packet[0..8] != b"OpusHead"
+        || packet[8] != 1
+        || packet[9] != 1
+        || packet[18] != 0
+    {
+        return None;
+    }
+    let rate = u32::from_le_bytes(packet[12..16].try_into().ok()?);
+    WRITER_RATES
+        .contains(&rate)
+        .then(|| (u16::from_le_bytes([packet[10], packet[11]]), rate))
 }
 
-fn encoder() -> Result<opus::Encoder> {
-    let mut e = opus::Encoder::new(RATE, opus::Channels::Mono, opus::Application::Voip)
+fn encoder(profile: Profile) -> Result<opus::Encoder> {
+    let mut e = opus::Encoder::new(profile.rate, opus::Channels::Mono, opus::Application::Voip)
         .context("starting the Opus encoder")?;
-    e.set_bitrate(opus::Bitrate::Bits(BITRATE))?;
+    e.set_bitrate(opus::Bitrate::Bits(profile.bitrate))?;
     e.set_vbr(true)?;
     e.set_complexity(COMPLEXITY)?;
     Ok(e)
@@ -160,9 +218,15 @@ pub struct OpusWriter {
     pw: PacketWriter<'static, BufWriter<File>>,
     enc: opus::Encoder,
     serial: u32,
+    /// Sample rate (the profile's).
+    rate: u32,
+    /// Samples per packet at `rate`.
+    frame: usize,
+    /// 48 kHz granule units per sample.
+    gps: u64,
     /// Input not yet encoded (< one frame).
     pending: Vec<f32>,
-    /// Encoder lookahead, in 16 kHz samples.
+    /// Encoder lookahead, in samples at `rate`.
     lookahead: u64,
     /// Pre-skip, in 48 kHz samples.
     pre_skip: u64,
@@ -179,16 +243,29 @@ pub struct OpusWriter {
 }
 
 impl OpusWriter {
-    /// Create `path` — never over an existing file — holding a duration cap
-    /// of `max_samples`; both headers are on disk when this returns.
+    /// Create `path` for recorded audio ([`RECORDED`]) — never over an
+    /// existing file — holding a duration cap of `max_samples`; both headers
+    /// are on disk when this returns.
     pub fn create_capped(path: &Path, max_samples: u64) -> Result<Self> {
-        Self::create_tagged(path, max_samples, &[])
+        Self::create_with(path, max_samples, RECORDED, &[])
     }
 
-    /// [`Self::create_capped`] with `tags` (`NAME`, value) as the stream's
-    /// user comments — generated speech carries its synthetic marks (#256).
-    pub fn create_tagged(path: &Path, max_samples: u64, tags: &[(String, String)]) -> Result<Self> {
-        let mut enc = encoder()?;
+    /// [`Self::create_capped`] with another [`Profile`] and `tags` (`NAME`,
+    /// value) as the stream's user comments — generated speech is
+    /// [`SPEECH`] and carries its synthetic marks (#256, #309).
+    /// `max_samples` counts samples at the profile's rate.
+    pub fn create_with(
+        path: &Path,
+        max_samples: u64,
+        profile: Profile,
+        tags: &[(String, String)],
+    ) -> Result<Self> {
+        if !WRITER_RATES.contains(&profile.rate) {
+            bail!("unsupported Opus rate {} Hz", profile.rate);
+        }
+        let mut enc = encoder(profile)?;
+        let frame = (profile.rate * FRAME_MS / 1000) as usize;
+        let gps = granule_per_sample(profile.rate);
         let lookahead = enc.get_lookahead().context("reading the Opus lookahead")? as u64;
         let file = OpenOptions::new()
             .write(true)
@@ -200,9 +277,12 @@ impl OpusWriter {
             pw: PacketWriter::new(BufWriter::with_capacity(64 * 1024, file)),
             enc,
             serial: serial(),
-            pending: Vec::with_capacity(FRAME),
+            rate: profile.rate,
+            frame,
+            gps,
+            pending: Vec::with_capacity(frame),
             lookahead,
-            pre_skip: lookahead * GRANULE_PER_SAMPLE,
+            pre_skip: lookahead * gps,
             samples: 0,
             max_samples,
             packets: 0,
@@ -220,7 +300,7 @@ impl OpusWriter {
         (|| -> std::io::Result<()> {
             // Each header on its own page (RFC 7845 §3).
             self.pw.write_packet(
-                opus_head(pre_skip),
+                opus_head(pre_skip, self.rate),
                 self.serial,
                 PacketWriteEndInfo::EndPage,
                 0,
@@ -234,6 +314,11 @@ impl OpusWriter {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Sample rate of the samples [`Self::write`] takes.
+    pub fn rate(&self) -> u32 {
+        self.rate
     }
 
     /// Samples written so far (the position on the session clock).
@@ -257,11 +342,11 @@ impl OpusWriter {
             .min(usize::try_from(self.room()).unwrap_or(usize::MAX));
         let mut rest = &samples[..n];
         while !rest.is_empty() {
-            let take = (FRAME - self.pending.len()).min(rest.len());
+            let take = (self.frame - self.pending.len()).min(rest.len());
             self.pending.extend_from_slice(&rest[..take]);
             rest = &rest[take..];
             self.samples += take as u64;
-            if self.pending.len() == FRAME {
+            if self.pending.len() == self.frame {
                 self.encode_pending()?;
             }
         }
@@ -273,11 +358,11 @@ impl OpusWriter {
         let n = n.min(self.room());
         let mut left = n;
         while left > 0 {
-            let take = ((FRAME - self.pending.len()) as u64).min(left);
+            let take = ((self.frame - self.pending.len()) as u64).min(left);
             self.pending.resize(self.pending.len() + take as usize, 0.0);
             left -= take;
             self.samples += take;
-            if self.pending.len() == FRAME {
+            if self.pending.len() == self.frame {
                 self.encode_pending()?;
             }
         }
@@ -286,7 +371,7 @@ impl OpusWriter {
 
     /// Encode the pending frame (padded with zeros) as the next packet.
     fn encode_pending(&mut self) -> Result<()> {
-        self.pending.resize(FRAME, 0.0);
+        self.pending.resize(self.frame, 0.0);
         let n = self
             .enc
             .encode_float(&self.pending, &mut self.scratch)
@@ -296,7 +381,7 @@ impl OpusWriter {
         self.emit_held(false)?;
         self.packets += 1;
         // Natural granule: every 48 kHz sample decoded so far.
-        self.held = Some((packet, self.packets * FRAME as u64 * GRANULE_PER_SAMPLE));
+        self.held = Some((packet, self.packets * self.frame as u64 * self.gps));
         Ok(())
     }
 
@@ -334,11 +419,13 @@ impl OpusWriter {
         // Encode until every input sample has left the encoder: packets ×
         // FRAME ≥ samples + lookahead (at least one packet, so the stream
         // always has an end-of-stream page carrying audio).
-        while self.packets * (FRAME as u64) < self.samples + self.lookahead || self.held.is_none() {
+        while self.packets * (self.frame as u64) < self.samples + self.lookahead
+            || self.held.is_none()
+        {
             self.encode_pending()?;
         }
         if let Some((_, granule)) = self.held.as_mut() {
-            *granule = self.pre_skip + self.samples * GRANULE_PER_SAMPLE;
+            *granule = self.pre_skip + self.samples * self.gps;
         }
         self.emit_held(true)?;
         let path = self.path.clone();
@@ -432,19 +519,22 @@ fn read_page<R: Read + Seek>(r: &mut R, offset: u64) -> Option<Page> {
 }
 
 /// Rewrite `file` as an empty stream of ours (headers + one silent packet
-/// ending the stream): a crash cut the headers or left no audio page.
-fn write_empty_stream(path: &Path, file: File) -> Result<u64> {
+/// ending the stream) at `rate`: a crash cut the headers (recorded audio's
+/// rate then) or left no audio page.
+fn write_empty_stream(path: &Path, file: File, rate: u32) -> Result<u64> {
     drop(file);
     std::fs::remove_file(path)?;
-    OpusWriter::create_capped(path, 0)?.finish()
+    let profile = if rate == SPEECH_RATE { SPEECH } else { RECORDED };
+    OpusWriter::create_with(path, 0, profile, &[])?.finish()
 }
 
 /// Make an Ogg Opus file left by a crash complete again: cut it after the
 /// last whole page and mark that page as the end of the stream (its
 /// granule already says how much audio precedes it). A file cut inside the
 /// headers, or with no audio page, becomes an empty stream. Only a mono
-/// 16 kHz Opus stream as [`OpusWriter`] writes it is touched; any other
-/// file is refused, untouched. Idempotent. Returns the samples kept.
+/// Opus stream as [`OpusWriter`] writes it (16 or 24 kHz) is touched; any
+/// other file is refused, untouched. Idempotent. Returns the samples kept,
+/// at the file's rate.
 pub fn repair(path: &Path) -> Result<u64> {
     let mut file = OpenOptions::new()
         .read(true)
@@ -463,9 +553,11 @@ pub fn repair(path: &Path) -> Result<u64> {
             bail!("{} is not an Opus file written by Sussurro", path.display());
         }
         drop(r);
-        return write_empty_stream(path, file);
+        return write_empty_stream(path, file, RATE);
     };
-    let Some(pre_skip) = parse_head(&first.head).filter(|_| first.flags & FLAG_BOS != 0) else {
+    let Some((pre_skip, rate)) =
+        parse_head(&first.head).filter(|_| first.flags & FLAG_BOS != 0)
+    else {
         bail!("{} is not an Opus file written by Sussurro", path.display());
     };
     let pre_skip = pre_skip as u64;
@@ -498,7 +590,7 @@ pub fn repair(path: &Path) -> Result<u64> {
     }
     // Pages 0 and 1 are the headers: no audio page survived.
     if pages.len() < 3 {
-        return write_empty_stream(path, file);
+        return write_empty_stream(path, file, rate);
     }
     let last = pages.swap_remove(pages.len() - 1);
     let end = last.offset + last.len;
@@ -518,20 +610,20 @@ pub fn repair(path: &Path) -> Result<u64> {
         file.write_all(&page[..26])?;
     }
     file.sync_all()?;
-    Ok(last.granule.saturating_sub(pre_skip) / GRANULE_PER_SAMPLE)
+    Ok(last.granule.saturating_sub(pre_skip) / granule_per_sample(rate))
 }
 
 // ---- reading and seeking (#248) --------------------------------------------
 
-/// Decoding restarts this many samples before a seek target: 200 ms, where
-/// spike V0-4 measured 49 dB against a linear decode (80 ms gave 29.6 dB).
-pub const PRE_ROLL: u64 = RATE as u64 / 5;
+/// Decoding restarts this long before a seek target: 200 ms, where spike
+/// V0-4 measured 49 dB against a linear decode (80 ms gave 29.6 dB).
+pub const PRE_ROLL_MS: u64 = 200;
 /// A seek at most this far ahead decodes forward instead of restarting:
 /// cheaper than a restart (which decodes the pre-roll plus up to a page)
 /// and bit-exact with a linear decode.
-const FORWARD_SLACK: u64 = 2 * RATE as u64;
-/// Decoder output room: the longest Opus packet (120 ms) at 48 kHz, more
-/// than enough at 16 kHz.
+const FORWARD_SLACK_MS: u64 = 2_000;
+/// Decoder output room: the longest Opus packet (120 ms) at 48 kHz, the
+/// highest rate a reader decodes at.
 const MAX_DECODED: usize = 5_760;
 
 /// One page of the stream's audio, as the index keeps it.
@@ -539,9 +631,9 @@ const MAX_DECODED: usize = 5_760;
 struct IndexedPage {
     offset: u64,
     len: u64,
-    /// Samples decoded from the start of the stream (16 kHz, pre-skip
-    /// included) once this page's packets are; `None` when no packet ends
-    /// on the page.
+    /// Samples decoded from the start of the stream (at the reader's rate,
+    /// pre-skip included) once this page's packets are; `None` when no
+    /// packet ends on the page.
     end: Option<u64>,
     /// Its first packet began on the page before.
     continued: bool,
@@ -601,9 +693,10 @@ fn split_packets<'a>(lacing: &[u8], body: &'a [u8]) -> Vec<(&'a [u8], bool)> {
 }
 
 /// The `OpusHead` of any mono or stereo Ogg Opus stream (channel mapping
-/// family 0, RFC 7845 §5.1): its pre-skip (48 kHz samples) and output gain
-/// (Q7.8 dB). Stereo streams are decoded to mono by libopus.
-fn parse_head_any(packet: &[u8]) -> Option<(u64, i16)> {
+/// family 0, RFC 7845 §5.1): its pre-skip (48 kHz samples), output gain
+/// (Q7.8 dB) and input sample rate (informational; 0 = unknown). Stereo
+/// streams are decoded to mono by libopus.
+fn parse_head_any(packet: &[u8]) -> Option<(u64, i16, u32)> {
     (packet.len() >= 19
         && &packet[0..8] == b"OpusHead"
         && packet[8] & 0xF0 == 0
@@ -613,21 +706,37 @@ fn parse_head_any(packet: &[u8]) -> Option<(u64, i16)> {
             (
                 u16::from_le_bytes([packet[10], packet[11]]) as u64,
                 i16::from_le_bytes([packet[16], packet[17]]),
+                u32::from_le_bytes([packet[12], packet[13], packet[14], packet[15]]),
             )
         })
 }
 
-/// Reads an Ogg Opus file as 16 kHz mono samples, with seeking — what the
-/// `sussurro-audio:` scheme serves as a WAV (#248, E15) and what re-reads
-/// saved audio (Identify voices).
+/// The rate to play a stream at, from its `OpusHead` input rate: that rate
+/// when libopus decodes at it (every file the app writes: 16 kHz recorded
+/// audio and older speech, 24 kHz speech since #309), else 48 kHz, Opus's
+/// own (RFC 7845 §5.1). Pure.
+pub fn native_rate(input_rate: u32) -> u32 {
+    if is_opus_rate(input_rate) {
+        input_rate
+    } else {
+        48_000
+    }
+}
+
+/// Reads an Ogg Opus file as mono samples at a chosen rate, with seeking —
+/// at 16 kHz ([`Self::open`]) what re-reads saved audio (Identify voices,
+/// file transcription); at the file's own rate ([`Self::open_native`]) what
+/// the `sussurro-audio:` scheme serves as a WAV (#248, E15, #309).
 ///
-/// **Positions** are sample indices of the trimmed stream: pre-skip
-/// dropped, end trimmed to the last granule, so sample `i` is sample `i` of
-/// what was recorded and [`Self::total_samples`] is its exact length.
+/// **Positions** are sample indices of the trimmed stream at the reader's
+/// [`Self::rate`]: pre-skip dropped, end trimmed to the last granule, so
+/// sample `i` is sample `i` of what was written and
+/// [`Self::total_samples`] is its exact length (at the rate it was
+/// written; another rate rounds it down).
 ///
 /// **Index**: opening scans the page headers only (offset, end granule;
 /// about 1 ms and 3,600 entries for an hour). A seek decodes from the page
-/// that ends at least [`PRE_ROLL`] before the target, with the decoder
+/// that ends at least [`PRE_ROLL_MS`] before the target, with the decoder
 /// reset; reading on from where the reader stopped (or seeking up to
 /// 2 s ahead) goes on decoding, bit-exact with a linear decode.
 ///
@@ -644,8 +753,13 @@ pub struct OpusReader {
     file: Option<File>,
     serial: u32,
     pages: Vec<IndexedPage>,
-    /// Pre-skip, in 16 kHz samples.
+    /// Output sample rate.
+    rate: u32,
+    /// Pre-skip, in samples at `rate`.
     pre: u64,
+    /// [`PRE_ROLL_MS`] and [`FORWARD_SLACK_MS`] in samples at `rate`.
+    pre_roll: u64,
+    forward_slack: u64,
     total: u64,
     dec: opus::Decoder,
     /// The next page to read, as an index into `pages`.
@@ -666,9 +780,25 @@ pub struct OpusReader {
 }
 
 impl OpusReader {
-    /// Open `path` and index its pages. Fails for anything but a mono or
-    /// stereo Ogg Opus stream with whole headers.
+    /// Open `path` decoding at 16 kHz (the engine's rate, whatever the file
+    /// was written at) and index its pages. Fails for anything but a mono
+    /// or stereo Ogg Opus stream with whole headers.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_at(path, Some(RATE))
+    }
+
+    /// [`Self::open`] decoding at the file's own rate ([`native_rate`]):
+    /// 24 kHz for generated speech, 16 kHz for recorded audio and speech
+    /// saved before #309.
+    pub fn open_native(path: &Path) -> Result<Self> {
+        Self::open_at(path, None)
+    }
+
+    /// Open decoding at `rate` (an Opus rate), or the native one.
+    fn open_at(path: &Path, rate: Option<u32>) -> Result<Self> {
+        if let Some(r) = rate.filter(|&r| !is_opus_rate(r)) {
+            bail!("Opus can't decode at {r} Hz");
+        }
         let file = File::open(path).with_context(|| format!("opening {}", path.display()))?;
         let file_len = file.metadata()?.len();
         let not_opus = || anyhow::anyhow!("{} is not an Ogg Opus file", path.display());
@@ -680,7 +810,9 @@ impl OpusReader {
         }
         let mut head = vec![0u8; first.body_len() as usize];
         r.read_exact(&mut head).map_err(|_| not_opus())?;
-        let (pre_skip, gain) = parse_head_any(&head).ok_or_else(not_opus)?;
+        let (pre_skip, gain, input_rate) = parse_head_any(&head).ok_or_else(not_opus)?;
+        let rate = rate.unwrap_or_else(|| native_rate(input_rate));
+        let gps = granule_per_sample(rate);
         let serial = first.serial;
         let mut offset = first.len();
         // The comment header, over one or more pages: it ends on the first
@@ -741,12 +873,11 @@ impl OpusReader {
         let pages: Vec<IndexedPage> = raw
             .into_iter()
             .map(|(p, granule)| IndexedPage {
-                end: (granule != u64::MAX)
-                    .then(|| granule.saturating_sub(start48) / GRANULE_PER_SAMPLE),
+                end: (granule != u64::MAX).then(|| granule.saturating_sub(start48) / gps),
                 ..p
             })
             .collect();
-        let pre = pre_skip / GRANULE_PER_SAMPLE;
+        let pre = pre_skip / gps;
         let total = pages
             .iter()
             .rev()
@@ -754,7 +885,7 @@ impl OpusReader {
             .unwrap_or(0)
             .saturating_sub(pre);
         let mut dec =
-            opus::Decoder::new(RATE, opus::Channels::Mono).context("starting the Opus decoder")?;
+            opus::Decoder::new(rate, opus::Channels::Mono).context("starting the Opus decoder")?;
         if gain != 0 {
             dec.set_gain(gain as i32)?;
         }
@@ -763,7 +894,10 @@ impl OpusReader {
             file: None,
             serial,
             pages,
+            rate,
             pre,
+            pre_roll: PRE_ROLL_MS * u64::from(rate) / 1000,
+            forward_slack: FORWARD_SLACK_MS * u64::from(rate) / 1000,
             total,
             dec,
             next_page: 0,
@@ -778,7 +912,13 @@ impl OpusReader {
         })
     }
 
-    /// Length of the stream in 16 kHz samples (trimmed: what was recorded).
+    /// Sample rate of what [`Self::read`] returns.
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    /// Length of the stream in samples at [`Self::rate`] (trimmed: what was
+    /// written).
     pub fn total_samples(&self) -> u64 {
         self.total
     }
@@ -802,7 +942,7 @@ impl OpusReader {
     /// this restarts the decoder.
     pub fn seek(&mut self, t: u64) -> Result<()> {
         let t = t.min(self.total);
-        if t >= self.t && t - self.t <= FORWARD_SLACK {
+        if t >= self.t && t - self.t <= self.forward_slack {
             // Forward: through what is decoded, then by decoding on (the
             // samples before `t` are dropped as they come).
             let ahead = (t - self.t) as usize;
@@ -816,7 +956,7 @@ impl OpusReader {
             self.t = t;
             return Ok(());
         }
-        let from = (t + self.pre).saturating_sub(PRE_ROLL);
+        let from = (t + self.pre).saturating_sub(self.pre_roll);
         // The last page that ends before the pre-roll starts and is
         // followed by a page starting on a whole packet.
         let restart = (0..self.pages.len()).rev().find(|&i| {
@@ -873,7 +1013,7 @@ impl OpusReader {
                 Err(_) => {
                     // A damaged packet: its length in silence, decoder reset.
                     self.dec.reset_state()?;
-                    let n = opus::packet::get_nb_samples(&packet, RATE).unwrap_or(0);
+                    let n = opus::packet::get_nb_samples(&packet, self.rate).unwrap_or(0);
                     self.scratch[..n.min(MAX_DECODED)].fill(0.0);
                     n.min(MAX_DECODED)
                 }
@@ -977,14 +1117,16 @@ impl OpusReader {
 }
 
 /// Decode `path` through to the end and check that every sample decoded:
-/// the length in samples of a sound Ogg Opus file (the check before a WAV
-/// is replaced by its Opus copy, #248).
+/// the length in samples, at the file's own rate ([`native_rate`]), of a
+/// sound Ogg Opus file (the check before a WAV is replaced by its Opus
+/// copy, #248).
 pub fn verify(path: &Path) -> Result<u64> {
-    let mut r = OpusReader::open(path)?;
-    let mut buf = Vec::with_capacity(RATE as usize);
+    let mut r = OpusReader::open_native(path)?;
+    let block = r.rate() as usize;
+    let mut buf = Vec::with_capacity(block);
     loop {
         buf.clear();
-        if r.read(&mut buf, RATE as usize)? == 0 {
+        if r.read(&mut buf, block)? == 0 {
             break;
         }
     }
@@ -998,21 +1140,22 @@ pub fn verify(path: &Path) -> Result<u64> {
     Ok(r.total_samples())
 }
 
-/// Decode a whole file with libopus (tests; playback is #248): 16 kHz mono
-/// samples with the pre-skip dropped and the end trimmed to the last
-/// granule — what any conforming player returns — and whether the stream
-/// had its end-of-stream page.
+/// Decode a whole file with libopus (tests; playback is #248): mono samples
+/// at the file's rate (16 or 24 kHz) with the pre-skip dropped and the end
+/// trimmed to the last granule — what any conforming player returns — and
+/// whether the stream had its end-of-stream page.
 #[cfg(test)]
 pub(crate) fn decode_file(path: &Path) -> Result<(Vec<f32>, bool)> {
     let mut reader = ogg::reading::PacketReader::new(BufReader::new(File::open(path)?));
     let head = reader
         .read_packet_expected()
         .context("no OpusHead packet")?;
-    let pre_skip = parse_head(&head.data).context("not our OpusHead")? as u64;
+    let (pre_skip, rate) = parse_head(&head.data).context("not our OpusHead")?;
+    let (pre_skip, gps) = (pre_skip as u64, granule_per_sample(rate));
     reader
         .read_packet_expected()
         .context("no OpusTags packet")?;
-    let mut dec = opus::Decoder::new(RATE, opus::Channels::Mono)?;
+    let mut dec = opus::Decoder::new(rate, opus::Channels::Mono)?;
     let mut pcm = Vec::new();
     let mut out = vec![0f32; 5_760];
     let mut granule = None;
@@ -1028,10 +1171,10 @@ pub(crate) fn decode_file(path: &Path) -> Result<(Vec<f32>, bool)> {
             break;
         }
     }
-    let skip = (pre_skip / GRANULE_PER_SAMPLE) as usize;
+    let skip = (pre_skip / gps) as usize;
     let mut pcm = pcm.split_off(skip.min(pcm.len()));
     if let Some(g) = granule {
-        pcm.truncate((g.saturating_sub(pre_skip) / GRANULE_PER_SAMPLE) as usize);
+        pcm.truncate((g.saturating_sub(pre_skip) / gps) as usize);
     }
     Ok((pcm, complete))
 }
@@ -1048,7 +1191,7 @@ mod tests {
             ("SYNTHETIC".to_string(), "1".to_string()),
             ("comment".to_string(), "a=b, ünïcode".to_string()),
         ];
-        let mut w = OpusWriter::create_tagged(&tagged, u64::MAX, &tags).unwrap();
+        let mut w = OpusWriter::create_with(&tagged, u64::MAX, RECORDED, &tags).unwrap();
         w.write(&voice(RATE as usize, 0)).unwrap();
         w.finish().unwrap();
         assert_eq!(
@@ -1326,6 +1469,202 @@ mod tests {
         out
     }
 
+    // ---- generated speech at 24 kHz (#309) ----
+
+    /// Speech-like test signal at 24 kHz with a full band: the voice sweep
+    /// (pitched as at 16 kHz × 1.5) plus a "sibilant" — partials between
+    /// 8.5 and 11.5 kHz, switched on and off every 250 ms, as an "s" is.
+    pub(crate) fn bright_voice(n: usize) -> Vec<f32> {
+        let low = voice(n, 0);
+        (0..n)
+            .map(|i| {
+                let t = i as f64 / SPEECH_RATE as f64;
+                let on = if (t * 4.0).fract() < 0.5 { 1.0 } else { 0.0 };
+                let hiss: f64 = [8_700.0, 9_300.0, 9_900.0, 10_500.0, 11_100.0]
+                    .iter()
+                    .enumerate()
+                    .map(|(k, f)| (2.0 * std::f64::consts::PI * f * t + k as f64).sin())
+                    .sum::<f64>()
+                    * 0.02
+                    * on;
+                low[i] * 0.8 + hiss as f32
+            })
+            .collect()
+    }
+
+    fn speech_file(dir: &Path, name: &str, samples: usize) -> (PathBuf, Vec<f32>) {
+        let path = dir.join(name);
+        let pcm = bright_voice(samples);
+        let mut w = OpusWriter::create_with(&path, u64::MAX, SPEECH, &[]).unwrap();
+        assert_eq!(w.rate(), SPEECH_RATE);
+        // Uneven blocks, as Pocket's chunks come.
+        for chunk in pcm.chunks(7_331) {
+            w.write(chunk).unwrap();
+        }
+        w.finish().unwrap();
+        (path, pcm)
+    }
+
+    /// Energy of `x` between `lo` and `hi` Hz at `rate`, summed over 4096-
+    /// sample Hann windows.
+    fn band_energy(x: &[f32], rate: u32, lo: f64, hi: f64) -> f64 {
+        use rustfft::{num_complex::Complex32, FftPlanner};
+        const N: usize = 4_096;
+        let fft = FftPlanner::<f32>::new().plan_fft_forward(N);
+        let bins = |f: f64| (f * N as f64 / rate as f64) as usize;
+        let mut total = 0.0;
+        for w in x.chunks_exact(N) {
+            let mut buf: Vec<Complex32> = w
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| {
+                    let hann = 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / N as f32).cos();
+                    Complex32::new(v * hann, 0.0)
+                })
+                .collect();
+            fft.process(&mut buf);
+            total += buf[bins(lo)..bins(hi)]
+                .iter()
+                .map(|c| c.norm_sqr() as f64)
+                .sum::<f64>();
+        }
+        total
+    }
+
+    #[test]
+    fn native_rates_are_the_opus_ones_else_48k() {
+        for r in [8_000, 12_000, 16_000, 24_000, 48_000] {
+            assert_eq!(native_rate(r), r);
+        }
+        for r in [0, 44_100, 22_050, 96_000] {
+            assert_eq!(native_rate(r), 48_000, "{r}");
+        }
+        assert_eq!(granule_per_sample(SPEECH_RATE), 2);
+        // The writer only takes the rates it is meant for.
+        let dir = tempfile::tempdir().unwrap();
+        let odd = Profile {
+            rate: 48_000,
+            bitrate: 32_000,
+        };
+        assert!(OpusWriter::create_with(&dir.path().join("x.opus"), 0, odd, &[]).is_err());
+        assert!(OpusReader::open_at(&dir.path().join("x.opus"), Some(44_100)).is_err());
+    }
+
+    #[test]
+    fn speech_round_trip_at_24_khz_keeps_length_alignment_and_the_upper_band() {
+        let dir = tempfile::tempdir().unwrap();
+        let n = 3 * SPEECH_RATE as usize + 123;
+        let (path, pcm) = speech_file(dir.path(), "speech.opus", n);
+        // The header says 24 kHz and the pre-skip is 312 at 48 kHz.
+        let mut reader = ogg::reading::PacketReader::new(File::open(&path).unwrap());
+        let head = reader.read_packet_expected().unwrap();
+        assert_eq!(parse_head(&head.data), Some((312, SPEECH_RATE)));
+        // Exact length, no lag, the waveform kept.
+        let (out, complete) = decode_file(&path).unwrap();
+        assert!(complete);
+        assert_eq!(out.len(), n);
+        assert_eq!(verify(&path).unwrap(), n as u64);
+        let mid = SPEECH_RATE as usize..2 * SPEECH_RATE as usize;
+        assert!(lag(&pcm[mid.clone()], &out[mid.clone()]).abs() <= 2);
+        assert!(corr(&pcm[mid.clone()], &out[mid]) > 0.8);
+        // The 8.5–11.5 kHz band survives (the point of #309) — at 16 kHz
+        // nothing above 8 kHz could.
+        let (want, got) = (
+            band_energy(&pcm, SPEECH_RATE, 8_500.0, 11_500.0),
+            band_energy(&out, SPEECH_RATE, 8_500.0, 11_500.0),
+        );
+        assert!(got > 0.25 * want, "upper band kept {:.2}", got / want);
+        // And the bitrate stays near SPEECH_BITRATE (VBR; headers aside).
+        let bytes = std::fs::metadata(&path).unwrap().len() as f64;
+        let kbps = bytes * 8.0 / (n as f64 / SPEECH_RATE as f64) / 1000.0;
+        assert!((16.0..48.0).contains(&kbps), "{kbps:.1} kb/s");
+    }
+
+    #[test]
+    fn reader_at_24_khz_is_exact_and_seeks_on_the_sample() {
+        let dir = tempfile::tempdir().unwrap();
+        let n = 9 * SPEECH_RATE as usize + 77;
+        let (path, _) = speech_file(dir.path(), "speech-notes.opus", n);
+        let (full, _) = decode_file(&path).unwrap();
+        let mut r = OpusReader::open_native(&path).unwrap();
+        assert_eq!(r.rate(), SPEECH_RATE);
+        assert_eq!(r.total_samples(), n as u64);
+        for chunk in [1usize, 999, 24_001] {
+            let mut r = OpusReader::open_native(&path).unwrap();
+            assert_eq!(read_all(&mut r, chunk), full, "chunk {chunk}");
+            assert_eq!(r.filled(), 0);
+        }
+        let total = n as u64;
+        let pre_roll = PRE_ROLL_MS * SPEECH_RATE as u64 / 1000;
+        let mut worst = f64::INFINITY;
+        for t in [
+            7 * SPEECH_RATE as u64 + 5,
+            1_000,
+            SPEECH_RATE as u64 - 1,
+            3 * SPEECH_RATE as u64,
+            8 * SPEECH_RATE as u64 + 4_000,
+            0,
+            total - 100,
+        ] {
+            r.seek(t).unwrap();
+            assert_eq!(r.position(), t);
+            let mut got = Vec::new();
+            let k = r.read(&mut got, 12_000).unwrap();
+            assert_eq!(k as u64, 12_000.min(total - t), "at {t}");
+            let want = &full[t as usize..t as usize + k];
+            if t < pre_roll {
+                assert_eq!(got, want, "at {t}");
+            } else {
+                worst = worst.min(snr(want, &got));
+            }
+        }
+        assert!(worst > 30.0, "worst seek {worst:.1} dB");
+        // A short seek ahead (under 2 s at 24 kHz) decodes on, bit-exact.
+        let mut r = OpusReader::open_native(&path).unwrap();
+        let mut got = Vec::new();
+        r.read(&mut got, 5_000).unwrap();
+        r.seek(5_000 + 40_000).unwrap();
+        got.clear();
+        r.read(&mut got, 3_000).unwrap();
+        assert_eq!(got, &full[45_000..48_000]);
+        // The 16 kHz reader (Identify voices, transcription) still reads it,
+        // at 16 kHz: two thirds of the samples.
+        let r16 = OpusReader::open(&path).unwrap();
+        assert_eq!(r16.rate(), RATE);
+        assert_eq!(r16.total_samples(), n as u64 * 2 / 3);
+    }
+
+    #[test]
+    fn older_16_khz_speech_still_reads_at_16_khz_and_24_khz_repairs() {
+        let dir = tempfile::tempdir().unwrap();
+        // Speech saved before #309: 16 kHz, tagged.
+        let old = dir.path().join("speech.opus");
+        let tags = [("SYNTHETIC".to_string(), "1".to_string())];
+        let mut w = OpusWriter::create_with(&old, u64::MAX, RECORDED, &tags).unwrap();
+        w.write(&voice(2 * RATE as usize + 9, 0)).unwrap();
+        w.finish().unwrap();
+        let r = OpusReader::open_native(&old).unwrap();
+        assert_eq!((r.rate(), r.total_samples()), (RATE, 2 * RATE as u64 + 9));
+        assert_eq!(verify(&old).unwrap(), 2 * RATE as u64 + 9);
+
+        // A 24 kHz file cut by a crash repairs at 24 kHz.
+        let crashed = dir.path().join("speech-x.opus");
+        let mut w = OpusWriter::create_with(&crashed, u64::MAX, SPEECH, &[]).unwrap();
+        w.write(&bright_voice(3 * SPEECH_RATE as usize + 500)).unwrap();
+        std::mem::forget(w);
+        let kept = repair(&crashed).unwrap();
+        assert!(kept >= 2 * SPEECH_RATE as u64, "{kept}");
+        assert_eq!(verify(&crashed).unwrap(), kept);
+        assert_eq!(decode_file(&crashed).unwrap(), (decode_file(&crashed).unwrap().0, true));
+        // Headers only: an empty 24 kHz stream.
+        let bare = dir.path().join("speech-y.opus");
+        let w = OpusWriter::create_with(&bare, u64::MAX, SPEECH, &[]).unwrap();
+        std::mem::forget(w);
+        assert_eq!(repair(&bare).unwrap(), 0);
+        let r = OpusReader::open_native(&bare).unwrap();
+        assert_eq!((r.rate(), r.total_samples()), (SPEECH_RATE, 0));
+    }
+
     /// Signal-to-noise ratio of `got` against `want`, in dB.
     fn snr(want: &[f32], got: &[f32]) -> f64 {
         let s: f64 = want.iter().map(|&x| (x as f64).powi(2)).sum();
@@ -1389,7 +1728,7 @@ mod tests {
             let n = r.read(&mut got, 8_000).unwrap();
             assert_eq!(n as u64, 8_000.min(total - t), "at {t}");
             let want = &full[t as usize..t as usize + n];
-            if t < PRE_ROLL {
+            if t < PRE_ROLL_MS * RATE as u64 / 1000 {
                 // Restarted from the first page: exactly a linear decode.
                 assert_eq!(got, want, "at {t}");
             } else {

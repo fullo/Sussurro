@@ -1,7 +1,8 @@
-//! Band-limited rate conversion for generated speech (#256): Pocket TTS
-//! speaks at 24 kHz, saved speech is 16 kHz Ogg Opus like every other audio
-//! file of the archive (so the `sussurro-audio:` scheme, its Opus reader
-//! and the virtual WAV of #248 play it unchanged).
+//! Band-limited rate conversion for generated speech (#256). Since #309
+//! saved speech is 24 kHz Ogg Opus, Pocket TTS's own rate, so for Pocket
+//! this is a pass-through; it converts an engine at another rate to 24 kHz,
+//! and is the 24 ↔ 16 kHz step of #257's watermark (computed at 16 kHz,
+//! added to the 24 kHz audio: E17's "M16").
 //!
 //! Why not the capture path's [`crate::audio::resample::StreamResampler`]:
 //! it interpolates linearly with no low-pass, fine for a microphone going

@@ -35,7 +35,9 @@
 //! **Opus is served as WAV** (#248, E15): the WebView never sees Ogg Opus
 //! (macOS before 15.4 can't play it, and 15.4+ only estimates its
 //! duration). An `.opus` file is answered as a *virtual* WAV — the 44-byte
-//! header of its exact decoded length, then 16-bit PCM — and a byte range
+//! header of its exact decoded length at the file's own rate (16 kHz for
+//! recorded audio and speech saved before #309, 24 kHz for generated
+//! speech since), then 16-bit PCM — and a byte range
 //! maps to a sample range that [`OpusReader`] decodes from its page index.
 //! A reader is kept per file ([`OPUS_CACHE`], a few entries, the file
 //! closed between requests), so the element's consecutive ranges decode on
@@ -342,7 +344,8 @@ impl OpusWav {
         let end = (start + count).min(self.len());
         let mut out = Vec::with_capacity((end - start.min(end)) as usize);
         if start < header_len {
-            let header = super::audio::header((self.samples() * 2) as u32);
+            let header =
+                super::audio::header_at(self.reader.rate(), (self.samples() * 2) as u32);
             out.extend_from_slice(&header[start as usize..end.min(header_len) as usize]);
         }
         if end > header_len {
@@ -388,7 +391,7 @@ fn opus_wav(path: &Path) -> Result<Arc<Mutex<OpusWav>>> {
         }
     }
     let entry = Arc::new(Mutex::new(OpusWav {
-        reader: OpusReader::open(path)?,
+        reader: OpusReader::open_native(path)?,
         stamp,
     }));
     let mut cache = OPUS_CACHE.lock().unwrap_or_else(|e| e.into_inner());

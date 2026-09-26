@@ -15,10 +15,12 @@
 //! **The job**: one at a time (the engine is loaded once), in the
 //! background, with progress by chunk and cancel between chunks (and inside
 //! Pocket's generation loop). The text goes through
-//! [`super::text::prepare`] (#254), each chunk is spoken, resampled to
-//! 16 kHz ([`super::resample`]), passed through the marking hook
-//! ([`super::marking::Marker::process`], P21) and encoded to Ogg Opus with
-//! the synthetic-speech comments. A saved file is written to the item's
+//! [`super::text::prepare`] (#254), each chunk is spoken, passed through
+//! the marking hook ([`super::marking::Marker::process`], P21) and encoded
+//! to Ogg Opus at 24 kHz ([`crate::archive::opus::SPEECH`], #309: Pocket's
+//! own rate, so its 8–12 kHz band is kept) with the synthetic-speech
+//! comments. An engine at another rate is resampled to 24 kHz first
+//! ([`super::resample`]). A saved file is written to the item's
 //! `.sussurro/` and moved into place under the archive lock; a cancelled or
 //! failed run leaves nothing.
 //!
@@ -33,8 +35,8 @@ use super::marking::{self, Marker, Provenance};
 use super::resample::Resampler;
 use super::service::{self, ENGINE_NAME, LISTEN_PREFIX, PREVIEW_PREFIX};
 use super::text::{self, Chunk, Lang, PrepOptions};
-use crate::archive::audio::{MAX_SAMPLES, RATE};
-use crate::archive::opus::OpusWriter;
+use crate::archive::audio::MAX_SAMPLES;
+use crate::archive::opus::{OpusWriter, SPEECH, SPEECH_RATE};
 use crate::archive::speech::{self, SpeechInfo};
 use crate::archive::store::{existing_item_dir, sha256_hex, TRANSCRIPT_FILE};
 use anyhow::{bail, Context, Result};
@@ -231,9 +233,10 @@ impl Drop for JobGuard<'_> {
     }
 }
 
-/// Speak `chunks` into a new Ogg Opus file at `out` (16 kHz mono, with
-/// `marker`'s comments; every block through its hook). Returns the samples
-/// written. On any error, `out` is removed.
+/// Speak `chunks` into a new Ogg Opus file at `out` (24 kHz mono,
+/// [`SPEECH`], with `marker`'s comments; every block through its hook).
+/// Returns the samples written, at [`SPEECH_RATE`]. On any error, `out` is
+/// removed.
 pub fn render_to_opus(
     engine: &mut dyn TtsEngine,
     chunks: &[Chunk],
@@ -242,17 +245,18 @@ pub fn render_to_opus(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(usize, usize),
 ) -> Result<u64> {
-    let mut w = OpusWriter::create_tagged(out, MAX_SAMPLES, &marker.tags())?;
-    let mut rs = Resampler::new(engine.sample_rate(), RATE);
+    let mut w = OpusWriter::create_with(out, MAX_SAMPLES, SPEECH, &marker.tags())?;
+    // Pocket speaks at 24 kHz: a pass-through.
+    let mut rs = Resampler::new(engine.sample_rate(), SPEECH_RATE);
     let spoken = (|| -> Result<()> {
         engine::render(engine, chunks, cancel, progress, &mut |pcm| {
             let mut block = rs.push(pcm);
-            marker.process(&mut block, RATE);
+            marker.process(&mut block, SPEECH_RATE);
             w.write(&block)?;
             Ok(())
         })?;
         let mut tail = rs.flush();
-        marker.process(&mut tail, RATE);
+        marker.process(&mut tail, SPEECH_RATE);
         w.write(&tail)?;
         Ok(())
     })();
@@ -401,7 +405,7 @@ pub fn run(
     Ok(Outcome {
         file,
         save,
-        seconds: samples as f64 / f64::from(RATE),
+        seconds: samples as f64 / f64::from(SPEECH_RATE),
         chunks: chunks.len(),
     })
 }
@@ -608,7 +612,9 @@ mod tests {
         let dir = existing_item_dir(archive, &id).unwrap();
         let path = dir.join("speech.opus");
         let samples = crate::archive::opus::verify(&path).unwrap();
-        assert_eq!(samples as f64 / 16_000.0, out.seconds);
+        assert_eq!(samples as f64 / 24_000.0, out.seconds, "24 kHz (#309)");
+        let r = crate::archive::opus::OpusReader::open_native(&path).unwrap();
+        assert_eq!((r.rate(), r.total_samples()), (24_000, samples));
         let tags = crate::archive::opus::read_tags(&path).unwrap();
         assert!(tags.contains(&("SYNTHETIC".into(), "1".into())), "{tags:?}");
         assert!(
