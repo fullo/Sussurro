@@ -141,6 +141,11 @@ pub fn is_audio_file_name(name: &str) -> bool {
 /// The canonical 44-byte header of a mono 16-bit 16 kHz WAV holding
 /// `data_bytes` of samples.
 pub(crate) fn header(data_bytes: u32) -> [u8; HEADER_LEN as usize] {
+    header_at(RATE, data_bytes)
+}
+
+/// [`header`] at `rate` Hz: the virtual WAV of a 24 kHz speech file (#309).
+pub(crate) fn header_at(rate: u32, data_bytes: u32) -> [u8; HEADER_LEN as usize] {
     let mut h = [0u8; HEADER_LEN as usize];
     h[0..4].copy_from_slice(b"RIFF");
     h[4..8].copy_from_slice(&(36u32.wrapping_add(data_bytes)).to_le_bytes());
@@ -148,8 +153,8 @@ pub(crate) fn header(data_bytes: u32) -> [u8; HEADER_LEN as usize] {
     h[16..20].copy_from_slice(&16u32.to_le_bytes());
     h[20..22].copy_from_slice(&1u16.to_le_bytes()); // PCM
     h[22..24].copy_from_slice(&1u16.to_le_bytes()); // mono
-    h[24..28].copy_from_slice(&RATE.to_le_bytes());
-    h[28..32].copy_from_slice(&(RATE * 2).to_le_bytes());
+    h[24..28].copy_from_slice(&rate.to_le_bytes());
+    h[28..32].copy_from_slice(&(rate * 2).to_le_bytes());
     h[32..34].copy_from_slice(&2u16.to_le_bytes()); // block align
     h[34..36].copy_from_slice(&16u16.to_le_bytes());
     h[36..40].copy_from_slice(b"data");

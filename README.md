@@ -172,8 +172,10 @@ section: pick the transcript or one of its documents and a language, then
 **Listen** (a temporary file, deleted when you close the document) or
 **Save as speech file** — `speech.opus` (or `speech-<document>.opus`) next
 to the item, read with the voice picked for that language in Models →
-Voices. It runs in the background with progress and Cancel. Generated
-speech is always labelled *Synthetic*, is never named like a recording
+Voices. The speech keeps the voice model's full 24 kHz band (Ogg Opus at
+32 kb/s, about 14 MB per hour). It runs in the background with progress
+and Cancel. Generated speech is always labelled *Synthetic*, is never
+named like a recording
 (`audio*.opus`), and says so in the file itself (Ogg Opus comments
 `SYNTHETIC=1`, engine, voice) and in the item's frontmatter (`speech:`,
 `synthetic:`); an inaudible watermark follows in a later release. When the

@@ -18,9 +18,10 @@
 //!
 //! The pattern the app treats as generated speech is
 //! `speech(-[a-z0-9-]+)?.(opus|wav)` ([`is_speech_file_name`], plan §4.5);
-//! only `.opus` is written (Ogg Opus, 16 kHz mono, 24 kb/s — the format of
-//! saved audio, so the `sussurro-audio:` scheme and its Opus reader play it
-//! unchanged).
+//! only `.opus` is written: Ogg Opus, mono, 24 kHz at 32 kb/s since #309
+//! ([`super::opus::SPEECH`], Pocket's full band); files saved before are
+//! 16 kHz at 24 kb/s, the format of recorded audio. The `sussurro-audio:`
+//! scheme plays both at their own rate ([`super::opus::OpusReader::open_native`]).
 //!
 //! **Frontmatter** — two app-owned keys, kept in [`ItemMeta::extra`] like
 //! `audio:` so a UI that round-trips only the fields it knows never drops

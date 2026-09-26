@@ -35,7 +35,9 @@
 //! **Opus is served as WAV** (#248, E15): the WebView never sees Ogg Opus
 //! (macOS before 15.4 can't play it, and 15.4+ only estimates its
 //! duration). An `.opus` file is answered as a *virtual* WAV — the 44-byte
-//! header of its exact decoded length, then 16-bit PCM — and a byte range
+//! header of its exact decoded length at the file's own rate (16 kHz for
+//! recorded audio and speech saved before #309, 24 kHz for generated
+//! speech since), then 16-bit PCM — and a byte range
 //! maps to a sample range that [`OpusReader`] decodes from its page index.
 //! A reader is kept per file ([`OPUS_CACHE`], a few entries, the file
 //! closed between requests), so the element's consecutive ranges decode on
@@ -51,8 +53,8 @@
 //! stop playing after the first MiB).
 
 use super::audio::AudioFormat;
-use super::speech::is_playable_file_name;
 use super::opus::OpusReader;
+use super::speech::is_playable_file_name;
 use anyhow::{bail, Context, Result};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -65,7 +67,8 @@ pub const SCHEME: &str = "sussurro-audio";
 /// as it plays. 1 MiB is about 33 s of 16 kHz 16-bit mono.
 pub const MAX_CHUNK: u64 = 1024 * 1024;
 /// Largest resource sent whole to a request without a `Range` header:
-/// 128 MiB, a WAV of about 70 minutes (see the module docs).
+/// 128 MiB, a WAV of about 70 minutes at 16 kHz, 46 at 24 kHz (generated
+/// speech, #309; see the module docs).
 pub const MAX_WHOLE: u64 = 128 * 1024 * 1024;
 /// Every response is a WAV, including decoded Opus.
 const CONTENT_TYPE: &str = "audio/wav";
@@ -342,7 +345,7 @@ impl OpusWav {
         let end = (start + count).min(self.len());
         let mut out = Vec::with_capacity((end - start.min(end)) as usize);
         if start < header_len {
-            let header = super::audio::header((self.samples() * 2) as u32);
+            let header = super::audio::header_at(self.reader.rate(), (self.samples() * 2) as u32);
             out.extend_from_slice(&header[start as usize..end.min(header_len) as usize]);
         }
         if end > header_len {
@@ -388,7 +391,7 @@ fn opus_wav(path: &Path) -> Result<Arc<Mutex<OpusWav>>> {
         }
     }
     let entry = Arc::new(Mutex::new(OpusWav {
-        reader: OpusReader::open(path)?,
+        reader: OpusReader::open_native(path)?,
         stamp,
     }));
     let mut cache = OPUS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
@@ -814,6 +817,62 @@ mod tests {
             let db = snr_db(&i16s(&want[a..a + n]), &i16s(&r.body[off..off + n]));
             // A wrong position would be near 0 dB (see the reader's tests).
             assert!(db > 30.0, "at {start}: {db:.1} dB");
+        }
+    }
+
+    #[test]
+    fn speech_is_served_at_its_own_rate_24_khz_now_16_khz_before() {
+        use crate::archive::opus::{decode_file, OpusWriter, RECORDED, SPEECH};
+        let tmp = tempfile::tempdir().unwrap();
+        let tags = [("SYNTHETIC".to_string(), "1".to_string())];
+        // Speech since #309 (24 kHz) and speech saved before it (16 kHz).
+        for (name, profile, n) in [
+            ("speech.opus", SPEECH, 5 * 24_000 + 11),
+            ("speech-old.opus", RECORDED, 5 * 16_000 + 11),
+        ] {
+            let p = tmp.path().join(name);
+            let mut w = OpusWriter::create_with(&p, u64::MAX, profile, &tags).unwrap();
+            let audio: Vec<f32> = (0..n)
+                .map(|i| 0.2 * (i as f32 * 0.05).sin() * (i as f32 * 0.0003).cos())
+                .collect();
+            w.write(&audio).unwrap();
+            w.finish().unwrap();
+            let (pcm, _) = decode_file(&p).unwrap();
+            assert_eq!(pcm.len(), n);
+            let rate = profile.rate;
+
+            // The virtual header: mono 16-bit at the file's rate, exact size.
+            let r = serve_file(&p, Some("bytes=0-43"), false);
+            assert_eq!((r.status, r.body.len()), (206, 44), "{name}");
+            let u32_at = |i: usize| u32::from_le_bytes(r.body[i..i + 4].try_into().unwrap());
+            assert_eq!(&r.body[0..4], b"RIFF");
+            assert_eq!(u32_at(24), rate, "{name}: sample rate");
+            assert_eq!(u32_at(28), rate * 2, "{name}: byte rate");
+            assert_eq!(u32_at(40), (n * 2) as u32, "{name}: data size");
+            assert_eq!(u32_at(4), 36 + (n * 2) as u32);
+
+            // The whole body: that header, then the exact decode.
+            let r = serve_file(&p, None, false);
+            assert_eq!(r.status, 200);
+            let mut want = crate::archive::audio::header_at(rate, (n * 2) as u32).to_vec();
+            for &s in &pcm {
+                want.extend_from_slice(&crate::archive::audio::to_i16(s).to_le_bytes());
+            }
+            assert!(r.body == want, "{name}: body differs from a full decode");
+
+            // A range in the middle decodes close to the full decode.
+            let start = (3 * rate as u64) * 2 + 44;
+            let r = serve_file(&p, Some(&format!("bytes={start}-{}", start + 9_999)), false);
+            let got = i16s(&r.body);
+            let at = (start - 44) as usize / 2;
+            let want: Vec<f32> = pcm[at..at + got.len()]
+                .iter()
+                .map(|&s| crate::archive::audio::to_i16(s) as f32)
+                .collect();
+            let db = snr_db(&want, &got);
+            // A wrong position would be near 0 dB (libopus builds differ
+            // by a few dB per platform).
+            assert!(db > 20.0, "{name}: {db:.1} dB");
         }
     }
 

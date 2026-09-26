@@ -77,8 +77,12 @@ impl Marker {
     }
 
     /// **The watermark hook (#257).** Every block of generated audio, at
-    /// `rate` Hz, passes through here before it is written, in order. Not
-    /// built yet: the samples are left as they are.
+    /// `rate` Hz, passes through here before it is written, in order —
+    /// 24 kHz for saved speech, *Listen* files (#309) and previews. #257's
+    /// "M16" scheme (spike #240, E17) computes the mark on the 16 kHz
+    /// resample of the block and adds it, upsampled, to the 24 kHz audio,
+    /// so one 16 kHz detector reads every file. Not built yet: the samples
+    /// are left as they are.
     pub fn process(&mut self, pcm: &mut [f32], rate: u32) {
         let _ = (pcm, rate);
     }
@@ -124,7 +128,7 @@ mod tests {
     fn marks_claim_only_what_is_applied() {
         let mut m = marker();
         let mut pcm = vec![0.25f32; 16];
-        m.process(&mut pcm, 16_000);
+        m.process(&mut pcm, 24_000);
         assert_eq!(pcm, vec![0.25f32; 16], "no watermark until #257");
         assert_eq!(m.marks(), [MARK_METADATA]);
     }
