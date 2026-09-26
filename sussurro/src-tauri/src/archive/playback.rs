@@ -870,7 +870,9 @@ mod tests {
                 .map(|&s| crate::archive::audio::to_i16(s) as f32)
                 .collect();
             let db = snr_db(&want, &got);
-            assert!(db > 30.0, "{name}: {db:.1} dB");
+            // A wrong position would be near 0 dB (libopus builds differ
+            // by a few dB per platform).
+            assert!(db > 20.0, "{name}: {db:.1} dB");
         }
     }
 
