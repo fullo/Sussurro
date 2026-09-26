@@ -258,10 +258,7 @@ fn live_read_aloud_saves_a_marked_speech_file() {
     let item_dir = crate::archive::store::existing_item_dir(archive, &id).unwrap();
     std::fs::write(
         item_dir.join("transcript.md"),
-        format!(
-            "---\ntype: note\ntitle: Read me\nlanguage: {}\n---\n{body}",
-            l.code
-        ),
+        format!("---\ntype: note\ntitle: Read me\nlanguage: {}\n---\n{body}", l.code),
     )
     .unwrap();
     let speaker = PocketSpeaker {

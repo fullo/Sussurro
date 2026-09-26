@@ -490,19 +490,11 @@ mod tests {
     #[test]
     fn old_previews_are_cleared_and_nothing_else() {
         let dir = tempfile::tempdir().unwrap();
-        for f in [
-            "preview-1.wav",
-            "preview-2.wav.part",
-            "listen-1.opus",
-            "keep.txt",
-        ] {
+        for f in ["preview-1.wav", "preview-2.wav.part", "listen-1.opus", "keep.txt"] {
             std::fs::write(dir.path().join(f), b"x").unwrap();
         }
         clear_prefix(dir.path(), "preview-");
-        assert!(
-            dir.path().join("listen-1.opus").exists(),
-            "a preview leaves Listen files"
-        );
+        assert!(dir.path().join("listen-1.opus").exists(), "a preview leaves Listen files");
         clear_previews(dir.path());
         let left: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()

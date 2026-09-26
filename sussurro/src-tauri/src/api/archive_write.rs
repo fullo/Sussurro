@@ -515,19 +515,18 @@ pub fn create(
             "send the note as Content-Type: application/json (UTF-8)",
         );
     }
-    let key = match idempotency_key.map(str::trim) {
-        None => None,
-        Some(k) if valid_idempotency_key(k) => Some(k),
-        Some(_) => {
-            return Reply::error(
+    let key =
+        match idempotency_key.map(str::trim) {
+            None => None,
+            Some(k) if valid_idempotency_key(k) => Some(k),
+            Some(_) => return Reply::error(
                 400,
                 "invalid_idempotency_key",
                 &format!(
                     "`Idempotency-Key` must be 1 to {MAX_IDEMPOTENCY_KEY} visible ASCII characters"
                 ),
-            )
-        }
-    };
+            ),
+        };
     let note = match parse_note(body) {
         Ok(n) => n,
         Err(r) => return r,
