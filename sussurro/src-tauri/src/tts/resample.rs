@@ -176,7 +176,9 @@ mod tests {
 
     fn tone(rate: u32, hz: f64, n: usize) -> Vec<f32> {
         (0..n)
-            .map(|i| (0.5 * (2.0 * std::f64::consts::PI * hz * i as f64 / rate as f64).sin()) as f32)
+            .map(|i| {
+                (0.5 * (2.0 * std::f64::consts::PI * hz * i as f64 / rate as f64).sin()) as f32
+            })
             .collect()
     }
 
@@ -223,8 +225,15 @@ mod tests {
         let out = whole(24_000, 16_000, &tone(24_000, 1000.0, 24_000));
         let want = tone(16_000, 1000.0, 16_000);
         let (a, b) = (&out[500..15_000], &want[500..15_000]);
-        let err: f32 = a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0, f32::max);
-        assert!(err < 0.01, "1 kHz must come through in phase: max error {err}");
+        let err: f32 = a
+            .iter()
+            .zip(b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0, f32::max);
+        assert!(
+            err < 0.01,
+            "1 kHz must come through in phase: max error {err}"
+        );
     }
 
     #[test]

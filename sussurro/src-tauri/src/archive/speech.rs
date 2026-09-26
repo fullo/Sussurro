@@ -273,7 +273,8 @@ pub fn part_path(dir: &Path, file: &str) -> PathBuf {
 /// rewrite (broken YAML): checked before any file is touched.
 fn check_item(dir: &Path, id: &str) -> Result<()> {
     let path = transcript_path(dir);
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let (meta, _) = super::frontmatter::parse(&text).map_err(|e| {
         anyhow::anyhow!(
             "the frontmatter of {} can't be read ({e:#}), so Sussurro can't record the speech \
@@ -306,7 +307,8 @@ pub fn commit(archive: &Path, id: &str, part: &Path, file: &str, info: &SpeechIn
         check_item(&dir, id)?;
         let target = dir.join(file);
         if std::fs::symlink_metadata(&target).is_ok() {
-            move_to_trash(&target).with_context(|| format!("moving the old {file} to the trash"))?;
+            move_to_trash(&target)
+                .with_context(|| format!("moving the old {file} to the trash"))?;
         }
         std::fs::rename(part, &target).with_context(|| format!("saving {file}"))?;
         let info = info.clone();
@@ -407,17 +409,31 @@ mod tests {
             "speech-action-items-2.opus"
         );
         let a = speech_file_name("Riunione 3.md").unwrap();
-        assert!(a.starts_with("speech-riunione-3-") && a.ends_with(".opus"), "{a}");
-        assert_eq!(a, speech_file_name("Riunione 3.md").unwrap(), "deterministic");
+        assert!(
+            a.starts_with("speech-riunione-3-") && a.ends_with(".opus"),
+            "{a}"
+        );
+        assert_eq!(
+            a,
+            speech_file_name("Riunione 3.md").unwrap(),
+            "deterministic"
+        );
         // Names that slug alike still get different files.
         assert_ne!(a, speech_file_name("riunione_3.md").unwrap());
         assert_ne!(a, speech_file_name("riunione-3.md").unwrap());
         let only_symbols = speech_file_name("日本語.md").unwrap();
-        assert_eq!(only_symbols.len(), "speech-12345678.opus".len(), "{only_symbols}");
+        assert_eq!(
+            only_symbols.len(),
+            "speech-12345678.opus".len(),
+            "{only_symbols}"
+        );
         let long = speech_file_name(&format!("{}.md", "a".repeat(200))).unwrap();
         assert!(is_speech_file_name(&long), "{long}");
         for name in ["Riunione 3.md", "日本語.md", "x.md", "Ünïcödé — notes.md"] {
-            assert!(is_speech_file_name(&speech_file_name(name).unwrap()), "{name}");
+            assert!(
+                is_speech_file_name(&speech_file_name(name).unwrap()),
+                "{name}"
+            );
         }
         assert!(speech_file_name("../x.md").is_err());
         assert!(speech_file_name("notes.txt").is_err());
@@ -445,7 +461,11 @@ mod tests {
             ..ItemMeta::default()
         };
         record(&mut meta, "speech.opus", &info("transcript.md", "aa"));
-        record(&mut meta, "speech-document.opus", &info("document.md", "bb"));
+        record(
+            &mut meta,
+            "speech-document.opus",
+            &info("document.md", "bb"),
+        );
         record(&mut meta, "speech.opus", &info("transcript.md", "cc"));
         let doc = super::super::frontmatter::render(&meta).unwrap();
         assert!(doc.contains("synthetic:"), "{doc}");
@@ -474,7 +494,10 @@ mod tests {
         assert_eq!(infos["speech.opus"].extra["future_key"], 3);
         let old = "---\ntype: note\ntitle: T\n---\nbody\n";
         let (meta, _) = super::super::frontmatter::parse(old).unwrap();
-        assert!(listed(&meta).is_empty() && self::infos(&meta).is_empty(), "items from before #256");
+        assert!(
+            listed(&meta).is_empty() && self::infos(&meta).is_empty(),
+            "items from before #256"
+        );
     }
 
     fn new_item(archive: &Path) -> String {
@@ -513,7 +536,10 @@ mod tests {
         let p = part(archive, &id, SPEECH_FILE, b"two");
         commit(archive, &id, &p, SPEECH_FILE, &info("transcript.md", "h2")).unwrap();
         assert_eq!(std::fs::read(dir.join(SPEECH_FILE)).unwrap(), b"two");
-        assert!(test_trash::contains(&dir.join(SPEECH_FILE)), "old one trashed");
+        assert!(
+            test_trash::contains(&dir.join(SPEECH_FILE)),
+            "old one trashed"
+        );
         let item = read_item(archive, &id).unwrap();
         assert_eq!(infos(&item.meta)[SPEECH_FILE].text_sha256, "h2");
 
@@ -521,8 +547,10 @@ mod tests {
         let mut sent = item.meta.clone();
         sent.title = "Renamed".into();
         sent.extra.remove(SPEECH_KEY);
-        sent.extra
-            .insert(SYNTHETIC_KEY.into(), serde_json::json!({"speech.opus": {"voice": "x"}}));
+        sent.extra.insert(
+            SYNTHETIC_KEY.into(),
+            serde_json::json!({"speech.opus": {"voice": "x"}}),
+        );
         let after = update_meta(archive, &id, &sent).unwrap();
         assert_eq!(after.meta.title, "Renamed");
         assert_eq!(listed(&after.meta), [SPEECH_FILE]);

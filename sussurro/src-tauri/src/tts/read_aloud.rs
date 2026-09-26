@@ -312,7 +312,10 @@ pub fn run(
 ) -> Result<Outcome> {
     let source = read_source(req.archive, req.id, req.document)?;
     if source.recording {
-        bail!("'{}' is still being recorded — read it aloud when the session ends", req.id);
+        bail!(
+            "'{}' is still being recorded — read it aloud when the session ends",
+            req.id
+        );
     }
     let lang = resolve_language(req.language, &source.item_language)?;
     let voice = service::voice_for(req.voices, lang);
@@ -347,7 +350,10 @@ pub fn run(
             service::clear_prefix(dir, LISTEN_PREFIX);
             let n = LISTEN_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
             let name = format!("{LISTEN_PREFIX}{n}.opus");
-            (dir.join(format!("{name}.part")), Some((dir.join(&name), name)))
+            (
+                dir.join(format!("{name}.part")),
+                Some((dir.join(&name), name)),
+            )
         }
     };
     let mut marker = Marker::new(Provenance {
@@ -463,7 +469,8 @@ pub fn statuses(archive: &Path, id: &str) -> Result<Vec<SpeechStatus>> {
             let text = if info.document == TRANSCRIPT_FILE {
                 Ok(item.body.clone())
             } else {
-                crate::archive::companion::read_companion(archive, id, &info.document).map(|d| d.body)
+                crate::archive::companion::read_companion(archive, id, &info.document)
+                    .map(|d| d.body)
             };
             match text {
                 Ok(md) => s.stale = prepared(&md, &info.language).1 != info.text_sha256,
@@ -478,7 +485,10 @@ pub fn statuses(archive: &Path, id: &str) -> Result<Vec<SpeechStatus>> {
 /// Delete a speech file (to the OS trash); refused while a job saves it.
 pub fn delete(jobs: &Jobs, archive: &Path, id: &str, file: &str) -> Result<()> {
     if let Some(j) = jobs.current() {
-        if j.save && j.item_id == id && speech::speech_file_name(&j.document).ok().as_deref() == Some(file) {
+        if j.save
+            && j.item_id == id
+            && speech::speech_file_name(&j.document).ok().as_deref() == Some(file)
+        {
             bail!("this speech is being made right now — cancel it first");
         }
     }
@@ -550,7 +560,12 @@ mod tests {
         id
     }
 
-    fn req<'a>(archive: &'a Path, id: &'a str, voices: &'a BTreeMap<String, String>, target: Target<'a>) -> Request<'a> {
+    fn req<'a>(
+        archive: &'a Path,
+        id: &'a str,
+        voices: &'a BTreeMap<String, String>,
+        target: Target<'a>,
+    ) -> Request<'a> {
         Request {
             archive,
             id,
@@ -565,14 +580,21 @@ mod tests {
     fn saving_writes_a_marked_opus_next_to_the_item_and_records_it() {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path();
-        let id = item(archive, "it", "# Riunione\n\nAbbiamo 3 punti. Il primo è il budget.\n");
+        let id = item(
+            archive,
+            "it",
+            "# Riunione\n\nAbbiamo 3 punti. Il primo è il budget.\n",
+        );
         let jobs = Jobs::default();
         let voices = BTreeMap::from([("it".to_string(), "marius".to_string())]);
         let speaker = FakeSpeaker::new();
         let mut seen = Vec::new();
-        let out = run(&jobs, &speaker, &req(archive, &id, &voices, Target::Save), &mut |s| {
-            seen.push((s.done, s.total))
-        })
+        let out = run(
+            &jobs,
+            &speaker,
+            &req(archive, &id, &voices, Target::Save),
+            &mut |s| seen.push((s.done, s.total)),
+        )
         .unwrap();
         assert_eq!(out.file, "speech.opus");
         assert!(out.save && out.seconds > 0.0);
@@ -589,7 +611,10 @@ mod tests {
         assert_eq!(samples as f64 / 16_000.0, out.seconds);
         let tags = crate::archive::opus::read_tags(&path).unwrap();
         assert!(tags.contains(&("SYNTHETIC".into(), "1".into())), "{tags:?}");
-        assert!(tags.contains(&("TTS_VOICE".into(), "marius".into())), "{tags:?}");
+        assert!(
+            tags.contains(&("TTS_VOICE".into(), "marius".into())),
+            "{tags:?}"
+        );
         assert!(!speech::part_path(&dir, "speech.opus").exists());
 
         let item = crate::archive::read_item(archive, &id).unwrap();
@@ -597,7 +622,10 @@ mod tests {
         assert!(item.audio.is_empty());
         let info = &speech::infos(&item.meta)["speech.opus"];
         assert_eq!(info.document, "transcript.md");
-        assert_eq!((info.voice.as_str(), info.language.as_str()), ("marius", "it"));
+        assert_eq!(
+            (info.voice.as_str(), info.language.as_str()),
+            ("marius", "it")
+        );
         assert_eq!(info.marked, [marking::MARK_METADATA]);
 
         let st = statuses(archive, &id).unwrap();
@@ -612,15 +640,28 @@ mod tests {
         let id = item(archive, "en", "Hello there. This is a note.\n");
         let jobs = Jobs::default();
         let voices = BTreeMap::new();
-        run(&jobs, &FakeSpeaker::new(), &req(archive, &id, &voices, Target::Save), &mut |_| {}).unwrap();
+        run(
+            &jobs,
+            &FakeSpeaker::new(),
+            &req(archive, &id, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap();
         let mut meta = crate::archive::read_item(archive, &id).unwrap().meta;
         meta.tags = vec!["new tag".into()];
         crate::archive::update_meta(archive, &id, &meta).unwrap();
-        assert!(!statuses(archive, &id).unwrap()[0].stale, "frontmatter edits don't count");
+        assert!(
+            !statuses(archive, &id).unwrap()[0].stale,
+            "frontmatter edits don't count"
+        );
 
         let dir = existing_item_dir(archive, &id).unwrap();
         let doc = std::fs::read_to_string(dir.join(TRANSCRIPT_FILE)).unwrap();
-        std::fs::write(dir.join(TRANSCRIPT_FILE), doc.replace("a note", "a longer note")).unwrap();
+        std::fs::write(
+            dir.join(TRANSCRIPT_FILE),
+            doc.replace("a note", "a longer note"),
+        )
+        .unwrap();
         assert!(statuses(archive, &id).unwrap()[0].stale);
     }
 
@@ -633,7 +674,14 @@ mod tests {
             title: "Action items".into(),
             ..CompanionMeta::default()
         };
-        let doc = write_companion(archive, &id, "action-items.md", &meta, "- Call Anna at 3 pm.\n").unwrap();
+        let doc = write_companion(
+            archive,
+            &id,
+            "action-items.md",
+            &meta,
+            "- Call Anna at 3 pm.\n",
+        )
+        .unwrap();
         let jobs = Jobs::default();
         let voices = BTreeMap::new();
         let mut r = req(archive, &id, &voices, Target::Save);
@@ -657,21 +705,43 @@ mod tests {
         let archive = tmp.path().join("archive");
         let listen = tmp.path().join("tts-preview");
         let id = item(&archive, "it", "Ciao a tutti.\n");
-        let before = std::fs::read(existing_item_dir(&archive, &id).unwrap().join(TRANSCRIPT_FILE)).unwrap();
+        let before = std::fs::read(
+            existing_item_dir(&archive, &id)
+                .unwrap()
+                .join(TRANSCRIPT_FILE),
+        )
+        .unwrap();
         let jobs = Jobs::default();
         let voices = BTreeMap::new();
-        let out = run(&jobs, &FakeSpeaker::new(), &req(&archive, &id, &voices, Target::Listen { dir: &listen }), &mut |_| {}).unwrap();
+        let out = run(
+            &jobs,
+            &FakeSpeaker::new(),
+            &req(&archive, &id, &voices, Target::Listen { dir: &listen }),
+            &mut |_| {},
+        )
+        .unwrap();
         assert!(!out.save);
         let name = service::preview_file_name(&out.file).expect("served by the scheme");
         assert!(listen.join(name).is_file());
         let item = crate::archive::read_item(&archive, &id).unwrap();
         assert!(item.speech.is_empty() && !speech::has_keys(&item.meta));
         assert_eq!(
-            std::fs::read(existing_item_dir(&archive, &id).unwrap().join(TRANSCRIPT_FILE)).unwrap(),
+            std::fs::read(
+                existing_item_dir(&archive, &id)
+                    .unwrap()
+                    .join(TRANSCRIPT_FILE)
+            )
+            .unwrap(),
             before
         );
         // The next Listen replaces it; closing the document discards it.
-        let again = run(&jobs, &FakeSpeaker::new(), &req(&archive, &id, &voices, Target::Listen { dir: &listen }), &mut |_| {}).unwrap();
+        let again = run(
+            &jobs,
+            &FakeSpeaker::new(),
+            &req(&archive, &id, &voices, Target::Listen { dir: &listen }),
+            &mut |_| {},
+        )
+        .unwrap();
         assert!(!listen.join(name).exists());
         let name2 = service::preview_file_name(&again.file).unwrap();
         discard_listens(&jobs, &listen);
@@ -691,7 +761,13 @@ mod tests {
             cancel_first: Some(jobs),
             ..FakeSpeaker::new()
         };
-        let err = run(jobs, &speaker, &req(archive, &id, &voices, Target::Save), &mut |_| {}).unwrap_err();
+        let err = run(
+            jobs,
+            &speaker,
+            &req(archive, &id, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(format!("{err:#}").contains("cancelled"), "{err:#}");
         assert!(!jobs.is_running());
         assert!(!dir.join("speech.opus").exists());
@@ -701,11 +777,19 @@ mod tests {
             fail: true,
             ..FakeSpeaker::new()
         };
-        let err = run(jobs, &broken, &req(archive, &id, &voices, Target::Save), &mut |_| {}).unwrap_err();
+        let err = run(
+            jobs,
+            &broken,
+            &req(archive, &id, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("not downloaded"), "{err}");
         assert!(!jobs.is_running());
         assert!(crate::archive::speech::files_in(&dir).is_empty());
-        assert!(!speech::has_keys(&crate::archive::read_item(archive, &id).unwrap().meta));
+        assert!(!speech::has_keys(
+            &crate::archive::read_item(archive, &id).unwrap().meta
+        ));
     }
 
     #[test]
@@ -717,7 +801,13 @@ mod tests {
         let speaker = FakeSpeaker::new();
         // No language the module speaks.
         let id = item(archive, "fr", "Bonjour.\n");
-        let err = run(&jobs, &speaker, &req(archive, &id, &voices, Target::Save), &mut |_| {}).unwrap_err();
+        let err = run(
+            &jobs,
+            &speaker,
+            &req(archive, &id, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("'fr'"), "{err}");
         // …unless one is picked.
         let mut r = req(archive, &id, &voices, Target::Save);
@@ -725,7 +815,13 @@ mod tests {
         assert!(run(&jobs, &speaker, &r, &mut |_| {}).is_ok());
         // Nothing to read.
         let empty = item(archive, "it", "```\ncode only\n```\n");
-        let err = run(&jobs, &speaker, &req(archive, &empty, &voices, Target::Save), &mut |_| {}).unwrap_err();
+        let err = run(
+            &jobs,
+            &speaker,
+            &req(archive, &empty, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("nothing to read"), "{err}");
         // A live item.
         let live = crate::archive::live::begin_session(
@@ -737,7 +833,13 @@ mod tests {
             },
         )
         .unwrap();
-        let err = run(&jobs, &speaker, &req(archive, &live, &voices, Target::Save), &mut |_| {}).unwrap_err();
+        let err = run(
+            &jobs,
+            &speaker,
+            &req(archive, &live, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("recorded"), "{err}");
         // A document that isn't one.
         let mut r = req(archive, &id, &voices, Target::Save);
@@ -777,7 +879,10 @@ mod tests {
         assert_eq!(resolve_language(Some("en-GB"), "it").unwrap().code, "en");
         assert_eq!(resolve_language(Some(" "), "en").unwrap().code, "en");
         let err = resolve_language(None, "auto").unwrap_err().to_string();
-        assert!(err.contains("no language") && err.contains("Italian"), "{err}");
+        assert!(
+            err.contains("no language") && err.contains("Italian"),
+            "{err}"
+        );
         assert!(resolve_language(None, "").is_err());
     }
 
@@ -788,6 +893,10 @@ mod tests {
         assert!(!c1.is_empty());
         assert_eq!(h1, h2, "frontmatter and spacing are not read");
         assert_ne!(h1, prepared("# T\n\nUno tre.\n", "it").1);
-        assert_ne!(h1, prepared("# T\n\nUno due.\n", "en").1, "language changes the reading");
+        assert_ne!(
+            h1,
+            prepared("# T\n\nUno due.\n", "en").1,
+            "language changes the reading"
+        );
     }
 }
