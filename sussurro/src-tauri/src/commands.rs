@@ -2988,7 +2988,6 @@ pub fn recipe_reveal_document(
         .map_err(|e| e.to_string())
 }
 
-
 // ---- Read aloud (0.12, #255, P18/P24): experimental, off by default ----
 
 /// The models folder, whether read aloud is on, and the voice picks.
@@ -3003,7 +3002,9 @@ fn tts_context(state: &AppState) -> (PathBuf, bool, std::collections::BTreeMap<S
 
 /// The models folder, or why read aloud can't be used now (P24: it acts
 /// only while the module is on).
-fn tts_on(state: &AppState) -> Result<(PathBuf, std::collections::BTreeMap<String, String>), String> {
+fn tts_on(
+    state: &AppState,
+) -> Result<(PathBuf, std::collections::BTreeMap<String, String>), String> {
     let (dir, enabled, picks) = tts_context(state);
     if !enabled {
         return Err("Read aloud is off — turn it on in Settings → Experimental.".into());
@@ -3021,7 +3022,9 @@ fn tts_preview_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Models → Voices: languages, voices, sizes, what is downloaded.
 #[tauri::command]
-pub async fn tts_status(state: State<'_, AppState>) -> Result<crate::tts::service::TtsStatus, String> {
+pub async fn tts_status(
+    state: State<'_, AppState>,
+) -> Result<crate::tts::service::TtsStatus, String> {
     let (dir, enabled, picks) = tts_context(&state);
     blocking(move || Ok(crate::tts::service::global().status(&dir, enabled, &picks))).await
 }
@@ -3043,7 +3046,8 @@ pub async fn tts_download(
     let (dir, picks) = tts_on(&state)?;
     let lang = crate::tts::catalog::language(&language)
         .ok_or_else(|| format!("no read-aloud model for '{language}'"))?;
-    let voice = voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
+    let voice =
+        voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
     let emitter = app.clone();
     let result = blocking(move || {
         let fetch = crate::tts::models::HttpFetch::new()?;
@@ -3129,10 +3133,17 @@ pub async fn tts_preview(
     let (dir, picks) = tts_on(&state)?;
     let lang = crate::tts::catalog::language(&language)
         .ok_or_else(|| format!("no read-aloud model for '{language}'"))?;
-    let voice = voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
+    let voice =
+        voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
     let preview_dir = tts_preview_dir(&app)?;
     blocking(move || {
-        let name = crate::tts::service::global().preview(&dir, &preview_dir, lang.code, &voice, text.as_deref())?;
+        let name = crate::tts::service::global().preview(
+            &dir,
+            &preview_dir,
+            lang.code,
+            &voice,
+            text.as_deref(),
+        )?;
         Ok(format!("{}{name}", crate::tts::service::PREVIEW_PREFIX))
     })
     .await
@@ -3183,7 +3194,10 @@ pub async fn read_aloud_start(
         };
         let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
         read_aloud::run(read_aloud::jobs(), &speaker, &req, &mut |s| {
-            if s.done == 0 || s.done == s.total || last.elapsed() >= std::time::Duration::from_millis(250) {
+            if s.done == 0
+                || s.done == s.total
+                || last.elapsed() >= std::time::Duration::from_millis(250)
+            {
                 last = std::time::Instant::now();
                 let _ = emitter.emit("read-aloud-progress", s);
             }
@@ -3228,7 +3242,10 @@ pub async fn read_aloud_delete(
     file: String,
 ) -> Result<(), String> {
     let (archive, _) = archive_paths(&state)?;
-    blocking(move || crate::tts::read_aloud::delete(crate::tts::read_aloud::jobs(), &archive, &id, &file)).await
+    blocking(move || {
+        crate::tts::read_aloud::delete(crate::tts::read_aloud::jobs(), &archive, &id, &file)
+    })
+    .await
 }
 
 /// Delete the temporary *Listen* files (the document closed).
@@ -3262,7 +3279,8 @@ fn serve_tts_preview(
     request: &tauri::http::Request<Vec<u8>>,
     range: Option<&str>,
 ) -> Option<archive::playback::Reply> {
-    let decoded = archive::playback::percent_decode(request.uri().path().trim_start_matches('/')).ok()?;
+    let decoded =
+        archive::playback::percent_decode(request.uri().path().trim_start_matches('/')).ok()?;
     let name = crate::tts::service::preview_file_name(&decoded)?;
     let head = match request.method().as_str() {
         "GET" => false,

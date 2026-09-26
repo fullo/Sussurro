@@ -471,8 +471,9 @@ project decisions here, not in per-machine memory.**
   touched. libopus 1.6 via `opus` 0.4 + `opusic-sys` (static, CMake) and the
   `ogg` 0.9 muxer: 16 kHz mono VOIP, 24 kb/s VBR, complexity 10, 20 ms
   packets, one page per second flushed (fsync every 10 pages), pre-skip =
-  lookahead × 3 and end trimming on the last granule (decoded length and
-  positions exact). Startup recovery (`repair_any`) cuts a crashed `.opus`
+  lookahead in 48 kHz samples and end trimming on the last granule (decoded
+  length and positions exact); generated speech uses the same writer at
+  24 kHz / 32 kb/s (#309, see #256). Startup recovery (`repair_any`) cuts a crashed `.opus`
   after its last whole page and sets EOS (empty stream if the headers were
   cut); foreign files untouched. Windows MSVC link is checked on every PR
   by the `opus-windows` job (`cargo test -p opus`).
@@ -798,11 +799,20 @@ project decisions here, not in per-machine memory.**
   `archive/speech.rs`, `tts/marking.rs`, `shell/ReadAloudSection.tsx`):
   transcript or a companion document → `tts::text::prepare` → Pocket with
   the language's picked voice (item `language:`, or one the user picks) →
-  **24 → 16 kHz windowed-sinc resample** (`tts/resample.rs`; the capture
-  path's linear resampler would alias the 8–12 kHz band) → Ogg Opus via the
-  existing `OpusWriter` (16 kHz, 24 kb/s — kept at the archive's rate so the
-  `sussurro-audio:` virtual WAV/reader play it unchanged; 24 kHz Opus would
-  need the reader + virtual header to carry a rate). **Save** =
+  Ogg Opus **at Pocket's own 24 kHz** (#309: `opus::SPEECH`,
+  `OpusWriter::create_with`; recorded audio stays 16 kHz `RECORDED`) at
+  **32 kb/s** — at 24 kHz libopus codes hybrid (SILK 0–8 kHz, CELT
+  8–12 kHz) and its rate table gives SILK 18 of 24 kb/s but 22 of 32, about
+  what the 16 kHz core had; measured on a synthetic bright voice, 24 kb/s
+  kept 89 % of the 8.5–11.5 kHz energy, 32 kb/s 100 %; ~14.4 MB/h. The
+  `OpusHead` input rate says which: `OpusReader::open_native` decodes at the
+  file's rate (`native_rate`: an Opus rate, else 48 kHz) and the
+  `sussurro-audio:` virtual WAV header carries it (`audio::header_at`), so
+  speech saved before #309 (16 kHz, 24 kb/s) still plays; `OpusReader::open`
+  stays 16 kHz for STT/Identify voices; `opus::verify` counts native
+  samples; `repair` accepts both rates. An engine at another rate goes
+  through the windowed-sinc `tts/resample.rs` to 24 kHz (Pocket: pass-
+  through). Previews were already 24 kHz WAVs. **Save** =
   `speech.opus` / `speech-<slug>.opus` (clean companion stem, else slug +
   8 hex of its SHA-256), written to `.sussurro/<file>.part` and moved in
   under the archive lock (old file → OS trash); **Listen** =
@@ -816,9 +826,10 @@ project decisions here, not in per-machine memory.**
   `update_meta` ignores both from the UI. **Marking (P21)**: every file
   goes through `tts::marking::Marker` — Opus comments `SYNTHETIC=1`,
   `DIGITAL_SOURCE_TYPE=…trainedAlgorithmicMedia`, engine, voice, language
-  (`OpusWriter::create_tagged`, `opus::read_tags`); `Marker::process` is the
+  (`OpusWriter::create_with`, `opus::read_tags`); `Marker::process` is the
   single **watermark hook for #257** (no-op now, `marked: [metadata]`), the
-  preview passes it too. **Stale** = SHA-256 of the speakable text (not the
+  preview passes it too; it gets 24 kHz blocks, and #257's "M16" (E17)
+  computes the mark on their 16 kHz resample and adds it upsampled. **Stale** = SHA-256 of the speakable text (not the
   frontmatter) ≠ the recorded one. One job at a time (`read_aloud::jobs()`),
   progress `read-aloud-progress`, cancel between chunks; refused while off,
   on a live item, or with the model/voice missing (points to Models →

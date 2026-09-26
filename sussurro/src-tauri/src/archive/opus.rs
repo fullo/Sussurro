@@ -51,8 +51,10 @@ pub const SPEECH_RATE: u32 = 24_000;
 /// — less than the 24 kb/s the 0–8 kHz band gets at 16 kHz, so the added
 /// band would cost the core — and 22 kb/s of a 32 kb/s total, about what
 /// the core had, the rest for 8–12 kHz. Xiph's recommended settings put
-/// full-band speech at 28–40 kb/s. 32 kb/s is about 14.4 MB per hour of
-/// speech (a few MB per document).
+/// full-band speech at 28–40 kb/s. Measured on the tests' bright voice:
+/// 24 kb/s kept 89 % of the 8.5–11.5 kHz energy, 32 kb/s 100 % (40 kb/s
+/// no more). 32 kb/s is about 14.4 MB per hour of speech (a few MB per
+/// document).
 pub const SPEECH_BITRATE: i32 = 32_000;
 /// libopus complexity (E15; about 1 % of a core while recording).
 pub const COMPLEXITY: i32 = 10;
@@ -524,7 +526,11 @@ fn read_page<R: Read + Seek>(r: &mut R, offset: u64) -> Option<Page> {
 fn write_empty_stream(path: &Path, file: File, rate: u32) -> Result<u64> {
     drop(file);
     std::fs::remove_file(path)?;
-    let profile = if rate == SPEECH_RATE { SPEECH } else { RECORDED };
+    let profile = if rate == SPEECH_RATE {
+        SPEECH
+    } else {
+        RECORDED
+    };
     OpusWriter::create_with(path, 0, profile, &[])?.finish()
 }
 
@@ -555,8 +561,7 @@ pub fn repair(path: &Path) -> Result<u64> {
         drop(r);
         return write_empty_stream(path, file, RATE);
     };
-    let Some((pre_skip, rate)) =
-        parse_head(&first.head).filter(|_| first.flags & FLAG_BOS != 0)
+    let Some((pre_skip, rate)) = parse_head(&first.head).filter(|_| first.flags & FLAG_BOS != 0)
     else {
         bail!("{} is not an Opus file written by Sussurro", path.display());
     };
@@ -1206,7 +1211,10 @@ mod tests {
         assert_eq!(decode_file(&tagged).unwrap().0.len(), RATE as usize);
         // Recorded audio has none.
         let plain = dir.path().join("audio.opus");
-        OpusWriter::create_capped(&plain, u64::MAX).unwrap().finish().unwrap();
+        OpusWriter::create_capped(&plain, u64::MAX)
+            .unwrap()
+            .finish()
+            .unwrap();
         assert!(read_tags(&plain).unwrap().is_empty());
         // Malformed comment headers are refused, not read past their end.
         assert_eq!(parse_tags(b"OpusTags\x05\0\0\0ab"), None);
@@ -1650,12 +1658,16 @@ mod tests {
         // A 24 kHz file cut by a crash repairs at 24 kHz.
         let crashed = dir.path().join("speech-x.opus");
         let mut w = OpusWriter::create_with(&crashed, u64::MAX, SPEECH, &[]).unwrap();
-        w.write(&bright_voice(3 * SPEECH_RATE as usize + 500)).unwrap();
+        w.write(&bright_voice(3 * SPEECH_RATE as usize + 500))
+            .unwrap();
         std::mem::forget(w);
         let kept = repair(&crashed).unwrap();
         assert!(kept >= 2 * SPEECH_RATE as u64, "{kept}");
         assert_eq!(verify(&crashed).unwrap(), kept);
-        assert_eq!(decode_file(&crashed).unwrap(), (decode_file(&crashed).unwrap().0, true));
+        assert_eq!(
+            decode_file(&crashed).unwrap(),
+            (decode_file(&crashed).unwrap().0, true)
+        );
         // Headers only: an empty 24 kHz stream.
         let bare = dir.path().join("speech-y.opus");
         let w = OpusWriter::create_with(&bare, u64::MAX, SPEECH, &[]).unwrap();

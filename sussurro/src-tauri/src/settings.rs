@@ -1196,7 +1196,10 @@ mod tests {
             std::collections::BTreeMap::from([("it".to_string(), "marius".to_string())])
         );
         let back: Settings = serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
-        assert_eq!(back.tts_voices, on.tts_voices, "round-trips through settings.json");
+        assert_eq!(
+            back.tts_voices, on.tts_voices,
+            "round-trips through settings.json"
+        );
     }
 
     /// A settings.json exactly as 0.6.3 writes it (every field, pretty
