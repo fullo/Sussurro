@@ -67,7 +67,8 @@ pub const SCHEME: &str = "sussurro-audio";
 /// as it plays. 1 MiB is about 33 s of 16 kHz 16-bit mono.
 pub const MAX_CHUNK: u64 = 1024 * 1024;
 /// Largest resource sent whole to a request without a `Range` header:
-/// 128 MiB, a WAV of about 70 minutes (see the module docs).
+/// 128 MiB, a WAV of about 70 minutes at 16 kHz, 46 at 24 kHz (generated
+/// speech, #309; see the module docs).
 pub const MAX_WHOLE: u64 = 128 * 1024 * 1024;
 /// Every response is a WAV, including decoded Opus.
 const CONTENT_TYPE: &str = "audio/wav";
