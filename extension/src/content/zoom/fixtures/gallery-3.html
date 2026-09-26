@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- Synthetic fixture (#246), written by hand for the selector-set tests:
+     the structure the provisional set `zoom-2026-09a` expects inside the
+     meeting iframe's document, not a copy of Zoom's markup (no live page
+     has been inspected yet, #184). A gallery of three tiles: the user
+     (self attribute, Zoom-style "(me)" qualifier), one remote participant
+     marked as the active speaker, one quiet host. The same active speaker
+     is also shown in a large speaker-view tile (same user id). Names are
+     made up; wrappers and class names are never matched. -->
+<html>
+  <body>
+    <div class="meeting-app">
+      <div class="speaker-view">
+        <div data-user-id="16778240" data-active-speaker="false">
+          <canvas></canvas>
+          <div class="avatar-footer"><span data-testid="footer-name">Bruno Esempio</span></div>
+        </div>
+      </div>
+      <div class="gallery">
+        <div data-user-id="16779264" data-self="true" data-active-speaker="false">
+          <div class="avatar-footer"><span data-testid="footer-name">Ada Test (me)</span></div>
+        </div>
+        <div data-user-id="16778240" data-active-speaker="false">
+          <div class="avatar-footer"><span data-testid="footer-name">Bruno Esempio</span></div>
+        </div>
+        <div data-user-id="16780288" data-active-speaker="false">
+          <div class="avatar-footer"><span data-testid="footer-name">Chiara Prova (Host)</span></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

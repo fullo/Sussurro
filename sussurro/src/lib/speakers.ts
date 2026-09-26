@@ -39,7 +39,10 @@ export function identifyOffer(
 /** Where a speaker's name comes from, for the panel's small print. */
 export function speakerSource(id: string): string {
   if (id === "you") return "mic channel";
+  // Names from the meeting page, per platform (#131, #245, #246).
   if (id.startsWith("meet:")) return "from Meet";
+  if (id.startsWith("teams:")) return "from Teams";
+  if (id.startsWith("zoom:")) return "from Zoom";
   if (id.startsWith("voice:")) return "by voice";
   return "";
 }

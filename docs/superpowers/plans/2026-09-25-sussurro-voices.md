@@ -278,7 +278,11 @@ assume.
   Versioned, data-only selector sets per platform; CSRC binding where the
   platform exposes contributing sources; health checks; `names_unavailable`
   instead of a guess. Values come only from our own inspection of live
-  pages (#184 method), never from other projects' lists.
+  pages (#184 method), never from other projects' lists. Per-platform
+  tracker parameters (#239): hang time, mirror rule, CSRC vs SSRC, and
+  lag-aware voting; the capture prerequisites (Teams on
+  `teams.cloud.microsoft`, Zoom's `/wc/` iframe with `all_frames`) landed
+  in #287.
 - **E21 — Calendar sources behind one trait.** `CalendarSource` returns
   events with a start, an end, a title and attendees (name, email). ICS
   first (pure parser, tested on fixtures; RRULE expansion only for the day
@@ -758,23 +762,33 @@ Desk research, same method as #105. We studied approaches only and copied
 no selector values; ours must come from our own inspection of live pages
 during the #184 manual QA.
 
-- **Teams web** delivers one mixed remote audio stream, so the DOM is the
-  only "who is speaking" signal. Projects that track it use a voice-level
-  outline element on each participant's stream wrapper, found through
-  `data-tid`-style attributes, and take names from roster and tile
-  attributes and aria labels; they call these attributes unstable across
-  Teams builds. Captions carry an author attribute but depend on the tenant
-  allowing captions. Vexa moved to VAD-first segmentation with the DOM as
-  enrichment only, which is already Sussurro's design.
-- **Zoom web client** delivers one WebRTC track per participant, so the
-  per-channel audio is reliable and the channel → name mapping is the weak
-  part. The signals are the active-speaker frame classes and the name in
-  the avatar footer, bound with votes and hysteresis. Caption markup has no
+The desk study #239 (closed; its comment is the reference) refined this:
+
+- **Teams web** delivers one server-mixed remote audio stream **with
+  per-participant CSRCs** (several at once = overlap), plus a redundant
+  track carrying the same CSRCs. The DOM gives the names: a voice-level
+  outline under a `data-tid` stream wrapper that trails the audio by about
+  1 s, lights on typing too, and is missing in one of the UI variants
+  Teams serves in the same tenant. Captions carry an author attribute but
+  depend on the tenant allowing captions.
+- **Zoom web client** runs the meeting in a same-origin `/wc/` iframe and
+  has two transports: in WebRTC mode one RTP stream per participant (the
+  SSRC is the participant), in WASM mode (older, and the automatic
+  fallback) no receivers at all, so attribution is temporal only. The
+  active-speaker marker lags, flickers and sticks to the presenter during
+  a screen share; the name is in the avatar footer. Caption markup has no
   names.
-- Both get the Meet treatment (E20): a versioned selector set per
-  platform, CSRC binding where remote receivers expose contributing sources
-  (to check), health checks, and "Voice N" when a hook misses. A missing DOM
-  signal never gates audio.
+- Both got the Meet treatment (E20) in #245/#246: one observer engine with
+  a profile per platform — versioned data-only selector sets
+  (`teams-2026-09a`, `zoom-2026-09a`, placeholders of the documented
+  shapes, **unverified until #184**), CSRC binding on Teams (mirror rule
+  off, 800 ms hang), SSRC binding on Zoom (the page timeline in WASM
+  mode), **lag-aware votes** (inside a turn only, two turns or one ≥ 3 s),
+  the user's tile learned from our mic, a Zoom screen-share pause, a Teams
+  outline-coverage health check, and "Voice N" when a hook misses. Named
+  speakers are `teams:<name>` / `zoom:<name>` (Meet and older items keep
+  `meet:`); the app shifts the Teams/Zoom page timeline by 1 s. A missing
+  DOM signal never gates audio.
 
 ### 4.9 Calendar attendees (0.11 file, Track A OAuth)
 

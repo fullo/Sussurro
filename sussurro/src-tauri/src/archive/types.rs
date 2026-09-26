@@ -297,7 +297,8 @@ pub struct OverlapSpan {
 /// A speaker as known to one document.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct DocSpeaker {
-    /// `"you"` | `"meet:<name>"` | `"voice:<n>"`.
+    /// `"you"` | `"meet:<name>"` / `"teams:<name>"` / `"zoom:<name>"` (names
+    /// from the meeting page) | `"voice:<n>"`.
     pub id: String,
     pub label: String,
     #[serde(default)]

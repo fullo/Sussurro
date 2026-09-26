@@ -7,8 +7,8 @@ The extension is a capture device plus a live mirror; editing happens in the
 app (plan decision E3).
 
 Pairing with the app (#127), capture (#128) and the live transcript in the
-side panel (#129) work; Meet names (#131) are implemented and wait for a
-live check. Capture is verified automatically against a local two-peer call
+side panel (#129) work; names from the page on Meet (#131), Teams (#245)
+and Zoom (#246) are implemented and wait for a live check. Capture is verified automatically against a local two-peer call
 in Chromium, Firefox and Edge (see *Browsers* and *Capture harness*); real
 Meet / Teams / Zoom calls are still checked by hand (#184). Meetings are
 always on in the app (#138): there is no switch, only pairing. How users
@@ -212,62 +212,103 @@ the controls. The strings live once, in the app's
 `sussurro/src/lib/recordingNotice.ts`, imported here as `@sussurro/notice`
 (same wording as the app's New screen).
 
-## Meet names (#131)
+## Names from the page (Meet #131, Teams #245, Zoom #246)
 
 Who spoke, per remote line (plan §4.3, decision P8): the mic channel is
-always **You** (layer 1); on **Google Meet** the page adds names (layer 2);
-whatever stays unnamed is **Voice N** from the app's voice clustering
-(layer 3). **Teams and Zoom web get layers 1 and 3 only** in 0.9: no
-observer runs there.
+always **You** (layer 1); on **Google Meet**, **Microsoft Teams** and the
+**Zoom web client** the page adds names (layer 2); whatever stays unnamed
+is **Voice N** from the app's voice clustering (layer 3).
 
-On a Meet tab, while capturing, the MAIN-world observer
-(`src/content/meet/`) runs every 100 ms:
+One observer engine (`src/content/names/`) runs in the MAIN world of the
+frame that captures (Zoom's meeting iframe reads its own document), only
+while capturing, every 100 ms. What differs per platform is a **profile**
+(`src/content/{meet,teams,zoom}/profile.ts`, picked by
+`src/content/profiles.ts`): its selector sets, which RTP source says who
+speaks, how votes count and which extra checks run. Every Teams/Zoom
+number is a first guess from the desk study (#239), to be measured on real
+calls (#184).
 
-- **Who is speaking, from the audio** (`csrc.ts`): Meet tags each packet of
-  its few remote audio streams with the speaker's contributing source
-  (CSRC), stable per participant for the call. The observer polls
-  `RTCRtpReceiver.getContributingSources()` on the remote audio receivers
-  and sends `speaker_active` / `speaker_idle` with `id: "csrc:<n>"`,
-  `source: "rtp"` (no indicator lag). A CSRC on two receivers for several
-  polls is a mirror of the current speaker and is ignored for the call.
-- **Names, from the page** (`dom.ts`, `selectors/`): participant tiles,
-  the user's own tile and the lit ("speaking") tile, read through a
-  **versioned, data-only selector set** — attributes and structure only,
-  never obfuscated classes, never visible text or labels (localized).
-  Sets are picked at run time (first whose fingerprint fits, re-checked
-  every 30 s; several can be live for phased rollouts). The shipped set
-  `meet-2026-09a` is **provisional and unverified** (`verifiedOn: null`):
-  #184 confirms or replaces its values from our own inspection of a live
-  page. A MutationObserver on the set's attributes plus a 1 s refresh
-  keeps the read cheap; the observer never clicks or opens panels.
-- **Binding** (`binder.ts`): when exactly one CSRC speaks and exactly one
+- **Who is speaking, from the audio** (`sources.ts`), sent as
+  `speaker_active` / `speaker_idle` with `source: "rtp"` (no indicator
+  lag):
+  - **Meet**: its few server-mixed remote streams tag each packet with the
+    speaker's contributing source; the observer polls
+    `RTCRtpReceiver.getContributingSources()` (`id: "csrc:<n>"`). A CSRC on
+    two receivers for several polls is a mirror of the current speaker and
+    is ignored for the call.
+  - **Teams**: one mix with per-participant CSRCs, plus a redundant track
+    carrying the same CSRCs — so the mirror rule is **off** there (it would
+    blacklist every speaker); CSRC entries go stale in pauses, so the hang
+    is 800 ms. Two CSRCs at once is overlap: no vote, and the app leaves
+    the span unnamed.
+  - **Zoom** (WebRTC mode): one RTP stream per participant; the observer
+    polls `getSynchronizationSources()` (`id: "ssrc:<n>"`, same entry
+    shape). Zoom's WASM mode has no receivers at all: see *Without RTP
+    sources*.
+- **Names, from the page** (`dom.ts`, each platform's `selectors/`):
+  participant tiles, the user's own tile and the lit ("speaking") tile,
+  read through a **versioned, data-only selector set** — attributes and
+  structure only, never obfuscated classes, never visible text or labels
+  (localized). Sets are picked at run time (first whose fingerprint fits,
+  re-checked every 30 s; several can be live for phased rollouts and
+  Teams' UI variants). The shipped sets `meet-2026-09a`, `teams-2026-09a`
+  and `zoom-2026-09a` are **provisional and unverified** (`verifiedOn:
+  null`): the Teams and Zoom values are placeholders of the shapes the desk
+  study documents (a `data-tid` stream wrapper and voice-level outline on
+  Teams; a user-id tile, footer name and active-speaker marker on Zoom),
+  since no values were copied from other projects. #184 confirms or
+  replaces every value from our own inspection of a live page, with a
+  synthetic fixture under the platform's `fixtures/`. A MutationObserver on
+  the sets' attributes plus a 1 s refresh keeps the read cheap; the
+  observer never clicks or opens panels (rosters and captions are not
+  read).
+- **Binding** (`binder.ts`): when exactly one source speaks and exactly one
   remote tile is lit, that is a vote; 5 agreeing votes with a margin of 3
   lock the name (`speaker_name {id, name}`), which then applies to every
-  line of that CSRC, even after the page breaks. One live CSRC per name
-  (a rejoin may take it after 30 s), namesakes and the user's own name
-  never bind, and 10 contradicting votes in a row drop a binding
-  (`name: null`).
-- **Without CSRCs** (another browser or transport), after 2 s of remote
-  speech the lit tiles themselves become the timeline (`source: "dom"`,
-  `id: "tile:<hash>"` with the name); the app compensates their lag.
+  line of that source, even after the page breaks. One live source per
+  name (a rejoin may take it after 30 s), namesakes and the user's own
+  name never bind, and 10 contradicting votes in a row drop a binding
+  (`name: null`). **Lag-aware on Teams and Zoom**: their highlight trails
+  the audio by about a second, which in a two-person call pairs each new
+  speaker with the previous one's outline. There a vote counts only inside
+  a turn — the source alone for 1 s, one tile lit alone for 300 ms (Zoom
+  500 ms, it flickers) and lit after the turn began — and a binding needs
+  two turns, or one voted for 3 s.
+- **The user's tile, from the mic** (`self.ts`, Teams and Zoom): when our
+  mic has carried speech for 1 s, nobody remote has, and one tile lights,
+  that tile is the user's (10 agreeing polls, then sticky) — for UI
+  variants without a self marker.
+- **Pause** (a set's optional `pause` hook, Zoom): while the screen-share
+  view is on, the spotlight holds the presenter, so the lit tile neither
+  votes nor feeds the page timeline.
+- **Without RTP sources** (a transport or browser without them, Zoom's WASM
+  mode), after 2 s of remote speech the lit tiles themselves become the
+  timeline (`source: "dom"`, `id: "tile:<hash>"` with the name); the app
+  shifts them by the platform's lag (400 ms Meet, 1 s Teams/Zoom).
 - **Participants**: the names on the remote tiles (the user excluded),
-  through one name guard (`names.ts`: no ids, timers or "You").
+  through one name guard (`guard.ts`: no ids, timers, "You" or "Unknown
+  user"; names cut with "…" rejected; "(Guest)", "(External)", "(Host,
+  me)"… stripped, localized).
 - **Health** (`health.ts`): cross-checks, not "a selector matched": 20 s
   of remote speech without a single lit tile means the speaking hook is
-  broken; tiles without names mean the name hook is. A broken hook stops
-  sending names — never guesses — and `observer_health {state:
-  "names_unavailable"}` goes to the app and to the side panel
-  (`PanelState.names`).
+  broken; tiles without names mean the name hook is; on Teams, fewer than
+  half of the tiles carrying the outline at all (the UI variant without
+  it) also breaks the speaking hook. A broken hook stops sending names —
+  never guesses — and `observer_health {state: "names_unavailable"}` goes
+  to the app and to the side panel (`PanelState.names`). The RTP hook is
+  reported as `csrc` or `ssrc`.
 
 Times: the page stamps events in its own worklet frames; the background
 turns them into milliseconds on the connection's audio clock (the clock of
 the app's segments) and replays the page's state (participants, names,
 active speakers, health) to a new connection (`src/shared/speakerEvents.ts`).
 The app attributes each remote line to the name active for most of it
-(see `sussurro/src-tauri/src/speakers/names.rs`).
+(see `sussurro/src-tauri/src/speakers/names.rs`) and saves named speakers as
+`meet:<name>`, `teams:<name>` or `zoom:<name>`. The protocol is unchanged
+(2): Teams and Zoom send the same events as Meet.
 
-**Not done yet**: Meet's live captions as an opt-in name fallback (a
-follow-up); lag numbers and the real hooks come from the live check (#184).
+**Not done yet**: live captions as an opt-in name fallback (a follow-up);
+the real hooks and the lag numbers come from the live check (#184).
 
 ## Browsers (#137)
 
@@ -288,8 +329,8 @@ both; where they differ:
 | Tab-capture fallback | yes (`tabCapture` + offscreen document) | none: not built, never shown |
 
 Identical in both: pairing in the extension's IndexedDB (#217), the MAIN-world hook
-(`world: "MAIN"`, Firefox ≥ 128), the Meet name observer
-(`getContributingSources()` exists in both), the recording notice, the
+(`world: "MAIN"`, Firefox ≥ 128), the name observers
+(`getContributingSources()` and `getSynchronizationSources()` exist in both), the recording notice, the
 live lines and the item buttons; without host access to the meeting
 sites, the panel offers **Allow access** in both.
 
@@ -328,7 +369,8 @@ check there (#184).
 | `src/background/` | background worker: per-tab session, WebSocket to the app, badge, Chrome tab capture |
 | `src/content/main-world.ts` | MAIN-world content script (the `RTCPeerConnection` hook, E4) |
 | `src/content/isolated-world.ts` | ISOLATED-world content script (relay to the background) |
-| `src/content/meet/` | Meet name observer (#131): CSRC timeline, selector sets + fixtures, binder, health |
+| `src/content/names/` | the name observer engine (#131, #245, #246): RTP source timeline, selector-set reader, binder, self from mic, health, name guard |
+| `src/content/{meet,teams,zoom}/` | per-platform profile, selector sets and synthetic fixtures; `src/content/profiles.ts` picks one |
 | `src/offscreen/`, `offscreen.html` | Chrome only: tab-capture fallback |
 | `e2e/` | capture harness (Playwright + a fake app) |
 | `src/sidepanel/`, `sidepanel.html` | side panel (Chrome) / sidebar (Firefox): live lines, Start/Stop, item actions (#129) |
@@ -397,13 +439,19 @@ stored. On a fake Meet page (`e2e/meet.html`, served at
 content-script patterns match it) it checks the Meet name observer, in
 every configuration: CSRC `speaker_active`/`speaker_idle`, bound names,
 participants without the user, healthy observer. Two more routed pages
-(#287) check capture with the shipped patterns: `e2e/loopback.html` (a
+(#287) check capture with the shipped patterns: `e2e/teams.html` (a
 loopback call) at `https://teams.cloud.microsoft/`, and `e2e/zoom.html` at
 `https://app.zoom.us/wc/e2e/join`, whose call runs in a same-origin
-`/wc/e2e/meeting` iframe while the top frame holds a mic preview — the
-hook in both frames, one session with the tab's platform, URL and title,
-both channels carrying the iframe's call (not the preview), and audio
-length matching the clock (captured once).
+`/wc/e2e/meeting` iframe (`e2e/zoom-meeting.html`) while the top frame
+holds a mic preview — the hook in both frames, one session with the tab's
+platform, URL and title, both channels carrying the iframe's call (not the
+preview), and audio length matching the clock (captured once). Both call
+pages also carry synthetic tiles for the provisional Teams/Zoom sets and
+fake RTP sources on a script (CSRCs on the Teams mix, an SSRC per Zoom
+participant) with the highlight 400 ms late: the checks are the Teams and
+Zoom name observers' ids, the names bound after two turns, participants
+without the user or the "(Guest)"-style qualifiers, and a healthy
+observer with its set.
 
 Configurations: `chromium` (binary messaging, Meet-like `replaceTrack`),
 `chromium-json` (the manifest key removed: base64, as on Chrome < 148) and

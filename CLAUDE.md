@@ -359,30 +359,51 @@ project decisions here, not in per-machine memory.**
   per platform in `storage.local` `meetingLanguage` (not a secret), first
   time = the app's dictation language; greyed while recording, shown in
   the recording header; an app without the route (404) gets no selector.
-- **Meet names (0.9, #131, P8)** (`speakers/names.rs`,
-  `extension/src/content/meet/`): layer 1 mic = "You", layer 2 names on
-  **Meet only** (Teams/Zoom: layers 1 + 3), layer 3 Voice N. The page's
-  identity is the RTP **CSRC** (`getContributingSources()` polled at
-  10 Hz, mirror CSRCs excluded); names come from tiles through
-  **versioned data-only selector sets** (attributes/structure, never
-  obfuscated classes or label text; the shipped `meet-2026-09a` is
-  unverified until #184 — replace values only from our own inspection,
-  with a synthetic fixture) and are bound CSRC → name by voting (5 votes,
-  margin 3, 1:1, drop after 10 contradictions). Health cross-checks
-  against the audio; a broken hook sends `names_unavailable`, never
-  guesses. Without CSRCs the lit tiles become a `dom` timeline. **Protocol
+- **Page names: Meet (0.9, #131, P8), Teams and Zoom web (0.11, #245,
+  #246, desk study #239)** (`speakers/names.rs`,
+  `extension/src/content/names/` = one observer engine,
+  `content/{meet,teams,zoom}/` = per-platform profile + selector sets +
+  fixtures, `content/profiles.ts`): layer 1 mic = "You", layer 2 names from
+  the page on all three, layer 3 Voice N. The page's identity is an RTP
+  source polled at 10 Hz: the **CSRC** on Meet and Teams
+  (`getContributingSources()`; Meet excludes mirror CSRCs, Teams turns the
+  mirror rule off — its redundant track repeats the mix's CSRCs — and
+  hangs 800 ms), the **SSRC** per participant stream on Zoom's WebRTC
+  mode (`getSynchronizationSources()`, ids `ssrc:<n>`); no receivers
+  (Zoom WASM mode) = the lit tiles become a `dom` timeline. Names come
+  from tiles through **versioned data-only selector sets** (attributes/
+  structure, never obfuscated classes or label text; the shipped
+  `meet-2026-09a`, `teams-2026-09a`, `zoom-2026-09a` are **unverified
+  until #184** — the Teams/Zoom values are placeholders of the shapes the
+  desk study names, replace them only from our own inspection, with a
+  synthetic fixture) and are bound source → name by voting (5 votes,
+  margin 3, 1:1, drop after 10 contradictions). **Teams/Zoom vote
+  lag-aware** (their outline trails the audio ~1 s): only inside a turn
+  (source alone ≥ 1 s, one tile lit ≥ 300/500 ms and lit after the turn
+  began) and only after 2 turns or one ≥ 3 s; they learn the user's tile
+  from our mic when the self marker is missing (sticky); Zoom has a
+  screen-share `pause` hook; Teams a coverage check (tiles without the
+  outline = the UI variant without it). The name guard strips platform
+  qualifiers ("(Guest)", "(Host, me)", localized), rejects "Unknown
+  user" and names cut with "…". Health cross-checks against the audio; a
+  broken hook sends `names_unavailable`, never guesses. **Speaker ids by
+  platform**: `meet:<name>` (also `other` and every item from before
+  0.11), `teams:<name>`, `zoom:<name>` (`doc::page_name_prefix`,
+  `SharedNames::for_platform`); every page-name helper accepts all three.
+  **Protocol
   2** (additive; `/app/version` reports `protocol_min: 1`, the extension
   accepts `protocol_min..=protocol`): `speaker_active {t, id?, name?,
   source?}`, `speaker_idle`, `speaker_name` (last binding applies to the
   whole call), `observer_health`; `t` = ms on the connection's audio clock
   (page frames mapped by the background). App: a remote line takes the
   name covering ≥ 50 % of it and 1.5× the runner-up, after lag
-  compensation (dom 400 ms, caption 1.5 s, rtp 0) and 250 ms edge trim —
+  compensation (dom 400 ms — 1 s on Teams/Zoom, `AttributionParams::
+  for_platform` — caption 1.5 s, rtp 0) and 250 ms edge trim —
   constants in `AttributionParams`, to re-tune from #184's measurements;
   else Voice N. An end-of-run pass re-attributes with every event;
-  `meet:<name>` speakers feed the People link suggestion; page
-  participants join the frontmatter with People emails. Captions fallback
-  not built (follow-up).
+  page-name speakers (any prefix) feed the People link suggestion (by
+  label); page participants join the frontmatter with People emails.
+  Captions fallback not built (follow-up); the protocol stays 2.
 - **Recording notice (0.9, #136)**: before recording other people (New →
   System audio + mic, Microphone → Meeting in the room, the extension's
   side-panel Start) a notice says others may need to be told and may have
@@ -661,7 +682,8 @@ project decisions here, not in per-machine memory.**
   `src/lib/voiceSuggestions.ts`, `shell/VoiceSuggestionChip.tsx`):
   `voice_suggestions(id)` returns `{speaker_id, person_id}` only (no score)
   for unlinked **`voice:N`** speakers (never "You" — the mic channel or a
-  voice with `own_voice: true` from #243 — nor `meet:` names) of a
+  voice with `own_voice: true` from #243 — nor page names `meet:`/`teams:`/
+  `zoom:`) of a
   non-recording item, from ready profiles of people still in People; a
   dismissed best match gives **no** suggestion (never the runner-up). The
   panel chip *Sounds like X · Link · Not X*: Link = the normal

@@ -1,0 +1,87 @@
+<!doctype html>
+<!-- A fake Zoom web-client meeting iframe for the capture harness (#287,
+     names #246), served at https://app.zoom.us/wc/e2e/meeting by a
+     Playwright route inside zoom.html. Synthetic: the structure the
+     provisional selector set `zoom-2026-09a` expects (tiles with a user
+     id, a self attribute, a footer name leaf with Zoom-style qualifiers, an
+     active-speaker attribute), not Zoom's markup. A loopback call inside
+     the frame gives it a sent track (mic channel) and a received one
+     (remote channel). Zoom's WebRTC mode (one RTP stream per participant)
+     is faked on RTCRtpReceiver.prototype.getSynchronizationSources on a
+     script — Bo speaks (SSRC 4001), a pause, Cy (4002), a pause, again —
+     and the active-speaker marker follows 400 ms late. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>e2e zoom meeting</title>
+  </head>
+  <body>
+    <button id="join">Join</button>
+    <div class="gallery">
+      <div data-user-id="e2e-ada" data-self="true" data-active-speaker="false">
+        <span data-testid="footer-name">Ada E2e (me)</span>
+      </div>
+      <div class="tile" data-user-id="e2e-bo" data-active-speaker="false">
+        <span data-testid="footer-name">Bo E2e</span>
+      </div>
+      <div class="tile" data-user-id="e2e-cy" data-active-speaker="false">
+        <span data-testid="footer-name">Cy E2e (Host)</span>
+      </div>
+    </div>
+    <audio id="out" autoplay></audio>
+    <script>
+      // 5 s cycle: 0–1.8 s Bo, 1.8–2.5 s nobody, 2.5–4.3 s Cy, 4.3–5 s nobody.
+      const SCRIPT = [
+        [1800, 4001, 1],
+        [700, 0, -1],
+        [1800, 4002, 2],
+        [700, 0, -1],
+      ];
+      const LAG = 400;
+      const t0 = performance.now();
+      function at(ms) {
+        let t = (((ms - t0) % 5000) + 5000) % 5000;
+        for (const [len, ssrc, tile] of SCRIPT) {
+          if (t < len) return { ssrc, tile };
+          t -= len;
+        }
+        return { ssrc: 0, tile: -1 };
+      }
+      const remote = new Set();
+      RTCRtpReceiver.prototype.getSynchronizationSources = function () {
+        if (!this.track || !remote.has(this.track.id)) return [];
+        const { ssrc } = at(performance.now());
+        return ssrc ? [{ source: ssrc, timestamp: performance.now() - 20, audioLevel: 0.5, rtpTimestamp: 0 }] : [];
+      };
+      const tiles = document.querySelectorAll(".tile");
+      setInterval(() => {
+        const { tile } = at(performance.now() - LAG);
+        tiles.forEach((el, i) => el.setAttribute("data-active-speaker", String(i + 1 === tile)));
+      }, 100);
+
+      window.callState = () => ({ joined: !!window.pcs });
+      document.getElementById("join").onclick = async () => {
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        osc.frequency.value = 300;
+        const dst = ctx.createMediaStreamDestination();
+        osc.connect(dst);
+        osc.start();
+        const a = new RTCPeerConnection();
+        const b = new RTCPeerConnection();
+        a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
+        b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
+        b.ontrack = (e) => {
+          remote.add(e.track.id);
+          document.getElementById("out").srcObject = e.streams[0] || new MediaStream([e.track]);
+        };
+        a.addTrack(dst.stream.getAudioTracks()[0], dst.stream);
+        await a.setLocalDescription(await a.createOffer());
+        await b.setRemoteDescription(a.localDescription);
+        await b.setLocalDescription(await b.createAnswer());
+        await a.setRemoteDescription(b.localDescription);
+        window.pcs = [a, b];
+      };
+    </script>
+  </body>
+</html>

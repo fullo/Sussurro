@@ -1,6 +1,6 @@
-/* What the Meet observer emits (#131): the page messages of
- * shared/speakers.ts, with the performance time `at` in place of the page
- * frame `pf` (the MAIN world converts). */
+/* What the name observer emits (#131): the page messages of
+ * shared/speakerEvents.ts, with the performance time `at` in place of the
+ * page frame `pf` (the MAIN world converts). */
 import type { LitTile } from "./binder";
 import type { Tile } from "./dom";
 import type { HealthReport, SpeakerSource } from "../../shared/speakerEvents";

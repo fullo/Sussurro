@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- Synthetic fixture (#245), written by hand for the selector-set tests:
+     the structure the provisional set `teams-2026-09a` expects, not a copy
+     of Teams' markup (no live page has been inspected yet, #184). Three
+     participant stream wrappers: the user (local-stream attribute), one
+     remote participant lit by the voice-level outline, one quiet. Names
+     carry Teams-style qualifiers; the names are made up. Wrappers and
+     class names stand for layout containers and are never matched. -->
+<html>
+  <body>
+    <div role="main">
+      <div class="stage">
+        <div data-tid="participant-stream" data-participant-id="8:orgid:0000-ada" data-is-local="true">
+          <div data-tid="voice-level-outline" data-speaking="false"></div>
+          <div class="footer"><span data-tid="participant-name">Ada Test</span></div>
+        </div>
+        <div data-tid="participant-stream" data-participant-id="8:orgid:0000-bruno">
+          <div class="frame"><div data-tid="voice-level-outline" data-speaking="false"></div></div>
+          <div class="footer"><span data-tid="participant-name">Bruno  Esempio (Guest)</span></div>
+        </div>
+        <div data-tid="participant-stream" data-participant-id="8:orgid:0000-chiara">
+          <div data-tid="voice-level-outline" data-speaking="false"></div>
+          <div class="footer"><span data-tid="participant-name">Chiara Prova (External)</span></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
