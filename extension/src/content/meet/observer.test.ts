@@ -3,9 +3,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { ObserverMsg } from "./messages";
-import { tileKey } from "./names";
-import { MeetObserver, TICK_MS } from "./observer";
+import type { ObserverMsg } from "../names/messages";
+import { tileKey } from "../names/guard";
+import { NameObserver, TICK_MS } from "../names/observer";
+import { MEET_PROFILE } from "./profile";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const grid = () => new DOMParser().parseFromString(readFileSync(join(HERE, "fixtures", "grid-3.html"), "utf8"), "text/html");
@@ -17,7 +18,8 @@ function rig() {
   let speaking: number[] = [];
   let level = 0;
   const out: ObserverMsg[] = [];
-  const obs = new MeetObserver({
+  const obs = new NameObserver({
+    profile: MEET_PROFILE,
     doc,
     receivers: () => [{ getContributingSources: () => speaking.map((source) => ({ source, timestamp: now - 20, audioLevel: 0.4 })) }],
     now: () => now,
@@ -99,7 +101,8 @@ describe("Meet observer", () => {
 
   it("never throws into the page", () => {
     const r = rig();
-    const bad = new MeetObserver({
+    const bad = new NameObserver({
+      profile: MEET_PROFILE,
       doc: r.doc,
       receivers: () => {
         throw new Error("boom");

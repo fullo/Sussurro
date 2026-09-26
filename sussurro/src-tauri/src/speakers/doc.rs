@@ -72,25 +72,57 @@ pub fn you_speaker() -> DocSpeaker {
     }
 }
 
-/// Prefix of the names from the meeting page (`meet:Anna Rossi`, #131).
+/// Prefix of the names from a Google Meet page (`meet:Anna Rossi`, #131).
+/// Every page name recorded before Teams and Zoom had names (0.11) has it,
+/// and a client that names no known platform gets it too.
 pub const MEET_PREFIX: &str = "meet:";
+/// Names from a Microsoft Teams web page (`teams:Anna Rossi`, #245).
+pub const TEAMS_PREFIX: &str = "teams:";
+/// Names from a Zoom web client page (`zoom:Anna Rossi`, #246).
+pub const ZOOM_PREFIX: &str = "zoom:";
+/// Every prefix of a name from a meeting page.
+pub const PAGE_NAME_PREFIXES: [&str; 3] = [MEET_PREFIX, TEAMS_PREFIX, ZOOM_PREFIX];
 
-pub fn meet_id(name: &str) -> String {
-    format!("{MEET_PREFIX}{name}")
+/// The page-name prefix of a meeting's platform (`start.platform`, already
+/// lower-cased by the protocol): Teams and Zoom get their own, anything
+/// else stays `meet:` (back-compat).
+pub fn page_name_prefix(platform: &str) -> &'static str {
+    match platform {
+        "teams" => TEAMS_PREFIX,
+        "zoom" => ZOOM_PREFIX,
+        _ => MEET_PREFIX,
+    }
 }
 
-pub fn is_meet(id: &str) -> bool {
-    id.starts_with(MEET_PREFIX)
+/// The speaker id of a name from the page, e.g. `teams:Anna Rossi`.
+pub fn page_name_id(prefix: &str, name: &str) -> String {
+    format!("{prefix}{name}")
 }
 
-/// A name from the meeting page. `k` is its order among the document's
-/// names: they take the voice colours from the other end of the list, so
-/// a small meeting's names and voices don't share a colour.
-pub fn meet_speaker(name: &str, k: usize) -> DocSpeaker {
+/// The name in a page-name speaker id (`meet:`, `teams:` or `zoom:`).
+pub fn page_name_of(id: &str) -> Option<&str> {
+    PAGE_NAME_PREFIXES.iter().find_map(|p| id.strip_prefix(p))
+}
+
+/// Whether a speaker id is a name from a meeting page (any platform).
+pub fn is_page_name(id: &str) -> bool {
+    page_name_of(id).is_some()
+}
+
+/// The colour of the `k`-th name of a document: names take the voice
+/// colours from the other end of the list, so a small meeting's names and
+/// voices don't share a colour.
+pub fn page_name_color(k: usize) -> String {
+    VOICE_COLORS[VOICE_COLORS.len() - 1 - k % VOICE_COLORS.len()].to_string()
+}
+
+/// A name from the meeting page, under its id (`meet:`/`teams:`/`zoom:`).
+/// `k` is its order among the document's names ([`page_name_color`]).
+pub fn page_name_speaker(id: &str, k: usize) -> DocSpeaker {
     DocSpeaker {
-        id: meet_id(name),
-        label: name.to_string(),
-        color: VOICE_COLORS[VOICE_COLORS.len() - 1 - k % VOICE_COLORS.len()].to_string(),
+        id: id.to_string(),
+        label: page_name_of(id).unwrap_or(id).to_string(),
+        color: page_name_color(k),
         person_id: None,
         label_before_link: None,
         own_voice: None,
@@ -106,13 +138,13 @@ pub fn meet_speaker(name: &str, k: usize) -> DocSpeaker {
 pub fn sync_named_speakers(file: &mut SegmentsFile) {
     let mut names: Vec<String> = Vec::new();
     for id in file.segments.iter().filter_map(|s| s.speaker_id.as_deref()) {
-        if is_meet(id) && !names.iter().any(|n| n == id) {
+        if is_page_name(id) && !names.iter().any(|n| n == id) {
             names.push(id.to_string());
         }
     }
     let old = std::mem::take(&mut file.speakers);
-    let (meets, rest): (Vec<DocSpeaker>, Vec<DocSpeaker>) =
-        old.into_iter().partition(|s| is_meet(&s.id));
+    let (named, rest): (Vec<DocSpeaker>, Vec<DocSpeaker>) =
+        old.into_iter().partition(|s| is_page_name(&s.id));
     file.speakers = rest;
     let at = file
         .speakers
@@ -123,11 +155,11 @@ pub fn sync_named_speakers(file: &mut SegmentsFile) {
         .iter()
         .enumerate()
         .map(|(k, id)| {
-            meets
+            named
                 .iter()
                 .find(|s| &s.id == id)
                 .cloned()
-                .unwrap_or_else(|| meet_speaker(id.strip_prefix(MEET_PREFIX).unwrap_or(id), k))
+                .unwrap_or_else(|| page_name_speaker(id, k))
         })
         .collect();
     file.speakers.splice(at..at, entries);
@@ -210,7 +242,7 @@ pub fn rename_speaker(file: &mut SegmentsFile, speaker_id: &str, label: &str) ->
 }
 
 /// The label a speaker gets without a user's choice: "Voice N", "You",
-/// or the name the meeting page showed (`meet:<name>`).
+/// or the name the meeting page showed (`meet:`/`teams:`/`zoom:<name>`).
 pub fn default_label(id: &str) -> Option<String> {
     if let Some(n) = voice_number(id) {
         return Some(voice_label(n));
@@ -218,7 +250,7 @@ pub fn default_label(id: &str) -> Option<String> {
     if id == YOU_ID {
         return Some("You".to_string());
     }
-    id.strip_prefix("meet:").map(str::to_string)
+    page_name_of(id).map(str::to_string)
 }
 
 /// Whether the user named this speaker (its label is not the default).
@@ -906,6 +938,67 @@ mod tests {
         // A Meet name's default label is the name itself.
         assert_eq!(default_label("meet:Anna R.").as_deref(), Some("Anna R."));
         assert!(!renamed(&f.speakers[2]));
+    }
+
+    #[test]
+    fn page_names_have_a_prefix_per_platform_and_meet_stays_for_the_rest() {
+        assert_eq!(page_name_prefix("meet"), "meet:");
+        assert_eq!(page_name_prefix("teams"), "teams:");
+        assert_eq!(page_name_prefix("zoom"), "zoom:");
+        assert_eq!(page_name_prefix("other"), "meet:");
+        assert_eq!(page_name_id("teams:", "Anna"), "teams:Anna");
+        for (id, name) in [
+            ("meet:Anna", "Anna"),
+            ("teams:Anna R.", "Anna R."),
+            ("zoom:Bo", "Bo"),
+        ] {
+            assert!(is_page_name(id));
+            assert_eq!(page_name_of(id), Some(name));
+            assert_eq!(default_label(id).as_deref(), Some(name));
+            let sp = page_name_speaker(id, 0);
+            assert_eq!((sp.id.as_str(), sp.label.as_str()), (id, name));
+            assert_eq!(sp.color, page_name_color(0));
+        }
+        for id in ["voice:1", "you", "webex:Anna", "Anna"] {
+            assert!(!is_page_name(id));
+        }
+        assert_ne!(page_name_color(0), page_name_color(1));
+    }
+
+    #[test]
+    fn named_speakers_of_any_platform_are_listed_before_the_voices() {
+        // An item recorded before 0.11 (meet:) next to a Teams name: both
+        // are page names, listed in order of first appearance, and an
+        // existing entry keeps its label and link.
+        let mut f = doc(&[0, 1, 2], &[None, None, Some(1)], 1);
+        f.segments[0].speaker_id = Some("teams:Anna".into());
+        f.segments[1].speaker_id = Some("meet:Bo".into());
+        f.speakers.push(DocSpeaker {
+            id: "meet:Bo".into(),
+            label: "Bo Renamed".into(),
+            person_id: Some("p1".into()),
+            ..Default::default()
+        });
+        f.speakers.push(DocSpeaker {
+            id: "zoom:Gone".into(),
+            label: "Gone".into(),
+            ..Default::default()
+        });
+        sync_named_speakers(&mut f);
+        let listed: Vec<(&str, &str)> = f
+            .speakers
+            .iter()
+            .map(|s| (s.id.as_str(), s.label.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("teams:Anna", "Anna"),
+                ("meet:Bo", "Bo Renamed"),
+                ("voice:1", "Voice 1")
+            ]
+        );
+        assert_eq!(f.speakers[1].person_id.as_deref(), Some("p1"));
     }
 
     #[test]

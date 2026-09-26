@@ -14,7 +14,10 @@
  * source timeline, the bound names, the participants and its health. On a
  * fake page at the Teams cloud host, and on a fake Zoom page whose call
  * runs in a same-origin iframe (#287), capture works with the shipped
- * match patterns — the iframe's call, once, not the top frame's mic.
+ * match patterns — the iframe's call, once, not the top frame's mic — and
+ * the Teams and Zoom name observers (#245, #246) bind their faked RTP
+ * sources (CSRCs on the Teams mix, an SSRC per Zoom participant) to the
+ * late speaking marker.
  *
  *   npm run build && npm run test:e2e            (chromium, chromium-json, firefox)
  *   npm run test:e2e -- chromium firefox edge     (a choice)
@@ -657,16 +660,19 @@ async function runConfig(config: Config): Promise<Check[]> {
   /** Capture on a host the shipped patterns match (#287), served by a route:
    *  Teams' cloud host (loopback call in the top frame), or a Zoom web-client
    *  page whose loopback call runs in a same-origin iframe while its top
-   *  frame holds a mic preview. */
+   *  frame holds a mic preview. Each call page also has participant tiles
+   *  and faked RTP sources (Teams: CSRCs on the mix; Zoom: an SSRC per
+   *  participant), so the platform's name observer (#245, #246) is
+   *  checked in the frame that captures. */
   async function hostCapture(kind: "teams" | "zoom") {
     const html = (file: string) => ({ status: 200, contentType: "text/html; charset=utf-8", body: readFileSync(join(EXT, "e2e", file), "utf8") });
     const label = kind === "teams" ? "Teams (teams.cloud.microsoft)" : "Zoom (meeting iframe)";
     let url: string;
     if (kind === "teams") {
-      await b.ctx.route("https://teams.cloud.microsoft/**", (r) => r.fulfill(html("loopback.html")));
+      await b.ctx.route("https://teams.cloud.microsoft/**", (r) => r.fulfill(html("teams.html")));
       url = "https://teams.cloud.microsoft/v2/?meetingjoin=true";
     } else {
-      await b.ctx.route("https://app.zoom.us/**", (r) => r.fulfill(html(new URL(r.request().url()).pathname.startsWith("/wc/e2e/meeting") ? "loopback.html" : "zoom.html")));
+      await b.ctx.route("https://app.zoom.us/**", (r) => r.fulfill(html(new URL(r.request().url()).pathname.startsWith("/wc/e2e/meeting") ? "zoom-meeting.html" : "zoom.html")));
       url = "https://app.zoom.us/wc/e2e/join";
     }
     const P = await b.ctx.newPage();
@@ -693,7 +699,9 @@ async function runConfig(config: Config): Promise<Check[]> {
     const name = kind === "teams" ? "Microsoft Teams" : "Zoom";
     const shown = await panel.text();
     check(`${label}: the tab's panel shows the capture`, shown.includes(`Recording ${name}`), shown.replace(/\s+/g, " "));
-    await sleep(5000);
+    // Long enough for two turns of each fake speaker after the lag-aware
+    // binder's delay (the page's 5 s script, whatever phase Start hit).
+    await sleep(14_000);
     await panel.click("stop");
     const wallSec = (Date.now() - t0) / 1000;
     await until(`${kind} session done`, async () => (await panel.status("phase")) === "done", 10_000);
@@ -703,7 +711,7 @@ async function runConfig(config: Config): Promise<Check[]> {
     const rate = Number(start.rate);
     check(
       `${label}: start says platform ${kind}, with the tab's URL and title`,
-      start.platform === kind && String(start.url) === url && start.title === (kind === "teams" ? "e2e loopback" : "e2e zoom"),
+      start.platform === kind && String(start.url) === url && start.title === (kind === "teams" ? "e2e teams" : "e2e zoom"),
       start,
     );
     const mic = s?.channels.get(0);
@@ -724,6 +732,23 @@ async function runConfig(config: Config): Promise<Check[]> {
       !!mic && !!remote && sec(mic) > wallSec * 0.4 && sec(mic) < wallSec * 1.2 && sec(remote) < wallSec * 1.2 && mic.seqGaps === 0 && remote.seqGaps === 0,
       { wallSec: +wallSec.toFixed(2), mic: info(mic), remote: info(remote) },
     );
+    // Names (#245, #246): the platform's RTP ids, bound to the late
+    // speaking marker, participants without the user or the qualifiers.
+    const who = kind === "teams" ? "Teams" : "Zoom";
+    const [prefix, bo, cy] = kind === "teams" ? ["csrc", 3001, 3002] : ["ssrc", 4001, 4002];
+    const ctl = (type: string) => (s?.controls ?? []).filter((c) => c.type === type);
+    const act = ctl("speaker_active");
+    check(
+      `${who}: speaker_active from the RTP sources (${prefix} ids, rtp)`,
+      act.some((c) => c.id === `${prefix}:${bo}` && c.source === "rtp") && act.some((c) => c.id === `${prefix}:${cy}`) && act.every((c) => String(c.id).startsWith(`${prefix}:`)),
+      act,
+    );
+    const bound = Object.fromEntries(ctl("speaker_name").map((c) => [c.id, c.name]));
+    check(`${who}: names bound to the sources by the late speaking marker`, bound[`${prefix}:${bo}`] === "Bo E2e" && bound[`${prefix}:${cy}`] === "Cy E2e" && Object.keys(bound).length === 2, bound);
+    const people = ctl("participants").flatMap((c) => c.names as string[]);
+    check(`${who}: participants without the user, qualifiers removed`, people.includes("Bo E2e") && people.includes("Cy E2e") && !people.some((n) => n.includes("Ada") || n.includes("(")), people);
+    const health = ctl("observer_health").at(-1);
+    check(`${who}: observer health ok, with the selector set`, health?.state === "ok" && health?.set === `${kind}-2026-09a`, health);
     await P.close();
   }
 }

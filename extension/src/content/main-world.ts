@@ -22,8 +22,9 @@ import { FRAME_SAMPLES, rms16, toPcm16 } from "../shared/frame";
 import type { CaptureSnapshot, FromMain, ToMain } from "../shared/messages";
 import { TrackRegistry, diffTracks, type Selection } from "./registry";
 import { PROCESSOR_NAME, WORKLET_SOURCE } from "./worklet";
-import { MeetObserver } from "./meet/observer";
-import type { ObserverMsg } from "./meet/messages";
+import { NameObserver } from "./names/observer";
+import type { ObserverMsg } from "./names/messages";
+import { profileFor } from "./profiles";
 import { detectPlatform } from "../shared/platform";
 import { perfToFrame, type PageSpeakerMsg } from "../shared/speakerEvents";
 
@@ -43,7 +44,9 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
   const createObjectURL = URL.createObjectURL.bind(URL);
   const revokeObjectURL = URL.revokeObjectURL.bind(URL);
   const perfNow = performance.now.bind(performance);
-  const isMeet = detectPlatform(location.href) === "meet";
+  /** The name observer's profile for this frame's page (null: not a
+   *  meeting page). Zoom's meeting iframe is a Zoom page of its own. */
+  const profile = profileFor(detectPlatform(location.href));
 
   const reg = new TrackRegistry<MediaStreamTrack, RTCPeerConnection, RTCRtpSender>();
   const errors: string[] = [];
@@ -53,10 +56,11 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
   let pcCount = 0;
   let port: MessagePort | null = null;
   let capture: Capture | null = null;
-  /** Peer connections open in the page (for the Meet observer's receivers). */
+  /** Peer connections open in the page (for the name observer's receivers). */
   const pcs = new Set<RTCPeerConnection>();
-  /** The Meet name observer (#131): Meet pages only, while armed. */
-  let observer: MeetObserver | null = null;
+  /** The name observer (#131; Teams #245, Zoom #246): meeting pages only,
+   *  in the frame that captures, while armed. */
+  let observer: NameObserver | null = null;
 
   const send = (m: FromMain, transfer: Transferable[] = []) => {
     try {
@@ -479,9 +483,9 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
     };
   };
 
-  // ---- Meet names (#131) -----------------------------------------------------
+  // ---- names (#131, #245, #246) ----------------------------------------------
 
-  /** The page's remote audio receivers (their CSRCs say who speaks). */
+  /** The page's remote audio receivers (their CSRCs or SSRCs say who speaks). */
   const remoteReceivers = (): RTCRtpReceiver[] => {
     const out: RTCRtpReceiver[] = [];
     for (const pc of pcs) {
@@ -505,21 +509,23 @@ type AnyFn = (...args: any[]) => any; // eslint-disable-line @typescript-eslint/
   };
 
   const startObserver = (c: Capture) => {
-    if (!isMeet || observer) return;
+    if (!profile || observer) return;
     try {
-      observer = new MeetObserver({
+      observer = new NameObserver({
         doc: document,
+        profile,
         receivers: remoteReceivers,
         now: perfNow,
         timeOrigin: performance.timeOrigin,
         remoteLevel: () => c.levels[1],
+        micLevel: () => c.levels[0],
         emit: (m) => sendSpeaker(c, m),
         note,
       });
       observer.start();
     } catch (e) {
       observer = null;
-      note(`meet observer: ${String(e)}`);
+      note(`${profile.platform} observer: ${String(e)}`);
     }
   };
 

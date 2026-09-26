@@ -976,6 +976,111 @@ fn a_websocket_meeting_becomes_an_archive_item() {
     assert_eq!(*r.host.0.opened.lock().unwrap(), vec![item_id.clone()]);
 }
 
+/// Teams (#245) and Zoom (#246) pages send the same protocol 2 events as
+/// Meet; their names get the platform's own prefix.
+#[test]
+fn teams_and_zoom_meetings_name_remote_lines_with_their_platform_prefix() {
+    for (platform, url, source, id, expected) in [
+        (
+            "teams",
+            "https://teams.cloud.microsoft/v2/",
+            "rtp",
+            "csrc:3001",
+            "teams:Anna Rossi",
+        ),
+        (
+            "zoom",
+            "https://app.zoom.us/wc/123/join",
+            "rtp",
+            "ssrc:4001",
+            "zoom:Anna Rossi",
+        ),
+    ] {
+        let r = start_server();
+        let mut ws = ws_connect(r.port, TOKEN, Some(EXT)).expect("upgrade");
+        read_json(&mut ws).unwrap();
+        ws.send(Message::text(format!(
+            r#"{{"type":"start","title":"Sync","url":"{url}","platform":"{platform}","rate":48000,"channels":2}}"#
+        )))
+        .unwrap();
+        // The remote side speaks 3.5–6 s; the page's source (Teams' CSRC,
+        // Zoom's SSRC) is bound to a name and active over it.
+        for n in 0..450usize {
+            let t = n as f32 * 0.02;
+            let remote_amp = if (3.5..6.0).contains(&t) { 0.4 } else { 0.0 };
+            ws.send(Message::binary(protocol::encode_audio_frame(
+                0,
+                n as u32,
+                &frame_48k(n * 960, 0.0),
+            )))
+            .unwrap();
+            ws.send(Message::binary(protocol::encode_audio_frame(
+                1,
+                n as u32,
+                &frame_48k(n * 960, remote_amp),
+            )))
+            .unwrap();
+            if n == 170 {
+                ws.send(Message::text(format!(
+                    r#"{{"type":"speaker_name","id":"{id}","name":"Anna Rossi"}}"#
+                )))
+                .unwrap();
+                ws.send(Message::text(format!(
+                    r#"{{"type":"speaker_active","id":"{id}","source":"{source}","t":3400}}"#
+                )))
+                .unwrap();
+            }
+            if n == 310 {
+                ws.send(Message::text(format!(
+                    r#"{{"type":"speaker_idle","id":"{id}","t":6200}}"#
+                )))
+                .unwrap();
+            }
+        }
+        ws.send(Message::text(r#"{"type":"stop"}"#)).unwrap();
+        let mut done_item = None;
+        let mut announced = Vec::new();
+        while let Some(m) = read_json(&mut ws) {
+            if m["type"] == "speaker" {
+                announced.push((
+                    m["id"].as_str().unwrap_or_default().to_string(),
+                    m["label"].as_str().unwrap_or_default().to_string(),
+                ));
+            }
+            if m["type"] == "status" && m["state"] == "done" {
+                done_item = m["item_id"].as_str().map(str::to_string);
+            }
+        }
+        let item_id = done_item.expect("done with an item id");
+        let item = archive::read_item(&r.host.0.archive, &item_id).unwrap();
+        let remote = item
+            .segments
+            .segments
+            .iter()
+            .find(|s| s.channel == Channel::Remote)
+            .unwrap();
+        assert_eq!(remote.speaker_id.as_deref(), Some(expected), "{platform}");
+        let listed: Vec<(&str, &str)> = item
+            .segments
+            .speakers
+            .iter()
+            .map(|s| (s.id.as_str(), s.label.as_str()))
+            .collect();
+        assert!(listed.contains(&(expected, "Anna Rossi")), "{listed:?}");
+        assert!(
+            announced.contains(&(expected.to_string(), "Anna Rossi".to_string())),
+            "{announced:?}"
+        );
+        let names: Vec<&str> = item
+            .meta
+            .participants
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names, ["Anna Rossi"], "{platform}");
+    }
+}
+
 #[test]
 fn app_languages_lists_the_engine_languages_for_the_extension_only() {
     use crate::stt::languages::LanguageSet;

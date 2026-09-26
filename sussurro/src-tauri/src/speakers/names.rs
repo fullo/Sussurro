@@ -5,10 +5,19 @@
 //! for most of it. Pure — unit tested; [`SharedNames`] lets the `/live`
 //! connection feed the timeline while the engine reads it.
 //!
+//! **Platforms.** Google Meet (#131), Microsoft Teams web (#245) and the
+//! Zoom web client (#246) all send the same protocol 2 events; the
+//! attribution is the same for all. What the platform changes
+//! ([`SharedNames::for_platform`]): the prefix of the named speakers' ids
+//! (`meet:`, `teams:`, `zoom:` — `meet:` for anything else, and for every
+//! item recorded before 0.11) and the page indicator's lag.
+//!
 //! **Timeline.** Every event carries `t_ms`, the client's position in the
 //! audio it sent (the clock the lines' `start_ms` use). A speaker is an
-//! `id` (a participant key stable for the call — on Meet the RTP
-//! contributing source) or, from protocol 1 clients, a bare name:
+//! `id` (a participant key stable for the call — the RTP contributing
+//! source on Meet and Teams, the stream's synchronization source on Zoom,
+//! a tile key on the page timeline) or, from protocol 1 clients, a bare
+//! name:
 //! - with an `id`, the speaker is active from `speaker_active` to its
 //!   `speaker_idle` (several can overlap);
 //! - a bare name is one "who is speaking" indicator: it stays active until
@@ -42,6 +51,7 @@ use crate::archive::meeting::{MeetingEvent, NameSource};
 use crate::archive::people::{link_new_participants, name_key, Person};
 use crate::archive::types::{normalize_participants, Participant};
 use crate::archive::ItemMeta;
+use crate::speakers::doc::{page_name_prefix, MEET_PREFIX};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -84,6 +94,22 @@ impl Default for AttributionParams {
 }
 
 impl AttributionParams {
+    /// The parameters for a meeting's platform (`start.platform`). Teams'
+    /// speaking outline and Zoom's active-speaker marker trail the audio
+    /// by about a second (desk study #239), against Meet's ~400 ms; the
+    /// page timeline (`source: "dom"`) is used there only without RTP
+    /// sources (Zoom's WASM mode, a browser that hides CSRCs). First
+    /// guesses, to re-tune from #184's measurements.
+    pub fn for_platform(platform: &str) -> Self {
+        match platform {
+            "teams" | "zoom" => Self {
+                dom_lag_ms: 1_000,
+                ..Self::default()
+            },
+            _ => Self::default(),
+        }
+    }
+
     fn lag(&self, source: NameSource) -> i64 {
         (match source {
             NameSource::Rtp => 0,
@@ -406,17 +432,45 @@ pub fn attribute(
     NameTimeline::from_events(params, events).attribute(start_ms, end_ms)
 }
 
-/// A timeline the `/live` connection writes and the engine reads.
-#[derive(Clone, Default)]
-pub struct SharedNames(Arc<Mutex<NameTimeline>>);
+/// A timeline the `/live` connection writes and the engine reads, with the
+/// prefix its named speakers get (`meet:`, `teams:`, `zoom:`).
+#[derive(Clone)]
+pub struct SharedNames {
+    timeline: Arc<Mutex<NameTimeline>>,
+    prefix: &'static str,
+}
+
+impl Default for SharedNames {
+    fn default() -> Self {
+        Self::new(AttributionParams::default())
+    }
+}
 
 impl SharedNames {
+    /// A Meet-style timeline (`meet:` names).
     pub fn new(params: AttributionParams) -> Self {
-        Self(Arc::new(Mutex::new(NameTimeline::new(params))))
+        Self {
+            timeline: Arc::new(Mutex::new(NameTimeline::new(params))),
+            prefix: MEET_PREFIX,
+        }
+    }
+
+    /// The timeline of a meeting on `platform` (`start.platform`: `meet`,
+    /// `teams`, `zoom` or `other`): its lags and its names' prefix.
+    pub fn for_platform(platform: &str) -> Self {
+        Self {
+            prefix: page_name_prefix(platform),
+            ..Self::new(AttributionParams::for_platform(platform))
+        }
+    }
+
+    /// The prefix of this meeting's named speakers.
+    pub fn prefix(&self) -> &'static str {
+        self.prefix
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, NameTimeline> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        self.timeline.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn push(&self, event: &MeetingEvent) {
@@ -442,7 +496,7 @@ impl SharedNames {
 
 impl PartialEq for SharedNames {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.timeline, &other.timeline)
     }
 }
 
@@ -772,6 +826,53 @@ mod tests {
         assert_ne!(a, SharedNames::new(params()));
         b.push(&dom(0, "Anna"));
         assert_eq!(a.attribute(0, 2_000), named("Anna"));
+    }
+
+    #[test]
+    fn teams_and_zoom_get_their_prefix_and_a_longer_page_lag() {
+        assert_eq!(SharedNames::default().prefix(), "meet:");
+        assert_eq!(SharedNames::new(params()).prefix(), "meet:");
+        for (platform, prefix, lag) in [
+            ("meet", "meet:", 400),
+            ("teams", "teams:", 1_000),
+            ("zoom", "zoom:", 1_000),
+            ("other", "meet:", 400),
+        ] {
+            assert_eq!(SharedNames::for_platform(platform).prefix(), prefix);
+            let p = AttributionParams::for_platform(platform);
+            assert_eq!(p.dom_lag_ms, lag, "{platform}");
+            assert_eq!(
+                (
+                    p.caption_lag_ms,
+                    p.tolerance_ms,
+                    p.min_share_pct,
+                    p.margin_pct
+                ),
+                (1_500, 250, 50, 150)
+            );
+        }
+        // Zoom's page timeline (WASM mode): the active-speaker marker lit
+        // 1 s after Anna started. Shifted by Zoom's lag, her 1 s line is
+        // hers; with Meet's 400 ms it would still look silent.
+        let zoom = SharedNames::for_platform("zoom");
+        let meet = SharedNames::for_platform("meet");
+        for n in [&zoom, &meet] {
+            n.push(&active(
+                1_300,
+                Some("tile:1"),
+                Some("Anna"),
+                NameSource::Dom,
+            ));
+            n.push(&idle(2_300, "tile:1"));
+        }
+        assert_eq!(zoom.attribute(0, 1_000), named("Anna"));
+        assert_eq!(meet.attribute(0, 1_000), Attribution::Silent);
+        // RTP ids need no lag on any platform.
+        let teams = SharedNames::for_platform("teams");
+        teams.push(&rtp(0, "csrc:9"));
+        teams.push(&bind("csrc:9", Some("Bo")));
+        teams.push(&idle(2_000, "csrc:9"));
+        assert_eq!(teams.attribute(0, 2_000), named("Bo"));
     }
 
     #[test]

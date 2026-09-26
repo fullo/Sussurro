@@ -115,8 +115,9 @@ Models · Settings**.
   through **native loopback** (WASAPI on Windows, a Core Audio tap on
   macOS 14.2+, the PulseAudio/PipeWire monitor on Linux) or any **virtual
   audio device** (BlackHole, VB-Cable, a monitor source).
-- **Speakers**: your microphone is always **You**. On Google Meet, remote
-  lines take the participants' **names from the page**. Everyone else is
+- **Speakers**: your microphone is always **You**. On Google Meet,
+  Microsoft Teams and the Zoom web client, remote lines take the
+  participants' **names from the page**. Everyone else is
   told apart by voice as **Voice 1, Voice 2…**, on this computer, with a
   small speaker model (WeSpeaker, downloaded on first use). Rename voices,
   link them to people, or **Re-detect speakers** over the whole call.
@@ -302,16 +303,19 @@ paired again.
   only if *Save audio* is on in Settings. If the connection drops, the extension reconnects and the rest
   of the call becomes a new item.
 
-### Meet names
+### Names from the meeting page
 
-On **Google Meet** the extension also reads the participants' names from the
-page and matches them to who is speaking, so remote lines are named instead
-of *Voice N*, and the participants join the item's frontmatter (with their
-email if they are in People). It reads the page's structure only, never
-clicks or opens panels, and when it can't read the names reliably it stops
-and says so rather than guess: those lines stay *Voice N*. Meet changes its
-page often, so this is the part most likely to need an update. **Teams and
-Zoom** get *You* and *Voice N* only.
+On **Google Meet**, **Microsoft Teams** and the **Zoom web client** the
+extension also reads the participants' names from the page and matches them
+to who is speaking, so remote lines are named instead of *Voice N*, and the
+participants join the item's frontmatter (with their email if they are in
+People). It reads the page's structure only, never clicks or opens panels,
+and when it can't read the names reliably it stops and says so rather than
+guess: those lines stay *Voice N*. On Teams and Zoom a name is taken only
+after the person has spoken a few times, because their "speaking" highlight
+comes late. These pages change often, so this is the part most likely to
+need an update; the Teams and Zoom readers are new in 0.11 and still being
+checked on real calls.
 
 ### Privacy and consent
 
@@ -641,10 +645,9 @@ the very next request.
 
 - **Speaker labels are approximate.** *Voice N* clustering was tuned on
   English recordings. Two similar voices can merge, and one voice can split.
-  Rename, move lines, or *Re-detect speakers*. **Meet names** depend on
-  Meet's page, which changes often. When the extension can't read the names
-  it says so and falls back to *Voice N*. Teams and Zoom get *You* and
-  *Voice N* only.
+  Rename, move lines, or *Re-detect speakers*. **Names from the page**
+  (Meet, Teams, Zoom) depend on pages that change often. When the extension
+  can't read the names it says so and falls back to *Voice N*.
 - **No echo cancellation.** Record calls with headphones, or the others'
   voices can land on your *You* channel too.
 - **Built-in system audio** follows the output device that was the default

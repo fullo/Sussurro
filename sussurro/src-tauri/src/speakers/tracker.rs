@@ -5,11 +5,12 @@
 //! embeddings (P8: stored for "Re-detect" and later voice recognition).
 //!
 //! A browser meeting's remote channel also has the page's names (#131,
-//! [`super::names`]): a line the page attributes to a name is `meet:<name>`
-//! instead of a voice (it still gets its embedding); the others keep their
-//! "Voice N". At the end of the run [`Tracker::finish_names`] redoes the
-//! attribution with every event the page sent (a name learned late applies
-//! to the earlier lines too).
+//! [`super::names`]): a line the page attributes to a name is
+//! `<platform>:<name>` (`meet:`, `teams:`, `zoom:`) instead of a voice (it
+//! still gets its embedding); the others keep their "Voice N". At the end
+//! of the run [`Tracker::finish_names`] redoes the attribution with every
+//! event the page sent (a name learned late applies to the earlier lines
+//! too).
 //!
 //! With the overlap model (#244, [`Tracker::with_overlap`]) each line of a
 //! clustered channel is also checked for overlapping speech; the spans go
@@ -18,7 +19,8 @@
 
 use super::cluster::{mean_embedding, OnlineClusterer};
 use super::doc::{
-    is_meet, meet_id, meet_speaker, sync_named_speakers, voice_speaker, you_speaker, YOU_ID,
+    is_page_name, page_name_id, page_name_speaker, sync_named_speakers, voice_speaker, you_speaker,
+    MEET_PREFIX, YOU_ID,
 };
 use super::model::SpeakerEmbedder;
 use super::names::{Attribution, SharedNames};
@@ -155,7 +157,7 @@ pub struct Tracker {
     channels: Vec<(Channel, OnlineClusterer, Vec<Option<u32>>)>,
     next_voice: u32,
     you_listed: bool,
-    /// Names from the page listed so far (`meet:<name>` ids).
+    /// Names from the page listed so far (`<platform>:<name>` ids).
     names_listed: Vec<String>,
     /// The cluster of each line that could take a name — `(channel, start
     /// ms) → (channel index, cluster)` — so the end-of-run pass can give a
@@ -324,13 +326,22 @@ impl Tracker {
         }
     }
 
-    /// The `meet:` id of a page name, and its entry the first time.
+    /// The page-name prefix of this meeting's platform (`meet:` without a
+    /// timeline).
+    fn name_prefix(&self) -> &'static str {
+        self.options
+            .names
+            .as_ref()
+            .map_or(MEET_PREFIX, SharedNames::prefix)
+    }
+
+    /// The `<platform>:` id of a page name, and its entry the first time.
     fn name_speaker(&mut self, name: &str) -> (String, Option<DocSpeaker>) {
-        let id = meet_id(name);
+        let id = page_name_id(self.name_prefix(), name);
         if self.names_listed.contains(&id) {
             return (id, None);
         }
-        let sp = meet_speaker(name, self.names_listed.len());
+        let sp = page_name_speaker(&id, self.names_listed.len());
         self.names_listed.push(id.clone());
         (id, Some(sp))
     }
@@ -436,9 +447,9 @@ impl Tracker {
                 continue;
             }
             let want = match names.attribute(seg.start_ms, seg.end_ms) {
-                Attribution::Named(n) => Some(meet_id(&n)),
+                Attribution::Named(n) => Some(page_name_id(names.prefix(), &n)),
                 _ => match seg.speaker_id.as_deref() {
-                    Some(id) if is_meet(id) => {
+                    Some(id) if is_page_name(id) => {
                         let (channel, start) = (seg.channel, seg.start_ms);
                         self.clustered
                             .iter()
@@ -806,6 +817,49 @@ pub(crate) mod tests {
             assert_eq!(t.participants(), ["Bo"]);
             // Idempotent.
             assert_eq!(t.finish_names(&mut file), 0);
+        }
+
+        #[test]
+        fn teams_and_zoom_names_take_their_platform_prefix_and_meet_lines_stay() {
+            for (platform, id) in [
+                ("teams", "teams:Anna"),
+                ("zoom", "zoom:Anna"),
+                ("meet", "meet:Anna"),
+                ("other", "meet:Anna"),
+            ] {
+                let names = SharedNames::for_platform(platform);
+                bind(&names, "ssrc:7", Some("Anna"));
+                rtp(&names, "ssrc:7", 0, 4_000);
+                let (load, _) = fake_loader(3);
+                let mut t = Tracker::new(browser(&names), load);
+                let a = t.label_at(Channel::Remote, Some((0, 4_000)), &audio(0, 4_000));
+                assert_eq!(a.speaker_id.as_deref(), Some(id), "{platform}");
+                assert_eq!(
+                    a.new_speaker
+                        .as_ref()
+                        .map(|s| (s.id.as_str(), s.label.as_str())),
+                    Some((id, "Anna"))
+                );
+                // The end-of-run pass keeps the platform's id, and a line
+                // an older build named `meet:` goes back to its voice when
+                // the page no longer names it (any prefix is a page name).
+                let mut file = SegmentsFile::default();
+                file.speakers.push(a.new_speaker.clone().unwrap());
+                file.segments.push(line(0, 4_000, &a));
+                let b = t.label_at(Channel::Remote, Some((5_000, 9_000)), &audio(1, 4_000));
+                let mut old = line(5_000, 9_000, &b);
+                old.speaker_id = Some("meet:Bo".into());
+                file.segments.push(old);
+                t.finish_names(&mut file);
+                let ids: Vec<Option<&str>> = file
+                    .segments
+                    .iter()
+                    .map(|s| s.speaker_id.as_deref())
+                    .collect();
+                assert_eq!(ids, [Some(id), Some("voice:1")], "{platform}");
+                let listed: Vec<&str> = file.speakers.iter().map(|s| s.id.as_str()).collect();
+                assert_eq!(listed, [id, "voice:1"], "{platform}");
+            }
         }
 
         #[test]

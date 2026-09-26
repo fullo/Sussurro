@@ -1,17 +1,20 @@
-/* The shape of a Meet selector set (#131): data only, no code, one file per
- * set (`meet-<yyyy>-<mm><letter>.ts`), listed newest first in `index.ts`.
+/* The shape of a selector set (#131; Teams #245, Zoom #246): data only, no
+ * code, one file per set (`<platform>-<yyyy>-<mm><letter>.ts` under the
+ * platform's `selectors/`), listed newest first in its `index.ts`.
  *
- * Meet's markup changes every few months and not for everyone at once
- * (phased rollouts, #105), so several sets can be live together: at join
- * and every 30 s the observer picks the first set whose fingerprint passes
- * on the current page, and records which strategy matched per hook. Every
- * hook is an ordered list of named strategies — data or ARIA attributes
- * and structure first, never obfuscated class names (they change weekly
- * and a wrong guess is worse than no name). Matching never depends on
- * visible text or labels (they are localized).
+ * Meeting pages change every few months and not for everyone at once
+ * (phased rollouts, #105; Teams serves two UI variants in one tenant,
+ * #239), so several sets can be live together: at join and every 30 s the
+ * observer picks the first set whose fingerprint passes on the current
+ * page, and records which strategy matched per hook. Every hook is an
+ * ordered list of named strategies — data or ARIA attributes and structure
+ * first, never obfuscated class names (they change weekly and a wrong guess
+ * is worse than no name). Matching never depends on visible text or labels
+ * (they are localized).
  *
- * A fix is a new set file plus a synthetic fixture under `../fixtures/`
- * rebuilt from the live page's structure (no real names), with a test. */
+ * A fix is a new set file plus a synthetic fixture under the platform's
+ * `fixtures/` rebuilt from the live page's structure (no real names), with
+ * a test. */
 
 /** Elements found by a CSS selector (relative to the document, or to a
  *  tile for the per-tile hooks). */
@@ -38,7 +41,7 @@ export interface IdStrategy {
 
 export interface SelectorSet {
   id: string;
-  /** Date the values were checked on a live Meet page (null: not yet). */
+  /** Date the values were checked on a live meeting page (null: not yet). */
   verifiedOn: string | null;
   /** UI languages the check covered. */
   locales: string[];
@@ -53,6 +56,10 @@ export interface SelectorSet {
     selfMarker: AttrStrategy[];
     /** The tile is lit as speaking. */
     speaking: AttrStrategy[];
+    /** Optional, document-wide: while any of these is on the page, the lit
+     *  tile can't be trusted (Zoom's screen share keeps the spotlight on
+     *  the presenter, #239) — no votes and no tile timeline meanwhile. */
+    pause?: FindStrategy[];
   };
   /** The set applies when at least this many tiles with an id are found. */
   fingerprint: { minTiles: number };

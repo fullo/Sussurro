@@ -275,7 +275,7 @@ Three layers, in order of reliability:
    link it to a person in the People registry.
 
 Teams web and Zoom web get layers 1 and 3 in 0.9; their name observers are
-added when time allows, with the same fallback.
+added when time allows, with the same fallback (done in 0.11: #245, #246).
 
 **People registry**: name, email, aliases. Stored in the archive at
 `<archive>/.sussurro/people.json` so it travels with the archive. When a
