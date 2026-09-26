@@ -42,6 +42,7 @@ export function LibraryScreen({
   onCount,
   onNew,
   onOpenSettings,
+  onOpenModels,
 }: {
   ctl: Ctl;
   selectedId: string | null;
@@ -53,6 +54,8 @@ export function LibraryScreen({
   onNew: () => void;
   /** Open a Settings section (the calendar panel links to its settings). */
   onOpenSettings?: (s: SectionId) => void;
+  /** Open Models (read aloud points to Models → Voices, #256). */
+  onOpenModels?: () => void;
 }) {
   const [query, setQuery] = useState("");
   /** Type chips + facets (#135), remembered across screens and restarts. */
@@ -254,6 +257,7 @@ export function LibraryScreen({
               version={version}
               onChanged={onChanged}
               onOpenSettings={onOpenSettings}
+              onOpenModels={onOpenModels}
               onDeleted={() => {
                 onSelect(null);
                 onChanged();

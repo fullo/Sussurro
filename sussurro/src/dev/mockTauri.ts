@@ -25,7 +25,7 @@ import { version as pkgVersion } from "../../package.json";
 import { emit } from "@tauri-apps/api/event";
 import { linkEmail, mergePreview, nameKey, parseAliases, personFor, personProblems } from "../lib/people";
 import { DATE_BUCKETS, localToday, type DateBucket, type Facets, type FacetValue } from "../lib/facets";
-import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Participant, Person, Recipe, Segment, Settings, VoiceStatus, OwnVoiceStatus } from "../lib/types";
+import type { AudioFile, CompanionDoc, DocSpeaker, Item, ItemMeta, ItemSummary, LlmProfile, Participant, Person, ReadAloudJob, Recipe, Segment, Settings, SpeechStatus, VoiceStatus, OwnVoiceStatus } from "../lib/types";
 import { singleChannel } from "../lib/ownVoice";
 import type { CalendarAttendee, CalendarLinkStatus, CalendarMatch, PlannedAttendee } from "../lib/calendar";
 import { nameFromEmail } from "../lib/participants";
@@ -161,6 +161,9 @@ interface Stored {
   sourceFile?: "available" | "missing" | "changed";
   /** Saved audio in the item folder (#141). */
   audio?: AudioFile[];
+  /** Generated speech (read aloud, #256), with the text it was read from
+   *  (standing in for the frontmatter's text hash). */
+  speech?: (SpeechStatus & { text: string })[];
 }
 
 /** A run's saved audio (#141): 16 kHz 16-bit mono WAV, 32 000 bytes/s,
@@ -578,8 +581,84 @@ function toItem(s: Stored): Item {
     external_hosts: hostsOf(s.id),
     embedded_segments: s.voiceOf ? Object.keys(s.voiceOf).length : 0,
     audio: (s.audio ?? []).map((f) => ({ ...f })),
-    folder_bytes: 4_096 + body.length + (s.audio ?? []).reduce((n, f) => n + f.bytes, 0),
+    speech: (s.speech ?? []).map((f) => ({ name: f.file, bytes: f.bytes })),
+    folder_bytes: 4_096 + body.length + [...(s.audio ?? []), ...(s.speech ?? [])].reduce((n, f) => n + f.bytes, 0),
   };
+}
+
+// ---- Read aloud of an item (#256): mirrors tts::read_aloud ----
+let readJob: ReadAloudJob | null = null;
+let readCancel = false;
+let readListens = 0;
+
+/** Mirrors archive::speech::speech_file_name (the hash is faked). */
+function speechFileName(document: string): string {
+  if (document === "transcript.md") return "speech.opus";
+  const stem = document.replace(/\.md$/i, "");
+  const slug = stem.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug === stem && slug ? `speech-${slug}.opus` : `speech-${slug ? `${slug}-` : ""}1a2b3c4d.opus`;
+}
+
+function documentText(s: Stored, document: string): string | null {
+  if (document === "transcript.md") return toItem(s).body;
+  const d = (docs[s.id] ?? []).find((x) => x.file === document);
+  return d ? d.body : null;
+}
+
+function speechStatuses(s: Stored): SpeechStatus[] {
+  return (s.speech ?? []).map(({ text, ...f }) => {
+    const now = documentText(s, f.document);
+    return { ...f, stale: now !== null && now !== text, source_missing: now === null };
+  });
+}
+
+async function readAloud(id: string, document: string | null, language: string | null, save: boolean) {
+  if (!settings.tts_enabled) throw "Read aloud is off — turn it on in Settings → Experimental.";
+  const s = find(id);
+  if (!s) throw `no archive item '${id}'`;
+  if (s.recording) throw `'${id}' is still being recorded — read it aloud when the session ends`;
+  const doc = document ?? "transcript.md";
+  const text = documentText(s, doc);
+  if (text === null) throw `no document '${doc}' in '${id}'`;
+  const code = (language || s.meta.language || "").toLowerCase().split(/[-_]/)[0];
+  if (!TTS_CATALOG.some((l) => l.code === code)) throw `Read aloud has no voice for '${code}' — pick one of Italian, English to read it in.`;
+  const voice = ttsVoiceOf(code);
+  if (!ttsDisk[code]?.model || !ttsDisk[code].voices.has(voice))
+    throw `The read-aloud voice ${voice} is not downloaded — download it in Models → Voices.`;
+  if (readJob) throw "Sussurro is already reading a document aloud — wait for it or cancel it.";
+  const total = Math.max(1, Math.ceil(text.length / 160));
+  readCancel = false;
+  readJob = { item_id: id, document: doc, save, language: code, voice, done: 0, total };
+  try {
+    for (let i = 0; i <= total; i++) {
+      if (readCancel) throw "reading cancelled";
+      readJob = { ...readJob, done: i };
+      ev("read-aloud-progress", readJob);
+      if (i < total) await new Promise((r) => setTimeout(r, 300));
+    }
+    const seconds = Math.round(text.length / 15);
+    if (!save) return { file: `tts-preview/listen-${++readListens}.opus`, save, seconds, chunks: total };
+    const file = speechFileName(doc);
+    const entry = {
+      file,
+      bytes: seconds * 3_000,
+      document: doc,
+      voice,
+      language: code,
+      engine: "Pocket TTS",
+      date: new Date().toISOString().slice(0, 19),
+      marked: ["metadata"],
+      recorded: true,
+      stale: false,
+      source_missing: false,
+      text,
+    };
+    s.speech = [...(s.speech ?? []).filter((f) => f.file !== file), entry].sort((x, y) => x.file.localeCompare(y.file));
+    return { file, save, seconds, chunks: total };
+  } finally {
+    readJob = null;
+    ev("read-aloud-progress", null);
+  }
 }
 
 function toSummary(s: Stored, snippet?: string): ItemSummary {
@@ -1503,6 +1582,27 @@ function handle(cmd: string, a: Args): unknown {
       }
       return null;
     }
+    case "read_aloud_start":
+      return readAloud(String(a.id), (a.document as string | null) ?? null, (a.language as string | null) ?? null, !!a.save);
+    case "read_aloud_cancel":
+      readCancel = readJob !== null;
+      return readCancel;
+    case "read_aloud_job":
+      return readJob;
+    case "read_aloud_files": {
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      return speechStatuses(s);
+    }
+    case "read_aloud_delete": {
+      const s = find(String(a.id));
+      if (!s) throw `no archive item '${a.id}'`;
+      if (!/^speech(-[a-z0-9-]+)?\.(opus|wav)$/.test(String(a.file))) throw `'${a.file}' is not a speech file`;
+      s.speech = (s.speech ?? []).filter((f) => f.file !== a.file);
+      return null;
+    }
+    case "read_aloud_discard":
+      return null;
     case "tts_preview": {
       if (!settings.tts_enabled) throw "Read aloud is off — turn it on in Settings → Experimental.";
       const code = String(a.language);

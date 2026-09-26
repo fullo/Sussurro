@@ -435,6 +435,9 @@ export interface Item {
   /** Saved audio in the item folder (#141): `audio.wav`, or one file per
    *  channel (`audio-mic.wav`, `audio-remote.wav`…). Empty = none. */
   audio?: AudioFile[];
+  /** Generated speech in the item folder (read aloud, #256): `speech.opus`,
+   *  `speech-<document>.opus` — synthetic, never a recording. */
+  speech?: AudioFile[];
   /** Size of the item folder on disk, audio included (#141). */
   folder_bytes?: number;
 }
@@ -751,4 +754,46 @@ export interface TtsStatus {
   downloading: TtsDownloadProgress | null;
   /** Language whose model is in memory now. */
   loaded: string | null;
+}
+
+/** A generated speech file of an item (read aloud, #256). */
+export interface SpeechStatus {
+  file: string;
+  bytes: number;
+  /** What was read: `transcript.md` or a companion document; empty when
+   *  the frontmatter has no record of the file. */
+  document: string;
+  voice: string;
+  language: string;
+  engine: string;
+  date: string;
+  /** Marks the file carries (P21): "metadata", "watermark" (#257). */
+  marked: string[];
+  /** The frontmatter records the file. */
+  recorded: boolean;
+  /** The document's text changed since the speech was made. */
+  stale: boolean;
+  /** The document it was read from is gone. */
+  source_missing: boolean;
+}
+
+/** The read-aloud job in progress (`read_aloud_job`, `read-aloud-progress`). */
+export interface ReadAloudJob {
+  item_id: string;
+  document: string;
+  save: boolean;
+  language: string;
+  voice: string;
+  done: number;
+  total: number;
+}
+
+/** What `read_aloud_start` made. */
+export interface ReadAloudOutcome {
+  /** Saved: the file in the item folder; Listen: the `sussurro-audio:`
+   *  path of the temporary file. */
+  file: string;
+  save: boolean;
+  seconds: number;
+  chunks: number;
 }

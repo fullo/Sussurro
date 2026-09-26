@@ -186,6 +186,7 @@ export function Shell({ ctl }: { ctl: Ctl }) {
             onCount={setLibraryCount}
             onNew={() => setScreen("new")}
             onOpenSettings={(s) => { setSection(s); setScreen("settings"); }}
+            onOpenModels={() => setScreen("models")}
           />
         )}
         {screen === "people" && <PeopleScreen ctl={ctl} />}

@@ -1160,3 +1160,22 @@ button.pchip-name:hover { text-decoration: underline; }
 .tts-voice-pick { display: inline-flex; align-items: center; gap: 6px; min-width: 90px; }
 .tts-voice-source { font-size: 12px; }
 .tts-progress .progress { width: 200px; }
+/* Generated speech in the Audio tab (read aloud, #256): always labelled
+   synthetic, kept apart from recorded audio. */
+.ra { margin: 12px 12px 4px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: var(--radius); background: var(--c-surface); display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
+.ra-head h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; color: var(--c-dark); }
+.ra-note { margin: 2px 0 0; font-size: 12px; }
+.ra-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ra-file { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.ra-file p { margin: 0; }
+.ra-synthetic { font-size: 10.5px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 0 6px; line-height: 16px; }
+.ra-name { font-size: 11.5px; }
+.ra-facts { font-size: 12px; }
+.ra-stale, .ra-missing { margin: 0; font-size: 12.5px; color: var(--warn); }
+.ra-audio { width: 100%; max-width: 520px; height: 36px; }
+.ra-make { display: flex; flex-direction: column; gap: 8px; }
+.ra-listen { display: flex; flex-direction: column; gap: 2px; }
+.ra-listen p, .ra-off { margin: 0; font-size: 12px; }
+.au-with-speech { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.au-speech-slot { flex: 0 1 auto; max-height: 45%; overflow-y: auto; }
+.au-recorded-head { margin: 8px 18px 0; font-size: 13px; color: var(--c-dark); }
