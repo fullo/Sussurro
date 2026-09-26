@@ -166,6 +166,19 @@ that allow commercial use are offered (Common Voice, voice donations,
 LibriVox, VCTK, Alba MacKenna), and no voice cloning is included. The
 engine leaves memory after 5 minutes unused.
 
+With the module on, an item's **Audio** tab gets a *Generated speech*
+section: pick the transcript or one of its documents and a language, then
+**Listen** (a temporary file, deleted when you close the document) or
+**Save as speech file** — `speech.opus` (or `speech-<document>.opus`) next
+to the item, read with the voice picked for that language in Models →
+Voices. It runs in the background with progress and Cancel. Generated
+speech is always labelled *Synthetic*, is never named like a recording
+(`audio*.opus`), and says so in the file itself (Ogg Opus comments
+`SYNTHETIC=1`, engine, voice) and in the item's frontmatter (`speech:`,
+`synthetic:`); an inaudible watermark follows in a later release. When the
+text changes after the speech was made, the tab says it is out of date.
+*Delete…* moves a speech file to the trash.
+
 ## Getting started
 
 Download the installer for your OS from the
@@ -445,7 +458,8 @@ account:
 | Dictation history and usage stats | `history.jsonl`, `stats.json` in the app's data folder |
 | Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
 | Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
-| Read-aloud models and voices (experimental, only if you download them) | `models/pocket-tts/` in the same folder; voice previews are temporary files in `tts-preview/` in the app's data folder, deleted at the next start |
+| Read-aloud models and voices (experimental, only if you download them) | `models/pocket-tts/` in the same folder; voice previews and *Listen* files are temporary files in `tts-preview/` in the app's data folder, deleted when replaced, when the document closes and at the next start |
+| Generated speech (read aloud → *Save as speech file*) | `speech.opus` / `speech-<document>.opus` in the item's archive folder, marked synthetic in the file and the frontmatter |
 | Voice profiles of people with *Recognise this voice* on, and your own voice if you recorded it (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
 | *Not X* answers to voice suggestions (0.11) | `voice_dismissals.json` in the app's data folder (ids only; readable only by you on macOS and Linux) |
 

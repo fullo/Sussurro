@@ -765,13 +765,46 @@ project decisions here, not in per-machine memory.**
   shared idle thread. Previews are temporary WAVs (`<app data>/tts-preview/`,
   swept at startup) served by `sussurro-audio:` under `tts-preview/` — no
   CSP change. WAVs carry a `LIST/INFO` "synthetic speech" comment; the
-  watermark is #264. Generation per #254 chunk, re-cut at 50 tokens; voice
+  watermark is #257. Generation per #254 chunk, re-cut at 50 tokens; voice
   and decoder state restart per piece; temperature 0.7, fixed seed (same
   text = same audio). Live test (`tts::live_tests`, env vars in the file)
   on the M1 Pro at 2 threads: Italian RTF ≈ 1.2–1.4, English ≈ 0.4; Whisper
   heard 91 % / 86 % of the words. `licenses.json` has the CC-BY entry
   (`scripts/gen-licenses.mjs`); regenerate with a real `npm ci` install (a
   symlinked `node_modules` makes `npm ls` list dev deps).
+- **Read aloud of an item (0.12, #256, P17/P21/P24)** (`tts/read_aloud.rs`,
+  `archive/speech.rs`, `tts/marking.rs`, `shell/ReadAloudSection.tsx`):
+  transcript or a companion document → `tts::text::prepare` → Pocket with
+  the language's picked voice (item `language:`, or one the user picks) →
+  **24 → 16 kHz windowed-sinc resample** (`tts/resample.rs`; the capture
+  path's linear resampler would alias the 8–12 kHz band) → Ogg Opus via the
+  existing `OpusWriter` (16 kHz, 24 kb/s — kept at the archive's rate so the
+  `sussurro-audio:` virtual WAV/reader play it unchanged; 24 kHz Opus would
+  need the reader + virtual header to carry a rate). **Save** =
+  `speech.opus` / `speech-<slug>.opus` (clean companion stem, else slug +
+  8 hex of its SHA-256), written to `.sussurro/<file>.part` and moved in
+  under the archive lock (old file → OS trash); **Listen** =
+  `<app data>/tts-preview/listen-N.opus`, deleted at the next Listen, when
+  the document closes (`read_aloud_discard`), at startup and module off.
+  Names `speech(-[a-z0-9-]+)?.(opus|wav)` never match `audio*` (Delete/
+  Compress audio don't touch them); the scheme serves both
+  (`is_playable_file_name`). Frontmatter app-owned `speech: [...]` +
+  `synthetic: {<file>: {document, generator, engine, voice, language, date,
+  text_sha256, marked}}` (per file, not the plan's single block);
+  `update_meta` ignores both from the UI. **Marking (P21)**: every file
+  goes through `tts::marking::Marker` — Opus comments `SYNTHETIC=1`,
+  `DIGITAL_SOURCE_TYPE=…trainedAlgorithmicMedia`, engine, voice, language
+  (`OpusWriter::create_tagged`, `opus::read_tags`); `Marker::process` is the
+  single **watermark hook for #257** (no-op now, `marked: [metadata]`), the
+  preview passes it too. **Stale** = SHA-256 of the speakable text (not the
+  frontmatter) ≠ the recorded one. One job at a time (`read_aloud::jobs()`),
+  progress `read-aloud-progress`, cancel between chunks; refused while off,
+  on a live item, or with the model/voice missing (points to Models →
+  Voices, never downloads); `tts_delete` refuses during a job; files list
+  and delete work while the module is off. Commands `read_aloud_start`,
+  `_cancel`, `_job`, `_files`, `_delete`, `_discard`. Live test
+  `live_read_aloud_saves_a_marked_speech_file` (English M1 Pro, 2 threads:
+  6.3 s of speech in 3.4 s).
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at
