@@ -28,7 +28,8 @@ pub fn set_settings(
     // The model name flows into models_dir.join(name) for download and load —
     // reject traversal/absolute paths before anything touches the filesystem.
     models::validate_model_name(&settings.whisper_model).map_err(|e| e.to_string())?;
-    hotkey::apply(&app, &settings.hotkey).map_err(|e| e.to_string())?;
+    let prev_hotkey = state.settings.lock().unwrap().hotkey.clone();
+    hotkey::change(&app, &prev_hotkey, &settings.hotkey).map_err(|e| format!("{e:#}"))?;
     // Only touch the OS launch entry when the state actually changes:
     // disabling a never-registered entry fails with os error 2 on Windows.
     let autolaunch = app.autolaunch();
