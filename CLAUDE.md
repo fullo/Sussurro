@@ -476,7 +476,7 @@ project decisions here, not in per-machine memory.**
   24 kHz / 32 kb/s (#309, see #256). Startup recovery (`repair_any`) cuts a crashed `.opus`
   after its last whole page and sets EOS (empty stream if the headers were
   cut); foreign files untouched. Windows MSVC link is checked on every PR
-  by the `opus-windows` job (`cargo test -p opus`).
+  by the `rust-windows` job (`cargo test -p opus`, plus the whole Rust suite on Windows).
 - **Opus playback, decode and Compress audio (0.11, #248, P16/E15)**:
   `AudioFormat`'s default is **Opus for new installs**; a settings file
   without `saved_audio_format` (an existing user) is pinned to WAV and saved
