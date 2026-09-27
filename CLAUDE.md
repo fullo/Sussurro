@@ -200,8 +200,11 @@ project decisions here, not in per-machine memory.**
   connections. Patched: an unread body closes the connection (nothing read
   or allocated), head ≤ 64 KiB / ≤ 100 headers (431), chunked framing
   lines ≤ 4 KiB, ambiguous `Content-Length`/`Transfer-Encoding` → 400,
-  ≤ 128 connections, 30 s socket timeouts lifted on the `/live` upgrade
-  (`tiny_http::Limits`). Residual (accepted): a local process can hold all
+  ≤ 128 connections, 30 s socket timeouts (`tiny_http::Limits`) kept on a
+  `/live` upgrade until the client authenticates (bounded by the 2 s auth
+  deadline; `Request::upgrade_with_timeouts`), lifted after. Connection
+  clones share one socket (`Arc`): on Windows a duplicated socket keeps its
+  own timeouts. Residual (accepted): a local process can hold all
   128 connections and deny the API, not crash it. Don't replace the
   vendored crate with the crates.io one; moving to hyper would be a
   separate decision.
@@ -476,7 +479,7 @@ project decisions here, not in per-machine memory.**
   24 kHz / 32 kb/s (#309, see #256). Startup recovery (`repair_any`) cuts a crashed `.opus`
   after its last whole page and sets EOS (empty stream if the headers were
   cut); foreign files untouched. Windows MSVC link is checked on every PR
-  by the `opus-windows` job (`cargo test -p opus`).
+  by the `rust-windows` job (`cargo test -p opus`, plus the whole Rust suite on Windows).
 - **Opus playback, decode and Compress audio (0.11, #248, P16/E15)**:
   `AudioFormat`'s default is **Opus for new installs**; a settings file
   without `saved_audio_format` (an existing user) is pinned to WAV and saved
