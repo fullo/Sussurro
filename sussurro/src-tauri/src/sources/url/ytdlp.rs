@@ -732,10 +732,18 @@ mod tests {
     #[test]
     fn yt_dlp_never_inherits_proxy_variables() {
         let cmd = command(Path::new("/bin/yt-dlp"));
+        // Windows env keys are case-insensitive: `http_proxy` and
+        // `HTTP_PROXY` are one entry, listed under the first spelling.
+        let same = |k: &OsStr, var: &str| {
+            if cfg!(windows) {
+                k.eq_ignore_ascii_case(var)
+            } else {
+                k == OsStr::new(var)
+            }
+        };
         for var in PROXY_VARS {
             assert!(
-                cmd.get_envs()
-                    .any(|(k, v)| k == OsStr::new(var) && v.is_none()),
+                cmd.get_envs().any(|(k, v)| same(k, var) && v.is_none()),
                 "{var} is removed"
             );
         }

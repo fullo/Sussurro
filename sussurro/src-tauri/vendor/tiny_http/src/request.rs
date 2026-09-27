@@ -73,6 +73,23 @@ pub struct Request {
 
     // If Some, a message must be sent after responding
     notify_when_responded: Option<Sender<()>>,
+
+    // Sussurro: the connection's socket, handed out by `upgrade_with_timeouts`.
+    pub(crate) socket: Option<crate::connection::Connection>,
+}
+
+/// Sussurro: the read/write timeouts of an upgraded connection's socket.
+///
+/// The server keeps its HTTP `io_timeout` on a socket after an upgrade;
+/// the caller lifts it (`set(None)`) once the peer is trusted, so an
+/// unauthenticated upgrade can't hold a connection open forever.
+pub struct SocketTimeouts(crate::connection::Connection);
+
+impl SocketTimeouts {
+    /// Sets the read and write timeouts (`None`: wait forever).
+    pub fn set(&self, timeout: Option<std::time::Duration>) -> std::io::Result<()> {
+        self.0.set_timeouts(timeout)
+    }
 }
 
 struct NotifyOnDrop<R> {
@@ -243,6 +260,7 @@ where
         body_length: content_length,
         must_send_continue: expects_continue,
         notify_when_responded: None,
+        socket: None,
     })
 }
 
@@ -336,6 +354,18 @@ impl Request {
         } else {
             Box::new(stream) as Box<dyn ReadWrite + Send>
         }
+    }
+
+    /// Sussurro: [`upgrade`](Self::upgrade), plus the socket's timeouts —
+    /// still the server's HTTP `io_timeout` — for the caller to lift once
+    /// the peer is trusted. `None` if the socket couldn't be kept.
+    pub fn upgrade_with_timeouts<R: Read>(
+        mut self,
+        protocol: &str,
+        response: Response<R>,
+    ) -> (Box<dyn ReadWrite + Send>, Option<SocketTimeouts>) {
+        let timeouts = self.socket.take().map(SocketTimeouts);
+        (self.upgrade(protocol, response), timeouts)
     }
 
     /// Allows to read the body of the request.

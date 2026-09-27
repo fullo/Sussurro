@@ -5,6 +5,7 @@ use std::os::unix::net as unix_net;
 use std::{
     net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
     path::PathBuf,
+    sync::Arc,
 };
 
 /// Unified listener. Either a [`TcpListener`] or [`std::os::unix::net::UnixListener`]
@@ -45,35 +46,40 @@ impl From<unix_net::UnixListener> for Listener {
 }
 
 /// Unified connection. Either a [`TcpStream`] or [`std::os::unix::net::UnixStream`].
+///
+/// Sussurro: clones share one OS socket (`Arc`) instead of duplicating it. On
+/// Windows a duplicated socket keeps its own read/write timeouts, so lifting
+/// them on one clone at a WebSocket upgrade left the reading half on the HTTP
+/// timeout; with a single socket the change reaches every half.
 #[derive(Debug)]
 pub(crate) enum Connection {
-    Tcp(TcpStream),
+    Tcp(Arc<TcpStream>),
     #[cfg(unix)]
-    Unix(unix_net::UnixStream),
+    Unix(Arc<unix_net::UnixStream>),
 }
 impl std::io::Read for Connection {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
-            Self::Tcp(s) => s.read(buf),
+            Self::Tcp(s) => std::io::Read::read(&mut &**s, buf),
             #[cfg(unix)]
-            Self::Unix(s) => s.read(buf),
+            Self::Unix(s) => std::io::Read::read(&mut &**s, buf),
         }
     }
 }
 impl std::io::Write for Connection {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            Self::Tcp(s) => s.write(buf),
+            Self::Tcp(s) => std::io::Write::write(&mut &**s, buf),
             #[cfg(unix)]
-            Self::Unix(s) => s.write(buf),
+            Self::Unix(s) => std::io::Write::write(&mut &**s, buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
-            Self::Tcp(s) => s.flush(),
+            Self::Tcp(s) => std::io::Write::flush(&mut &**s),
             #[cfg(unix)]
-            Self::Unix(s) => s.flush(),
+            Self::Unix(s) => std::io::Write::flush(&mut &**s),
         }
     }
 }
@@ -112,21 +118,21 @@ impl Connection {
 
     pub(crate) fn try_clone(&self) -> std::io::Result<Self> {
         match self {
-            Self::Tcp(s) => s.try_clone().map(Self::from),
+            Self::Tcp(s) => Ok(Self::Tcp(Arc::clone(s))),
             #[cfg(unix)]
-            Self::Unix(s) => s.try_clone().map(Self::from),
+            Self::Unix(s) => Ok(Self::Unix(Arc::clone(s))),
         }
     }
 }
 impl From<TcpStream> for Connection {
     fn from(s: TcpStream) -> Self {
-        Self::Tcp(s)
+        Self::Tcp(Arc::new(s))
     }
 }
 #[cfg(unix)]
 impl From<unix_net::UnixStream> for Connection {
     fn from(s: unix_net::UnixStream) -> Self {
-        Self::Unix(s)
+        Self::Unix(Arc::new(s))
     }
 }
 

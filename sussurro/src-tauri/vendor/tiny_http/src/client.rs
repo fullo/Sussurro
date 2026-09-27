@@ -35,7 +35,8 @@ pub struct ClientConnection {
     // connection then closes (`util::close_flag`).
     close: CloseFlag,
 
-    // Sussurro (#223): the socket, to lift its timeouts on an upgrade.
+    // Sussurro (#223): the socket, handed to each request so that an
+    // upgrade can lift its timeouts (`Request::upgrade_with_timeouts`).
     socket: Option<Connection>,
 
     // set to true if we know that the previous request is the last one
@@ -223,7 +224,7 @@ impl ClientConnection {
         std::mem::swap(&mut self.next_header_source, &mut data_source);
 
         // building the next reader
-        let request = crate::request::new_request(
+        let mut request = crate::request::new_request(
             self.secure,
             method,
             path,
@@ -245,6 +246,7 @@ impl ClientConnection {
         })?;
 
         // return the request
+        request.socket = self.socket.as_ref().and_then(|s| s.try_clone().ok());
         Ok(request)
     }
 }
@@ -336,13 +338,11 @@ impl Iterator for ClientConnection {
             match lowercase {
                 Some(ref val) if val.contains("close") => self.no_more_requests = true,
                 Some(ref val) if val.contains("upgrade") => {
-                    self.no_more_requests = true;
-                    // Sussurro (#223): an upgraded stream (the app's WebSocket)
-                    // waits for messages as long as it likes; the timeouts
-                    // the server set at accept are for HTTP only.
-                    if let Some(socket) = &self.socket {
-                        socket.set_timeouts(None).ok();
-                    }
+                    // Sussurro (#223): the timeouts stay on after an upgrade;
+                    // the caller lifts them once the peer is trusted
+                    // (`Request::upgrade_with_timeouts`), so an unauthenticated
+                    // upgrade can't hold the connection open forever.
+                    self.no_more_requests = true
                 }
                 Some(ref val)
                     if !val.contains("keep-alive") && *rq.http_version() == HTTPVersion(1, 0) =>
