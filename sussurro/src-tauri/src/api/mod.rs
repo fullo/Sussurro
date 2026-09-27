@@ -229,8 +229,9 @@ pub fn parse_url(url: &str) -> (&str, HashMap<String, String>) {
 ///     `chunked` or next to a length) is a 400 and close;
 ///   - at most 128 connections at once (more are closed at accept; each
 ///     holds a thread), and a 30 s socket read/write timeout while a
-///     connection speaks HTTP — lifted on the `/live` upgrade, whose idle
-///     waits are the extension's own ([`live`]).
+///     connection speaks HTTP — kept on a `/live` upgrade until the client
+///     authenticates (then bounded by the auth deadline), lifted after, when
+///     idle waits are the extension's own ([`live`]).
 ///
 /// Residual: a local process can hold every connection (128 idle or
 /// trickling sockets, each re-arming the 30 s timeout) and so deny the API
@@ -624,7 +625,7 @@ fn upgrade_live(host: &Arc<dyn Host>, request: tiny_http::Request, auth: live::L
         tiny_http::Header::from_bytes(&b"Sec-WebSocket-Accept"[..], accept.as_bytes())
             .expect("header"),
     );
-    let stream = request.upgrade("websocket", response);
+    let (stream, timeouts) = request.upgrade_with_timeouts("websocket", response);
     let host = host.clone();
     std::thread::spawn(move || {
         let ws = tungstenite::WebSocket::from_raw_socket(
@@ -632,7 +633,11 @@ fn upgrade_live(host: &Arc<dyn Host>, request: tiny_http::Request, auth: live::L
             tungstenite::protocol::Role::Server,
             Some(live::ws_config()),
         );
-        live::serve(ws, &*host, auth);
+        live::serve(ws, &*host, auth, &|t| {
+            if let Some(s) = &timeouts {
+                let _ = s.set(t);
+            }
+        });
     });
 }
 

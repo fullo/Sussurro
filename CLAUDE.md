@@ -200,8 +200,11 @@ project decisions here, not in per-machine memory.**
   connections. Patched: an unread body closes the connection (nothing read
   or allocated), head ≤ 64 KiB / ≤ 100 headers (431), chunked framing
   lines ≤ 4 KiB, ambiguous `Content-Length`/`Transfer-Encoding` → 400,
-  ≤ 128 connections, 30 s socket timeouts lifted on the `/live` upgrade
-  (`tiny_http::Limits`). Residual (accepted): a local process can hold all
+  ≤ 128 connections, 30 s socket timeouts (`tiny_http::Limits`) kept on a
+  `/live` upgrade until the client authenticates (bounded by the 2 s auth
+  deadline; `Request::upgrade_with_timeouts`), lifted after. Connection
+  clones share one socket (`Arc`): on Windows a duplicated socket keeps its
+  own timeouts. Residual (accepted): a local process can hold all
   128 connections and deny the API, not crash it. Don't replace the
   vendored crate with the crates.io one; moving to hyper would be a
   separate decision.
