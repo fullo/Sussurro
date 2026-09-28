@@ -894,8 +894,8 @@ project decisions here, not in per-machine memory.**
   (so `tts_delete` of everything removes them); **every download job that
   finds them missing brings them** (same click, counted in the
   confirmation — P24; `tts_download { watermarkOnly }` for models from before
-  #257). **Fail closed**: `Marker::new` needs the generator; read aloud,
-  *Listen* and previews refuse without it (checked before any work), no
+  #257). **Fail closed**: `Marker::new` needs the generator; read aloud
+  and previews refuse without it (checked before any work), no
   switch anywhere. **M16**: `watermark::M16` streams — audio → 16 kHz
   (`tts/resample.rs`), generator on ≤ 10 s windows padded to the 320-sample
   hop, watermark → back to the audio's rate and added; the output lags up
@@ -943,8 +943,7 @@ project decisions here, not in per-machine memory.**
   to the trash with the old audio (also when the new file is unsigned);
   *Delete speech* trashes both; `is_speech_sidecar_name` is not playable
   (the scheme never serves `.c2pa`); Delete/Compress audio untouched.
-  *Listen* gets `listen-N.c2pa` in `tts-preview/` (cleared with it);
-  previews (WAV) embed the manifest. Frontmatter `marked` gains
+  Voice previews (WAV) embed the manifest. Frontmatter `marked` gains
   `signature`. No speech export path exists, so nothing else embeds.
   *Check a file*: embedded manifest (wav/mp3/m4a/flac) first, else the
   `<same stem>.c2pa` next to the picked file through `open_picked_file`

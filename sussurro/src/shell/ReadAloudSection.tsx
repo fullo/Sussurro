@@ -139,6 +139,8 @@ export function ReadAloudSection({
 
   const start = async () => {
     setError("");
+    // Create again replaces the file the player may be streaming.
+    if (existing && playing?.file === existing.file) setPlaying(null);
     try {
       const out = await invoke<ReadAloudOutcome>("read_aloud_start", {
         id: item.id,
