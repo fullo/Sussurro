@@ -3109,8 +3109,10 @@ pub async fn tts_status(
 /// Download a language's model (when missing) and a voice — only on the
 /// user's click in Models → Voices, after the size and licence were shown,
 /// and only while the module is on (P24). `voice` defaults to the
-/// language's selected voice; `voice_only` skips the model. Progress goes
-/// out as `tts-download-progress` (null when the job ends).
+/// language's selected voice; `voice_only` skips the model. The watermark
+/// models (#257) come too when missing; `watermark_only` fetches just them
+/// (TTS models downloaded before #257). Progress goes out as
+/// `tts-download-progress` (null when the job ends).
 #[tauri::command]
 pub async fn tts_download(
     app: AppHandle,
@@ -3118,6 +3120,7 @@ pub async fn tts_download(
     language: String,
     voice: Option<String>,
     voice_only: Option<bool>,
+    watermark_only: Option<bool>,
 ) -> Result<(), String> {
     use tauri::Emitter;
     let (dir, picks) = tts_on(&state)?;
@@ -3130,21 +3133,27 @@ pub async fn tts_download(
         let fetch = crate::tts::models::HttpFetch::new()?;
         let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
         let mut file = String::new();
-        crate::tts::service::global().download(
-            &fetch,
-            &dir,
-            lang.code,
-            &voice,
-            voice_only.unwrap_or(false),
-            &mut |p| {
-                // A few updates a second, and every new file.
-                if p.file != file || last.elapsed() >= std::time::Duration::from_millis(250) {
-                    file = p.file.clone();
-                    last = std::time::Instant::now();
-                    let _ = emitter.emit("tts-download-progress", p);
-                }
-            },
-        )
+        let mut report = |p: &crate::tts::models::Progress| {
+            // A few updates a second, and every new file.
+            if p.file != file || last.elapsed() >= std::time::Duration::from_millis(250) {
+                file = p.file.clone();
+                last = std::time::Instant::now();
+                let _ = emitter.emit("tts-download-progress", p);
+            }
+        };
+        let service = crate::tts::service::global();
+        if watermark_only.unwrap_or(false) {
+            service.download_watermark(&fetch, &dir, lang.code, &mut report)
+        } else {
+            service.download(
+                &fetch,
+                &dir,
+                lang.code,
+                &voice,
+                voice_only.unwrap_or(false),
+                &mut report,
+            )
+        }
     })
     .await;
     let _ = app.emit("tts-download-progress", Option::<()>::None);
@@ -3224,6 +3233,53 @@ pub async fn tts_preview(
         Ok(format!("{}{name}", crate::tts::service::PREVIEW_PREFIX))
     })
     .await
+}
+
+/// *Check a file* (#257, E17): the native picker opens from Rust (no path
+/// crosses IPC), the picked audio file is opened with the import guards
+/// (audio extensions only, no links, ≤ 2 GiB) and read by the AudioSeal
+/// detector plus its tags — on this computer, nothing is uploaded. Needs
+/// the detector, downloaded with the read-aloud models: never downloaded
+/// here. `None` when the user cancelled. Main window only.
+#[tauri::command]
+pub async fn watermark_check_file(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::tts::check::CheckResult>, String> {
+    use crate::tts::check;
+    use tauri_plugin_dialog::DialogExt;
+
+    crate::config_io::check_import_caller(window.label())?;
+    let (models, _, _) = tts_context(&state);
+    if !crate::tts::models::detector_present(&models) {
+        return Err("Check a file needs the watermark detector, which is downloaded with the read-aloud models — download a voice in Models → Voices.".into());
+    }
+    let dialog = window
+        .dialog()
+        .file()
+        .set_title("Choose an audio file to check")
+        .add_filter("Audio", check::EXTENSIONS)
+        .set_parent(&window);
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(picked) = dialog.blocking_pick_file() else {
+            return Ok(None);
+        };
+        let path = picked
+            .into_path()
+            .map_err(|e| format!("could not read file: {e}"))?;
+        let file =
+            crate::config_io::open_picked_file(&path, check::EXTENSIONS, check::MAX_FILE_BYTES)
+                .map_err(|e| format!("could not read file: {e:#}"))?;
+        let detector_path =
+            crate::tts::models::watermark_path(&models, &crate::tts::catalog::WATERMARK_DETECTOR);
+        let mut detector = crate::tts::watermark::AudioSealDetector::load(&detector_path)
+            .map_err(|e| format!("{e:#}"))?;
+        check::check_file(&path, file, &mut detector)
+            .map(Some)
+            .map_err(|e| format!("could not check the file: {e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// *Read aloud* an item's transcript (or its companion `document`) in

@@ -313,6 +313,52 @@ pub const ENGLISH: Language = Language {
     preview: "Hello, I am Sussurro's reading voice. This is how a document will sound when it is read aloud.",
 };
 
+/// The watermark models (#257, P21, E17): Meta's AudioSeal 0.2, the 16-bit
+/// base generator and detector (code and weights MIT), in our own ONNX
+/// export (`scripts/export_audioseal_onnx.py`, a dev tool that never ships)
+/// hosted at [`WATERMARK_REPO`]. Downloaded with the TTS models, on the same
+/// explicit request (P24), into `pocket-tts/audioseal/`, so deleting the
+/// module deletes them too. Without the generator nothing is spoken (fail
+/// closed); the detector is what *Check a file* runs.
+pub const WATERMARK_REPO: &str = "DarumaHQ/audioseal-onnx";
+/// Its pinned revision (the export is bit-for-bit spike #240's).
+pub const WATERMARK_REVISION: &str = "55477a4c93a98fd9c38f59173d506c7e9a803589";
+/// Folder under [`ROOT_DIR`] that holds the two graphs.
+pub const WATERMARK_DIR: &str = "audioseal";
+pub const WATERMARK_LICENCE: &str = "MIT";
+pub const WATERMARK_ATTRIBUTION: &str = "AudioSeal by Meta, ONNX export by DarumaHQ";
+
+/// The generator: `audio` f32 `[B,1,T]` at 16 kHz + `message` i64 `[B,16]`
+/// → `watermark` f32 `[B,1,T]`, added to the audio.
+pub const WATERMARK_GENERATOR: PinnedFile = PinnedFile {
+    remote: "audioseal_generator_16bits.onnx",
+    name: "audioseal_generator_16bits.onnx",
+    bytes: 58_818_989,
+    sha256: "a413f9653f1724554744343e65153a5c1e28b1dc0d58a586d6102f57367f6aab",
+};
+
+/// The detector: `audio` f32 `[B,1,T]` at 16 kHz → `prob` f32 `[B,T]`
+/// (per sample) and `bits` f32 `[B,16]` (probability of a 1).
+pub const WATERMARK_DETECTOR: PinnedFile = PinnedFile {
+    remote: "audioseal_detector_16bits.onnx",
+    name: "audioseal_detector_16bits.onnx",
+    bytes: 34_662_285,
+    sha256: "87ba889b5c097c5e046f44ba916f57b363d88fdaeaf2a4e671faa752eb8e056a",
+};
+
+/// Both watermark files, in download order.
+pub const WATERMARK_FILES: &[PinnedFile] = &[WATERMARK_GENERATOR, WATERMARK_DETECTOR];
+
+/// Bytes of the watermark files.
+pub fn watermark_bytes() -> u64 {
+    WATERMARK_FILES.iter().map(|f| f.bytes).sum()
+}
+
+/// URL of a watermark file at the pinned revision.
+pub fn watermark_url(f: &PinnedFile) -> String {
+    resolve_url(WATERMARK_REPO, WATERMARK_REVISION, f.remote)
+}
+
 /// Every language the module offers, in UI order.
 pub const LANGUAGES: &[Language] = &[ITALIAN, ENGLISH];
 
@@ -401,6 +447,26 @@ mod tests {
     fn sizes_match_what_the_ui_announces() {
         assert_eq!(ITALIAN.model_bytes(), 1_307_501_592);
         assert_eq!(ENGLISH.model_bytes(), 399_783_234);
+    }
+
+    #[test]
+    fn the_watermark_models_are_pinned_to_the_hosted_export() {
+        assert_eq!(watermark_bytes(), 93_481_274);
+        assert!(validate_model_name(WATERMARK_DIR).is_ok());
+        for f in WATERMARK_FILES {
+            assert!(validate_model_name(f.name).is_ok(), "{}", f.name);
+            assert_eq!(f.sha256.len(), 64);
+            assert!(f.sha256.chars().all(|c| c.is_ascii_hexdigit()));
+            let url = watermark_url(f);
+            assert_eq!(
+                url,
+                format!(
+                    "https://huggingface.co/DarumaHQ/audioseal-onnx/resolve/{WATERMARK_REVISION}/{}",
+                    f.name
+                )
+            );
+        }
+        assert_eq!(WATERMARK_LICENCE, "MIT");
     }
 
     #[test]

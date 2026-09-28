@@ -7,7 +7,12 @@
 //! ```text
 //! pocket-tts/<bundle>/bundle.json, tokenizer.model, *.onnx
 //! pocket-tts/<bundle>/voices/<voice>.safetensors
+//! pocket-tts/audioseal/audioseal_{generator,detector}_16bits.onnx   (#257)
 //! ```
+//!
+//! The watermark models (#257) come with every download that finds them
+//! missing — the same click, shown in the same confirmation — because
+//! nothing can be spoken without them (P21, fail closed).
 //!
 //! **Nothing here runs on its own**: every download starts from the
 //! user's click in Models → Voices while the module is on (checked by the
@@ -17,7 +22,7 @@
 //! deletes it (as #90). Partial downloads are `*.part` files, removed when
 //! a download fails or is cancelled.
 
-use super::catalog::{Language, PinnedFile, Voice, ROOT_DIR};
+use super::catalog::{self, Language, PinnedFile, Voice, ROOT_DIR, WATERMARK_DIR, WATERMARK_FILES};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::io::{Read, Write};
@@ -51,6 +56,38 @@ pub fn model_present(models_dir: &Path, lang: &Language) -> bool {
 
 pub fn voice_present(models_dir: &Path, lang: &Language, voice: &Voice) -> bool {
     present(&voice_path(models_dir, lang, voice), &voice.file)
+}
+
+/// Folder of the watermark models (#257).
+pub fn watermark_dir(models_dir: &Path) -> PathBuf {
+    models_dir.join(ROOT_DIR).join(WATERMARK_DIR)
+}
+
+/// Path of one watermark model file.
+pub fn watermark_path(models_dir: &Path, f: &PinnedFile) -> PathBuf {
+    watermark_dir(models_dir).join(f.name)
+}
+
+/// Both watermark models are on disk (the generator is needed to speak).
+pub fn watermark_present(models_dir: &Path) -> bool {
+    WATERMARK_FILES
+        .iter()
+        .all(|f| present(&watermark_path(models_dir, f), f))
+}
+
+/// The watermark detector is on disk (*Check a file*).
+pub fn detector_present(models_dir: &Path) -> bool {
+    let f = &catalog::WATERMARK_DETECTOR;
+    present(&watermark_path(models_dir, f), f)
+}
+
+/// Watermark files not on disk yet, with their URL and destination.
+fn missing_watermark(models_dir: &Path) -> Vec<(String, &'static PinnedFile, PathBuf)> {
+    WATERMARK_FILES
+        .iter()
+        .map(|f| (catalog::watermark_url(f), f, watermark_path(models_dir, f)))
+        .filter(|(_, f, p)| !present(p, f))
+        .collect()
 }
 
 /// Bytes of this module's files on disk (all languages, `.part` included).
@@ -208,6 +245,44 @@ pub fn download(
     for v in voices {
         jobs.push((lang.voice_url(v), &v.file, voice_path(models_dir, lang, v)));
     }
+    // #257: nothing is spoken without the watermark, so any download that
+    // finds it missing brings it too (the UI's confirmation counts it).
+    if !jobs.is_empty() {
+        jobs.extend(missing_watermark(models_dir));
+    }
+    run_jobs(fetch, jobs, lang, with_model, voices, cancel, progress)
+}
+
+/// Download only the watermark models (the TTS models are already there,
+/// e.g. from a build before #257). `lang` names the job for the UI.
+pub fn download_watermark(
+    fetch: &dyn Fetch,
+    models_dir: &Path,
+    lang: &Language,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(&Progress),
+) -> Result<()> {
+    run_jobs(
+        fetch,
+        missing_watermark(models_dir),
+        lang,
+        true,
+        &[],
+        cancel,
+        progress,
+    )
+}
+
+/// Fetch `jobs` in order, reporting progress as one download.
+fn run_jobs(
+    fetch: &dyn Fetch,
+    jobs: Vec<(String, &PinnedFile, PathBuf)>,
+    lang: &Language,
+    with_model: bool,
+    voices: &[&Voice],
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(&Progress),
+) -> Result<()> {
     let mut state = Progress {
         language: lang.code.to_string(),
         voice: if with_model {
@@ -391,9 +466,84 @@ mod tests {
         assert!(asked[0].contains(crate::tts::catalog::MODEL_REVISION));
         assert_eq!(
             seen[0].total_bytes,
-            ITALIAN.model_bytes() + voice.file.bytes
+            ITALIAN.model_bytes() + voice.file.bytes + catalog::watermark_bytes(),
+            "the missing watermark models come with the download (#257)"
         );
         assert!(!model_present(dir.path(), &ITALIAN));
+    }
+
+    /// Records URLs; serves "abc" for every one of them (never matches).
+    fn asked_by(voice_only: bool, watermark_there: bool) -> (Vec<String>, u64) {
+        let dir = tempfile::tempdir().unwrap();
+        if watermark_there {
+            let wdir = watermark_dir(dir.path());
+            std::fs::create_dir_all(&wdir).unwrap();
+            for f in WATERMARK_FILES {
+                let file = std::fs::File::create(wdir.join(f.name)).unwrap();
+                file.set_len(f.bytes).unwrap();
+            }
+            assert!(watermark_present(dir.path()) && detector_present(dir.path()));
+        }
+        let fake = FakeFetch {
+            bodies: HashMap::new(),
+            asked: Mutex::new(Vec::new()),
+        };
+        let alba = ENGLISH.voice("alba").unwrap();
+        let mut total = 0;
+        let _ = download(
+            &fake,
+            dir.path(),
+            &ENGLISH,
+            &[alba],
+            !voice_only,
+            &AtomicBool::new(false),
+            &mut |p| total = p.total_bytes,
+        );
+        let asked = fake.asked.lock().unwrap().clone();
+        (asked, total)
+    }
+
+    #[test]
+    fn the_watermark_comes_with_any_download_until_it_is_there() {
+        let alba = ENGLISH.voice("alba").unwrap().file.bytes;
+        let (_, total) = asked_by(true, false);
+        assert_eq!(total, alba + catalog::watermark_bytes());
+        let (_, total) = asked_by(true, true);
+        assert_eq!(total, alba, "present watermark files are not fetched again");
+        let (_, total) = asked_by(false, true);
+        assert_eq!(total, ENGLISH.model_bytes() + alba);
+    }
+
+    #[test]
+    fn a_watermark_only_download_asks_the_pinned_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = FakeFetch {
+            bodies: HashMap::new(),
+            asked: Mutex::new(Vec::new()),
+        };
+        let mut seen = Vec::new();
+        let err = download_watermark(
+            &fake,
+            dir.path(),
+            &ITALIAN,
+            &AtomicBool::new(false),
+            &mut |p| seen.push(p.clone()),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("nothing was kept"));
+        let asked = fake.asked.lock().unwrap().clone();
+        assert_eq!(
+            asked,
+            [catalog::watermark_url(&catalog::WATERMARK_GENERATOR)]
+        );
+        assert!(asked[0].contains(catalog::WATERMARK_REVISION));
+        assert_eq!(seen[0].total_bytes, catalog::watermark_bytes());
+        assert!(!watermark_present(dir.path()));
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "only the empty module folder"
+        );
     }
 
     #[test]
@@ -434,8 +584,15 @@ mod tests {
         delete_voice(dir.path(), &ENGLISH, alba).unwrap(); // already gone: fine
         delete_language(dir.path(), &ENGLISH).unwrap();
         assert!(!language_dir(dir.path(), &ENGLISH).exists());
+        let w = watermark_path(dir.path(), &catalog::WATERMARK_DETECTOR);
+        std::fs::create_dir_all(w.parent().unwrap()).unwrap();
+        std::fs::write(&w, b"x").unwrap();
         delete_all(dir.path()).unwrap();
         assert!(!dir.path().join(ROOT_DIR).exists());
+        assert!(
+            !w.exists(),
+            "the watermark models go with the module (#257)"
+        );
         delete_all(dir.path()).unwrap(); // nothing there: fine
         assert!(
             dir.path().join("ggml-base.bin").exists(),

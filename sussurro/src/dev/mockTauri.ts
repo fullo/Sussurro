@@ -628,6 +628,7 @@ async function readAloud(id: string, document: string | null, language: string |
   if (text === null) throw `no document '${doc}' in '${id}'`;
   const code = (language || s.meta.language || "").toLowerCase().split(/[-_]/)[0];
   if (!TTS_CATALOG.some((l) => l.code === code)) throw `Read aloud has no voice for '${code}' — pick one of Italian, English to read it in.`;
+  if (!watermarkOnDisk) throw "The watermark model that marks generated speech is not downloaded — download it in Models → Voices.";
   const voice = ttsVoiceOf(code);
   if (!ttsDisk[code]?.model || !ttsDisk[code].voices.has(voice))
     throw `The read-aloud voice ${voice} is not downloaded — download it in Models → Voices.`;
@@ -653,7 +654,7 @@ async function readAloud(id: string, document: string | null, language: string |
       language: code,
       engine: "Pocket TTS",
       date: new Date().toISOString().slice(0, 19),
-      marked: ["metadata"],
+      marked: ["metadata", "watermark"],
       recorded: true,
       stale: false,
       source_missing: false,
@@ -1108,6 +1109,10 @@ const ttsDisk: Record<string, { model: boolean; voices: Set<string> }> = {
   it: { model: params.get("tts") === "on", voices: new Set(params.get("tts") === "on" ? ["giovanni"] : []) },
   en: { model: false, voices: new Set() },
 };
+/** The AudioSeal watermark models (#257): with the first download; `?tts=on`
+ *  starts with them, `?watermark=missing` without (a model from before #257). */
+const WATERMARK_BYTES = 58_818_989 + 34_662_285;
+let watermarkOnDisk = params.get("tts") === "on" && params.get("watermark") !== "missing";
 let ttsJob: { language: string; voice: string | null; file: string; done_bytes: number; total_bytes: number } | null = null;
 let ttsCancel = false;
 let ttsPreviews = 0;
@@ -1136,19 +1141,27 @@ function ttsStatus() {
       }),
     };
   });
+  if (watermarkOnDisk) onDisk += WATERMARK_BYTES;
   return {
     enabled: !!settings.tts_enabled,
     engine: "Pocket TTS",
     licence: "CC-BY-4.0",
     attribution: "Pocket TTS by Kyutai, ONNX export by KevinAHM",
     languages,
+    watermark: {
+      bytes: WATERMARK_BYTES,
+      downloaded: watermarkOnDisk,
+      detector_downloaded: watermarkOnDisk,
+      licence: "MIT",
+      attribution: "AudioSeal by Meta, ONNX export by DarumaHQ",
+    },
     bytes_on_disk: onDisk,
     downloading: ttsJob,
     loaded: null,
   };
 }
 
-async function ttsDownload(code: string, voice: string | null, voiceOnly: boolean): Promise<null> {
+async function ttsDownload(code: string, voice: string | null, voiceOnly: boolean, watermarkOnly = false): Promise<null> {
   if (!settings.tts_enabled) throw "Read aloud is off — turn it on in Settings → Experimental.";
   if (ttsJob) throw "another read-aloud download is running";
   const lang = TTS_CATALOG.find((l) => l.code === code);
@@ -1156,7 +1169,8 @@ async function ttsDownload(code: string, voice: string | null, voiceOnly: boolea
   const v = voice ?? ttsVoiceOf(code);
   const vBytes = lang.voices.find((x) => x[0] === v)?.[3] ?? 0;
   const d = ttsDisk[code];
-  const total = (voiceOnly || d.model ? 0 : lang.model_bytes) + (d.voices.has(v) ? 0 : vBytes);
+  const wm = watermarkOnDisk ? 0 : WATERMARK_BYTES;
+  const total = watermarkOnly ? wm : (voiceOnly || d.model ? 0 : lang.model_bytes) + (d.voices.has(v) ? 0 : vBytes) + wm;
   ttsCancel = false;
   ttsJob = { language: code, voice: voiceOnly ? v : null, file: voiceOnly ? `${v}.safetensors` : "flow_lm_main.onnx", done_bytes: 0, total_bytes: total };
   try {
@@ -1166,6 +1180,8 @@ async function ttsDownload(code: string, voice: string | null, voiceOnly: boolea
       ttsJob = { ...ttsJob, done_bytes: Math.round((total * i) / 10), file: i === 10 ? `${v}.safetensors` : ttsJob.file };
       ev("tts-download-progress", ttsJob);
     }
+    watermarkOnDisk = true;
+    if (watermarkOnly) return null;
     if (!voiceOnly) d.model = true;
     d.voices.add(v);
     return null;
@@ -1575,7 +1591,41 @@ function handle(cmd: string, a: Args): unknown {
     case "tts_status":
       return ttsStatus();
     case "tts_download":
-      return ttsDownload(String(a.language), (a.voice as string | null) ?? null, !!a.voiceOnly);
+      return ttsDownload(String(a.language), (a.voice as string | null) ?? null, !!a.voiceOnly, !!a.watermarkOnly);
+    case "watermark_check_file": {
+      if (!watermarkOnDisk)
+        throw "Check a file needs the watermark detector, which is downloaded with the read-aloud models — download a voice in Models → Voices.";
+      // `?check=none|inconclusive|tags` picks the answer; default: made by Sussurro.
+      const kind = params.get("check");
+      return new Promise((r) =>
+        setTimeout(
+          () =>
+            r({
+              file_name: kind === "none" ? "interview.mp3" : "speech.opus",
+              format: kind === "none" ? "MP3" : "Ogg Opus",
+              seconds: 12.2,
+              truncated: false,
+              short: false,
+              summary:
+                kind === "none" ? "no_mark" : kind === "inconclusive" ? "inconclusive" : kind === "tags" ? "tags_only" : "made_by_sussurro",
+              watermark:
+                kind === "none" || kind === "tags"
+                  ? { verdict: "not_found", frames_marked: 0.01, bit_errors: 9 }
+                  : kind === "inconclusive"
+                    ? { verdict: "inconclusive", frames_marked: 0.89, bit_errors: 7 }
+                    : { verdict: "found", frames_marked: 0.954, bit_errors: 0 },
+              metadata:
+                kind === "none"
+                  ? { status: "not_read", tags: [] }
+                  : kind === "inconclusive"
+                    ? { status: "none", tags: [] }
+                    : { status: "sussurro", tags: [["SYNTHETIC", "1"], ["ENCODER", "Sussurro 0.10.2"], ["TTS_VOICE", "giovanni"]] },
+              signature: { status: "not_checked" },
+            }),
+          600,
+        ),
+      );
+    }
     case "tts_cancel_download":
       ttsCancel = true;
       return null;
@@ -1586,6 +1636,7 @@ function handle(cmd: string, a: Args): unknown {
         if (a.voice) ttsDisk[c].voices.delete(String(a.voice));
         else ttsDisk[c] = { model: false, voices: new Set() };
       }
+      if (!a.language) watermarkOnDisk = false; // everything, the watermark models too
       return null;
     }
     case "read_aloud_start":
@@ -1615,6 +1666,7 @@ function handle(cmd: string, a: Args): unknown {
       const v = (a.voice as string | null) ?? ttsVoiceOf(code);
       if (!ttsDisk[code]?.model) throw "the read-aloud model is not downloaded";
       if (!ttsDisk[code].voices.has(v)) throw `the voice ${v} is not downloaded`;
+      if (!watermarkOnDisk) throw "The watermark model that marks generated speech is not downloaded — download it in Models → Voices.";
       return new Promise((r) => setTimeout(() => r(`tts-preview/preview-${++ttsPreviews}.wav`), 900));
     }
     case "bundled_llm_download":

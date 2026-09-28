@@ -215,18 +215,50 @@ fn read_picked_file_with(
 ) -> anyhow::Result<Vec<u8>> {
     use std::io::Read;
 
-    let too_large = || {
-        anyhow::anyhow!(
-            "file is too large to import (max {} MB)",
-            max_bytes / (1024 * 1024)
-        )
-    };
+    let file = open_picked_file_with(path, &[ext], max_bytes, before_open)?;
+    let mut bytes = Vec::with_capacity(file.metadata()?.len() as usize);
+    file.take(max_bytes + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(too_large(max_bytes));
+    }
+    Ok(bytes)
+}
+
+fn too_large(max_bytes: u64) -> anyhow::Error {
+    anyhow::anyhow!(
+        "file is too large to import (max {} MB)",
+        max_bytes / (1024 * 1024)
+    )
+}
+
+/// A file the user picked in a native dialog, opened for reading with the
+/// guards of [`read_picked_file`] — one of the extensions `exts` (lower
+/// case), a regular file that is not a symlink (`O_NOFOLLOW` on Unix), at
+/// most `max_bytes` when opened — for readers that stream it instead of
+/// loading it whole (*Check a file*, #257).
+pub fn open_picked_file(
+    path: &Path,
+    exts: &[&str],
+    max_bytes: u64,
+) -> anyhow::Result<std::fs::File> {
+    open_picked_file_with(path, exts, max_bytes, &|| {})
+}
+
+fn open_picked_file_with(
+    path: &Path,
+    exts: &[&str],
+    max_bytes: u64,
+    before_open: &dyn Fn(),
+) -> anyhow::Result<std::fs::File> {
     let actual = path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
-    if actual.as_deref() != Some(ext) {
-        anyhow::bail!("only .{ext} files can be imported here");
+    if !actual.as_deref().is_some_and(|a| exts.contains(&a)) {
+        match exts {
+            [one] => anyhow::bail!("only .{one} files can be imported here"),
+            _ => anyhow::bail!("only .{} files can be opened here", exts.join(", .")),
+        }
     }
     // symlink_metadata does not follow the final component, so a link is
     // refused outright instead of being resolved to whatever it targets.
@@ -240,20 +272,15 @@ fn read_picked_file_with(
     before_open();
     let file = open_no_follow(path)?;
     // Re-check on the opened handle (the entry could have been swapped since
-    // the lstat) and bound the read in case the file grows meanwhile.
+    // the lstat); readers bound what they read in case the file grows.
     let meta = file.metadata()?;
     if !meta.is_file() {
         anyhow::bail!("not a regular file");
     }
     if meta.len() > max_bytes {
-        return Err(too_large());
+        return Err(too_large(max_bytes));
     }
-    let mut bytes = Vec::with_capacity(meta.len() as usize);
-    file.take(max_bytes + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > max_bytes {
-        return Err(too_large());
-    }
-    Ok(bytes)
+    Ok(file)
 }
 
 /// The import picker may only be opened by the main window, never by the
