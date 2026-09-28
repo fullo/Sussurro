@@ -884,7 +884,9 @@ project decisions here, not in per-machine memory.**
   credential store (`secrets.rs`, account `c2pa-signing-key`, write +
   read-back verified); chain in `<app data>/c2pa/signing-chain.pem` (dir
   0700, file 0600); a key/chain mismatch (self-test sign + verify at load)
-  makes a new pair; `signing::identity` caches it per run. **No clear-text
+  makes a new pair; `signing::identity` caches it per run. The key and
+  chain **stay** when the module is turned off or `tts_delete` runs
+  (maintainer, 2026-09-28: not personal data; keeps the signer stable). **No clear-text
   fallback**: no working store = the file is still made (watermark + tags)
   but unsigned, `synthetic.<file>.unsigned: <reason>` in the frontmatter,
   `SpeechStatus.unsigned` shown in the Audio tab. Manifest (Code 1.3, no
