@@ -401,10 +401,16 @@ mod tests {
     /// A connection failure names the host, never the secret path.
     #[test]
     fn connection_errors_do_not_leak_the_link() {
-        // A port nothing listens on.
+        // A port that drops every connection. Not a freed port: another
+        // test's server running in parallel could be given it and answer
+        // with a real calendar (seen on CI).
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
-        drop(l);
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                drop(conn);
+            }
+        });
         let url = Url::parse(&format!("http://127.0.0.1:{port}/private-secret/basic.ics")).unwrap();
         let e = format!("{:#}", fetch(&url, true).unwrap_err());
         assert!(e.contains("127.0.0.1"), "{e}");
