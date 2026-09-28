@@ -1069,7 +1069,8 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03; current version 0.10.3 — released 2026-09-28)
+## Roadmap (agreed 2026-07-03; current *released* version 0.10.3 — 2026-09-28;
+0.11.0 prepared, not yet published — see below)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -1265,23 +1266,54 @@ legal review) carry `needs maintainer`. Milestones and epics:
 (#275), `0.12 — Read aloud` (#276), `0.13 — Your voice, with consent`
 (#277), `Track A — Accounts and stores` (#278).
 
-- **0.11 — Known voices**: suggest-only voice recognition from confirmed
-  speaker links (profiles in app data, never in the archive: GDPR art. 9),
-  own-voice enrolment, overlap-aware Re-detect (pyannote segmentation-3.0,
-  MIT, through `ort`), Teams/Zoom web names, Ogg Opus saved audio (WebKit
-  plays Ogg Opus only from macOS 15.4, so older macOS needs a decode path),
-  archive HTTP API with scoped hashed tokens (every browser Origin refused),
-  calendar attendees from ICS.
-- **0.12 — Read aloud** (**experimental, optional module — P24**: off by
-  default under Settings → Experimental; TTS/cloning models are downloaded
-  ONLY on the user's explicit request, never at install, onboarding or in
-  the background): local TTS (default candidate Kyutai Pocket TTS,
-  MIT + CC-BY-4.0, native Italian; decided by a bake-off + listening test),
-  every generated file marked (watermark + metadata: AI Act art. 50 applies
-  from 2 Aug 2026).
+- **0.11 — Known voices, now including read aloud** (**maintainer decision,
+  2026-09-28, on #259**: "0.11 now ships read aloud (#254–#258)" — the
+  two-voice podcast recipe, #259, is the only 0.12 issue that stays out,
+  moved to the 0.13 milestone): suggest-only voice recognition from
+  confirmed speaker links (profiles in app data, never in the archive:
+  GDPR art. 9), own-voice enrolment, overlap-aware Re-detect (pyannote
+  segmentation-3.0, MIT, through `ort`), Teams/Zoom web names, Ogg Opus
+  saved audio (WebKit plays Ogg Opus only from macOS 15.4, so older macOS
+  needs a decode path), archive HTTP API with scoped hashed tokens (every
+  browser Origin refused), calendar attendees from ICS — plus **local read
+  aloud**, still an **experimental, optional module** (P24: off by default
+  under Settings → Experimental, `Settings.tts_enabled`; models download
+  only on the user's explicit request, never at install/onboarding/in the
+  background): text preparation (#254), the Pocket TTS engine and Models →
+  Voices (#255, MIT + CC-BY-4.0, native Italian, decided by the #236
+  bake-off + listening test), reading a document aloud (#256, plus 24 kHz
+  speech output, #309), marking every generated file — AudioSeal watermark
+  that can't be switched off, plus C2PA-signed metadata — and *Check a
+  file* (#257, AI Act art. 50 applies from 2 Aug 2026), and article links
+  that extract a web page's text into a readable item (#258).
+  **0.11.0 — prepared, not yet published** (docs/version-bump PR #253,
+  2026-09-28, refreshed 2026-09-28 for #257/#258 and other main merges):
+  all seventeen other 0.11 issues (#241–#252, #254–#258) are merged to
+  `main`, each already
+  updating the README, blog and manual for its own feature. #253 adds
+  `docs/releases/0.11.0.md`, this roadmap paragraph, the voices plan's
+  status section, bumps the version 0.10.0 → 0.11.0 in `package.json`,
+  `package-lock.json`, `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`,
+  and regenerates `licenses.json` (unchanged versus what the per-issue PRs
+  already produced; regenerating it needed a small cross-platform fix to
+  `scripts/gen-licenses.mjs`, which called `npm` without `shell: true`,
+  silently finding zero packages on Windows). Also folded in since the
+  first pass: the orphaned-macOS-sidecar reaper (#325/#319), an unreadable
+  archive folder no longer emptying the Library (#329/#328), a live level
+  meter on every audio source picker (#317/#314), and Ollama
+  thinking-model/runaway-output fixes (#318, released as the `release/
+  0.10.x`-branch patch **0.10.3**, also present on `main`). **Not tagged
+  or released**: no `v0.11.0` tag has been pushed, so the draft/publish/
+  un-draft release step and the manual QA from the plan's section 9
+  (macOS, Windows, Linux hardware) are still open, tracked by #253's
+  acceptance criteria.
+- **0.12 — Read aloud**: absorbed into 0.11 above by the maintainer's
+  2026-09-28 decision, apart from its stretch goal, the two-voice podcast
+  recipe (#259), moved to the 0.13 milestone.
 - **0.13 — Your voice, with consent**: own voice first; live consent with a
   nonce, transcript + voice match; never cloned from files, meetings or the
-  archive; gated by a lawyer's review.
+  archive; gated by a lawyer's review. Also holds the two-voice podcast
+  recipe stretch goal moved from 0.12 (#259).
 - **Track A**: store listings (Chrome, Edge, AMO listed), privacy policy
   page, Google/Microsoft calendar OAuth — maintainer accounts.
 - Licence rule for all of it: code **and** weights must allow commercial
