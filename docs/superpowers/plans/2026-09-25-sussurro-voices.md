@@ -345,10 +345,16 @@ assume.
   recomputed after "Re-detect" and every speaker edit. **Overlapped lines
   stay in the clustering** (keeping them out gained nothing and lost a
   quiet speaker) and **no masked embeddings** (no gain); they are kept out
-  of voice profiles only. Later upgrade to evaluate: NVIDIA Nemotron-3-Diarization
-  (Sortformer v3, 23 Sep 2026, OpenMDW-1.1, up to 8 speakers), but
-  `parakeet-rs` runs it on `ort` rc.13 while the app pins rc.12, and Italian
-  is not among its training languages.
+  of voice profiles only. *Spike #305 (2026-09-29) corrects an earlier note
+  here*: NVIDIA Nemotron-3-Diarization (Sortformer v3, 23 Sep 2026,
+  OpenMDW-1.1, up to 8 speakers) does **not** need `parakeet-rs`/`ort` rc.13
+  — NVIDIA ships it as a q8_0 GGUF plus its own ggml C++ runtime,
+  `NeMo-Speech.cpp` (Apache-2.0), an `ort`-free sidecar of the same shape as
+  whisper.cpp. Licence and size both clear the bar (details in 4.3), but it
+  is a complement, not a drop-in: it has no portable speaker embedding, so
+  WeSpeaker would still run per detected segment for profiles/own voice, and
+  Italian is still absent from its training data — not evaluated here for
+  lack of a working local build. Watch, don't build yet.
 - **E20 — Teams and Zoom name observers follow the Meet design (#131).**
   Versioned, data-only selector sets per platform; CSRC binding where the
   platform exposes contributing sources; health checks; `names_unavailable`
@@ -582,7 +588,7 @@ detection fixes the second problem and flags the first.
 | **pyannote segmentation-3.0** (onnx-community export) | MIT (original repo gated; the export is not) | 6 MB fp32, 1.5 MB int8 | plain ONNX Runtime, CPU, ~14 s of audio in 19 ms on an M4 Max | **Chosen** (E19) |
 | pyannote community-1 pipeline | CC-BY-4.0, gated | – | segmentation + WeSpeaker + VBx/PLDA | Borrow the VBx/PLDA idea later, with attribution |
 | NVIDIA Sortformer v2 / v2.1 | CC-BY-4.0 / NVIDIA Open Model License | 117M | `parakeet-rs` | Rejected in #107 (4-speaker cap, size); OML has guardrail and termination clauses |
-| NVIDIA Nemotron-3-Diarization | OpenMDW-1.1 | ~99M | `parakeet-rs` on `ort` rc.13 | Watch; needs an `ort` bump and an Italian check |
+| NVIDIA Nemotron-3-Diarization | OpenMDW-1.1 | ~99M, GGUF q8_0 107 MB (measured) | ggml sidecar, `NeMo-Speech.cpp` (Apache-2.0) — no ONNX export exists, no `ort` bump needed | Spike #305: passes all four gates (licence, disk, reasoned GPU/CPU, sidecar runtime); **complement, not replace** — up to 8 speakers, no portable embedding for profiles/own voice, no Italian in training data, DER/RTF not independently reproduced here (no local C++ toolchain) |
 | DiariZen | weights CC BY-NC 4.0 | – | – | **Incompatible** |
 
 *Spike #237 (8 AMI test meetings, 4.2 h): frame precision 0.87 / recall
@@ -594,6 +600,32 @@ one meeting; masked embeddings: no gain. A second voice per overlap from
 the nearest neighbouring line with another voice: DER 17.7 → 13.4 %,
 missed speech in overlap halved. Thresholds are from English AMI (in-domain
 for the model): re-check on Italian and laptop mics.*
+
+*Spike #305 (requested 2026-09-26, run 2026-09-29): evaluated the NVIDIA
+Nemotron-3-Diarization family as a possible upgrade to this stage. Only
+`Nemotron-3-Diarization` itself clears every gate — the older
+`diar_sortformer_4spk-v1` is CC-BY-NC-4.0 (reject), `diar_streaming_sortformer_4spk-v2.1`
+clears the licence gate (CC-BY-4.0) but caps at 4 speakers and is 2–3× worse
+on NVIDIA's own DER tables. Nemotron-3-Diarization: OpenMDW-1.1 weights
+(MIT-equivalent, redistribution explicit) + `NeMo-Speech.cpp` (Apache-2.0)
+ggml runtime, no `ort` involved; GGUF q8_0 measured at 107,012,128 bytes,
+well under the 2 GB ceiling; up to 8 speakers, same checkpoint streams
+(down to 0.32 s latency) or runs offline-style (30.4 s buffer). NVIDIA's own
+tables (forced-alignment references, collar 0 s, overlap included) show
+9.25 % DER on AMI Test MHM versus 15.81 % for the older streaming model —
+notably better than this project's own AMI measurement of the *current*
+pipeline (17.7 % baseline, 13.4 % with the overlap fix above), though the
+two are not directly comparable (different reference-label methodology,
+not reproduced independently). **Not measured here**: DER or RTF on this
+project's own AMI/Italian VoxPopuli clips (no C/C++ toolchain was available
+on the spike box to build `NeMo-Speech.cpp`), GPU/CPU peak memory (reasoned
+from model size only, not profiled), and anything on Italian — the model
+has zero Italian in its training or evaluation data, which is the crux of
+#293. Architecturally it is a **complement**: it is an end-to-end diarizer
+with no portable speaker embedding, so WeSpeaker would still need to run
+per detected-speaker segment to feed voice profiles (4.1) and "own voice";
+it would only replace the clustering stage, for meetings it fully covers.
+Full comment: issue #305.*
 
 What changes for the user (built in #244, the spike's shape, not the one
 first planned here): lines are checked **when they are labelled** — at the
@@ -1264,6 +1296,7 @@ privacy policy page for the stores (Track A).
 | 2026-09-25 | Maintainer starts the future track of #146; this plan drafted with P12–P23 as proposals |
 | 2026-09-25 | Spike V0-4 (#238): libopus via `opus` 0.4 / `opusic-sys` 0.7, `ogg` 0.9, 24 kb/s VOIP, 1 s pages; `opus-rs` rejected for now; the `sussurro-audio:` scheme always serves Opus items as decoded WAV |
 | 2026-09-26 | Spike V0-6 (#240): AudioSeal 16-bit (MIT code + weights) exported to ONNX by us and run through `ort`; watermark computed at 16 kHz and added to the 24 kHz TTS output; Vorbis comments + C2PA signed with a per-install self-signed key (embedded where C2PA supports the format, sidecar for Ogg — to confirm in #257); WavMark not needed |
+| 2026-09-29 | Spike #305: NVIDIA Nemotron-3-Diarization passes licence/disk/runtime gates via an `NeMo-Speech.cpp` ggml sidecar (no `ort` bump needed, correcting the earlier E19 note); recommendation is **complement**, not replace — no portable speaker embedding, no Italian training data, DER/RTF not independently reproduced (no local C++ toolchain on the spike box) |
 
 ---
 
@@ -1294,6 +1327,7 @@ Checked 2026-09-25. Approaches only; no code copied.
 
 **Diarization**
 - https://huggingface.co/pyannote/segmentation-3.0 · https://huggingface.co/onnx-community/pyannote-segmentation-3.0 · https://huggingface.co/pyannote/speaker-diarization-community-1 · https://huggingface.co/nvidia/diar_streaming_sortformer_4spk-v2.1 · https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/ · https://huggingface.co/nvidia/Nemotron-3-Diarization · https://lib.rs/crates/parakeet-rs · https://huggingface.co/BUT-FIT/diarizen-wavlm-large-s80-md
+- Spike #305: https://huggingface.co/nvidia/diar_sortformer_4spk-v1 (CC-BY-NC-4.0) · https://openmdw.ai/license/1-1/ (full licence text) · https://github.com/NVIDIA/NeMo-Speech.cpp (Apache-2.0 ggml runtime) · https://github.com/NVIDIA-NeMo/NeMo/issues/15077 (ONNX export fails for the streaming variant) · https://huggingface.co/blog/nvidia/nemotron-diarization
 
 **Opus**
 - https://lib.rs/crates/opusic-sys · https://github.com/restsend/opus-rs · https://crates.io/crates/ogg · https://github.com/pdeljanov/Symphonia/issues/8 · https://webkit.org/blog/16574/webkit-features-in-safari-18-4/ · https://caniuse.com/opus · https://caniuse.com/webm · https://www.rfc-editor.org/rfc/rfc7845 (Ogg Opus: pre-skip, granule, end trimming, 80 ms pre-roll)
