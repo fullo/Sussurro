@@ -3,7 +3,7 @@
 //! of an item, the temporary *Listen* file (#256) and the Models → Voices
 //! preview (#255).
 //!
-//! Two layers, as the plan asks:
+//! The layers, as the plan asks (two at least, Code of Practice 1.1):
 //!
 //! 1. **Metadata**: the Ogg Opus comments of [`Marker::tags`] —
 //!    `SYNTHETIC=1`, the generator, engine, voice, language and the IPTC
@@ -11,7 +11,9 @@
 //!    frontmatter, the `synthetic:` record of [`crate::archive::speech`]
 //!    (its `marked:` list comes from [`Marker::marks`]). Previews are WAVs
 //!    and carry the `LIST/INFO` comment of [`super::engine::wav_bytes`].
-//!    Signed metadata (C2PA) is #257's second part, not built yet.
+//!    **Signed** metadata (C2PA, #257 part 2) is [`super::signing`]: a
+//!    `.c2pa` sidecar next to each Ogg file, embedded in a preview WAV,
+//!    signed with this install's key after the file is written.
 //! 2. **Watermark** (#257): an inaudible AudioSeal mark on the PCM, "M16"
 //!    ([`super::watermark::M16`]). [`Marker::process`] is the hook — every
 //!    block of audio goes through it before it is encoded, and
@@ -36,6 +38,9 @@ pub const DIGITAL_SOURCE_TYPE: &str =
 pub const MARK_METADATA: &str = "metadata";
 /// The `marked:` entry for the watermark layer (AudioSeal, #257).
 pub const MARK_WATERMARK: &str = "watermark";
+/// The `marked:` entry for signed C2PA metadata (#257 part 2), when the
+/// file got its signature.
+pub const MARK_SIGNATURE: &str = "signature";
 
 /// What produced a piece of synthetic audio.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,9 +108,18 @@ impl Marker {
     }
 
     /// The marks the files of this marker carry, for the frontmatter's
-    /// `marked:` list.
-    pub fn marks(&self) -> Vec<String> {
-        vec![MARK_METADATA.to_string(), MARK_WATERMARK.to_string()]
+    /// `marked:` list — plus [`MARK_SIGNATURE`] when `signed`.
+    pub fn marks(&self, signed: bool) -> Vec<String> {
+        let mut m = vec![MARK_METADATA.to_string(), MARK_WATERMARK.to_string()];
+        if signed {
+            m.push(MARK_SIGNATURE.to_string());
+        }
+        m
+    }
+
+    /// What produced the audio.
+    pub fn provenance(&self) -> &Provenance {
+        &self.provenance
     }
 }
 
@@ -151,6 +165,10 @@ mod tests {
         out.extend(m.finish().unwrap());
         assert_eq!(out.len(), 16);
         assert!(out.iter().all(|&x| x != 0.25), "the watermark was added");
-        assert_eq!(m.marks(), [MARK_METADATA, MARK_WATERMARK]);
+        assert_eq!(m.marks(false), [MARK_METADATA, MARK_WATERMARK]);
+        assert_eq!(
+            m.marks(true),
+            [MARK_METADATA, MARK_WATERMARK, MARK_SIGNATURE]
+        );
     }
 }

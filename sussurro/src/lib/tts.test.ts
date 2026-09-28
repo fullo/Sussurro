@@ -4,6 +4,7 @@ import {
   checkNotes,
   checkSummary,
   metadataLine,
+  signatureDetails,
   signatureLine,
   watermarkLine,
   watermarkMissing,
@@ -17,7 +18,7 @@ import {
   selectedVoice,
   withVoice,
 } from "./tts";
-import type { TtsLanguage, TtsStatus, TtsVoice, TtsWatermark, WatermarkCheck } from "./types";
+import type { TtsLanguage, TtsStatus, TtsVoice, TtsWatermark, WatermarkCheck, WatermarkCheckSignature } from "./types";
 
 const voice = (over: Partial<TtsVoice> = {}): TtsVoice => ({
   id: "giovanni",
@@ -157,6 +158,22 @@ describe("the watermark models (#257)", () => {
   });
 });
 
+const sig = (over: Partial<WatermarkCheckSignature> = {}): WatermarkCheckSignature => ({
+  status: "valid",
+  source: "sidecar",
+  signer: "Sussurro install 1a2b3c4d",
+  issuer: "Sussurro (self-signed, one per install)",
+  generator: "Sussurro 0.12.0",
+  ai_generated: true,
+  claims_sussurro: true,
+  when: "2026-09-28T10:00:00Z",
+  engine: "Pocket TTS",
+  voice: "giovanni",
+  language: "it",
+  problem: "",
+  ...over,
+});
+
 const check = (over: Partial<WatermarkCheck> = {}): WatermarkCheck => ({
   file_name: "speech.opus",
   format: "Ogg Opus",
@@ -166,7 +183,7 @@ const check = (over: Partial<WatermarkCheck> = {}): WatermarkCheck => ({
   summary: "made_by_sussurro",
   watermark: { verdict: "found", frames_marked: 0.954, bit_errors: 0 },
   metadata: { status: "sussurro", tags: [["SYNTHETIC", "1"]] },
-  signature: { status: "not_checked" },
+  signature: sig(),
   ...over,
 });
 
@@ -189,12 +206,37 @@ describe("Check a file wording (E17)", () => {
     expect(watermarkLine(none)).toContain("not found");
   });
 
-  it("describes tags as unsigned and the C2PA slot as not checked", () => {
+  it("describes tags as unsigned", () => {
     expect(checkSummary(check({ summary: "tags_only" }))).toMatch(/tags can be copied/);
     expect(metadataLine(check())).toMatch(/not signed/);
     expect(metadataLine(check({ metadata: { status: "synthetic", tags: [] } }))).toMatch(/other software/);
     expect(metadataLine(check({ format: "MP3", metadata: { status: "not_read", tags: [] } }))).toBe("Tags: not read for MP3 files.");
-    expect(signatureLine(check())).toBe("Signed metadata (C2PA): not checked yet.");
+  });
+
+  it("words a valid C2PA signature honestly: a Sussurro install, not a trusted signer", () => {
+    const line = signatureLine(check());
+    expect(line).toBe(
+      'Signed metadata (C2PA) (in the .c2pa file next to it): valid — says synthetic speech made by Sussurro 0.12.0; signed by a Sussurro install ("Sussurro install 1a2b3c4d"), not a trusted signer. The file hasn\'t changed since it was signed.',
+    );
+    expect(signatureDetails(check())).toBe("engine Pocket TTS · voice giovanni · language it · made 2026-09-28T10:00:00Z (the signer's clock)");
+    const embedded = signatureLine(check({ signature: sig({ source: "embedded" }) }));
+    expect(embedded).toContain("(inside the file)");
+    // Someone else's manifest: named as they sign it, no Sussurro wording.
+    const other = signatureLine(check({ signature: sig({ claims_sussurro: false, generator: "OtherTTS 2", signer: "Acme" }) }));
+    expect(other).toContain('says made by OtherTTS 2 (AI-generated); signed by "Acme"');
+    expect(other).not.toMatch(/Sussurro install/);
+    expect(checkSummary(check({ summary: "signed_only" }))).toMatch(/not a trusted signer/);
+  });
+
+  it("says a changed file no longer matches its signature, and when there is none", () => {
+    const bad = signatureLine(check({ signature: sig({ status: "invalid", problem: "assertion.dataHash.mismatch" }) }));
+    expect(bad).toMatch(/does not match — the file changed after it was signed, or the signature belongs to another file/);
+    expect(bad).toContain("assertion.dataHash.mismatch");
+    expect(signatureDetails(check({ signature: sig({ status: "invalid" }) }))).toBeNull();
+    expect(signatureLine(check({ signature: sig({ status: "none", source: null }) }))).toMatch(/^Signed metadata \(C2PA\): none/);
+    for (const s of ["valid", "invalid", "none"] as const) {
+      expect(signatureLine(check({ signature: sig({ status: s }) })).toLowerCase()).not.toMatch(/human|person|real recording/);
+    }
   });
 
   it("notes short and long files, and that nothing left the computer", () => {

@@ -12,7 +12,8 @@
 //!   download (on request only), verification and deletion.
 //! - [`service`]: the loaded engine, its idle unload, the preview.
 //! - [`marking`] / [`watermark`]: every generated file carries tags and an
-//!   AudioSeal watermark (P21, #257); [`check`] is *Check a file*.
+//!   AudioSeal watermark (P21, #257), and [`signing`] adds signed C2PA
+//!   metadata with a per-install key; [`check`] is *Check a file*.
 //!
 //! File generation only, not real-time playback (P18). Read-aloud of
 //! archive items is #256.
@@ -26,6 +27,7 @@ pub mod pocket;
 pub mod read_aloud;
 pub mod resample;
 pub mod service;
+pub mod signing;
 pub mod text;
 pub mod watermark;
 

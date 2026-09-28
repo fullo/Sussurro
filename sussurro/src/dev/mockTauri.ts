@@ -654,7 +654,9 @@ async function readAloud(id: string, document: string | null, language: string |
       language: code,
       engine: "Pocket TTS",
       date: new Date().toISOString().slice(0, 19),
-      marked: ["metadata", "watermark"],
+      marked: ["metadata", "watermark", "signature"],
+      signed: true,
+      unsigned: "",
       recorded: true,
       stale: false,
       source_missing: false,
@@ -1595,8 +1597,24 @@ function handle(cmd: string, a: Args): unknown {
     case "watermark_check_file": {
       if (!watermarkOnDisk)
         throw "Check a file needs the watermark detector, which is downloaded with the read-aloud models — download a voice in Models → Voices.";
-      // `?check=none|inconclusive|tags` picks the answer; default: made by Sussurro.
+      // `?check=none|inconclusive|tags|signed|tampered` picks the answer;
+      // default: made by Sussurro (watermark + tags + a valid sidecar signature).
       const kind = params.get("check");
+      const validSig = {
+        status: "valid",
+        source: "sidecar",
+        signer: "Sussurro install 1a2b3c4d",
+        issuer: "Sussurro (self-signed, one per install)",
+        generator: "Sussurro 0.10.2",
+        ai_generated: true,
+        claims_sussurro: true,
+        when: "2026-09-28T10:00:00Z",
+        engine: "Pocket TTS",
+        voice: "giovanni",
+        language: "it",
+        problem: "",
+      };
+      const noSig = { ...validSig, status: "none", source: null, signer: "", issuer: "", generator: "", ai_generated: false, claims_sussurro: false, when: "", engine: "", voice: "", language: "" };
       return new Promise((r) =>
         setTimeout(
           () =>
@@ -1607,9 +1625,17 @@ function handle(cmd: string, a: Args): unknown {
               truncated: false,
               short: false,
               summary:
-                kind === "none" ? "no_mark" : kind === "inconclusive" ? "inconclusive" : kind === "tags" ? "tags_only" : "made_by_sussurro",
+                kind === "none"
+                  ? "no_mark"
+                  : kind === "inconclusive"
+                    ? "inconclusive"
+                    : kind === "tags" || kind === "tampered"
+                      ? "tags_only"
+                      : kind === "signed"
+                        ? "signed_only"
+                        : "made_by_sussurro",
               watermark:
-                kind === "none" || kind === "tags"
+                kind === "none" || kind === "tags" || kind === "signed" || kind === "tampered"
                   ? { verdict: "not_found", frames_marked: 0.01, bit_errors: 9 }
                   : kind === "inconclusive"
                     ? { verdict: "inconclusive", frames_marked: 0.89, bit_errors: 7 }
@@ -1620,7 +1646,12 @@ function handle(cmd: string, a: Args): unknown {
                   : kind === "inconclusive"
                     ? { status: "none", tags: [] }
                     : { status: "sussurro", tags: [["SYNTHETIC", "1"], ["ENCODER", "Sussurro 0.10.2"], ["TTS_VOICE", "giovanni"]] },
-              signature: { status: "not_checked" },
+              signature:
+                kind === "none" || kind === "inconclusive" || kind === "tags"
+                  ? noSig
+                  : kind === "tampered"
+                    ? { ...validSig, status: "invalid", problem: "assertion.dataHash.mismatch" }
+                    : validSig,
             }),
           600,
         ),
