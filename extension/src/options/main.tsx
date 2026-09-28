@@ -20,7 +20,7 @@ import {
 import { usePairing } from "../shared/usePairing";
 import { useNoticeNeeded } from "../shared/useNotice";
 import { RECORDING_NOTICE, RECORDING_PRIVACY_URL, resetNotice } from "../shared/notice";
-import { SOURCE_URL, licenseEntries } from "./licenses";
+import { PRIVACY_URL, SOURCE_URL, licenseEntries } from "./licenses";
 import "../shared/page.css";
 
 function Options() {
@@ -108,6 +108,10 @@ function AboutSection() {
         Sussurro browser extension, © Francesco Fullone (DarumaHQ), free software under the GNU AGPL v3.0 or later.{" "}
         <a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">
           Source code
+        </a>{" "}
+        ·{" "}
+        <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">
+          Privacy policy
         </a>
       </p>
       <h3>Third-party licences</h3>
