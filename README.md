@@ -64,6 +64,13 @@ Models · Settings**.
 - **New → Link** downloads a direct media link, or a video page through
   [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) if you have it installed, and
   transcribes it as a **transcription**. The download is temporary.
+  Choose **Article** instead to keep the main text of a web page — headings,
+  paragraphs and lists, without menus, ads or comments — as a **note**
+  (`source: url:<link>`); with the experimental Read aloud module on, its
+  Audio tab can then read it to you. Only the page itself is fetched, with
+  the same network rules as any link; pages behind a login or a paywall and
+  pages that build their text with JavaScript are refused rather than saved
+  empty.
 - Long recordings are cut at pauses (Silero voice-activity detection),
   transcribed and cleaned segment by segment while you talk, and saved after
   every segment, so a crash leaves an *Interrupted* item, not nothing. A hotkey
@@ -180,6 +187,8 @@ named like a recording
 `SYNTHETIC=1`, engine, voice) and in the item's frontmatter (`speech:`,
 `synthetic:`). When the text changes after the speech was made, the tab
 says it is out of date. *Delete…* moves a speech file to the trash.
+An article saved from New → Link (*Article*) is read like any other item,
+in the language the page declares.
 
 **Every generated file is marked**, as the EU AI Act (art. 50) asks of
 synthetic audio: besides the tags above, an **inaudible watermark** —
@@ -376,6 +385,8 @@ unless you tick *Allow local network addresses* for that run — checked on
 every address a host resolves to and every redirect. yt-dlp is used only for
 known video sites (YouTube, Vimeo, SoundCloud…), without its generic "any
 page" extractor, and every connection it makes goes through the same check.
+An *Article* link fetches the page's HTML only (no images, scripts or other
+pages, no script ever runs), capped at 10 MB, through the same check.
 
 - **Recipes and Ask questions** on an external profile show a confirmation
   **every time**: which document, roughly how much text (characters and
@@ -681,6 +692,10 @@ the very next request.
   when the recording started. If you switch outputs mid-call, start a new
   recording. On macOS it needs 14.2 or later, and on Linux `pulseaudio-utils`.
   The Windows loopback has not been verified on real hardware yet.
+- **Articles**: the main text is guessed by a Readability-style extractor,
+  so an odd page layout can lose a paragraph or keep a caption. Pages
+  behind a login or a paywall, and pages that build their text with
+  JavaScript, can't be saved.
 - **Links**: video pages work only on known platforms, through `yt-dlp`.
   Videos whose only audio is Opus or AC-3 are refused, because no ffmpeg is
   bundled. Links are capped at 2 GB and ignore system proxy settings (so the

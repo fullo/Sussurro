@@ -21,6 +21,7 @@ import { ReplayPlayer } from "../lib/replayPlayer";
 import type { Item } from "../lib/types";
 import type { Ctl } from "../hooks/useAppController";
 import { ReadAloudSection } from "./ReadAloudSection";
+import { isArticleItem } from "../lib/links";
 
 /* The document pane's Audio tab (0.10, #142): a player for the item's saved
    audio (#141) with "Play only: <speaker>", and the transcript lit as it
@@ -69,6 +70,23 @@ export function AudioTab({
             {files.length ? " — its audio is being saved." : "."}
           </p>
         </div>
+      </div>
+    );
+  }
+  if (files.length === 0 && isArticleItem(item.meta)) {
+    // The text of a web page (#258): nothing was ever recorded, so the
+    // Save audio advice doesn't apply. Read aloud is the only audio here,
+    // and only with the experimental module on (P24).
+    return (
+      <div className="doc-scroll">
+        {speech}
+        {!ctl?.settings.tts_enabled && (item.speech ?? []).length === 0 && (
+          <div className="au-empty">
+            <p>
+              <strong>No audio for this item.</strong> It holds the text of a web page.
+            </p>
+          </div>
+        )}
       </div>
     );
   }

@@ -231,6 +231,7 @@ pub fn run() {
             commands::engine_start_mic,
             commands::engine_start_link,
             commands::link_inspect,
+            commands::article_save,
             commands::yt_dlp_status,
             commands::engine_stop_mic,
             commands::engine_start_system,

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  articleProblem,
+  canSaveArticle,
   canTranscribeLink,
   describeDownload,
   downloadPercent,
   formatBytes,
+  isArticleItem,
   kindLabel,
   linkPhase,
   linkProblem,
@@ -69,5 +72,27 @@ describe("link helpers (#123)", () => {
     expect(linkProblem(info({ local: true }), null, false)).toMatch(/Allow local network addresses/);
     expect(linkProblem(info({ kind: "platform" }), yt(false), false)).toMatch(/yt-dlp/);
     expect(linkProblem(info(), yt(false), false)).toBeNull();
+  });
+});
+
+describe("article links (#258)", () => {
+  it("sends video sites to Transcribe and keeps the local-network opt-in", () => {
+    expect(canSaveArticle(info({ label: "example.com/news/story" }), false)).toBe(true);
+    expect(articleProblem(info({ kind: "platform" }), false)).toMatch(/Transcribe/);
+    expect(canSaveArticle(info({ kind: "platform" }), false)).toBe(false);
+    expect(canSaveArticle(info({ local: true }), false)).toBe(false);
+    expect(canSaveArticle(info({ local: true }), true)).toBe(true);
+    expect(canSaveArticle(info({ kind: null, error: "bad" }), true)).toBe(false);
+    expect(articleProblem(info({ kind: null, error: "bad" }), true)).toBe("bad");
+    expect(canSaveArticle(null, true)).toBe(false);
+    // yt-dlp never matters for an article.
+    expect(articleProblem(info(), false)).toBeNull();
+  });
+
+  it("tells article items from transcribed links", () => {
+    expect(isArticleItem({ type: "note", source: "url:https://example.com/a" })).toBe(true);
+    expect(isArticleItem({ type: "transcription", source: "url:https://example.com/a.mp3" })).toBe(false);
+    expect(isArticleItem({ type: "note", source: "mic" })).toBe(false);
+    expect(isArticleItem({ type: "note", source: "api:Shortcuts" })).toBe(false);
   });
 });

@@ -1116,7 +1116,7 @@ maintainer's own voice only if he provides it.
       playback (P17). (#256)
 - [ ] **Marking** of every generated file and *Check a file* (P21, E17). (#257;
       part 1 — watermark + *Check a file* — built, part 2 — C2PA — to do)
-- [ ] **Article links** to text items and audio (P17). (#258)
+- [x] **Article links** to text items and audio (P17). (#258)
 - [ ] Stretch: **two-voice podcast recipe** (P17). (#259)
 - [ ] Docs and release. (#260)
 
