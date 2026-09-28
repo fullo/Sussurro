@@ -115,6 +115,9 @@ pub struct AppState {
     pub recipe_answers: crate::recipes::answer::Answers,
     /// One-time confirmations for runs on external LLM profiles (#122).
     pub consents: crate::llm::consent::ConsentStore,
+    /// Live level previews for the mic/system pickers (#314) — never the
+    /// recorder above, so a preview never competes with a real recording.
+    pub level_previews: crate::audio::level_preview::LevelPreviews,
 }
 
 /// What streaming injection has already done for the current recording.

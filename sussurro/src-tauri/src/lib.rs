@@ -132,6 +132,7 @@ pub fn run() {
                 recipe_runs: Default::default(),
                 recipe_answers: Default::default(),
                 consents: Default::default(),
+                level_previews: Default::default(),
             });
             // Long-form sessions the last run never finished (crash, forced
             // quit): keep their items as "interrupted" (#153). Off the main
@@ -214,6 +215,9 @@ pub fn run() {
             commands::start_mic_test,
             commands::stop_mic_test,
             commands::mic_level,
+            commands::level_preview_start,
+            commands::level_preview,
+            commands::level_preview_stop,
             commands::whisper_gpu,
             commands::trigger_dictation,
             commands::copy_text,

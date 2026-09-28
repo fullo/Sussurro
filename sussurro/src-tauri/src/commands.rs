@@ -493,6 +493,8 @@ pub fn start_mic_test(state: State<'_, AppState>) -> Result<(), String> {
     if recorder.is_recording() {
         return Err("already recording".to_string());
     }
+    // Never compete with a picker's level preview for the device (#314).
+    state.level_previews.stop_all();
     let device = state.settings.lock().unwrap().input_device.clone();
     recorder.start(&device).map_err(|e| e.to_string())?;
     state
@@ -517,6 +519,70 @@ pub fn stop_mic_test(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn mic_level(state: State<'_, AppState>) -> f32 {
     state.recorder.lock().unwrap().level().unwrap_or(0.0)
+}
+
+/// Open a lightweight level preview for a picked device (#314): the New
+/// screen's mic/system pickers, Settings → Dictation's input device and the
+/// own-voice enrolment dialog use this (never the dictation/session
+/// recorder) so checking a device never competes with a real recording. Only
+/// a level (RMS of the last ~100 ms) ever crosses to the UI — no audio is
+/// kept, written or sent. `kind` is `"mic"` or `"system"`; for `"system"`,
+/// `native: true` opens the computer's own loopback capture (`device`
+/// ignored, #140), otherwise `device` names an input device (a virtual
+/// cable, a monitor source) and must be exact — never the default-input
+/// fallback the mic kind uses.
+#[tauri::command]
+pub fn level_preview_start(
+    state: State<'_, AppState>,
+    kind: String,
+    device: Option<String>,
+    native: Option<bool>,
+) -> Result<(), String> {
+    let kind = crate::audio::level_preview::PreviewKind::parse(&kind)
+        .ok_or_else(|| format!("unknown level preview kind '{kind}'"))?;
+    use crate::audio::level_preview::PreviewKind;
+    match kind {
+        PreviewKind::Mic => state
+            .level_previews
+            .start_mic(&device.unwrap_or_default())
+            .map_err(|e| format!("{e:#}")),
+        PreviewKind::System => {
+            if native.unwrap_or(false) {
+                state
+                    .level_previews
+                    .start_system_native()
+                    .map_err(|e| format!("{e:#}"))
+            } else {
+                let device = device.unwrap_or_default();
+                if device.is_empty() {
+                    return Err("choose a device first".to_string());
+                }
+                state
+                    .level_previews
+                    .start_system_device(&device)
+                    .map_err(|e| format!("{e:#}"))
+            }
+        }
+    }
+}
+
+/// The preview's current level (see [`level_preview_start`]); an error once
+/// it was never started or the device stopped delivering audio (shown as
+/// "unavailable" with the message).
+#[tauri::command]
+pub fn level_preview(state: State<'_, AppState>, kind: String) -> Result<f32, String> {
+    let kind = crate::audio::level_preview::PreviewKind::parse(&kind)
+        .ok_or_else(|| format!("unknown level preview kind '{kind}'"))?;
+    state.level_previews.level(kind)
+}
+
+/// Close the picker's preview and release the device (unmount, device
+/// change, or a real recording about to start).
+#[tauri::command]
+pub fn level_preview_stop(state: State<'_, AppState>, kind: String) {
+    if let Some(kind) = crate::audio::level_preview::PreviewKind::parse(&kind) {
+        state.level_previews.stop(kind);
+    }
 }
 
 /// Whisper runs on the GPU in this build (Metal / Vulkan). Settings uses it
@@ -859,8 +925,10 @@ pub async fn transcribe_file(
 /// recording as `audio.wav` in the item folder (P9, #141; omitted = the
 /// per-app default).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn engine_start_mic(
     app: AppHandle,
+    state: State<'_, AppState>,
     item_type: Option<crate::archive::ItemType>,
     title: Option<String>,
     defer: Option<bool>,
@@ -868,6 +936,8 @@ pub fn engine_start_mic(
     cleanup_level: Option<crate::settings::CleanupLevel>,
     save_audio: Option<bool>,
 ) -> Result<u64, String> {
+    // Never compete with a picker's level preview for the device (#314).
+    state.level_previews.stop_all();
     crate::engine::session::start_mic(
         &app,
         item_type.unwrap_or_default(),
@@ -895,6 +965,7 @@ pub fn engine_start_mic(
 #[allow(clippy::too_many_arguments)]
 pub async fn engine_start_system(
     app: AppHandle,
+    state: State<'_, AppState>,
     system_device: String,
     native: Option<bool>,
     mic_device: Option<String>,
@@ -904,6 +975,8 @@ pub async fn engine_start_system(
     cleanup_level: Option<crate::settings::CleanupLevel>,
     save_audio: Option<bool>,
 ) -> Result<u64, String> {
+    // Never compete with a picker's level preview for either device (#314).
+    state.level_previews.stop_all();
     // Off the main thread: it enumerates the audio devices first.
     let system = if native.unwrap_or(false) {
         crate::engine::session::SystemInput::Native
@@ -2391,7 +2464,10 @@ pub async fn own_voice_status(state: State<'_, AppState>) -> Result<OwnVoiceStat
 /// Start recording the enrolment paragraph from `device` (empty = the
 /// system default input). A recording already running is restarted.
 #[tauri::command]
-pub fn own_voice_enrol_start(device: String) -> Result<(), String> {
+pub fn own_voice_enrol_start(state: State<'_, AppState>, device: String) -> Result<(), String> {
+    // Never compete with the enrolment dialog's own level preview for the
+    // device (#314).
+    state.level_previews.stop_all();
     let mut slot = enrolment();
     if let Some((mut old, _)) = slot.take() {
         let _ = old.stop();
@@ -2989,7 +3065,6 @@ pub fn recipe_reveal_document(
         .map_err(|e| e.to_string())
 }
 
-
 // ---- Read aloud (0.12, #255, P18/P24): experimental, off by default ----
 
 /// The models folder, whether read aloud is on, and the voice picks.
@@ -3004,7 +3079,9 @@ fn tts_context(state: &AppState) -> (PathBuf, bool, std::collections::BTreeMap<S
 
 /// The models folder, or why read aloud can't be used now (P24: it acts
 /// only while the module is on).
-fn tts_on(state: &AppState) -> Result<(PathBuf, std::collections::BTreeMap<String, String>), String> {
+fn tts_on(
+    state: &AppState,
+) -> Result<(PathBuf, std::collections::BTreeMap<String, String>), String> {
     let (dir, enabled, picks) = tts_context(state);
     if !enabled {
         return Err("Read aloud is off — turn it on in Settings → Experimental.".into());
@@ -3022,7 +3099,9 @@ fn tts_preview_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// Models → Voices: languages, voices, sizes, what is downloaded.
 #[tauri::command]
-pub async fn tts_status(state: State<'_, AppState>) -> Result<crate::tts::service::TtsStatus, String> {
+pub async fn tts_status(
+    state: State<'_, AppState>,
+) -> Result<crate::tts::service::TtsStatus, String> {
     let (dir, enabled, picks) = tts_context(&state);
     blocking(move || Ok(crate::tts::service::global().status(&dir, enabled, &picks))).await
 }
@@ -3044,7 +3123,8 @@ pub async fn tts_download(
     let (dir, picks) = tts_on(&state)?;
     let lang = crate::tts::catalog::language(&language)
         .ok_or_else(|| format!("no read-aloud model for '{language}'"))?;
-    let voice = voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
+    let voice =
+        voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
     let emitter = app.clone();
     let result = blocking(move || {
         let fetch = crate::tts::models::HttpFetch::new()?;
@@ -3130,10 +3210,17 @@ pub async fn tts_preview(
     let (dir, picks) = tts_on(&state)?;
     let lang = crate::tts::catalog::language(&language)
         .ok_or_else(|| format!("no read-aloud model for '{language}'"))?;
-    let voice = voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
+    let voice =
+        voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
     let preview_dir = tts_preview_dir(&app)?;
     blocking(move || {
-        let name = crate::tts::service::global().preview(&dir, &preview_dir, lang.code, &voice, text.as_deref())?;
+        let name = crate::tts::service::global().preview(
+            &dir,
+            &preview_dir,
+            lang.code,
+            &voice,
+            text.as_deref(),
+        )?;
         Ok(format!("{}{name}", crate::tts::service::PREVIEW_PREFIX))
     })
     .await
@@ -3184,7 +3271,10 @@ pub async fn read_aloud_start(
         };
         let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
         read_aloud::run(read_aloud::jobs(), &speaker, &req, &mut |s| {
-            if s.done == 0 || s.done == s.total || last.elapsed() >= std::time::Duration::from_millis(250) {
+            if s.done == 0
+                || s.done == s.total
+                || last.elapsed() >= std::time::Duration::from_millis(250)
+            {
                 last = std::time::Instant::now();
                 let _ = emitter.emit("read-aloud-progress", s);
             }
@@ -3229,7 +3319,10 @@ pub async fn read_aloud_delete(
     file: String,
 ) -> Result<(), String> {
     let (archive, _) = archive_paths(&state)?;
-    blocking(move || crate::tts::read_aloud::delete(crate::tts::read_aloud::jobs(), &archive, &id, &file)).await
+    blocking(move || {
+        crate::tts::read_aloud::delete(crate::tts::read_aloud::jobs(), &archive, &id, &file)
+    })
+    .await
 }
 
 /// Delete the temporary *Listen* files (the document closed).
@@ -3263,7 +3356,8 @@ fn serve_tts_preview(
     request: &tauri::http::Request<Vec<u8>>,
     range: Option<&str>,
 ) -> Option<archive::playback::Reply> {
-    let decoded = archive::playback::percent_decode(request.uri().path().trim_start_matches('/')).ok()?;
+    let decoded =
+        archive::playback::percent_decode(request.uri().path().trim_start_matches('/')).ok()?;
     let name = crate::tts::service::preview_file_name(&decoded)?;
     let head = match request.method().as_str() {
         "GET" => false,
