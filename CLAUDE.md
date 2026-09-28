@@ -988,7 +988,7 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03; current version 0.10.2 — released 2026-09-28)
+## Roadmap (agreed 2026-07-03; current version 0.10.3 — released 2026-09-28)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -1127,6 +1127,11 @@ dictation hotkey is taken; `/live` no longer dropped after 30 s idle on
 Windows and an unauthenticated `/live` closed at the 2 s auth deadline;
 `cargo test` runs on Windows, with the `rust-windows` CI job (without the
 opus step on 0.10, which has no libopus).
+
+**0.10.3 — published 2026-09-28** (notes `docs/releases/0.10.3.md`): same
+route (PR #320, cherry-pick of #318): every Ollama request sends
+`think: false` (thinking models returned empty recipe results), recipe
+steps cap `num_predict`, bullet-only runaway lines are dropped.
 
 - **Phase 0** — spikes #106–#108 closed (Silero VAD, WeSpeaker embeddings,
   word timings). #104/#105 (browser capture, Meet names) were desk studies
