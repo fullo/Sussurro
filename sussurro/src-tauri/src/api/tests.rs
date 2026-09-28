@@ -1269,7 +1269,18 @@ fn a_dropped_connection_still_keeps_the_meeting() {
     // The run finishes on its own; the item is kept, titled from its text.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
-        let items = archive::list_items(&r.host.0.archive).unwrap();
+        // The archive folder is made with the first item: until then the
+        // scan says it is missing (#328), which here only means "not yet".
+        let items = match archive::list_items(&r.host.0.archive) {
+            Ok(items) => items,
+            Err(e)
+                if archive::unreadable::find(&e).map(|u| u.kind)
+                    == Some(archive::unreadable::UnreadableKind::Missing) =>
+            {
+                Vec::new()
+            }
+            Err(e) => panic!("{e:#}"),
+        };
         if let Some(it) = items.iter().find(|i| !i.recording) {
             assert_eq!(it.meta.item_type, ItemType::Meeting);
             assert_eq!(it.meta.source, "browser:teams.microsoft.com");
