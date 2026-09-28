@@ -745,7 +745,7 @@ mod tests {
     }
 
     fn items(f: &Fx) -> usize {
-        archive::list_items(&f.archive).len()
+        archive::list_items(&f.archive).unwrap_or_default().len()
     }
 
     #[test]

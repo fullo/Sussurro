@@ -449,6 +449,27 @@ project decisions here, not in per-machine memory.**
   frontmatter day vs. the viewer's local today sent by the UI; the date
   facet takes one bucket or one custom range. Index schema v2 (rebuilt
   automatically). Selection is kept in localStorage (`libraryFacets`).
+- **An unreadable archive is an error, never an empty archive (#328)**
+  (`archive/unreadable.rs`, `store::scan_item_dirs` → `ArchiveScan`): a
+  root that is missing, not a folder or refused (`read_dir` error, macOS
+  TCC = EPERM) makes the scan fail with `ArchiveUnreadable` (path + kind);
+  `Index::sync` scans **before** touching the database and
+  `rebuild_index` scans **before** its reset, so the index is left as it
+  is — except a **missing** root while the index knows none of its items
+  (no index, or one of another folder: an archive not created yet), which
+  syncs as empty (`Slot::scan`). Subfolders that can't be read are logged and listed as
+  `unreadable`: rows under them are kept (`ArchiveScan::is_unknown`). A
+  readable empty root still clears the index. Every derived-state writer
+  follows the same rule: voice profiles (`rebuild_all`/`enable` refuse
+  when a profile's document lies under an unreadable folder;
+  `document_changed` refuses on an unreadable root or document — an OS
+  read error is never "document gone"), `source-files.json` pruning and
+  the crash journal keep entries of an archive that can't be read. The
+  UI gets a JSON error `code: "archive_unreadable"` (`ui_error` in
+  `commands::blocking`; `src/lib/archiveError.ts`) and the Library shows
+  the folder, the OS reason, the macOS Files and Folders hint and
+  Settings → Archive; the archive API answers `503 archive_unreadable`
+  (no path). Dev mock: `?archive=unreadable|missing`.
 - **Saved audio (0.10, #141, P9)** (`archive/audio.rs`,
   `engine/audio_out.rs`): only on request — New's "Save audio" per run
   (`RunOptions.save_audio`), else `Settings.save_audio` (off; also covers

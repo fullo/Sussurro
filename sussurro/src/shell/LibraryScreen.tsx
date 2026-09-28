@@ -18,6 +18,7 @@ import {
 import { itemSubtitle, matchesQuery, splitHighlights, TYPE_FILTERS, TYPE_LABEL } from "../lib/library";
 import { externalHostsTitle, sentExternally } from "../lib/privacy";
 import { audioBadge } from "../lib/audio";
+import { parseArchiveUnreadable, unreadableCopy, type ArchiveUnreadable } from "../lib/archiveError";
 import type { ItemSummary } from "../lib/types";
 import { DocumentPane } from "./DocumentPane";
 import { LibraryFacets } from "./LibraryFacets";
@@ -70,6 +71,9 @@ export function LibraryScreen({
   const [total, setTotal] = useState<number | null>(null);
   const [archiveDir, setArchiveDir] = useState("");
   const [indexDown, setIndexDown] = useState(false);
+  /** The archive folder itself can't be read (#328): said, never shown as empty. */
+  const [unreadable, setUnreadable] = useState<ArchiveUnreadable | null>(null);
+  const [retry, setRetry] = useState(0);
   const q = useDebounced(query, 200);
 
   useEffect(() => {
@@ -79,8 +83,24 @@ export function LibraryScreen({
   useEffect(() => {
     let stale = false;
     (async () => {
-      const all = await invoke<ItemSummary[]>("archive_list").catch(() => null);
+      let listErr: unknown = null;
+      const all = await invoke<ItemSummary[]>("archive_list").catch((e) => {
+        listErr = e;
+        return null;
+      });
       if (stale) return;
+      const folderErr = parseArchiveUnreadable(listErr);
+      // A missing folder the index knows nothing of is an archive not
+      // created yet: the index answers (empty) and the Library says so.
+      if (folderErr && folderErr.kind !== "missing") {
+        setUnreadable(folderErr);
+        setTotal(null);
+        setItems([]);
+        setFacets(null);
+        setIndexDown(false);
+        return;
+      }
+      setUnreadable(null);
       if (all) {
         setTotal(all.length);
         onCount(all.length);
@@ -88,13 +108,26 @@ export function LibraryScreen({
       try {
         const found = await invoke<FacetedSearch>("archive_facets", { query: q, filters: toFilters(sel, localToday()) });
         if (stale) return;
+        if (folderErr) {
+          setTotal(0);
+          onCount(0);
+        }
         setIndexDown(false);
         setItems(found.items);
         setFacets(found.facets);
-      } catch {
+      } catch (e) {
+        if (stale) return;
+        const idxErr = parseArchiveUnreadable(e) ?? folderErr;
+        if (idxErr) {
+          // The folder is unreadable (or missing while the index knows items).
+          setUnreadable(idxErr);
+          setTotal(null);
+          setItems([]);
+          setFacets(null);
+          return;
+        }
         // Index unavailable: fall back to the folder scan, filtered here by
         // type and text only (the facets need the index).
-        if (stale) return;
         setIndexDown(true);
         setFacets(null);
         setItems((all ?? []).filter((i) => (!sel.types.length || sel.types.includes(i.meta.type)) && matchesQuery(i, q)));
@@ -104,12 +137,13 @@ export function LibraryScreen({
       stale = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, sel, version, ctl.settings.archive_dir]);
+  }, [q, sel, version, ctl.settings.archive_dir, retry]);
 
   const revealArchive = () =>
     invoke("archive_reveal", { id: null }).catch((e) => ctl.setBusy(String(e)));
 
-  const archiveEmpty = total === 0;
+  const archiveEmpty = total === 0 && !unreadable;
+  const copy = unreadable ? unreadableCopy(unreadable) : null;
   const selected = selectedId;
 
   return (
@@ -162,7 +196,8 @@ export function LibraryScreen({
           </div>
           <div className="lib-list" role="list">
             {items === null && <p className="sh-note pad">Loading…</p>}
-            {items !== null && items.length === 0 && !archiveEmpty && (
+            {unreadable && <p className="sh-note pad">The archive folder can't be read right now.</p>}
+            {items !== null && items.length === 0 && !archiveEmpty && !unreadable && (
               <div className="sh-note pad">
                 <p>
                   No items match{query.trim() ? ` “${query.trim()}”` : ""}
@@ -231,7 +266,30 @@ export function LibraryScreen({
         </div>
 
         <div className="doc-wrap">
-          {archiveEmpty ? (
+          {unreadable && copy ? (
+            <div className="empty-state" role="alert">
+              <h2>{copy.title}</h2>
+              <p className="mono path-line" title={unreadable.path}>{unreadable.path}</p>
+              <p>{copy.explanation}</p>
+              {copy.hint && <p>{copy.hint}</p>}
+              {copy.osReason && (
+                <p className="sh-muted">
+                  The system said: <span className="mono">{copy.osReason}</span>
+                </p>
+              )}
+              <p className="sh-muted">{copy.reassurance}</p>
+              <div className="row-gap">
+                <button type="button" className="btn-dark" onClick={() => setRetry((n) => n + 1)}>
+                  Try again
+                </button>
+                {onOpenSettings && (
+                  <button type="button" className="btn-ghost sh-btn" onClick={() => onOpenSettings("archive")}>
+                    Choose another folder…
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : archiveEmpty ? (
             <div className="empty-state">
               <h2>Your archive is empty</h2>
               <p>

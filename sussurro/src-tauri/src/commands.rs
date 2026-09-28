@@ -1559,7 +1559,8 @@ fn archive_paths(state: &AppState) -> Result<(PathBuf, PathBuf), String> {
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || f().map_err(|e| format!("{e:#}")))
+    // An unreadable archive root reaches the UI as a coded JSON error (#328).
+    tauri::async_runtime::spawn_blocking(move || f().map_err(|e| archive::unreadable::ui_error(&e)))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1614,7 +1615,7 @@ pub async fn archive_prepare(state: State<'_, AppState>) -> Result<String, Strin
 #[tauri::command]
 pub async fn archive_list(state: State<'_, AppState>) -> Result<Vec<ItemSummary>, String> {
     let (dir, _) = archive_paths(&state)?;
-    blocking(move || Ok(archive::list_items(&dir))).await
+    blocking(move || archive::list_items(&dir)).await
 }
 
 /// Full-text search with facets over the index (synced with the folder
@@ -1985,7 +1986,7 @@ pub async fn archive_uncompressed_audio(
 ) -> Result<UncompressedAudio, String> {
     let (dir, _) = archive_paths(&state)?;
     blocking(move || {
-        let items = archive::compress::items_with_wav(&dir);
+        let items = archive::compress::items_with_wav(&dir)?;
         Ok(UncompressedAudio {
             items: items.len(),
             bytes: items.iter().map(|(_, b)| b).sum(),
@@ -2017,7 +2018,7 @@ pub async fn archive_compress_audio(
                 let item = archive::paths::item_dir(&dir, &id)?;
                 vec![(id, archive::compress::wav_bytes(&item))]
             }
-            None => archive::compress::items_with_wav(&dir),
+            None => archive::compress::items_with_wav(&dir)?,
         };
         let total_bytes: u64 = targets.iter().map(|(_, b)| b).sum();
         let items_total = targets.len();

@@ -5,6 +5,7 @@ import { Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { audioBytes, compressPercent, compressSummaryText, wavFiles } from "../lib/audio";
 import { formatBytes } from "../lib/format";
+import { errorText } from "../lib/archiveError";
 import type { CompressProgress, CompressSummary, Item, UncompressedAudio } from "../lib/types";
 
 /* *Compress audio* (#248, P16): saved WAV files become Ogg Opus (about 10×
@@ -56,7 +57,7 @@ export function CompressItemButton({ ctl, item, onItem }: { ctl: Ctl; item: Item
       ctl.flash(compressSummaryText(s));
       onItem(await invoke<Item>("archive_get", { id: item.id }));
     } catch (e) {
-      ctl.setBusy(String(e));
+      ctl.setBusy(errorText(e));
     } finally {
       setRunning(false);
       setCancelling(false);
@@ -120,7 +121,7 @@ export function CompressAllField({ ctl }: { ctl: Ctl }) {
       ctl.flash(compressSummaryText(s));
       if (s.failed.length > 0) console.warn("Compress audio: not converted", s.failed);
     } catch (e) {
-      ctl.setBusy(String(e));
+      ctl.setBusy(errorText(e));
     } finally {
       setRunning(false);
       setCancelling(false);

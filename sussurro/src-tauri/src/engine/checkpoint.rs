@@ -428,10 +428,17 @@ pub fn recover(
             // folder missing, or the item still there but not rewritable:
             // try again at the next start.
             Err(e) => {
+                // Only a transcript positively gone from a readable archive
+                // drops the entry: a folder the OS refuses (#328) may still
+                // hold it.
                 let item_left = archive::paths::item_dir(&entry.archive, &entry.id)
-                    .map(|d| d.join(archive::store::TRANSCRIPT_FILE).is_file())
+                    .map(|d| {
+                        d.join(archive::store::TRANSCRIPT_FILE)
+                            .try_exists()
+                            .unwrap_or(true)
+                    })
                     .unwrap_or(false);
-                if item_left || !entry.archive.is_dir() {
+                if item_left || archive::store::open_root(&entry.archive).is_err() {
                     eprintln!("engine: journal entry {} kept for later ({e:#})", entry.id);
                     keep.push(entry);
                 } else {
@@ -565,7 +572,7 @@ mod tests {
             item.body
         );
         assert_eq!(item.meta.duration.as_deref(), Some("00:00:14"));
-        let listed = archive::list_items(&e.archive);
+        let listed = archive::list_items(&e.archive).unwrap();
         assert!(listed[0].interrupted);
         // Indexed: searchable, flagged in search results too.
         let hits = archive::with_index(&e.archive, &e.db, |i| {
