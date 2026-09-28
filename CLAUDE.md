@@ -957,7 +957,7 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03; current version 0.10.1 — released 2026-09-26)
+## Roadmap (agreed 2026-07-03; current version 0.10.2 — released 2026-09-28)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -1089,6 +1089,13 @@ with #279 (Firefox ≥ 140 desktop, AMO warnings), #291 (Teams on
 `teams.cloud.microsoft`, Zoom `/wc/` iframe) and #294 (meeting language;
 backported without the 0.11 archive API code). Later 0.10.x patches go on
 that branch the same way — never from `main`, which carries 0.11 work.
+
+**0.10.2 — published 2026-09-28** (notes `docs/releases/0.10.2.md`): same
+route (PR #313, cherry-picks of #311 and #312): settings saved when the
+dictation hotkey is taken; `/live` no longer dropped after 30 s idle on
+Windows and an unauthenticated `/live` closed at the 2 s auth deadline;
+`cargo test` runs on Windows, with the `rust-windows` CI job (without the
+opus step on 0.10, which has no libopus).
 
 - **Phase 0** — spikes #106–#108 closed (Silero VAD, WeSpeaker embeddings,
   word timings). #104/#105 (browser capture, Meet names) were desk studies
