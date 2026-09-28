@@ -258,8 +258,7 @@ pub fn check_listener_owner(
 #[cfg(windows)]
 pub fn tcp_listeners() -> std::io::Result<Vec<(std::net::Ipv4Addr, u16, u32)>> {
     use windows_sys::Win32::NetworkManagement::IpHelper::{
-        GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
-        TCP_TABLE_OWNER_PID_LISTENER,
+        GetExtendedTcpTable, MIB_TCPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
     };
     use windows_sys::Win32::Networking::WinSock::AF_INET;
     const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
@@ -291,10 +290,7 @@ pub fn tcp_listeners() -> std::io::Result<Vec<(std::net::Ipv4Addr, u16, u32)>> {
         // `dwNumEntries` rows, within the `len` bytes written.
         let rows = unsafe {
             let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
-            std::slice::from_raw_parts(
-                table.table.as_ptr() as *const MIB_TCPROW_OWNER_PID,
-                table.dwNumEntries as usize,
-            )
+            std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize)
         };
         return Ok(rows
             .iter()

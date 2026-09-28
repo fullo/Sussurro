@@ -959,11 +959,18 @@ fn live_takes_the_token_as_its_first_message() {
     .unwrap();
     assert_eq!(refused(&mut ws), "authentication required");
     assert!(archive::list_items(&r.host.0.archive).is_empty(), "no meeting started");
-    // Too late, even with the right token.
+    // Silent past the deadline: the server refuses and closes on its own
+    // (the socket's read timeout is the deadline), so an unauthenticated
+    // upgrade can't park a thread and a connection slot forever.
+    let t0 = std::time::Instant::now();
     let mut ws = ws_connect_bare(r.port, Some(EXT)).expect("upgrade");
-    std::thread::sleep(live::AUTH_TIMEOUT + std::time::Duration::from_millis(200));
-    ws.send(auth_message(TOKEN)).unwrap();
     assert_eq!(refused(&mut ws), "authentication timed out");
+    let waited = t0.elapsed();
+    assert!(
+        waited >= live::AUTH_TIMEOUT - std::time::Duration::from_millis(100)
+            && waited < live::AUTH_TIMEOUT + std::time::Duration::from_secs(3),
+        "refused at the deadline, not before or much after: {waited:?}"
+    );
 }
 
 #[test]

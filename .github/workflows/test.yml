@@ -75,6 +75,74 @@ jobs:
           path: extension/dist/*.zip
           retention-days: 14
 
+  # The Rust suite on Windows (MSVC + Vulkan whisper, as shipped). Linux
+  # alone missed Windows-only breakage: test binaries that could not load
+  # (no Common Controls v6 manifest), socket timeouts that behave
+  # differently, case-insensitive env keys.
+  rust-windows:
+    runs-on: windows-latest
+    env:
+      ORT_CACHE_DIR: ${{ github.workspace }}/.ort-cache
+    steps:
+      - uses: actions/checkout@v5
+
+      # cdn.pyke.io (ort's prebuilt ONNX Runtime) intermittently 403s GitHub
+      # runners; a populated cache skips the download entirely.
+      - name: ONNX Runtime binaries cache
+        uses: actions/cache@v6
+        with:
+          path: .ort-cache
+          key: ort-bin-${{ runner.os }}-${{ hashFiles('sussurro/src-tauri/Cargo.lock') }}
+          restore-keys: ort-bin-${{ runner.os }}-
+
+      # A SHORT cargo target dir is mandatory: the Vulkan shader sub-build
+      # exceeds MAX_PATH otherwise (MSBuild FTK1011).
+      - name: Cargo target dir
+        shell: bash
+        run: echo 'CARGO_TARGET_DIR=C:\st' >> "$GITHUB_ENV"
+
+      - name: Vulkan SDK
+        shell: pwsh
+        run: |
+          $urls = @(
+            'https://sdk.lunarg.com/sdk/download/latest/windows/vulkan_sdk.exe',
+            'https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe'
+          )
+          foreach ($u in $urls) {
+            try { Invoke-WebRequest $u -OutFile vulkan_sdk.exe -ErrorAction Stop; break } catch {}
+          }
+          Start-Process .\vulkan_sdk.exe -ArgumentList '--accept-licenses','--default-answer','--confirm-command','install' -Wait
+          $sdk = (Get-ChildItem C:\VulkanSDK | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          echo "VULKAN_SDK=$sdk" >> $env:GITHUB_ENV
+          echo "$sdk\Bin" >> $env:GITHUB_PATH
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: sussurro/src-tauri
+          key: rust-windows
+
+      - name: Frontend build
+        working-directory: sussurro
+        run: |
+          npm ci
+          npm run build
+
+      - name: Rust tests
+        working-directory: sussurro/src-tauri
+        run: cargo test --locked
+
+      - name: Clippy
+        working-directory: sussurro/src-tauri
+        run: cargo clippy --locked --all-targets
+
   test:
     # 24.04: the ort (onnxruntime) prebuilt binaries need glibc >= 2.38
     runs-on: ubuntu-24.04

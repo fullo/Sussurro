@@ -28,10 +28,11 @@
 //! **Auth.** The upgrade carries the token as `?token=` (protocol 1–2
 //! clients), or none: then the first message must be `auth {token}`,
 //! within [`AUTH_TIMEOUT`] of the upgrade ([`authorize`], #217), so the
-//! token stays out of URLs the browser may log. The upgraded stream cannot
-//! time out a read, so a client that sends nothing keeps its thread parked
-//! until the peer goes away (as any idle socket on the server); one that
-//! answers late, or with anything but the right token, is closed.
+//! token stays out of URLs the browser may log. Until then the socket keeps
+//! a read timeout at the deadline, so a client that sends nothing is closed
+//! with it instead of parking a thread; one that answers late, or with
+//! anything but the right token, is closed too. Only an authenticated
+//! stream waits without a timeout (the extension's idle pauses).
 //!
 //! **Limits (#217).** The page's events come from a web page (or an XSS on
 //! it) through the extension: per connection they are rate-limited
@@ -698,11 +699,25 @@ fn send<S: Read + Write>(ws: &mut WebSocket<S>, msg: &ServerMessage) -> bool {
 
 /// [`LiveAuth::FirstMessage`]: read the first message and check it; on a
 /// failure the client gets an error status and the socket is closed.
-fn first_message_auth<S: Read + Write>(ws: &mut WebSocket<S>, expected: &str, deadline: Instant) -> bool {
-    let Ok(msg) = ws.read() else {
-        return false;
+fn first_message_auth<S: Read + Write>(
+    ws: &mut WebSocket<S>,
+    expected: &str,
+    deadline: Instant,
+) -> bool {
+    let checked = match ws.read() {
+        Ok(msg) => check_auth_message(&msg, expected, Instant::now() > deadline),
+        // The socket's read timeout is the deadline: nothing came in time.
+        Err(tungstenite::Error::Io(e))
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            Err("authentication timed out")
+        }
+        Err(_) => return false,
     };
-    match check_auth_message(&msg, expected, Instant::now() > deadline) {
+    match checked {
         Ok(()) => true,
         Err(why) => {
             let _ = send(ws, &ServerMessage::Status(Status::message(State::Error, why)));
@@ -717,12 +732,25 @@ fn first_message_auth<S: Read + Write>(ws: &mut WebSocket<S>, expected: &str, de
 }
 
 /// Serve one upgraded connection until the meeting (if any) is written.
-pub fn serve<S: Read + Write>(mut ws: WebSocket<S>, host: &dyn Host, auth: LiveAuth) {
+///
+/// `timeouts` sets the socket's read/write timeout: bounded by the auth
+/// deadline until the first message authenticates, lifted (`None`) once the
+/// client is trusted.
+pub fn serve<S: Read + Write>(
+    mut ws: WebSocket<S>,
+    host: &dyn Host,
+    auth: LiveAuth,
+    timeouts: &dyn Fn(Option<Duration>),
+) {
     if let LiveAuth::FirstMessage { expected, deadline } = &auth {
+        // A zero timeout is an error for the socket: wait at least 1 ms.
+        let left = deadline.saturating_duration_since(Instant::now());
+        timeouts(Some(left.max(Duration::from_millis(1))));
         if !first_message_auth(&mut ws, expected, *deadline) {
             return;
         }
     }
+    timeouts(None);
     let mut conn = Conn::new(host);
     let mut open = send(&mut ws, &ServerMessage::Status(Status::ready()));
     while open {
