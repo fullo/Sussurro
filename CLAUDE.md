@@ -1084,8 +1084,8 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03; current *released* version 0.10.3 — 2026-09-28;
-0.11.0 and 0.12.0 prepared, not yet published — see below)
+## Roadmap (agreed 2026-07-03; current *released* version 0.11.0 — 2026-09-28;
+0.12.0 prepared, not yet published — see below)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -1301,7 +1301,8 @@ legal review) carry `needs maintainer`. Milestones and epics:
   that can't be switched off, plus C2PA-signed metadata — and *Check a
   file* (#257, AI Act art. 50 applies from 2 Aug 2026), and article links
   that extract a web page's text into a readable item (#258).
-  **0.11.0 — prepared, not yet published** (docs/version-bump PR #253,
+  **0.11.0 — published 2026-09-28** (tag `v0.11.0` on `a412e88`, PR #316;
+  extension `updates.json` updated after publishing) (docs/version-bump PR #253,
   2026-09-28, refreshed 2026-09-28 for #257/#258 and other main merges):
   all seventeen other 0.11 issues (#241–#252, #254–#258) are merged to
   `main`, each already

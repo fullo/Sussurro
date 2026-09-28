@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import generated from "./licenses.json";
-import { licenseEntries, repositoryUrl } from "./licenses";
+import { PRIVACY_URL, licenseEntries, repositoryUrl } from "./licenses";
 
 const read = (p: string) => JSON.parse(readFileSync(new URL(p, import.meta.url), "utf8"));
 const lock = read("../../package-lock.json") as {
@@ -61,5 +61,13 @@ describe("third-party licences (#138)", () => {
     expect(repositoryUrl("github:foo/bar")).toBe("");
     expect(repositoryUrl("javascript:alert(1)")).toBe("");
     expect(repositoryUrl("")).toBe("");
+  });
+});
+
+describe("privacy policy link (#267)", () => {
+  it("points at the project site's page, which exists in docs/", () => {
+    expect(PRIVACY_URL).toBe("https://fullo.github.io/Sussurro/privacy.html");
+    const page = readFileSync(new URL("../../../docs/privacy.html", import.meta.url), "utf8");
+    expect(page).toContain('id="extension-permissions"');
   });
 });

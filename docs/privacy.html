@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy policy — Sussurro</title>
+<meta name="description" content="What the Sussurro app and its browser extension do with your audio, text and other data: everything is processed on your computer, and what leaves it only does when you ask." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="assets/blog.css" />
+<!-- seo:start -->
+<link rel="canonical" href="https://fullo.github.io/Sussurro/privacy.html" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#fafaf8" />
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+<meta property="og:site_name" content="Sussurro" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Privacy policy — Sussurro" />
+<meta property="og:description" content="What the Sussurro app and its browser extension do with your audio, text and other data." />
+<meta property="og:url" content="https://fullo.github.io/Sussurro/privacy.html" />
+<meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Privacy policy — Sussurro" />
+<meta name="twitter:description" content="What the Sussurro app and its browser extension do with your audio, text and other data." />
+<meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<!-- seo:end -->
+<style>
+  .prose table { width: 100%; border-collapse: collapse; margin: 1em 0 1.4em; font-size: 15px; }
+  .prose th, .prose td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid rgba(0,0,0,.12); }
+  .prose th { font-weight: 600; }
+  .prose .table-scroll { overflow-x: auto; }
+  .prose .toc { columns: 2; column-gap: 32px; }
+  @media (max-width: 640px) { .prose .toc { columns: 1; } }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<nav><div class="wrap">
+  <a class="brand" href="index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="index.html#features">Features</a>
+    <a href="blog/index.html">Blog</a>
+      <a href="manual/index.html">Manual</a>
+    <a class="btn red" href="index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<main id="main">
+<article class="post">
+  <a class="back" href="index.html">← Sussurro</a>
+  <header class="post-head">
+    <h1>Privacy policy</h1>
+    <p class="dek">What the Sussurro app and the Sussurro browser extension do with your audio, your text and other data — and the few cases in which something leaves your computer.</p>
+    <div class="meta">Last updated 2026-09-28 · Covers the app and the extension, version 0.11 and later</div>
+  </header>
+
+  <div class="prose">
+    <div class="callout"><span class="k">In short</span><p>Sussurro records, transcribes and stores everything on your computer. There is no account, no telemetry, no analytics and no Sussurro server. Something leaves your computer only when you ask for it: a text you send to an LLM server that is not on your machine (after you agree to it), a link you ask to transcribe, a model you download, an update check you start, a calendar link you ask to read. The browser extension talks only to the Sussurro app on your own computer.</p></div>
+
+    <p>This page describes what the software does, as built. It is written in plain language and has not been reviewed by a lawyer. The source code is public, so every statement here can be checked against it: <a href="https://github.com/fullo/Sussurro">github.com/fullo/Sussurro</a>.</p>
+
+    <h2 id="contents">Contents</h2>
+    <ul class="toc">
+      <li><a href="#who">Who publishes Sussurro</a></li>
+      <li><a href="#on-your-computer">What happens on your computer</a></li>
+      <li><a href="#leaves">What leaves your computer, and when</a></li>
+      <li><a href="#no-telemetry">No telemetry, no analytics, no account</a></li>
+      <li><a href="#extension">The browser extension</a></li>
+      <li><a href="#local-api">The local API</a></li>
+      <li><a href="#other-people">Other people's data</a></li>
+      <li><a href="#voices">Voice profiles (biometric data)</a></li>
+      <li><a href="#synthetic">Generated speech and its marks</a></li>
+      <li><a href="#storage">Where data is kept, and how to delete it</a></li>
+      <li><a href="#website">This website</a></li>
+      <li><a href="#children">Children</a></li>
+      <li><a href="#changes">Changes to this policy</a></li>
+      <li><a href="#contact">Contact</a></li>
+    </ul>
+
+    <h2 id="who">Who publishes Sussurro</h2>
+    <p>Sussurro is written and published by Francesco Fullone (DarumaHQ), who holds its copyright, as free software under the GNU AGPL v3.0 or later. This policy covers the Sussurro desktop app (Windows, macOS, Linux) and the Sussurro browser extension (Chrome, Edge, Brave and Firefox), version 0.11 and later.</p>
+    <p>The publisher does not receive, collect or store any of your data: the software has no server to send it to. Whatever you record or write stays with you, and you decide what to do with it.</p>
+
+    <h2 id="on-your-computer">What happens on your computer</h2>
+    <p>Sussurro turns speech into text and keeps the result as ordinary files. All of this runs on your own computer:</p>
+    <ul>
+      <li><strong>Recording</strong> from your microphone, from your computer's sound, from audio files you open, or from a web meeting through the extension.</li>
+      <li><strong>Speech-to-text</strong> with the speech models on your computer (whisper.cpp, NVIDIA Parakeet or Qwen3-ASR).</li>
+      <li><strong>Cleanup, recipes and questions</strong> with a local LLM by default: Ollama on this computer, or the <em>Local (bundled)</em> model that Sussurro runs itself.</li>
+      <li><strong>Speaker labels</strong> ("Voice 1", "Voice 2"), overlap detection, and voice recognition if you turn it on.</li>
+      <li><strong>Read aloud</strong> (experimental, off by default): text-to-speech and the marks on generated audio.</li>
+      <li><strong>The archive</strong>: your notes, transcriptions and meetings as markdown files in <code>Documents/Sussurro</code>, plus a search index.</li>
+    </ul>
+    <p>Audio is not kept unless you ask for it (<em>Save audio</em>, off by default). Dictations pasted with the hotkey go into the app you are typing in, and into a local history file.</p>
+
+    <h2 id="leaves">What leaves your computer, and when</h2>
+    <p>Each of these happens only because of something you do. None of them sends data to the publisher.</p>
+
+    <h3 id="external-llm">Text sent to an external LLM server</h3>
+    <p>An LLM profile whose server is not on this computer (anything other than <code>localhost</code>, a loopback address or a <code>.local</code> host, or a profile you mark as external) is <strong>external</strong>: text sent to it leaves your computer and is handled under that provider's terms. Sussurro never switches from a local profile to an external one on its own.</p>
+    <ul>
+      <li><strong>Recipes and questions</strong> on an external profile ask for confirmation <strong>every time</strong>, showing which document, roughly how much text, which server and which model. Nothing is sent until you click <em>Send</em>. The app enforces this itself: the run needs a single-use permission issued for that exact request, valid for two minutes.</li>
+      <li><strong>Cleanup</strong> of dictations and transcriptions on an external profile needs a <strong>separate opt-in</strong> in Settings → Cleanup, tied to that server. Without it, Sussurro keeps the raw text and sends nothing.</li>
+      <li>Participants' <strong>email addresses</strong> are never sent to an LLM unless you tick <em>Include participant emails</em> for that run.</li>
+      <li>Every external send is <strong>logged next to the item</strong> (date, server, profile, model — never the content), and the Library marks those items as <em>Sent externally</em>.</li>
+      <li>API keys for LLM profiles are kept in your operating system's credential store (Keychain, Credential Manager, Secret Service), not in a settings file where one works.</li>
+    </ul>
+
+    <h3 id="links">Links you ask to transcribe</h3>
+    <p>When you paste a link into New → Link, Sussurro downloads that audio or video from the site you named. For known video platforms (YouTube, Vimeo, SoundCloud and a few others) it runs <code>yt-dlp</code>, a separate program you install yourself, which contacts that platform. Those sites see an ordinary download request from your computer. Addresses on your computer or your local network are refused unless you allow them for that run. The downloaded file is temporary and deleted after the run.</p>
+
+    <h3 id="articles">Articles you ask to save</h3>
+    <p>New → Link → <em>Article</em> fetches the HTML of the one page you named (at most 10 MB), under the same rules as a transcribed link: addresses on your computer or local network are refused unless you allow them for that run, every redirect is checked, and no system proxy is used. Nothing else is requested — no images, scripts, styles or other pages — and no script from the page ever runs. The site sees an ordinary request from your computer. The main text is extracted on your computer and saved as a note in your archive, with the link as its source; the page itself is not kept.</p>
+
+    <h3 id="models">Model downloads</h3>
+    <p>Speech, speaker and language models are not in the installer. Sussurro downloads each one when you ask for it (Models screen, first-run setup), or the first time you use a feature that needs it (for example speaker labels in your first meeting). Downloads come only from fixed addresses, and each file is checked against a known checksum before use:</p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>What</th><th>Where it comes from</th></tr></thead>
+      <tbody>
+        <tr><td>Whisper speech models</td><td>Hugging Face, <code>ggerganov/whisper.cpp</code></td></tr>
+        <tr><td>Voice activity detection (Silero)</td><td>Hugging Face, <code>ggml-org/whisper-vad</code></td></tr>
+        <tr><td>NVIDIA Parakeet speech model</td><td><code>blob.handy.computer</code> (the Handy project's download host)</td></tr>
+        <tr><td>Qwen3-ASR speech model (optional)</td><td>Hugging Face, <code>ggml-org/Qwen3-ASR-1.7B-GGUF</code></td></tr>
+        <tr><td><em>Local (bundled)</em> LLM, Qwen3 1.7B</td><td>Hugging Face, <code>ggml-org/Qwen3-1.7B-GGUF</code></td></tr>
+        <tr><td>Speaker labels (WeSpeaker)</td><td>Hugging Face, <code>Wespeaker/wespeaker-voxceleb-resnet34-LM</code></td></tr>
+        <tr><td>Overlapping speech (pyannote segmentation)</td><td>Hugging Face, <code>onnx-community/pyannote-segmentation-3.0</code></td></tr>
+        <tr><td>Read aloud (experimental): Pocket TTS models and voices</td><td>Hugging Face, <code>KevinAHM/pocket-tts-onnx</code> and <code>kyutai/pocket-tts-without-voice-cloning</code></td></tr>
+        <tr><td>Read aloud (experimental): watermark models</td><td>Hugging Face, <code>DarumaHQ/audioseal-onnx</code></td></tr>
+      </tbody>
+    </table></div>
+    <p>Read-aloud models are downloaded only after you turn the module on and confirm a download that shows its size and licence. Like any download, these requests reveal your IP address to the host (Hugging Face, or the Parakeet host). If you already have Whisper models on disk, you can point Sussurro at that folder and download nothing.</p>
+
+    <h3 id="updates">Updates</h3>
+    <p>When you click <em>Check for updates</em>, the app fetches a small file (<code>latest.json</code>) from the project's GitHub releases and, if you accept, downloads the new version from GitHub. Updates are signed and checked before they are installed. Sussurro does not check for updates on its own.</p>
+    <p>The Firefox extension is updated by Firefox itself, which periodically reads <code>https://fullo.github.io/Sussurro/extension/updates.json</code> and downloads new versions from the project's GitHub releases. That is a normal browser request with no data about you beyond what any web request carries. The Chrome build, loaded unpacked, is updated by hand.</p>
+
+    <h3 id="calendar">Calendar link</h3>
+    <p>If you save a private calendar link (the "secret address in iCal format" of Google Calendar, an Outlook or iCloud published calendar), Sussurro fetches it only when you ask it to add a meeting's attendees from your calendar. The link is a secret: it is kept only in your operating system's credential store, never in a settings file, an export or a log, and the app shows only its host. You can import an <code>.ics</code> file instead, which needs no network at all.</p>
+
+    <h3 id="things-you-send">Things you send yourself</h3>
+    <p>Sussurro doesn't send these anywhere, but you might: copied text, exported documents and subtitles, a portable configuration export (People are included only if you tick <em>Include People</em>; API keys and voice profiles never are), and the <em>Copy diagnostics</em> report (performance numbers and settings summaries, no transcripts and no keys) if you paste it into a bug report.</p>
+
+    <h2 id="no-telemetry">No telemetry, no analytics, no account</h2>
+    <p>Neither the app nor the extension contains analytics, telemetry, crash reporting, advertising or tracking code, and neither asks you to create an account. There is no Sussurro server. The Firefox extension declares that it collects no data (<code>data_collection_permissions: none</code>).</p>
+
+    <h2 id="extension">The browser extension</h2>
+    <p>The extension records web meetings on <strong>Google Meet, Microsoft Teams and Zoom in the browser</strong> and streams them to the Sussurro app on the same computer, which transcribes them.</p>
+
+    <h3 id="extension-captures">What it captures</h3>
+    <ul>
+      <li><strong>Nothing until you press <em>Start recording</em></strong> in its side panel (Chrome, Edge, Brave) or sidebar (Firefox) on the meeting tab. While it records, the toolbar button shows a red <strong>REC</strong> badge on that tab. Stop, closing the tab or leaving the page ends the recording. Before that, its script on the meeting page only watches for the call's audio streams so that it can record them after Start.</li>
+      <li><strong>Audio</strong>: your microphone as the page sends it, and the call's incoming audio (everyone else, mixed).</li>
+      <li><strong>Names from the page</strong>: the participants' names shown on the meeting page and which of them is speaking, so remote lines can be named instead of "Voice N". It reads the page's structure only; it never clicks, opens panels or reads the chat.</li>
+      <li>The meeting's <strong>host name</strong> (for example <code>meet.google.com</code>), recorded as the item's source.</li>
+    </ul>
+
+    <h3 id="extension-where">Where it goes</h3>
+    <p>All of it goes <strong>only to the Sussurro app on your computer</strong>, at <code>http://127.0.0.1</code>, using a pairing token. The extension contacts no other server. The app accepts the connection only from a browser extension carrying that token, never from a web page. The live transcript in the side panel is kept in the extension's memory while you use it, not saved by the extension.</p>
+
+    <h3 id="extension-storage">What it stores in your browser</h3>
+    <ul>
+      <li><strong>The pairing</strong> (the app's port and the pairing token), in the extension's own IndexedDB, where the meeting pages' scripts can't read it.</li>
+      <li>In the extension's local storage: whether you ticked <em>Don't show this again</em> on the recording notice (<code>recordingNoticeSeen</code>), and the meeting language you last picked for each platform (<code>meetingLanguage</code>).</li>
+    </ul>
+    <p>Removing the extension deletes all of it. <em>Forget pairing</em> in its options removes the pairing.</p>
+
+    <h3 id="extension-permissions">Permissions and why</h3>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Permission</th><th>Browsers</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td><code>storage</code></td><td>all</td><td>The recording-notice choice and the meeting language (above).</td></tr>
+        <tr><td><code>sidePanel</code></td><td>Chrome, Edge, Brave</td><td>The side panel with Start/Stop and the live transcript. Firefox uses its sidebar, which needs no permission.</td></tr>
+        <tr><td><code>tabCapture</code></td><td>Chrome, Edge, Brave</td><td>A fallback, used only after you pressed Start and no call audio arrived within 4 seconds (a page that plays the call in a way the extension can't otherwise reach): it captures that tab's audio. Not present in the Firefox build.</td></tr>
+        <tr><td><code>offscreen</code></td><td>Chrome, Edge, Brave</td><td>Runs that tab-capture fallback (a hidden extension page is where Chrome allows it). Not present in the Firefox build.</td></tr>
+        <tr><td>Host access: <code>meet.google.com</code>, <code>teams.microsoft.com</code>, <code>teams.live.com</code>, <code>teams.cloud.microsoft</code>, <code>*.zoom.us/wc/*</code></td><td>all</td><td>To run its script on the meeting pages, which finds the call's audio and the participants' names. No other sites: the extension does not ask for access to all websites.</td></tr>
+        <tr><td>Host access: <code>http://127.0.0.1/*</code></td><td>all</td><td>To reach the Sussurro app on your own computer.</td></tr>
+      </tbody>
+    </table></div>
+    <p>In Firefox you can withhold host access per site; without it, the panel offers <em>Allow access</em> and asks the browser for exactly the meeting sites above.</p>
+
+    <h2 id="local-api">The local API</h2>
+    <p>The app can serve an HTTP API for your own scripts and for the extension. It listens only on <code>127.0.0.1</code> (not reachable from the network), refuses requests from web pages, and is off on a new install. The extension's routes need the pairing token; archive routes need tokens you create, with scopes (participants' emails need their own scope), stored only as hashes.</p>
+
+    <h2 id="other-people">Other people's data</h2>
+    <p>Some of what you keep in Sussurro is about other people. You are the one who decides to collect it, and you are responsible for it under the rules that apply to you.</p>
+    <ul>
+      <li><strong>Meeting recordings</strong> capture other people's voices. Depending on where you and they are, and on your organisation's rules, you may need to tell them, and some may have to agree first. Before your first such recording the app and the extension show a notice saying so, and a "Recording other people" line stays visible while you record. The notice gives no legal advice. More in <a href="https://github.com/fullo/Sussurro#recording-meetings-and-consent">Recording meetings and consent</a>.</li>
+      <li><strong>People</strong>: the names, aliases and email addresses you enter are kept in your archive (<code>.sussurro/people.json</code>), so they travel with it if you sync or share the archive. They are never logged, never in diagnostics, and in a configuration export only if you ask.</li>
+      <li><strong>Participants</strong> of meetings and transcriptions (names, and emails from People or a calendar you import) are written in each item's file.</li>
+    </ul>
+
+    <h2 id="voices">Voice profiles (biometric data)</h2>
+    <p>A voiceprint that identifies a person is biometric data (special-category data under GDPR art. 9). Sussurro handles it this way:</p>
+    <ul>
+      <li><strong>Off until you turn it on, person by person</strong> (<em>Recognise this voice</em>). It learns only from lines you linked to that person yourself, and it only <strong>suggests</strong> a name; nothing is linked without your click.</li>
+      <li><strong>Your own voice</strong> ("You") is optional: you read a short paragraph aloud, and Sussurro keeps an averaged voiceprint of it, never the recording.</li>
+      <li>Each profile is one averaged voiceprint in the app's data folder (<code>voices/</code>, readable only by your user on macOS and Linux). It is <strong>never</strong> in the archive, a configuration export, diagnostics, logs or the local API, and never shown in the app.</li>
+      <li><strong>Delete</strong> with <em>Forget this voice</em> on a person, <em>Forget my voice</em>, or <em>Forget all voices</em> in Settings → Voices. Deleting a person forgets their voice. Forgetting deletes the file outright.</li>
+    </ul>
+    <p>Tell people before you let Sussurro learn their voice. Using it for yourself, family and friends is generally a different matter from an organisation recognising its staff or clients, where data protection law usually applies in full.</p>
+
+    <h2 id="synthetic">Generated speech and its marks</h2>
+    <p>The read-aloud module (experimental, off by default) turns text into speech on your computer. Every audio file it generates — saved speech, <em>Listen</em> files and voice previews — is marked as synthetic, as the EU AI Act (art. 50) asks, and there is no switch to turn the marks off:</p>
+    <ul>
+      <li><strong>Metadata</strong> in the file (<code>SYNTHETIC=1</code>, the engine, the voice, the language) and in the item's frontmatter.</li>
+      <li>An <strong>inaudible watermark</strong> (AudioSeal) carrying one fixed Sussurro code, the same for every user. It identifies the software, never you.</li>
+      <li><strong>Signed metadata (C2PA)</strong>, in the version that adds it: a signature made with a key created on your computer the first time it is needed, one per installation, kept in your operating system's credential store. The signed statement says the audio was generated by Sussurro, with the engine, voice, language and time; its signer name is "Sussurro install" plus a short code derived from that key. It contains no name, account, document title or other personal data. For saved Ogg Opus speech it is a small <code>.c2pa</code> file next to the audio.</li>
+    </ul>
+    <p><em>Check a file</em> tells whether an audio file carries these marks. It runs on your computer and uploads nothing.</p>
+
+    <h2 id="storage">Where data is kept, and how to delete it</h2>
+    <p>Everything is ordinary files under your user account, kept until you delete them. There is no retention period set by anyone else, and no copy anywhere else.</p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>What</th><th>Where</th><th>How to delete</th></tr></thead>
+      <tbody>
+        <tr><td>Notes, transcriptions, meetings, their documents, subtitles, saved audio, generated speech; the People registry</td><td>The archive, <code>Documents/Sussurro</code> (or the folder you chose)</td><td><em>Delete…</em> in the app (to the OS trash), or delete the files</td></tr>
+        <tr><td>Settings, including the extension's pairing token</td><td><code>settings.json</code> in the app's config folder</td><td>Delete the file; <em>Regenerate token…</em> invalidates the pairing</td></tr>
+        <tr><td>LLM API keys, the calendar link, the read-aloud signing key</td><td>The OS credential store, service <code>com.sussurro.app</code></td><td>Clear the key or link in Settings, or remove the entries in the credential store</td></tr>
+        <tr><td>Dictation history and usage counts, search index, temporary downloads, voice profiles, voice-suggestion answers</td><td>The app's data folder (e.g. <code>~/Library/Application Support/com.sussurro.app</code> on macOS)</td><td>In the app (<em>Forget all voices</em>, Settings), or delete the folder</td></tr>
+        <tr><td>Downloaded models</td><td><code>models/</code> in the app's data folder, or the folder you chose</td><td>Models screen, or delete the files</td></tr>
+        <tr><td>Extension pairing and preferences</td><td>The browser's extension storage</td><td>Remove the extension</td></tr>
+      </tbody>
+    </table></div>
+    <p>Uninstalling the app does not delete your archive: it is your documents. Text you sent to an external LLM server is subject to that provider's own retention.</p>
+
+    <h2 id="website">This website</h2>
+    <p>This site is hosted on GitHub Pages and its pages load fonts from Google Fonts, so GitHub and Google receive the usual request data (such as your IP address) when you visit. The site itself sets no cookies and runs no analytics.</p>
+
+    <h2 id="children">Children</h2>
+    <p>Sussurro is a general-purpose tool not aimed at children, and it collects nothing from anyone.</p>
+
+    <h2 id="changes">Changes to this policy</h2>
+    <p>When what the software does with data changes, this page changes with it, and the date at the top is updated. Every earlier version is in the project's public git history: <a href="https://github.com/fullo/Sussurro/commits/main/docs/privacy.html">history of this page</a>.</p>
+
+    <h2 id="contact">Contact</h2>
+    <p>Questions about this policy or about how Sussurro handles data: open an issue at <a href="https://github.com/fullo/Sussurro/issues">github.com/fullo/Sussurro/issues</a>. Issues are public, so don't include personal data or recordings.</p>
+    <p>To report a security problem privately, use GitHub's private vulnerability reporting for the repository: <a href="https://github.com/fullo/Sussurro/security/advisories/new">Report a vulnerability</a>.</p>
+    <!-- maintainer: enable "Private vulnerability reporting" in the repository's Settings → Security (it is off as of 2026-09-28), or the link above leads nowhere -->
+    <!-- maintainer: add a contact email if a store requires one -->
+  </div>
+</article>
+</main>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <ul class="foot-links">
+    <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
+    <li><a href="blog/index.html">Blog</a></li>
+    <li><a href="https://github.com/fullo/Sussurro/releases">Download</a></li>
+    <li><a href="privacy.html">Privacy</a></li>
+  </ul>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>
