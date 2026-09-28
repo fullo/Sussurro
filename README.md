@@ -192,19 +192,45 @@ voice previews alike. There is no switch to turn it off. Its two models
 come with the first read-aloud download, in the same confirmation; without
 them nothing is spoken. The watermark survives the app's own Opus, MP3 and
 resampling, but not heavy noise, speed changes or very short excerpts.
-Signed metadata (C2PA) comes in a later release.
+
+Generated files also carry **signed metadata**
+([C2PA](https://c2pa.org) Content Credentials): who made the file
+(`Sussurro <version>`), that it is AI-generated speech
+(`trainedAlgorithmicMedia`), the engine, voice and language, and when (this
+computer's clock — no time-stamp service is contacted). Ogg can't hold a
+C2PA manifest, so each saved `speech.opus` gets a `speech.c2pa` file next
+to it (keep them together: the pair travels, is replaced and moves to the
+trash as one); *Listen* files get one too, and voice previews (WAV) carry
+it inside. Each install signs with **its own self-signed certificate**,
+made the first time the module generates a file: its private key is kept
+only in the OS credential store (service `com.sussurro.app`, account
+`c2pa-signing-key`), and the certificate names no one
+(`Sussurro install <8 hex digits>`). Verifiers show these signatures as
+valid but from an unknown signer — no trust list knows a per-install
+certificate. Files signed by the same install can be linked to each other
+through the certificate. Where no credential store works (a Linux box
+without a Secret Service keyring), files are still generated, watermarked
+and tagged, but left unsigned, and the Audio tab says why.
 
 **Check a file** (Models → Voices, with the module on) tells whether any
 audio file carries Sussurro's marks: pick a file (Opus, Ogg, WAV, MP3, M4A,
-FLAC) and it says what the watermark and the tags each found. It runs on
-this computer; nothing is uploaded. "Made by Sussurro" needs the watermark
+FLAC) and it says what the watermark, the tags and the signed metadata
+each found — the manifest inside the file, or the `.c2pa` file with the
+same name next to it. It runs on this computer; nothing is uploaded, and
+no certificate is looked up online. A valid signature means the file is
+unchanged since it was signed, by a certificate no trust list knows
+("signed by a Sussurro install, not a trusted signer"): anyone can make
+such a certificate, so it says who *claims* to have made the file. A
+signature that doesn't match means the file changed after signing, or the
+`.c2pa` belongs to another file. "Made by Sussurro" needs the watermark
 over at least half the audio *and* Sussurro's code; a watermark-like signal
 with another code is reported as inconclusive (music and steady tones can
 look like one), and a file with no mark is reported as "no Sussurro mark
 found" — which doesn't say whether a person or a machine made it.
 
-**Please don't strip the marks.** Don't remove the tags, re-encode to hide
-the watermark or pass generated speech off as a recording: the marks are
+**Please don't strip the marks.** Don't remove the tags or the `.c2pa`
+files, re-encode to hide the watermark or pass generated speech off as a
+recording: the marks are
 how people can tell synthetic speech from a real voice.
 
 ## Getting started
@@ -486,11 +512,12 @@ account:
 | People registry | `<archive>/.sussurro/people.json` (travels with the archive) |
 | Settings, including LLM profiles and the extension's pairing token | `settings.json` in the app's config folder (readable only by you on macOS and Linux) |
 | LLM profile API keys | the OS credential store, service `com.sussurro.app` |
+| The read-aloud signing key (experimental, made the first time a file is generated) | the OS credential store, service `com.sussurro.app`, account `c2pa-signing-key`; its public certificate in `c2pa/signing-chain.pem` in the app's data folder (readable only by you on macOS and Linux) |
 | Dictation history and usage stats | `history.jsonl`, `stats.json` in the app's data folder |
 | Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
 | Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
 | Read-aloud models, voices and watermark models (experimental, only if you download them) | `models/pocket-tts/` in the same folder (the watermark models in `pocket-tts/audioseal/`); voice previews and *Listen* files are temporary files in `tts-preview/` in the app's data folder, deleted when replaced, when the document closes and at the next start |
-| Generated speech (read aloud → *Save as speech file*) | `speech.opus` / `speech-<document>.opus` in the item's archive folder, marked synthetic in the file and the frontmatter |
+| Generated speech (read aloud → *Save as speech file*) | `speech.opus` / `speech-<document>.opus` in the item's archive folder, marked synthetic in the file and the frontmatter, with its signed manifest `speech.c2pa` / `speech-<document>.c2pa` next to it |
 | Voice profiles of people with *Recognise this voice* on, and your own voice if you recorded it (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
 | *Not X* answers to voice suggestions (0.11) | `voice_dismissals.json` in the app's data folder (ids only; readable only by you on macOS and Linux) |
 

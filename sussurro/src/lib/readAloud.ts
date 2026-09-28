@@ -102,6 +102,13 @@ export function staleNote(s: SpeechStatus): string | null {
   return null;
 }
 
+/** Why a speech file carries no signature (#257 part 2), when the
+ *  frontmatter recorded one; null when it is signed or predates signing. */
+export function speechSignatureNote(s: SpeechStatus): string | null {
+  if (s.signed || !s.unsigned) return null;
+  return `Not signed: ${s.unsigned}. The watermark and the tags still mark it as synthetic.`;
+}
+
 /** The speech file already made from `document`, if any. */
 export function speechFor(files: SpeechStatus[], document: string): SpeechStatus | undefined {
   return files.find((f) => f.document === document);

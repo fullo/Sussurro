@@ -16,6 +16,13 @@
 //!                              `speech-riunione-3-1a2b3c4d.opus`)
 //! ```
 //!
+//! Each `.opus` can have a **sidecar** with the same stem and `.c2pa`
+//! (`speech.c2pa`, `speech-action-items.c2pa`): its signed C2PA manifest
+//! (#257 part 2, [`crate::tts::signing`]), since Ogg can't hold one. The
+//! sidecar moves in with its audio, goes to the trash with it (a new file
+//! or *Delete speech*), and is never served by the `sussurro-audio:`
+//! scheme ([`is_speech_sidecar_name`] is not a playable name).
+//!
 //! The pattern the app treats as generated speech is
 //! `speech(-[a-z0-9-]+)?.(opus|wav)` ([`is_speech_file_name`], plan §4.5);
 //! only `.opus` is written: Ogg Opus, mono, 24 kHz at 32 kb/s since #309
@@ -38,7 +45,9 @@
 //!     language: it
 //!     date: 2026-09-26T10:00:00+02:00
 //!     text_sha256: 9f…        # of the speakable text: "out of date" when it changes
-//!     marked: [metadata, watermark]   # the layers the file carries (#257); older files: [metadata]
+//!     marked: [metadata, watermark, signature]   # the layers the file carries (#257);
+//!                                  # older files: [metadata] or [metadata, watermark]
+//!     unsigned: …                  # only when no signature could be made: why
 //! ```
 //!
 //! `synthetic:` is one entry per file (the plan's single block, keyed by
@@ -92,6 +101,26 @@ pub fn is_speech_file_name(name: &str) -> bool {
 /// recorded audio (#141) or generated speech. Pure.
 pub fn is_playable_file_name(name: &str) -> bool {
     super::audio::is_audio_file_name(name) || is_speech_file_name(name)
+}
+
+/// Extension of a speech file's signed-manifest sidecar.
+pub const SIDECAR_EXT: &str = crate::tts::signing::SIDECAR_EXT;
+
+/// The sidecar of speech file `file` (`speech-x.opus` → `speech-x.c2pa`),
+/// `None` for a name that isn't a speech file. Pure.
+pub fn sidecar_name(file: &str) -> Option<String> {
+    if !is_speech_file_name(file) {
+        return None;
+    }
+    let stem = &file[..file.rfind('.')?];
+    Some(format!("{stem}.{SIDECAR_EXT}"))
+}
+
+/// `speech(-<slug>)?.c2pa`: a speech file's signed-manifest sidecar. Not
+/// audio — never served, listed or played. Pure.
+pub fn is_speech_sidecar_name(name: &str) -> bool {
+    name.strip_suffix(&format!(".{SIDECAR_EXT}"))
+        .is_some_and(|stem| is_speech_file_name(&format!("{stem}.opus")))
 }
 
 /// Lowercase ASCII letters and digits, anything else collapsed to one `-`,
@@ -160,10 +189,14 @@ pub struct SpeechInfo {
     /// = the speech is out of date).
     #[serde(default)]
     pub text_sha256: String,
-    /// Marks the file carries (P21): `metadata`, and `watermark` once #257
-    /// applies it.
+    /// Marks the file carries (P21): `metadata`, `watermark` (#257) and
+    /// `signature` (a `.c2pa` sidecar, #257 part 2).
     #[serde(default)]
     pub marked: Vec<String>,
+    /// Why the file has no signature (no working credential store…);
+    /// empty when it is signed or predates signing.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub unsigned: String,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
@@ -295,23 +328,42 @@ fn rewrite(dir: &Path, update: &dyn Fn(ItemMeta) -> ItemMeta) -> Result<()> {
     Ok(())
 }
 
-/// Move the finished `part` into item `id` as `file` and record `info` in
-/// the frontmatter, under the archive lock. An earlier file of that name
-/// goes to the OS trash first. On failure `part` is removed.
-pub fn commit(archive: &Path, id: &str, part: &Path, file: &str, info: &SpeechInfo) -> Result<()> {
+/// Move the finished `part` into item `id` as `file`, with its signed
+/// manifest `sidecar_part` (if any) as the file's `.c2pa`, and record
+/// `info` in the frontmatter, under the archive lock. An earlier file of
+/// that name and its sidecar go to the OS trash first — a sidecar is never
+/// left next to audio it wasn't made for. On failure both parts are
+/// removed.
+pub fn commit(
+    archive: &Path,
+    id: &str,
+    part: &Path,
+    sidecar_part: Option<&Path>,
+    file: &str,
+    info: &SpeechInfo,
+) -> Result<()> {
     let done = (|| -> Result<()> {
-        if !is_speech_file_name(file) {
+        let Some(sidecar) = sidecar_name(file) else {
             bail!("'{file}' is not a speech file name");
-        }
+        };
         let _lock = lock_items();
         let dir = existing_item_dir(archive, id)?;
         check_item(&dir, id)?;
         let target = dir.join(file);
-        if std::fs::symlink_metadata(&target).is_ok() {
-            move_to_trash(&target)
-                .with_context(|| format!("moving the old {file} to the trash"))?;
+        let sidecar_target = dir.join(&sidecar);
+        for old in [&target, &sidecar_target] {
+            if std::fs::symlink_metadata(old).is_ok() {
+                move_to_trash(old)
+                    .with_context(|| format!("moving the old {} to the trash", old.display()))?;
+            }
         }
         std::fs::rename(part, &target).with_context(|| format!("saving {file}"))?;
+        if let Some(sp) = sidecar_part {
+            if let Err(e) = std::fs::rename(sp, &sidecar_target) {
+                let _ = std::fs::remove_file(&target);
+                return Err(e).with_context(|| format!("saving {sidecar}"));
+            }
+        }
         let info = info.clone();
         let file = file.to_string();
         if let Err(e) = rewrite(&dir, &move |mut m| {
@@ -321,29 +373,43 @@ pub fn commit(archive: &Path, id: &str, part: &Path, file: &str, info: &SpeechIn
             // The file is marked by its own tags, but without its record the
             // app can't say what it was read from: take it back out.
             let _ = std::fs::remove_file(&target);
+            let _ = std::fs::remove_file(&sidecar_target);
             return Err(e.context("recording the speech file in the frontmatter"));
         }
         Ok(())
     })();
     if done.is_err() {
         let _ = std::fs::remove_file(part);
+        if let Some(sp) = sidecar_part {
+            let _ = std::fs::remove_file(sp);
+        }
     }
     done
 }
 
-/// *Delete speech*: `file` goes to the OS trash and the frontmatter stops
-/// listing it. A file already gone is just forgotten.
+/// Whether speech file `file` in the item folder `dir` has its sidecar (a
+/// regular file).
+pub fn has_sidecar(dir: &Path, file: &str) -> bool {
+    sidecar_name(file).is_some_and(|s| {
+        std::fs::symlink_metadata(dir.join(s)).is_ok_and(|m| m.file_type().is_file())
+    })
+}
+
+/// *Delete speech*: `file` and its `.c2pa` sidecar go to the OS trash and
+/// the frontmatter stops listing it. A file already gone is just forgotten.
 pub fn delete(archive: &Path, id: &str, file: &str) -> Result<()> {
-    if !is_speech_file_name(file) {
+    let Some(sidecar) = sidecar_name(file) else {
         bail!("'{file}' is not a speech file");
-    }
+    };
     let _lock = lock_items();
     let dir = existing_item_dir(archive, id)?;
-    let path = dir.join(file);
-    match std::fs::symlink_metadata(&path) {
-        Ok(m) if m.file_type().is_file() => move_to_trash(&path)?,
-        Ok(_) => bail!("'{file}' in '{id}' is not a regular file"),
-        Err(_) => {}
+    for name in [file, sidecar.as_str()] {
+        let path = dir.join(name);
+        match std::fs::symlink_metadata(&path) {
+            Ok(m) if m.file_type().is_file() => move_to_trash(&path)?,
+            Ok(_) => bail!("'{name}' in '{id}' is not a regular file"),
+            Err(_) => {}
+        }
     }
     let text = std::fs::read_to_string(transcript_path(&dir)).unwrap_or_default();
     let recorded = super::frontmatter::parse(&text)
@@ -399,6 +465,34 @@ mod tests {
     }
 
     #[test]
+    fn sidecars_follow_their_audio_and_are_never_playable() {
+        assert_eq!(sidecar_name("speech.opus").as_deref(), Some("speech.c2pa"));
+        assert_eq!(
+            sidecar_name("speech-action-items.opus").as_deref(),
+            Some("speech-action-items.c2pa")
+        );
+        assert_eq!(sidecar_name("audio.opus"), None);
+        assert_eq!(sidecar_name("speech.c2pa"), None);
+        for ok in ["speech.c2pa", "speech-riunione-3-1a2b3c4d.c2pa"] {
+            assert!(is_speech_sidecar_name(ok), "{ok}");
+            assert!(!is_speech_file_name(ok), "{ok}");
+            assert!(
+                !is_playable_file_name(ok),
+                "the audio scheme never serves {ok}"
+            );
+        }
+        for bad in [
+            "audio.c2pa",
+            "speech-.c2pa",
+            "speech.c2pa.part",
+            "Speech.c2pa",
+            "x.c2pa",
+        ] {
+            assert!(!is_speech_sidecar_name(bad), "{bad}");
+        }
+    }
+
+    #[test]
     fn a_document_gets_a_stable_speech_file_name() {
         assert_eq!(speech_file_name("transcript.md").unwrap(), "speech.opus");
         assert_eq!(
@@ -451,6 +545,7 @@ mod tests {
             date: "2026-09-26T10:00:00+02:00".into(),
             text_sha256: hash.into(),
             marked: vec!["metadata".into()],
+            unsigned: String::new(),
             extra: BTreeMap::new(),
         }
     }
@@ -526,7 +621,15 @@ mod tests {
         let id = new_item(archive);
         let dir = existing_item_dir(archive, &id).unwrap();
         let p = part(archive, &id, SPEECH_FILE, b"one");
-        commit(archive, &id, &p, SPEECH_FILE, &info("transcript.md", "h1")).unwrap();
+        commit(
+            archive,
+            &id,
+            &p,
+            None,
+            SPEECH_FILE,
+            &info("transcript.md", "h1"),
+        )
+        .unwrap();
         assert!(!p.exists());
         assert_eq!(std::fs::read(dir.join(SPEECH_FILE)).unwrap(), b"one");
         let item = read_item(archive, &id).unwrap();
@@ -535,7 +638,15 @@ mod tests {
         assert_eq!(files_in(&dir).len(), 1);
 
         let p = part(archive, &id, SPEECH_FILE, b"two");
-        commit(archive, &id, &p, SPEECH_FILE, &info("transcript.md", "h2")).unwrap();
+        commit(
+            archive,
+            &id,
+            &p,
+            None,
+            SPEECH_FILE,
+            &info("transcript.md", "h2"),
+        )
+        .unwrap();
         assert_eq!(std::fs::read(dir.join(SPEECH_FILE)).unwrap(), b"two");
         assert!(
             test_trash::contains(&dir.join(SPEECH_FILE)),
@@ -571,7 +682,15 @@ mod tests {
         )
         .unwrap();
         let p = part(archive, &id, SPEECH_FILE, b"x");
-        let err = commit(archive, &id, &p, SPEECH_FILE, &info("transcript.md", "h")).unwrap_err();
+        let err = commit(
+            archive,
+            &id,
+            &p,
+            None,
+            SPEECH_FILE,
+            &info("transcript.md", "h"),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("recorded"), "{err}");
         assert!(!p.exists());
 
@@ -579,12 +698,28 @@ mod tests {
         let dir = existing_item_dir(archive, &id).unwrap();
         std::fs::write(transcript_path(&dir), "---\ntitle: [broken\n---\nbody\n").unwrap();
         let p = part(archive, &id, SPEECH_FILE, b"x");
-        let err = commit(archive, &id, &p, SPEECH_FILE, &info("transcript.md", "h")).unwrap_err();
+        let err = commit(
+            archive,
+            &id,
+            &p,
+            None,
+            SPEECH_FILE,
+            &info("transcript.md", "h"),
+        )
+        .unwrap_err();
         assert!(format!("{err:#}").contains("frontmatter"), "{err:#}");
         assert!(!p.exists() && !dir.join(SPEECH_FILE).exists());
 
         let p = part(archive, &id, "audio.opus", b"x");
-        assert!(commit(archive, &id, &p, "audio.opus", &info("transcript.md", "h")).is_err());
+        assert!(commit(
+            archive,
+            &id,
+            &p,
+            None,
+            "audio.opus",
+            &info("transcript.md", "h")
+        )
+        .is_err());
     }
 
     #[test]
@@ -595,7 +730,7 @@ mod tests {
         let dir = existing_item_dir(archive, &id).unwrap();
         for f in [SPEECH_FILE, "speech-document.opus"] {
             let p = part(archive, &id, f, b"x");
-            commit(archive, &id, &p, f, &info("transcript.md", "h")).unwrap();
+            commit(archive, &id, &p, None, f, &info("transcript.md", "h")).unwrap();
         }
         delete(archive, &id, SPEECH_FILE).unwrap();
         assert!(test_trash::contains(&dir.join(SPEECH_FILE)));
@@ -610,5 +745,67 @@ mod tests {
         assert!(delete(archive, &id, "audio.opus").is_err());
         assert!(delete(archive, &id, "../transcript.md").is_err());
         assert!(dir.join("audio.opus").exists());
+    }
+
+    #[test]
+    fn a_sidecar_moves_in_with_its_audio_and_leaves_with_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = new_item(archive);
+        let dir = existing_item_dir(archive, &id).unwrap();
+        let signed = |bytes: &[u8]| {
+            let p = part(archive, &id, SPEECH_FILE, bytes);
+            let sp = part(archive, &id, "speech.c2pa", b"manifest");
+            (p, sp)
+        };
+        let (p, sp) = signed(b"one");
+        let mut i = info("transcript.md", "h1");
+        i.marked.push("signature".into());
+        commit(archive, &id, &p, Some(&sp), SPEECH_FILE, &i).unwrap();
+        assert!(!sp.exists());
+        assert!(has_sidecar(&dir, SPEECH_FILE));
+        assert_eq!(files_in(&dir).len(), 1, "the sidecar is not a speech file");
+        assert_eq!(
+            infos(&read_item(archive, &id).unwrap().meta)[SPEECH_FILE].marked,
+            ["metadata", "signature"]
+        );
+
+        // Replaced by an unsigned file: the old sidecar leaves with the old audio.
+        let p = part(archive, &id, SPEECH_FILE, b"two");
+        let mut i = info("transcript.md", "h2");
+        i.unsigned = "no credential store".into();
+        commit(archive, &id, &p, None, SPEECH_FILE, &i).unwrap();
+        assert!(!has_sidecar(&dir, SPEECH_FILE));
+        assert!(test_trash::contains(&dir.join("speech.c2pa")));
+        let doc = std::fs::read_to_string(transcript_path(&dir)).unwrap();
+        assert!(doc.contains("unsigned: no credential store"), "{doc}");
+
+        // Signed again, then deleted: both go to the trash.
+        let (p, sp) = signed(b"three");
+        commit(
+            archive,
+            &id,
+            &p,
+            Some(&sp),
+            SPEECH_FILE,
+            &info("transcript.md", "h3"),
+        )
+        .unwrap();
+        assert!(has_sidecar(&dir, SPEECH_FILE));
+        delete(archive, &id, SPEECH_FILE).unwrap();
+        assert!(!dir.join(SPEECH_FILE).exists() && !dir.join("speech.c2pa").exists());
+
+        // A failed commit leaves neither part behind.
+        let (p, sp) = signed(b"four");
+        assert!(commit(
+            archive,
+            &id,
+            &p,
+            Some(&sp),
+            "audio.opus",
+            &info("transcript.md", "h")
+        )
+        .is_err());
+        assert!(!p.exists() && !sp.exists());
     }
 }

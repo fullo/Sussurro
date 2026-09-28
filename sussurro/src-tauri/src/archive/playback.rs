@@ -488,6 +488,9 @@ mod tests {
             "/2026/09/x/speech-X.opus",
             "/2026/09/x/speech.opus.part",
             "/2026/09/x/.sussurro/speech.opus.part",
+            // A signed manifest is not audio (#257): never served.
+            "/2026/09/x/speech.c2pa",
+            "/2026/09/x/speech-action-items.c2pa",
             "/",
             "/audio.wav",
             "/2026%2F09%2Fx%2Ftranscript.md",
@@ -928,6 +931,8 @@ mod tests {
         assert!(resolve(&archive, &id, "audio-mic.opus").is_ok());
         // Not an audio name, even though the file exists.
         assert!(resolve(&archive, &id, "transcript.md").is_err());
+        file_of(&dir, "speech.c2pa", 64);
+        assert!(resolve(&archive, &id, "speech.c2pa").is_err());
         // Absent channel.
         assert!(resolve(&archive, &id, "audio-remote.wav").is_err());
         // Ids that are not items, or escape the archive.

@@ -865,13 +865,49 @@ project decisions here, not in per-machine memory.**
   `opus::read_tags` / WAV `LIST/INFO`. Verdict per E17: found = ≥ 50 % of
   samples with prob > 0.5 **and** ≤ 2 of 16 bits wrong; frames without the
   code = *inconclusive*; nothing = "no Sussurro mark found" (never
-  "human"); summary `made_by_sussurro | inconclusive | tags_only | no_mark`.
-  The result's `signature` slot (C2PA) reads `not_checked` until part 2
-  (per-install self-signed cert, sidecar `speech.c2pa`, `c2pa` crate with
-  `rust_native_crypto`). Never downloads from Check. Live test
+  "human"); summary `made_by_sussurro | inconclusive | signed_only |
+  tags_only | no_mark` (watermark first, then a valid signature claiming
+  Sussurro, then tags). Never downloads from Check. Live test
   `live_watermark_survives_the_app_opus_and_is_read_back` (env vars in
   `tts/live_tests.rs`): `say` speech at 24 kHz → Opus 32 kb/s: 95–98 % of
   frames, 0 bits wrong; unmarked: ≤ 0.4 % frames, 9 bits wrong.
+- **Signed metadata (C2PA) on generated speech (0.12, #257 part 2, E17
+  item 2)** (`tts/signing.rs`): `c2pa` 0.91 (MIT/Apache) with default
+  features off + `rust_native_crypto` (no OpenSSL, no HTTP client: no TSA,
+  no OCSP, no remote manifests) and `rcgen` over `ring` for the cert
+  (~103 new crates, all permissive). **Per-install self-signed** ES256
+  chain, made on first need (a file generated with the module on — never at
+  install/startup): a root that signs one end-entity cert and is dropped,
+  `CN=Sussurro install <8 hex of the public key>`, `O=Sussurro
+  (self-signed, one per install)`, EKU emailProtection, 30 years (no TSA →
+  verifiers check validity against *their* clock). Key only in the OS
+  credential store (`secrets.rs`, account `c2pa-signing-key`, write +
+  read-back verified); chain in `<app data>/c2pa/signing-chain.pem` (dir
+  0700, file 0600); a key/chain mismatch (self-test sign + verify at load)
+  makes a new pair; `signing::identity` caches it per run. The key and
+  chain **stay** when the module is turned off or `tts_delete` runs
+  (maintainer, 2026-09-28: not personal data; keeps the signer stable). **No clear-text
+  fallback**: no working store = the file is still made (watermark + tags)
+  but unsigned, `synthetic.<file>.unsigned: <reason>` in the frontmatter,
+  `SpeechStatus.unsigned` shown in the Audio tab. Manifest (Code 1.3, no
+  personal data): claim generator `Sussurro <version>`, fixed title
+  "Synthetic speech", one `c2pa.created` action with
+  `trainedAlgorithmicMedia`, `when` (UTC), engine/voice/language in
+  `parameters`; no soft binding. **Sidecar** for Ogg: `speech*.c2pa` (data
+  hash over the whole file) written to `.sussurro/<name>.c2pa.part` and
+  moved in by `speech::commit` together with the audio; an old sidecar goes
+  to the trash with the old audio (also when the new file is unsigned);
+  *Delete speech* trashes both; `is_speech_sidecar_name` is not playable
+  (the scheme never serves `.c2pa`); Delete/Compress audio untouched.
+  *Listen* gets `listen-N.c2pa` in `tts-preview/` (cleared with it);
+  previews (WAV) embed the manifest. Frontmatter `marked` gains
+  `signature`. No speech export path exists, so nothing else embeds.
+  *Check a file*: embedded manifest (wav/mp3/m4a/flac) first, else the
+  `<same stem>.c2pa` next to the picked file through `open_picked_file`
+  (regular file, no link, ≤ 1 MiB); `valid | invalid | none` + source,
+  signer, generator, `claims_sussurro`, `ai_generated`, problem codes; UI
+  says "signed by a Sussurro install, not a trusted signer". Live keychain
+  test `real_signing_key_in_the_os_store` (`#[ignore]`).
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at
