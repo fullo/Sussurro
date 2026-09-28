@@ -526,6 +526,14 @@ fn sync_conn(conn: &mut Connection, archive: &Path, scan: &ArchiveScan) -> Resul
         }
         match index_at(&tx, id, dir, &fp, &matcher) {
             Ok(()) => count += 1,
+            // Listed a moment ago but unreadable now (a drive going away,
+            // a permission change mid-sync): keep whatever row it has, the
+            // next sync reads it again (#328). Gone (`NotFound`) or broken
+            // content still drops it.
+            Err(e) if unreadable_now(&e) => {
+                eprintln!("archive index: can't read item {id} right now, kept: {e:#}");
+                count += 1;
+            }
             Err(e) => {
                 eprintln!("archive index: skipping broken item {id}: {e:#}");
                 delete_rows(&tx, id)?;
@@ -723,6 +731,15 @@ fn delete_rows(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM item_categories WHERE id = ?1", params![id])?;
     conn.execute("DELETE FROM item_participants WHERE id = ?1", params![id])?;
     Ok(())
+}
+
+/// An OS error reading an item that was just listed, other than the file
+/// being gone: the item is unreachable, not broken.
+fn unreadable_now(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() != std::io::ErrorKind::NotFound)
+    })
 }
 
 fn index_at(
@@ -1442,6 +1459,29 @@ mod tests {
         // The folder listing skips it, without failing.
         let listed = crate::archive::list_items(&f.archive).unwrap();
         assert_eq!(ids(listed), vec![f.note.clone()]);
+    }
+
+    /// An item listed by the scan whose transcript can't be read a moment
+    /// later keeps its row; one really gone is dropped (#328, review).
+    #[cfg(unix)]
+    #[test]
+    fn an_item_unreadable_after_the_scan_keeps_its_row() {
+        let f = fixture();
+        assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+        // A changed fingerprint makes the next sync read the file again.
+        let transcript = crate::archive::store::transcript_path(&f.archive.join(&f.note));
+        let mut text = std::fs::read_to_string(&transcript).unwrap();
+        text.push_str("\nEdited outside.\n");
+        std::fs::write(&transcript, text).unwrap();
+        let Some(lock) = Locked::new(&transcript) else {
+            return;
+        };
+        assert_eq!(Index::open(&f.archive, &f.db).unwrap().sync().unwrap(), 3);
+        assert_eq!(indexed(&f), all_three(&f));
+        drop(lock);
+        std::fs::remove_dir_all(f.archive.join(&f.note)).unwrap();
+        assert_eq!(Index::open(&f.archive, &f.db).unwrap().sync().unwrap(), 2);
+        assert!(!indexed(&f).contains(&f.note));
     }
 
     /// A folder not created yet (new install, a new folder picked in
