@@ -922,7 +922,9 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
             .collect();
         assert!(leftovers.is_empty());
-        assert!(crate::archive::list_items(&archive).is_empty());
+        assert!(crate::archive::list_items(&archive)
+            .unwrap_or_default()
+            .is_empty());
     }
 
     #[test]

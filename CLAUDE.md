@@ -449,6 +449,27 @@ project decisions here, not in per-machine memory.**
   frontmatter day vs. the viewer's local today sent by the UI; the date
   facet takes one bucket or one custom range. Index schema v2 (rebuilt
   automatically). Selection is kept in localStorage (`libraryFacets`).
+- **An unreadable archive is an error, never an empty archive (#328)**
+  (`archive/unreadable.rs`, `store::scan_item_dirs` → `ArchiveScan`): a
+  root that is missing, not a folder or refused (`read_dir` error, macOS
+  TCC = EPERM) makes the scan fail with `ArchiveUnreadable` (path + kind);
+  `Index::sync` scans **before** touching the database and
+  `rebuild_index` scans **before** its reset, so the index is left as it
+  is — except a **missing** root while the index knows none of its items
+  (no index, or one of another folder: an archive not created yet), which
+  syncs as empty (`Slot::scan`). Subfolders that can't be read are logged and listed as
+  `unreadable`: rows under them are kept (`ArchiveScan::is_unknown`). A
+  readable empty root still clears the index. Every derived-state writer
+  follows the same rule: voice profiles (`rebuild_all`/`enable` refuse
+  when a profile's document lies under an unreadable folder;
+  `document_changed` refuses on an unreadable root or document — an OS
+  read error is never "document gone"), `source-files.json` pruning and
+  the crash journal keep entries of an archive that can't be read. The
+  UI gets a JSON error `code: "archive_unreadable"` (`ui_error` in
+  `commands::blocking`; `src/lib/archiveError.ts`) and the Library shows
+  the folder, the OS reason, the macOS Files and Folders hint and
+  Settings → Archive; the archive API answers `503 archive_unreadable`
+  (no path). Dev mock: `?archive=unreadable|missing`.
 - **Saved audio (0.10, #141, P9)** (`archive/audio.rs`,
   `engine/audio_out.rs`): only on request — New's "Save audio" per run
   (`RunOptions.save_audio`), else `Settings.save_audio` (off; also covers
@@ -539,7 +560,14 @@ project decisions here, not in per-machine memory.**
   `cleanup_before_exit`, which also covers `restart()` and the updater's
   Windows install). Crash of Sussurro: Windows kill-on-close job object,
   Linux `PR_SET_PDEATHSIG` (spawned from one long-lived thread — the signal
-  follows the spawning *thread*), macOS nothing (documented). Spawned
+  follows the spawning *thread*), macOS a startup reaper (#319,
+  `stt/remote/orphans.rs`): at startup and before the first spawn of each
+  sidecar path it SIGTERMs (2 s, then SIGKILL after a re-check) processes
+  that are ours (uid), orphaned (ppid 1), run the same canonical
+  executable (`proc_pidpath`, never by name) and whose argv `--host` is
+  `…/sc-<pid>-…/llama.sock` of a dead Sussurro pid (libproc +
+  `KERN_PROCARGS2`, libc only; pure `select_orphans` tested everywhere;
+  `#[ignore]` live test `live_an_orphaned_sidecar_is_reaped`). Spawned
   without a shell, `-ngl 99 -c 4096 -np 1 --cache-ram 0 --no-webui`
   (#109's settings) `--no-slots`. **Who can reach it (#216,
   `stt/remote/endpoint.rs`)**: macOS/Linux `--host <dir>/llama.sock`, a
@@ -865,13 +893,66 @@ project decisions here, not in per-machine memory.**
   `opus::read_tags` / WAV `LIST/INFO`. Verdict per E17: found = ≥ 50 % of
   samples with prob > 0.5 **and** ≤ 2 of 16 bits wrong; frames without the
   code = *inconclusive*; nothing = "no Sussurro mark found" (never
-  "human"); summary `made_by_sussurro | inconclusive | tags_only | no_mark`.
-  The result's `signature` slot (C2PA) reads `not_checked` until part 2
-  (per-install self-signed cert, sidecar `speech.c2pa`, `c2pa` crate with
-  `rust_native_crypto`). Never downloads from Check. Live test
+  "human"); summary `made_by_sussurro | inconclusive | signed_only |
+  tags_only | no_mark` (watermark first, then a valid signature claiming
+  Sussurro, then tags). Never downloads from Check. Live test
   `live_watermark_survives_the_app_opus_and_is_read_back` (env vars in
   `tts/live_tests.rs`): `say` speech at 24 kHz → Opus 32 kb/s: 95–98 % of
   frames, 0 bits wrong; unmarked: ≤ 0.4 % frames, 9 bits wrong.
+- **Signed metadata (C2PA) on generated speech (0.12, #257 part 2, E17
+  item 2)** (`tts/signing.rs`): `c2pa` 0.91 (MIT/Apache) with default
+  features off + `rust_native_crypto` (no OpenSSL, no HTTP client: no TSA,
+  no OCSP, no remote manifests) and `rcgen` over `ring` for the cert
+  (~103 new crates, all permissive). **Per-install self-signed** ES256
+  chain, made on first need (a file generated with the module on — never at
+  install/startup): a root that signs one end-entity cert and is dropped,
+  `CN=Sussurro install <8 hex of the public key>`, `O=Sussurro
+  (self-signed, one per install)`, EKU emailProtection, 30 years (no TSA →
+  verifiers check validity against *their* clock). Key only in the OS
+  credential store (`secrets.rs`, account `c2pa-signing-key`, write +
+  read-back verified); chain in `<app data>/c2pa/signing-chain.pem` (dir
+  0700, file 0600); a key/chain mismatch (self-test sign + verify at load)
+  makes a new pair; `signing::identity` caches it per run. The key and
+  chain **stay** when the module is turned off or `tts_delete` runs
+  (maintainer, 2026-09-28: not personal data; keeps the signer stable). **No clear-text
+  fallback**: no working store = the file is still made (watermark + tags)
+  but unsigned, `synthetic.<file>.unsigned: <reason>` in the frontmatter,
+  `SpeechStatus.unsigned` shown in the Audio tab. Manifest (Code 1.3, no
+  personal data): claim generator `Sussurro <version>`, fixed title
+  "Synthetic speech", one `c2pa.created` action with
+  `trainedAlgorithmicMedia`, `when` (UTC), engine/voice/language in
+  `parameters`; no soft binding. **Sidecar** for Ogg: `speech*.c2pa` (data
+  hash over the whole file) written to `.sussurro/<name>.c2pa.part` and
+  moved in by `speech::commit` together with the audio; an old sidecar goes
+  to the trash with the old audio (also when the new file is unsigned);
+  *Delete speech* trashes both; `is_speech_sidecar_name` is not playable
+  (the scheme never serves `.c2pa`); Delete/Compress audio untouched.
+  *Listen* gets `listen-N.c2pa` in `tts-preview/` (cleared with it);
+  previews (WAV) embed the manifest. Frontmatter `marked` gains
+  `signature`. No speech export path exists, so nothing else embeds.
+  *Check a file*: embedded manifest (wav/mp3/m4a/flac) first, else the
+  `<same stem>.c2pa` next to the picked file through `open_picked_file`
+  (regular file, no link, ≤ 1 MiB); `valid | invalid | none` + source,
+  signer, generator, `claims_sussurro`, `ai_generated`, problem codes; UI
+  says "signed by a Sussurro install, not a trusted signer". Live keychain
+  test `real_signing_key_in_the_os_store` (`#[ignore]`).
+- **Article links (0.12, #258, P17)** (`sources/url/article.rs`,
+  command `article_save`, New → Link → *Article*): a web page's main text
+  becomes a **note** (not a transcription — no audio, speakers or
+  subtitles; P17's "transcription-like" = link source + generated audio),
+  `source: url:<link>`, date now, `language` from `<html lang>`, New's
+  default tags/categories, one segment per markdown block and per list item
+  (the #251 note shape), indexed at once, `archive-item-created`. Network =
+  `direct::fetch_bytes` only (the #123/#216 rules, 10 MiB cap, never a
+  second client); video sites, media links and non-HTML types are refused
+  pointing to Transcribe. Charset: header, BOM, `<meta>` prescan, UTF-8,
+  else windows-1252 (`encoding_rs`). Extraction: `dom_smoothie` **0.17**
+  (MIT; the release on the `dom_query` 0.27 / `html5ever` already in the
+  tree via tauri-utils/wry — bump with them), markdown mode, escapes
+  removed, links → text, images dropped, ≤ 200k elements; < 300 letters =
+  `TooLittleText` (login, paywall, JS page), nothing saved. Read aloud is
+  the ordinary Audio tab (module on only, P24); off, the tab just says
+  there is no audio. Live check `live_article_extraction` (`#[ignore]`).
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at

@@ -629,6 +629,15 @@ export interface LinkInfo {
   label: string;
 }
 
+/** `article_save` (#258): the note made from a web page's text. */
+export interface ArticleSaved {
+  id: string;
+  title: string;
+  paragraphs: number;
+  /** From the page's `<html lang>` (`en`, `it`), or empty. */
+  language: string;
+}
+
 /** `yt_dlp_status`. */
 export interface YtDlpStatus {
   found: boolean;
@@ -780,8 +789,12 @@ export interface SpeechStatus {
   language: string;
   engine: string;
   date: string;
-  /** Marks the file carries (P21): "metadata", "watermark" (#257). */
+  /** Marks the file carries (P21): "metadata", "watermark", "signature" (#257). */
   marked: string[];
+  /** Its signed C2PA manifest (`.c2pa` sidecar) is next to it (#257). */
+  signed: boolean;
+  /** Why it was left unsigned (no credential store…); empty otherwise. */
+  unsigned: string;
   /** The frontmatter records the file. */
   recorded: boolean;
   /** The document's text changed since the speech was made. */
@@ -822,7 +835,7 @@ export interface WatermarkCheck {
   truncated: boolean;
   /** Under 3 s: a missing mark says little. */
   short: boolean;
-  summary: "made_by_sussurro" | "inconclusive" | "tags_only" | "no_mark";
+  summary: "made_by_sussurro" | "inconclusive" | "signed_only" | "tags_only" | "no_mark";
   watermark: {
     verdict: "found" | "inconclusive" | "not_found";
     /** Share of the audio the detector found marked, 0–1. */
@@ -834,6 +847,30 @@ export interface WatermarkCheck {
     status: "sussurro" | "synthetic" | "none" | "not_read";
     tags: [string, string][];
   };
-  /** Signed metadata (C2PA) — #257's second part; "not_checked" until then. */
-  signature: { status: "not_checked" };
+  /** Signed metadata (C2PA, #257 part 2): embedded, or a `.c2pa` sidecar
+   *  next to the file. Strings come from the file: show them as text. */
+  signature: WatermarkCheckSignature;
+}
+
+export interface WatermarkCheckSignature {
+  /** valid = signed and unchanged since, by a certificate no trust list
+   *  knows; invalid = changed after signing, another file's sidecar, or
+   *  damaged; none = no signed metadata. */
+  status: "valid" | "invalid" | "none";
+  source: "sidecar" | "embedded" | null;
+  /** The certificate's common name and issuer. */
+  signer: string;
+  issuer: string;
+  /** "Sussurro 0.12.0". */
+  generator: string;
+  /** A `c2pa.created` action says trainedAlgorithmicMedia. */
+  ai_generated: boolean;
+  /** The claim generator is Sussurro (a claim: anyone can sign one). */
+  claims_sussurro: boolean;
+  when: string;
+  engine: string;
+  voice: string;
+  language: string;
+  /** Why it is invalid. */
+  problem: string;
 }

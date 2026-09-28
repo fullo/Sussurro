@@ -14,8 +14,17 @@
 //! - **Metadata**: the Ogg Opus comments ([`crate::archive::opus::read_tags`])
 //!   or a WAV's `LIST/INFO`. Plain tags, not signed: anyone can write or
 //!   strip them, and the UI says so.
-//! - **Signature**: signed metadata (C2PA) is #257's second part; the slot
-//!   is in the result and reads "not checked" until then.
+//! - **Signature** (#257 part 2): signed C2PA metadata — embedded in the
+//!   file (WAV, MP3, M4A, FLAC) or in a `<same stem>.c2pa` sidecar next to
+//!   it (Ogg can't hold one: that is how Sussurro saves `speech.opus`). The
+//!   sidecar is read only as a regular file (no link) of at most
+//!   [`super::signing::MAX_SIDECAR_BYTES`], opened with the picker's
+//!   guards. *Valid* = signed and unchanged since, by a self-signed
+//!   certificate — every Sussurro install signs with its own, which no
+//!   trust list knows, and anyone can make such a certificate: the manifest
+//!   says who *claims* to have made the file. *Invalid* = the file changed
+//!   after signing, the sidecar belongs to another file, or the manifest is
+//!   damaged. Checked locally, no network (no OCSP, no trust list).
 //!
 //! At most [`MAX_CHECK_SECONDS`] of audio is read (the rest is reported as
 //! not checked); detection costs ~1–2 s per minute at 2 threads.
@@ -81,18 +90,7 @@ pub struct MetadataLayer {
     pub tags: Vec<(String, String)>,
 }
 
-/// The signed-metadata layer (C2PA, #257 part 2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SignatureStatus {
-    /// Not built yet: nothing was checked.
-    NotChecked,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct SignatureLayer {
-    pub status: SignatureStatus,
-}
+pub use super::signing::{SignatureLayer, SignatureSource, SignatureStatus};
 
 /// The one-line answer, from the layers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -102,6 +100,9 @@ pub enum Summary {
     MadeBySussurro,
     /// A mark-like signal without Sussurro's code.
     Inconclusive,
+    /// No watermark found, but valid signed metadata says Sussurro made it
+    /// (signed by a self-signed certificate: a claim, not a trusted one).
+    SignedOnly,
     /// No watermark found, but the tags say Sussurro (tags can be copied).
     TagsOnly,
     /// No Sussurro mark found — which says nothing about who made it.
@@ -126,13 +127,69 @@ pub struct CheckResult {
     pub signature: SignatureLayer,
 }
 
-/// The summary from the layers. Pure.
-pub fn summarize(watermark: Verdict, metadata: MetadataStatus) -> Summary {
+/// The summary from the layers: the watermark first, then valid signed
+/// metadata that names Sussurro, then the tags. Pure.
+pub fn summarize(
+    watermark: Verdict,
+    metadata: MetadataStatus,
+    signature: &SignatureLayer,
+) -> Summary {
     match watermark {
         Verdict::Found => Summary::MadeBySussurro,
         Verdict::Inconclusive => Summary::Inconclusive,
+        Verdict::NotFound
+            if signature.status == SignatureStatus::Valid && signature.claims_sussurro =>
+        {
+            Summary::SignedOnly
+        }
         Verdict::NotFound if metadata == MetadataStatus::Sussurro => Summary::TagsOnly,
         Verdict::NotFound => Summary::NoMark,
+    }
+}
+
+/// The sidecar `<same stem>.c2pa` next to `path`: `None` when there is
+/// none, `Err` when one is there but can't be used (a link, not a regular
+/// file, too large). Opened with the picker's guards.
+fn read_sidecar(path: &Path) -> Option<std::result::Result<Vec<u8>, String>> {
+    let sidecar = super::signing::sidecar_path(path);
+    std::fs::symlink_metadata(&sidecar).ok()?;
+    Some(
+        crate::config_io::open_picked_file(
+            &sidecar,
+            &[super::signing::SIDECAR_EXT],
+            super::signing::MAX_SIDECAR_BYTES,
+        )
+        .and_then(|mut f| {
+            let mut buf = Vec::new();
+            f.by_ref()
+                .take(super::signing::MAX_SIDECAR_BYTES + 1)
+                .read_to_end(&mut buf)?;
+            Ok(buf)
+        })
+        .map_err(|e| format!("the .c2pa file next to it was not read ({e})")),
+    )
+}
+
+/// The signature layer of the file at `path` (opened as `file`): an
+/// embedded manifest first, else the sidecar.
+fn signature_layer(path: &Path, file: &mut std::fs::File) -> SignatureLayer {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if let Some(layer) = super::signing::verify_embedded(&ext, file) {
+        return layer;
+    }
+    match read_sidecar(path) {
+        None => SignatureLayer::none(),
+        Some(Ok(bytes)) => super::signing::verify_sidecar(&bytes, file),
+        Some(Err(problem)) => SignatureLayer {
+            status: SignatureStatus::Invalid,
+            source: Some(SignatureSource::Sidecar),
+            problem,
+            ..SignatureLayer::none()
+        },
     }
 }
 
@@ -372,6 +429,7 @@ pub fn check_file(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let mut tag_handle = file.try_clone().context("reading the file")?;
+    let mut sig_handle = file.try_clone().context("reading the file")?;
     let max = MAX_CHECK_SECONDS * u64::from(watermark::RATE);
     let mut detection = Detection::default();
     let mut window: Vec<f32> = Vec::with_capacity(WINDOW);
@@ -405,22 +463,21 @@ pub fn check_file(
         },
     };
     let verdict = detection.verdict();
+    let signature = signature_layer(path, &mut sig_handle);
     Ok(CheckResult {
         file_name,
         format,
         seconds,
         truncated,
         short: seconds < SHORT_SECONDS,
-        summary: summarize(verdict, metadata.status),
+        summary: summarize(verdict, metadata.status, &signature),
         watermark: WatermarkLayer {
             verdict,
             frames_marked: detection.fraction(),
             bit_errors: detection.bit_errors(),
         },
         metadata,
-        signature: SignatureLayer {
-            status: SignatureStatus::NotChecked,
-        },
+        signature,
     })
 }
 
@@ -508,7 +565,7 @@ mod tests {
         assert!(r.watermark.frames_marked > 0.99);
         assert_eq!(r.metadata.status, MetadataStatus::Sussurro);
         assert!(r.metadata.tags.iter().any(|(k, _)| k == "ICMT"));
-        assert_eq!(r.signature.status, SignatureStatus::NotChecked);
+        assert_eq!(r.signature.status, SignatureStatus::None, "not signed");
         assert_eq!(r.summary, Summary::MadeBySussurro);
         assert_eq!(r.file_name, "preview.wav");
     }
@@ -657,14 +714,189 @@ mod tests {
     #[test]
     fn summaries() {
         use MetadataStatus as M;
-        assert_eq!(summarize(Verdict::Found, M::None), Summary::MadeBySussurro);
+        let none = SignatureLayer::none();
+        let signed = SignatureLayer {
+            status: SignatureStatus::Valid,
+            claims_sussurro: true,
+            ..SignatureLayer::none()
+        };
+        let other = SignatureLayer {
+            claims_sussurro: false,
+            ..signed.clone()
+        };
+        let broken = SignatureLayer {
+            status: SignatureStatus::Invalid,
+            ..signed.clone()
+        };
         assert_eq!(
-            summarize(Verdict::Inconclusive, M::Sussurro),
+            summarize(Verdict::Found, M::None, &none),
+            Summary::MadeBySussurro
+        );
+        assert_eq!(
+            summarize(Verdict::Found, M::None, &broken),
+            Summary::MadeBySussurro
+        );
+        assert_eq!(
+            summarize(Verdict::Inconclusive, M::Sussurro, &signed),
             Summary::Inconclusive
         );
-        assert_eq!(summarize(Verdict::NotFound, M::Sussurro), Summary::TagsOnly);
-        assert_eq!(summarize(Verdict::NotFound, M::Synthetic), Summary::NoMark);
-        assert_eq!(summarize(Verdict::NotFound, M::NotRead), Summary::NoMark);
+        assert_eq!(
+            summarize(Verdict::NotFound, M::None, &signed),
+            Summary::SignedOnly
+        );
+        assert_eq!(
+            summarize(Verdict::NotFound, M::Sussurro, &other),
+            Summary::TagsOnly
+        );
+        assert_eq!(
+            summarize(Verdict::NotFound, M::Sussurro, &broken),
+            Summary::TagsOnly
+        );
+        assert_eq!(
+            summarize(Verdict::NotFound, M::Sussurro, &none),
+            Summary::TagsOnly
+        );
+        assert_eq!(
+            summarize(Verdict::NotFound, M::Synthetic, &none),
+            Summary::NoMark
+        );
+        assert_eq!(
+            summarize(Verdict::NotFound, M::NotRead, &broken),
+            Summary::NoMark
+        );
+    }
+
+    /// An Ogg Opus speech file signed like read aloud does it.
+    fn signed_opus(dir: &Path, name: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        let mut w = crate::archive::opus::OpusWriter::create_with(
+            &p,
+            crate::archive::audio::MAX_SAMPLES,
+            crate::archive::opus::SPEECH,
+            &[("SYNTHETIC".to_string(), "1".to_string())],
+        )
+        .unwrap();
+        w.write(&vec![0.01f32; 24_000 * 4]).unwrap();
+        w.finish().unwrap();
+        let id = crate::tts::signing::tests::test_identity(&dir.join("c2pa"));
+        let prov = crate::tts::marking::Provenance {
+            engine: "Pocket TTS".into(),
+            voice: "alba".into(),
+            language: "en".into(),
+        };
+        let manifest =
+            crate::tts::signing::sign_sidecar(&id, &prov, "2026-09-28T10:00:00Z", &p).unwrap();
+        std::fs::write(crate::tts::signing::sidecar_path(&p), manifest).unwrap();
+        p
+    }
+
+    #[test]
+    fn a_sidecar_next_to_the_file_is_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = signed_opus(dir.path(), "speech.opus");
+        // Quiet audio: the fake detector finds no watermark, the signature answers.
+        let (r, _) = check(&p, PAYLOAD);
+        assert_eq!(
+            r.signature.status,
+            SignatureStatus::Valid,
+            "{}",
+            r.signature.problem
+        );
+        assert_eq!(r.signature.source, Some(SignatureSource::Sidecar));
+        assert!(r.signature.claims_sussurro && r.signature.ai_generated);
+        assert!(r.signature.signer.starts_with("Sussurro install "));
+        assert_eq!(r.signature.voice, "alba");
+        assert_eq!(r.summary, Summary::SignedOnly);
+
+        // One byte changed after signing.
+        let mut bytes = std::fs::read(&p).unwrap();
+        let at = bytes.len() / 2;
+        bytes[at] ^= 1;
+        std::fs::write(&p, bytes).unwrap();
+        let (r, _) = check(&p, PAYLOAD);
+        assert_eq!(r.signature.status, SignatureStatus::Invalid);
+        assert!(
+            r.signature.problem.contains("dataHash.mismatch"),
+            "{}",
+            r.signature.problem
+        );
+        assert_ne!(r.summary, Summary::SignedOnly);
+
+        // Another file's sidecar.
+        let q = signed_opus(dir.path(), "other.opus");
+        std::fs::copy(
+            crate::tts::signing::sidecar_path(&q),
+            crate::tts::signing::sidecar_path(&p),
+        )
+        .unwrap();
+        let (r, _) = check(&p, PAYLOAD);
+        assert_eq!(r.signature.status, SignatureStatus::Invalid);
+
+        // No sidecar at all.
+        std::fs::remove_file(crate::tts::signing::sidecar_path(&p)).unwrap();
+        let (r, _) = check(&p, PAYLOAD);
+        assert_eq!(r.signature, SignatureLayer::none());
+
+        // A link or an oversized file is never read.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(
+                crate::tts::signing::sidecar_path(&q),
+                crate::tts::signing::sidecar_path(&p),
+            )
+            .unwrap();
+            let (r, _) = check(&p, PAYLOAD);
+            assert_eq!(r.signature.status, SignatureStatus::Invalid);
+            assert!(
+                r.signature.problem.contains("not read"),
+                "{}",
+                r.signature.problem
+            );
+            std::fs::remove_file(crate::tts::signing::sidecar_path(&p)).unwrap();
+        }
+        std::fs::write(
+            crate::tts::signing::sidecar_path(&p),
+            vec![0u8; crate::tts::signing::MAX_SIDECAR_BYTES as usize + 1],
+        )
+        .unwrap();
+        let (r, _) = check(&p, PAYLOAD);
+        assert_eq!(r.signature.status, SignatureStatus::Invalid);
+        assert!(
+            r.signature.problem.contains("not read"),
+            "{}",
+            r.signature.problem
+        );
+    }
+
+    #[test]
+    fn a_signed_preview_wav_answers_from_inside() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = crate::tts::signing::tests::test_identity(dir.path());
+        let prov = crate::tts::marking::Provenance {
+            engine: "Pocket TTS".into(),
+            voice: "giovanni".into(),
+            language: "it".into(),
+        };
+        let wav = crate::tts::engine::wav_bytes(24_000, &vec![0.3; 24_000 * 4]);
+        let signed =
+            crate::tts::signing::embed_in_wav(&id, &prov, "2026-09-28T10:00:00Z", &wav).unwrap();
+        let p = dir.path().join("preview.wav");
+        std::fs::write(&p, signed).unwrap();
+        let (r, _) = check(&p, PAYLOAD);
+        assert!(
+            (r.seconds - 4.0).abs() < 0.01,
+            "the manifest chunk is not audio: {}",
+            r.seconds
+        );
+        assert_eq!(
+            r.signature.status,
+            SignatureStatus::Valid,
+            "{}",
+            r.signature.problem
+        );
+        assert_eq!(r.signature.source, Some(SignatureSource::Embedded));
+        assert_eq!(r.metadata.status, MetadataStatus::Sussurro);
+        assert_eq!(r.summary, Summary::MadeBySussurro);
     }
 
     #[test]

@@ -99,7 +99,10 @@ export function withVoice(voices: Record<string, string> | undefined, code: stri
 // ---- Check a file (#257, E17) ------------------------------------------------
 // Wording rules (E17 / plan 4.7): "found" only with Sussurro's code; a mark
 // with another code is "inconclusive", never another tool's mark; nothing
-// found is "no Sussurro mark found", never "made by a person".
+// found is "no Sussurro mark found", never "made by a person". A valid C2PA
+// signature is from a self-signed certificate (one per Sussurro install, on
+// no trust list, and anyone can make one): it proves the file is unchanged
+// since signing, and only *claims* who made it.
 
 /** The one-line answer. */
 export function checkSummary(r: WatermarkCheck): string {
@@ -108,6 +111,8 @@ export function checkSummary(r: WatermarkCheck): string {
       return "Made by Sussurro: the audio carries Sussurro's watermark.";
     case "inconclusive":
       return "Inconclusive: something like a watermark is there, but not with Sussurro's code. Music and steady tones can look like this.";
+    case "signed_only":
+      return "No Sussurro watermark found, but the file's signed metadata says Sussurro made it and the file hasn't changed since it was signed. The signature is from a self-signed certificate, not a trusted signer.";
     case "tags_only":
       return "No Sussurro watermark found. The file's tags say Sussurro made it, but tags can be copied or edited by anyone.";
     default:
@@ -144,9 +149,32 @@ export function metadataLine(r: WatermarkCheck): string {
   }
 }
 
-/** The signed-metadata layer's line (C2PA comes with #257's second part). */
+/** The signed-metadata layer's line (C2PA, #257). */
 export function signatureLine(r: WatermarkCheck): string {
-  return r.signature.status === "not_checked" ? "Signed metadata (C2PA): not checked yet." : `Signed metadata: ${r.signature.status}.`;
+  const s = r.signature;
+  const where = s.source === "sidecar" ? " (in the .c2pa file next to it)" : s.source === "embedded" ? " (inside the file)" : "";
+  if (s.status === "none") {
+    return "Signed metadata (C2PA): none — no manifest in the file and no .c2pa file next to it.";
+  }
+  if (s.status === "invalid") {
+    const why = s.problem ? ` (${s.problem})` : "";
+    return `Signed metadata (C2PA)${where}: does not match — the file changed after it was signed, or the signature belongs to another file${why}.`;
+  }
+  const what = s.claims_sussurro
+    ? `says ${s.ai_generated ? "synthetic speech made by" : "made by"} ${s.generator || "Sussurro"}`
+    : `says made by ${s.generator || "unnamed software"}${s.ai_generated ? " (AI-generated)" : ""}`;
+  const signer = s.claims_sussurro
+    ? `signed by a Sussurro install ("${s.signer}"), not a trusted signer`
+    : `signed by "${s.signer || "an unnamed certificate"}"`;
+  return `Signed metadata (C2PA)${where}: valid — ${what}; ${signer}. The file hasn't changed since it was signed.`;
+}
+
+/** Details of a valid signature worth a line (engine, voice, time). */
+export function signatureDetails(r: WatermarkCheck): string | null {
+  const s = r.signature;
+  if (s.status !== "valid") return null;
+  const parts = [s.engine && `engine ${s.engine}`, s.voice && `voice ${s.voice}`, s.language && `language ${s.language}`, s.when && `made ${s.when} (the signer's clock)`].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
 }
 
 /** Caveats worth a line. */

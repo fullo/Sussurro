@@ -17,7 +17,10 @@
    listed in Settings → Scripting), ?calendar=1 (a private calendar link
    saved in Settings → Calendar, for a meeting's "Add attendees from
    calendar…"), ?api_note=1 (a script's `POST /archive/items` lands a
-   note 3 s after load: the Library refreshes). */
+   note 3 s after load: the Library refreshes), ?archive=unreadable (the
+   archive folder refused by macOS privacy settings, #328) or
+   ?archive=missing (moved or unmounted): the Library's error state, until
+   another folder is picked in Settings → Archive. */
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { normalizeScopes, tokenNameError, type ArchiveScope, type ArchiveTokenInfo } from "../lib/archiveTokens";
@@ -654,7 +657,9 @@ async function readAloud(id: string, document: string | null, language: string |
       language: code,
       engine: "Pocket TTS",
       date: new Date().toISOString().slice(0, 19),
-      marked: ["metadata", "watermark"],
+      marked: ["metadata", "watermark", "signature"],
+      signed: true,
+      unsigned: "",
       recorded: true,
       stale: false,
       source_missing: false,
@@ -1017,6 +1022,38 @@ function linkInspect(input: string) {
   const platform = !MEDIA.test(u.pathname) && PLATFORMS.some((d) => host === d || host.endsWith(`.${d}`));
   const local = /^(localhost|127\.|10\.|192\.168\.|169\.254\.|\[::1\])/.test(u.hostname);
   return { kind: platform ? "platform" : "direct", error: null, local, label: `${host}${u.pathname.replace(/\/$/, "")}${u.search}`.slice(0, 60) };
+}
+
+/** `article_save` (#258): the page's text as a note, `source: url:<link>`.
+ *  A link containing "login" plays a page with too little text. */
+async function saveArticle(url: string, title: string | null, allowLocal: boolean, tags: string[], categories: string[]) {
+  const info = linkInspect(url);
+  if (info.error) throw info.error;
+  if (info.kind === "platform") throw `${new URL(url).hostname} is a video site: use Transcribe to turn the video's audio into text`;
+  if (MEDIA.test(new URL(url).pathname)) throw "the link names an audio or video file: use Transcribe instead";
+  if (info.local && !allowLocal)
+    throw `${new URL(url).hostname} is on this computer or the local network: tick "Allow local network addresses" to use it`;
+  await new Promise((r) => window.setTimeout(r, 900));
+  if (/login/i.test(url))
+    throw "the page has too little readable text (42 characters). It may need a login, sit behind a paywall or build its text with JavaScript, which Sussurro doesn't run — nothing was saved";
+  const blocks = [
+    "Ogni faro lungo la costa ha il suo ritmo di luce e di buio: i marinai lo chiamano la caratteristica.",
+    "## Come nascono i ritmi",
+    "I primi fari usavano un meccanismo a orologeria per far girare le lenti attorno alla lampada.",
+    "- Fissa: una luce che non si spegne mai.",
+    "- Lampeggiante: accesa meno di quanto resta spenta.",
+  ];
+  const t = title?.trim() || "Perché i fari lampeggiano";
+  const u = new URL(url);
+  u.hash = "";
+  const id = `2026/09/${new Date().toISOString().slice(0, 10)}-${t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  items.push({
+    id,
+    meta: meta(t, "note", new Date().toISOString(), "", `url:${u.toString()}`, { language: "it", engine: "", tags, categories }),
+    segments: blocks.map((b, i) => ({ id: i, start_ms: i * 2000, end_ms: i * 2000, raw: b, text: b })),
+  });
+  ev("archive-item-created", id);
+  return { id, title: t, paragraphs: blocks.length, language: "it" };
 }
 
 let linkRun: { id: number; cancelled: boolean; label: string } | null = null;
@@ -1533,7 +1570,42 @@ async function runRecipe(id: string, recipeId: string, profileId: string | null,
 
 type Args = Record<string, unknown>;
 
+/* #328: the archive folder can't be read (?archive=unreadable|missing).
+   Mirrors archive::unreadable::ui_error; lasts until the folder changes. */
+const archiveFault = params.get("archive");
+const faultyArchiveDir = settings.archive_dir;
+const ARCHIVE_SCAN_COMMANDS = new Set([
+  "archive_list",
+  "archive_search",
+  "archive_facets",
+  "archive_rebuild_index",
+  "people_usage",
+  "archive_uncompressed_audio",
+  "archive_compress_audio",
+  "voices_rebuild",
+]);
+
+function archiveUnreadableError(): string | null {
+  if (archiveFault !== "unreadable" && archiveFault !== "missing") return null;
+  if (settings.archive_dir !== faultyArchiveDir) return null;
+  const path = settings.archive_dir || ARCHIVE;
+  const missing = archiveFault === "missing";
+  const reason = missing ? "No such file or directory (os error 2)" : "Operation not permitted (os error 1)";
+  return JSON.stringify({
+    code: "archive_unreadable",
+    path,
+    kind: missing ? "missing" : "permission_denied",
+    permission: !missing,
+    reason,
+    message: `the archive folder ${path} can't be read: ${reason}`,
+  });
+}
+
 function handle(cmd: string, a: Args): unknown {
+  if (ARCHIVE_SCAN_COMMANDS.has(cmd)) {
+    const err = archiveUnreadableError();
+    if (err) throw err;
+  }
   switch (cmd) {
     case "get_settings":
       return { ...settings };
@@ -1595,8 +1667,24 @@ function handle(cmd: string, a: Args): unknown {
     case "watermark_check_file": {
       if (!watermarkOnDisk)
         throw "Check a file needs the watermark detector, which is downloaded with the read-aloud models — download a voice in Models → Voices.";
-      // `?check=none|inconclusive|tags` picks the answer; default: made by Sussurro.
+      // `?check=none|inconclusive|tags|signed|tampered` picks the answer;
+      // default: made by Sussurro (watermark + tags + a valid sidecar signature).
       const kind = params.get("check");
+      const validSig = {
+        status: "valid",
+        source: "sidecar",
+        signer: "Sussurro install 1a2b3c4d",
+        issuer: "Sussurro (self-signed, one per install)",
+        generator: "Sussurro 0.10.2",
+        ai_generated: true,
+        claims_sussurro: true,
+        when: "2026-09-28T10:00:00Z",
+        engine: "Pocket TTS",
+        voice: "giovanni",
+        language: "it",
+        problem: "",
+      };
+      const noSig = { ...validSig, status: "none", source: null, signer: "", issuer: "", generator: "", ai_generated: false, claims_sussurro: false, when: "", engine: "", voice: "", language: "" };
       return new Promise((r) =>
         setTimeout(
           () =>
@@ -1607,9 +1695,17 @@ function handle(cmd: string, a: Args): unknown {
               truncated: false,
               short: false,
               summary:
-                kind === "none" ? "no_mark" : kind === "inconclusive" ? "inconclusive" : kind === "tags" ? "tags_only" : "made_by_sussurro",
+                kind === "none"
+                  ? "no_mark"
+                  : kind === "inconclusive"
+                    ? "inconclusive"
+                    : kind === "tags" || kind === "tampered"
+                      ? "tags_only"
+                      : kind === "signed"
+                        ? "signed_only"
+                        : "made_by_sussurro",
               watermark:
-                kind === "none" || kind === "tags"
+                kind === "none" || kind === "tags" || kind === "signed" || kind === "tampered"
                   ? { verdict: "not_found", frames_marked: 0.01, bit_errors: 9 }
                   : kind === "inconclusive"
                     ? { verdict: "inconclusive", frames_marked: 0.89, bit_errors: 7 }
@@ -1620,7 +1716,12 @@ function handle(cmd: string, a: Args): unknown {
                   : kind === "inconclusive"
                     ? { status: "none", tags: [] }
                     : { status: "sussurro", tags: [["SYNTHETIC", "1"], ["ENCODER", "Sussurro 0.10.2"], ["TTS_VOICE", "giovanni"]] },
-              signature: { status: "not_checked" },
+              signature:
+                kind === "none" || kind === "inconclusive" || kind === "tags"
+                  ? noSig
+                  : kind === "tampered"
+                    ? { ...validSig, status: "invalid", problem: "assertion.dataHash.mismatch" }
+                    : validSig,
             }),
           600,
         ),
@@ -2211,6 +2312,14 @@ function handle(cmd: string, a: Args): unknown {
       return YT_DLP
         ? { found: true, path: "/opt/homebrew/bin/yt-dlp", version: "2025.09.26", install_help: "" }
         : { found: false, path: null, version: null, install_help: "Install yt-dlp with Homebrew: `brew install yt-dlp` (or `pipx install yt-dlp`). It is not bundled with Sussurro: video sites change often and yt-dlp is updated to follow them." };
+    case "article_save":
+      return saveArticle(
+        String(a.url ?? ""),
+        (a.title as string | null) ?? null,
+        !!a.allowLocal,
+        (a.tags as string[] | undefined) ?? [],
+        (a.categories as string[] | undefined) ?? [],
+      );
     case "engine_start_link":
       return startLink(String(a.url), (a.title as string | null) ?? null, runLanguage(a), !!a.identifyVoices, runSavesAudio(a));
     case "engine_start_mic":

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Card } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
-import { checkNotes, checkSummary, metadataLine, signatureLine, watermarkLine } from "../lib/tts";
+import { checkNotes, checkSummary, metadataLine, signatureDetails, signatureLine, watermarkLine } from "../lib/tts";
 import type { TtsStatus, WatermarkCheck } from "../lib/types";
 import { ExperimentalBadge } from "./ReadAloudCard";
 
@@ -56,8 +56,9 @@ export function CheckFileCard({ ctl }: { ctl: Ctl }) {
       }
     >
       <p className="card-hint">
-        Looks for the marks Sussurro puts on every file it speaks: the inaudible watermark and the file's tags. Pick
-        any audio file (Opus, Ogg, WAV, MP3, M4A, FLAC); it is checked on this computer and nothing is uploaded.
+        Looks for the marks Sussurro puts on every file it speaks: the inaudible watermark, the file's tags and its
+        signed metadata (C2PA — inside the file, or in the <code>.c2pa</code> file with the same name next to it).
+        Pick any audio file (Opus, Ogg, WAV, MP3, M4A, FLAC); it is checked on this computer and nothing is uploaded.
       </p>
       <div className="row-gap">
         <button type="button" className="btn-ghost sh-btn" disabled={busy || !ready} onClick={pick}>
@@ -97,7 +98,10 @@ export function CheckFileCard({ ctl }: { ctl: Ctl }) {
                 </span>
               )}
             </li>
-            <li>{signatureLine(result)}</li>
+            <li>
+              {signatureLine(result)}
+              {signatureDetails(result) && <span className="sh-muted"> ({signatureDetails(result)})</span>}
+            </li>
           </ul>
           {checkNotes(result).map((n) => (
             <p key={n} className="card-hint">

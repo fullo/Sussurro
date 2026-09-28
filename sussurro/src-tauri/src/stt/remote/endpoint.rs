@@ -122,7 +122,7 @@ pub fn socket_path_fits(base: &Path, pid: u32, tag: &str) -> bool {
 }
 
 /// `sc-<pid>-<tag>` → `pid`. Pure.
-fn run_dir_pid(name: &str) -> Option<u32> {
+pub(super) fn run_dir_pid(name: &str) -> Option<u32> {
     name.strip_prefix(RUN_PREFIX)?
         .split('-')
         .next()?
@@ -131,7 +131,9 @@ fn run_dir_pid(name: &str) -> Option<u32> {
 }
 
 /// Remove the per-run folders of processes that are gone (a crash or a
-/// force-quit of Sussurro). Returns how many were removed.
+/// force-quit of Sussurro). Returns how many were removed. A server still
+/// running in such a folder (macOS: nothing stops it with the app) is
+/// stopped first by [`super::orphans::reap_orphans`] (#319).
 pub fn sweep_stale_run_dirs(base: &Path, current_pid: u32) -> usize {
     let Ok(entries) = std::fs::read_dir(base) else {
         return 0;

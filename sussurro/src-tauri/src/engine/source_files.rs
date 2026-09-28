@@ -54,8 +54,16 @@ fn write(store: &Path, s: &Store) -> Result<()> {
     crate::archive::store::write_atomic(store, &bytes)
 }
 
+/// Whether the entry's item may still exist: only an item positively
+/// gone from a readable archive is dropped. An archive that can't be read
+/// right now (an unmounted drive, a refused folder, #328) keeps its
+/// entries.
 fn item_exists(e: &Entry) -> bool {
-    crate::archive::paths::item_dir(&e.archive, &e.id).is_ok_and(|d| d.is_dir())
+    if crate::archive::store::open_root(&e.archive).is_err() {
+        return true;
+    }
+    crate::archive::paths::item_dir(&e.archive, &e.id)
+        .is_ok_and(|d| !matches!(d.try_exists(), Ok(false)))
 }
 
 /// Remember that item `id` of `archive` was transcribed from `source`.

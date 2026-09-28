@@ -32,8 +32,9 @@
 //!   restart and its Windows install path, both of which exit without the
 //!   exit event). If Sussurro itself is killed, the OS takes the sidecar
 //!   down on Windows (a kill-on-close job object) and Linux
-//!   (`PR_SET_PDEATHSIG`); macOS has no equivalent, so only a crash or a
-//!   force-quit of Sussurro can leave it running there.
+//!   (`PR_SET_PDEATHSIG`); macOS has no equivalent, so a crash or a
+//!   force-quit of Sussurro leaves it running there until the next start,
+//!   which stops it ([`orphans`], #319).
 //!
 //! The process side ([`Sidecar`], [`SidecarConfig`], [`kill_all`]) also runs
 //! the chat model of the "Local (bundled)" LLM profile (#118, a second,
@@ -61,6 +62,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 pub mod endpoint;
+pub mod orphans;
 pub use endpoint::{Endpoint, SidecarAccess};
 
 /// The one Qwen3-ASR size that passed the gate (#109, #152): 1.7B Q8.
@@ -513,6 +515,8 @@ fn new_endpoint(cfg: &SidecarConfig) -> Result<(Endpoint, Option<PathBuf>)> {
         .cloned()
         .chain(std::iter::once(std::env::temp_dir()))
         .collect();
+    // An earlier run's orphan (macOS) goes before its folder is swept.
+    orphans::reap_orphans(&cfg.binary);
     let (dir, sock) = endpoint::private_run_dir(&bases)?;
     Ok((Endpoint::Unix(sock), Some(dir)))
 }

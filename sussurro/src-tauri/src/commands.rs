@@ -1084,6 +1084,43 @@ pub fn link_inspect(url: String) -> LinkInfo {
     }
 }
 
+/// Save the main text of a web page as a note (#258, P17): fetched with the
+/// link rules (`allow_local` as for a transcribed link), extracted, saved
+/// with `source: url:<link>` and indexed; the Library refreshes on
+/// `archive-item-created`. `title` replaces the page's when not empty;
+/// `tags`/`categories` are New's defaults. Nothing is saved when the page
+/// has too little text or isn't HTML.
+#[tauri::command]
+pub async fn article_save(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    title: Option<String>,
+    allow_local: Option<bool>,
+    tags: Option<Vec<String>>,
+    categories: Option<Vec<String>>,
+) -> Result<crate::sources::url::article::Saved, String> {
+    use tauri::Emitter;
+    let (dir, db) = archive_paths(&state)?;
+    let saved = blocking(move || {
+        archive::prepare_archive_dir(&dir)?;
+        crate::sources::url::article::save_article(
+            &dir,
+            &db,
+            &url,
+            allow_local.unwrap_or(false),
+            &crate::sources::url::article::Extras {
+                title: title.unwrap_or_default(),
+                tags: tags.unwrap_or_default(),
+                categories: categories.unwrap_or_default(),
+            },
+        )
+    })
+    .await?;
+    let _ = app.emit_to("main", "archive-item-created", saved.id.clone());
+    Ok(saved)
+}
+
 /// Whether yt-dlp is installed (#123), for the Link tab.
 #[derive(serde::Serialize)]
 pub struct YtDlpStatus {
@@ -1522,7 +1559,8 @@ fn archive_paths(state: &AppState) -> Result<(PathBuf, PathBuf), String> {
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || f().map_err(|e| format!("{e:#}")))
+    // An unreadable archive root reaches the UI as a coded JSON error (#328).
+    tauri::async_runtime::spawn_blocking(move || f().map_err(|e| archive::unreadable::ui_error(&e)))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1577,7 +1615,7 @@ pub async fn archive_prepare(state: State<'_, AppState>) -> Result<String, Strin
 #[tauri::command]
 pub async fn archive_list(state: State<'_, AppState>) -> Result<Vec<ItemSummary>, String> {
     let (dir, _) = archive_paths(&state)?;
-    blocking(move || Ok(archive::list_items(&dir))).await
+    blocking(move || archive::list_items(&dir)).await
 }
 
 /// Full-text search with facets over the index (synced with the folder
@@ -1948,7 +1986,7 @@ pub async fn archive_uncompressed_audio(
 ) -> Result<UncompressedAudio, String> {
     let (dir, _) = archive_paths(&state)?;
     blocking(move || {
-        let items = archive::compress::items_with_wav(&dir);
+        let items = archive::compress::items_with_wav(&dir)?;
         Ok(UncompressedAudio {
             items: items.len(),
             bytes: items.iter().map(|(_, b)| b).sum(),
@@ -1980,7 +2018,7 @@ pub async fn archive_compress_audio(
                 let item = archive::paths::item_dir(&dir, &id)?;
                 vec![(id, archive::compress::wav_bytes(&item))]
             }
-            None => archive::compress::items_with_wav(&dir),
+            None => archive::compress::items_with_wav(&dir)?,
         };
         let total_bytes: u64 = targets.iter().map(|(_, b)| b).sum();
         let items_total = targets.len();
@@ -3097,6 +3135,16 @@ fn tts_preview_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
+/// `<app data>/c2pa`: the signing certificate chain of generated speech
+/// (#257 part 2; the key is in the OS credential store).
+fn signing_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join(crate::tts::signing::SIGNING_DIR))
+        .map_err(|e| e.to_string())
+}
+
 /// Models → Voices: languages, voices, sizes, what is downloaded.
 #[tauri::command]
 pub async fn tts_status(
@@ -3222,6 +3270,7 @@ pub async fn tts_preview(
     let voice =
         voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
     let preview_dir = tts_preview_dir(&app)?;
+    let sign_dir = signing_dir(&app)?;
     blocking(move || {
         let name = crate::tts::service::global().preview(
             &dir,
@@ -3229,6 +3278,7 @@ pub async fn tts_preview(
             lang.code,
             &voice,
             text.as_deref(),
+            &|| crate::tts::signing::identity(&sign_dir),
         )?;
         Ok(format!("{}{name}", crate::tts::service::PREVIEW_PREFIX))
     })
@@ -3238,7 +3288,9 @@ pub async fn tts_preview(
 /// *Check a file* (#257, E17): the native picker opens from Rust (no path
 /// crosses IPC), the picked audio file is opened with the import guards
 /// (audio extensions only, no links, ≤ 2 GiB) and read by the AudioSeal
-/// detector plus its tags — on this computer, nothing is uploaded. Needs
+/// detector plus its tags and its signed C2PA metadata (embedded, or a
+/// `<same stem>.c2pa` next to it, same guards, ≤ 1 MiB) — on this
+/// computer, nothing is uploaded. Needs
 /// the detector, downloaded with the read-aloud models: never downloaded
 /// here. `None` when the user cancelled. Main window only.
 #[tauri::command]
@@ -3304,6 +3356,7 @@ pub async fn read_aloud_start(
     let (archive, _) = archive_paths(&state)?;
     let journal = crate::engine::session::journal_path(&state);
     let listen_dir = tts_preview_dir(&app)?;
+    let sign_dir = signing_dir(&app)?;
     let emitter = app.clone();
     let result = blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &archive, &id)?;
@@ -3311,6 +3364,7 @@ pub async fn read_aloud_start(
             service: crate::tts::service::global(),
             models_dir: &models,
             options: crate::tts::pocket::PocketOptions::default(),
+            signer: &|| crate::tts::signing::identity(&sign_dir),
         };
         let target = if save {
             Target::Save

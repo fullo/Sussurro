@@ -18,7 +18,7 @@ Plan drafted; milestones and issues created (section 7). Nothing merged.
 |---|---|---|
 | Phase V0 — Voices spikes | #274 | all six spikes agent-ready (#235–#240) |
 | 0.11 — Known voices | #275 | waits on P12–P16 and the spikes; archive-API tokens (#249) and calendar files (#252) agent-ready |
-| 0.12 — Read aloud | #276 | P18 decided (Pocket TTS, file generation); engine (#255), read aloud (#256) and #264 agent-ready; marking (#257): watermark and *Check a file* built (part 1), C2PA signing decided and next (part 2) |
+| 0.12 — Read aloud | #276 | P18 decided (Pocket TTS, file generation); engine (#255), read aloud (#256) and #264 agent-ready; marking (#257): watermark and *Check a file* built (part 1), C2PA signing built (part 2) |
 | 0.13 — Your voice, with consent | #277 | waits on P19, P20 and the legal review (#261) |
 | Track A — Accounts and stores | #278 | maintainer accounts (P22, P23); privacy policy page (#267) agent-ready |
 
@@ -239,9 +239,16 @@ assume.
 - **E17 — Marking synthetic audio.** *Settled by spike V0-6 (#240, numbers
   in 4.7); the maintainer confirmed the hosting (`DarumaHQ/audioseal-onnx`)
   and the signed metadata (item 2's recommendation) in #257. Status
-  (2026-09-28): items 1 and 3 built in #257 part 1 — the M16 watermark on
-  every generated file and *Check a file* with a "not checked" slot for the
-  signature; item 2's C2PA signing is #257 part 2.* Two layers, as the Commission's Code of
+  (2026-09-28): all three items built — items 1 and 3 in #257 part 1 (the
+  M16 watermark on every generated file, *Check a file*), item 2 in part 2
+  (`tts/signing.rs`: `c2pa` 0.91.1 with `rust_native_crypto` and no HTTP
+  client, per-install self-signed ES256 chain made on first need with the
+  key only in the OS credential store and no clear-text fallback — without
+  a store the file is kept unsigned and says why; sidecar `speech*.c2pa`
+  for saved speech and *Listen* files, embedded in preview WAVs; the time
+  is the local clock, no TSA; *Check a file* reads the embedded manifest or
+  the sidecar and reports valid/invalid/none with the layer that answered).
+  The app has no export of speech files yet, so nothing else embeds.* Two layers, as the Commission's Code of
   Practice on marking and labelling (final, 10 June 2026) asks:
   1. **Watermark: Meta AudioSeal 0.2, the 16-bit base models**
      (`audioseal_wm_16bits` + `audioseal_detector_16bits`). Code MIT; the
@@ -1114,9 +1121,9 @@ maintainer's own voice only if he provides it.
       E16, E22). (#255)
 - [ ] **Read aloud**: speech file next to the item, Audio tab, temporary
       playback (P17). (#256)
-- [ ] **Marking** of every generated file and *Check a file* (P21, E17). (#257;
-      part 1 — watermark + *Check a file* — built, part 2 — C2PA — to do)
-- [ ] **Article links** to text items and audio (P17). (#258)
+- [x] **Marking** of every generated file and *Check a file* (P21, E17). (#257;
+      part 1 — watermark + *Check a file*; part 2 — C2PA signing)
+- [x] **Article links** to text items and audio (P17). (#258)
 - [ ] Stretch: **two-voice podcast recipe** (P17). (#259)
 - [ ] Docs and release. (#260)
 
@@ -1153,7 +1160,7 @@ Track A depends on the maintainer's accounts and the stores' review times.
 | Blind listening test of the bake-off samples (P18) | 0.12 | #236 |
 | Lawyer's review of cloning (P20) | 0.13 | #261 |
 | Read the Pocket TTS gated-weights terms before the app downloads them | 0.12/0.13 | #236 |
-| Confirm the signed metadata of `speech.opus` (sidecar `speech.c2pa` with a per-install key, or no signature on the Ogg file) and host the pinned AudioSeal ONNX export (e.g. a release asset) | 0.12 | #257 |
+| ~~Confirm the signed metadata of `speech.opus` (sidecar `speech.c2pa` with a per-install key, or no signature on the Ogg file) and host the pinned AudioSeal ONNX export (e.g. a release asset)~~ Done 2026-09-28: sidecar with a per-install key, export on `DarumaHQ/audioseal-onnx`; both built | 0.12 | #257 |
 | Chrome Web Store: $5 fee, 2-Step Verification, trader declaration | Track A | #270 |
 | Partner Center account (Edge) | Track A | #271 |
 | AMO: switch or add a listed version; answer reviewers | Track A | #269 |

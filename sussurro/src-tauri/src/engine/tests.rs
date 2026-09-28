@@ -244,7 +244,12 @@ fn pipeline_segments_cleans_with_context_and_writes_an_item() {
     assert!(!item.meta.extra.contains_key(archive::SESSION_KEY));
     assert!(checkpoint::journal_entries(&dir.path().join(checkpoint::JOURNAL_FILE)).is_empty());
     assert!(!r.item_id.ends_with("-untitled"), "{}", r.item_id);
-    assert_eq!(archive::list_items(&dir.path().join("archive")).len(), 1);
+    assert_eq!(
+        archive::list_items(&dir.path().join("archive"))
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(item.body.contains("W1X0"));
     // Indexed: searchable right away.
     let hits = archive::with_index(
@@ -413,7 +418,9 @@ fn stt_that_never_works_fails_fast_and_writes_nothing() {
     .unwrap_err();
     assert!(format!("{err:#}").contains("model not downloaded"));
     assert_eq!(stt.0, MAX_STT_FAILURES_UP_FRONT, "stops early");
-    assert!(archive::list_items(&dir.path().join("archive")).is_empty());
+    assert!(archive::list_items(&dir.path().join("archive"))
+        .unwrap_or_default()
+        .is_empty());
     assert!(checkpoint::journal_entries(&dir.path().join(checkpoint::JOURNAL_FILE)).is_empty());
     match sink.0.lock().unwrap().last().unwrap() {
         EngineEvent::Error(e) => {
@@ -441,7 +448,9 @@ fn stt_that_never_works_fails_fast_and_writes_nothing() {
     )
     .unwrap_err();
     assert!(format!("{err:#}").contains("model not downloaded"));
-    assert!(archive::list_items(&dir.path().join("archive")).is_empty());
+    assert!(archive::list_items(&dir.path().join("archive"))
+        .unwrap_or_default()
+        .is_empty());
 }
 
 #[test]
@@ -463,7 +472,7 @@ fn source_failure_mid_run_keeps_the_segments_done_as_interrupted() {
     let err = run(j, &mut stt, &FakeCleaner::default(), sink.clone()).unwrap_err();
     assert!(format!("{err:#}").contains("decode error"));
     let archive_dir = dir.path().join("archive");
-    let items = archive::list_items(&archive_dir);
+    let items = archive::list_items(&archive_dir).unwrap();
     assert_eq!(items.len(), 1);
     assert!(items[0].interrupted && !items[0].recording);
     let item = archive::read_item(&archive_dir, &items[0].id).unwrap();
@@ -536,7 +545,7 @@ fn a_crash_mid_run_leaves_a_recoverable_item() {
     impl SegmentStt for Observer {
         fn transcribe(&mut self, _: &[f32]) -> Result<TimedTranscript> {
             self.calls += 1;
-            let items = archive::list_items(&self.archive);
+            let items = archive::list_items(&self.archive).unwrap();
             assert_eq!(items.len(), 1, "item exists from the start");
             assert!(items[0].recording);
             let saved = archive::read_item(&self.archive, &items[0].id)
@@ -573,7 +582,7 @@ fn a_crash_mid_run_leaves_a_recoverable_item() {
     assert!(crashed.is_err());
     // Before each STT call, every earlier segment was already on disk.
     assert_eq!(*seen.lock().unwrap(), vec![0, 1, 2, 3]);
-    let items = archive::list_items(&archive_dir);
+    let items = archive::list_items(&archive_dir).unwrap();
     assert!(items[0].recording, "left in progress by the crash");
 
     let data = dir.path().join("data");
@@ -614,7 +623,9 @@ fn cancel_stops_the_run_without_writing() {
     )
     .unwrap_err();
     assert!(format!("{err:#}").contains("cancelled"));
-    assert!(archive::list_items(&dir.path().join("archive")).is_empty());
+    assert!(archive::list_items(&dir.path().join("archive"))
+        .unwrap_or_default()
+        .is_empty());
 }
 
 /// #122: the external-cleanup entry a session carries.
@@ -640,7 +651,7 @@ struct ExternalLlm {
 
 impl Cleaner for ExternalLlm {
     fn clean(&self, _: Option<&str>, raw: &str) -> String {
-        let items = archive::list_items(&self.archive);
+        let items = archive::list_items(&self.archive).unwrap();
         let logged = items
             .first()
             .map(|i| {
@@ -696,7 +707,7 @@ fn external_cleanup_is_logged_before_the_first_send_even_if_the_run_fails() {
         "logged before the first send, once per run: {calls:?}"
     );
 
-    let items = archive::list_items(&archive_dir);
+    let items = archive::list_items(&archive_dir).unwrap();
     assert_eq!(items.len(), 1);
     assert!(items[0].interrupted);
     assert_eq!(items[0].external_hosts, ["api.example.com"]);
@@ -1645,7 +1656,9 @@ fn cancel_while_waiting_for_a_dictation_ends_the_run() {
         !events.iter().any(|e| matches!(e, EngineEvent::Segment(_))),
         "a cancelled wait is not a failed segment"
     );
-    assert!(archive::list_items(&dir.path().join("archive")).is_empty());
+    assert!(archive::list_items(&dir.path().join("archive"))
+        .unwrap_or_default()
+        .is_empty());
     assert!(gate.is_pending(), "the dictation itself is untouched");
 }
 
@@ -1810,7 +1823,7 @@ fn a_link_run_downloads_transcribes_and_cleans_up() {
     };
     let shared = Mutex::new(Settings::default());
     let archive_dir = dir.path().join("Documents").join("Sussurro");
-    let count_items = || archive::list_items(&archive_dir).len();
+    let count_items = || archive::list_items(&archive_dir).unwrap().len();
     let run = |input: &str, allow_local: bool, sink: Arc<VecSink>| {
         let req = LinkRequest {
             id: 11,
@@ -2553,7 +2566,7 @@ fn save_audio_off_writes_no_audio_anywhere() {
     let item = archive::read_item(&dir.path().join("archive"), &r.item_id).unwrap();
     assert!(item.audio.is_empty());
     assert!(!item.meta.extra.contains_key(archive::audio::AUDIO_KEY));
-    let listed = archive::list_items(&dir.path().join("archive"));
+    let listed = archive::list_items(&dir.path().join("archive")).unwrap();
     assert_eq!(listed[0].audio_bytes, 0);
 }
 
@@ -2570,7 +2583,12 @@ fn save_audio_off_writes_nothing_on_a_failed_run_either() {
         sink: sink.clone(),
     });
     assert!(run(j, &mut fake_stt(), &FakeCleaner::default(), sink).is_err());
-    assert_eq!(archive::list_items(&dir.path().join("archive")).len(), 1);
+    assert_eq!(
+        archive::list_items(&dir.path().join("archive"))
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(wavs_under(dir.path()).is_empty());
 }
 
@@ -2613,7 +2631,10 @@ fn save_audio_writes_the_runs_audio_as_one_wav_and_lists_it() {
         }]
     );
     assert!(item.folder_bytes > bytes);
-    assert_eq!(archive::list_items(&archive_dir)[0].audio_bytes, bytes);
+    assert_eq!(
+        archive::list_items(&archive_dir).unwrap()[0].audio_bytes,
+        bytes
+    );
     // Search rows carry it too.
     let hits = archive::with_index(&archive_dir, &dir.path().join("index.sqlite"), |i| {
         i.search("", &Default::default())
@@ -2721,7 +2742,9 @@ fn a_cancelled_run_trashes_its_audio_with_the_item() {
     )
     .is_err());
     let archive_dir = dir.path().join("archive");
-    assert!(archive::list_items(&archive_dir).is_empty());
+    assert!(archive::list_items(&archive_dir)
+        .unwrap_or_default()
+        .is_empty());
     assert!(wavs_under(dir.path()).is_empty());
     assert!(archive::store::test_trash::contains(
         &archive_dir.join(started_id(&sink))
@@ -2762,7 +2785,7 @@ fn a_failed_run_keeps_its_audio_with_the_interrupted_item() {
     j.save_audio = true;
     assert!(run(j, &mut fake_stt(), &FakeCleaner::default(), sink).is_err());
     let archive_dir = dir.path().join("archive");
-    let items = archive::list_items(&archive_dir);
+    let items = archive::list_items(&archive_dir).unwrap();
     assert_eq!(items.len(), 1);
     assert!(items[0].interrupted);
     let item = archive::read_item(&archive_dir, &items[0].id).unwrap();

@@ -17,6 +17,7 @@ import {
   readiness,
   speechFacts,
   speechFor,
+  speechSignatureNote,
   staleNote,
   type ReadableDoc,
 } from "../lib/readAloud";
@@ -201,6 +202,11 @@ export function ReadAloudSection({
                 {note && (
                   <p className={f.stale || f.source_missing ? "ra-stale" : "sh-muted"} role="note">
                     {note}
+                  </p>
+                )}
+                {speechSignatureNote(f) && (
+                  <p className="sh-muted" role="note">
+                    {speechSignatureNote(f)}
                   </p>
                 )}
                 <audio

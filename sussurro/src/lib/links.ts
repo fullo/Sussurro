@@ -71,3 +71,30 @@ export function linkProblem(info: LinkInfo | null, ytDlp: YtDlpStatus | null, al
   if (info.local && !allowLocal) return "This address is on this computer or your local network — tick “Allow local network addresses” to use it.";
   return null;
 }
+
+/* ---------- Article links (#258) ---------- */
+
+/** What New → Link does with the link: transcribe its audio, or save the
+ *  web page's text as a note (then *Read aloud* in the Audio tab). */
+export type LinkAction = "transcribe" | "article";
+
+/** What blocks saving the link as an article, in words, or null. Video
+ *  sites go to Transcribe; the page itself is checked by the backend. */
+export function articleProblem(info: LinkInfo | null, allowLocal: boolean): string | null {
+  if (!info) return null;
+  if (info.error) return info.error;
+  if (info.kind === "platform") return "This is a video site — choose Transcribe to turn the video's audio into text.";
+  if (info.local && !allowLocal) return "This address is on this computer or your local network — tick “Allow local network addresses” to use it.";
+  return null;
+}
+
+/** Whether *Save article* can be pressed. */
+export function canSaveArticle(info: LinkInfo | null, allowLocal: boolean): boolean {
+  return !!info && !!info.kind && articleProblem(info, allowLocal) === null;
+}
+
+/** An item made from a web page's text (#258): a note whose source is a
+ *  link. Transcribed links are transcriptions, so the two never mix. */
+export function isArticleItem(meta: { type: string; source: string }): boolean {
+  return meta.type === "note" && meta.source.startsWith("url:");
+}

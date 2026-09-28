@@ -350,6 +350,9 @@ impl Service {
 
     /// Render `text` (plain text or markdown) in `code` with `voice_id`
     /// into a new preview WAV in `preview_dir`, deleting older ones.
+    /// `signer` gives this install's signing identity once the audio is
+    /// made (#257 part 2): the WAV then carries the C2PA manifest inside;
+    /// without one it is left unsigned (watermark and tags still there).
     /// Returns the file name (see [`preview_file_name`]).
     pub fn preview(
         &self,
@@ -358,6 +361,7 @@ impl Service {
         code: &str,
         voice_id: &str,
         text: Option<&str>,
+        signer: &dyn Fn() -> std::result::Result<std::sync::Arc<super::signing::Identity>, String>,
     ) -> Result<String> {
         let lang = lang(code)?;
         // #257: no watermark model, no preview (checked before any work).
@@ -405,7 +409,18 @@ impl Service {
             *seq
         };
         let name = format!("preview-{n}.wav");
-        engine::write_wav(&preview_dir.join(&name), rate, &audio)?;
+        let mut wav = engine::wav_bytes(rate, &audio);
+        match signer().and_then(|id| {
+            super::signing::embed_in_wav(&id, marker.provenance(), &super::signing::now_utc(), &wav)
+                .map_err(|e| format!("{e:#}"))
+        }) {
+            Ok(signed) => wav = signed,
+            Err(why) => eprintln!("read aloud: the preview is not signed: {why}"),
+        }
+        let path = preview_dir.join(&name);
+        let tmp = path.with_extension("wav.part");
+        std::fs::write(&tmp, wav)?;
+        std::fs::rename(&tmp, &path)?;
         Ok(name)
     }
 }
@@ -427,7 +442,11 @@ pub fn clear_prefix(preview_dir: &Path, prefix: &str) {
     for e in rd.flatten() {
         let name = e.file_name();
         let name = name.to_string_lossy();
-        let temp = name.ends_with(".wav") || name.ends_with(".opus") || name.ends_with(".part");
+        // `.c2pa`: a *Listen* file's signed-manifest sidecar (#257).
+        let temp = name.ends_with(".wav")
+            || name.ends_with(".opus")
+            || name.ends_with(".c2pa")
+            || name.ends_with(".part");
         if name.starts_with(prefix) && temp {
             let _ = std::fs::remove_file(e.path());
         }
@@ -503,7 +522,9 @@ mod tests {
     fn a_preview_needs_the_watermark_model() {
         let dir = tempfile::tempdir().unwrap();
         let err = global()
-            .preview(dir.path(), &dir.path().join("p"), "it", "giovanni", None)
+            .preview(dir.path(), &dir.path().join("p"), "it", "giovanni", None, &|| {
+                Err("no store".into())
+            })
             .unwrap_err();
         assert!(err.to_string().contains("watermark"), "{err}");
         assert!(!dir.path().join("p").exists(), "nothing written");
@@ -550,6 +571,8 @@ mod tests {
             "tts-preview/listen-3.wav",
             "tts-preview/listen-.opus",
             "tts-preview/listen-3.opus.part",
+            "tts-preview/listen-3.c2pa",
+            "tts-preview/preview-3.c2pa",
             "tts-preview/../settings.json",
             "tts-preview/preview-3.wav/x",
             "tts-preview/preview-1a.wav",
@@ -564,7 +587,7 @@ mod tests {
     #[test]
     fn old_previews_are_cleared_and_nothing_else() {
         let dir = tempfile::tempdir().unwrap();
-        for f in ["preview-1.wav", "preview-2.wav.part", "listen-1.opus", "keep.txt"] {
+        for f in ["preview-1.wav", "preview-2.wav.part", "listen-1.opus", "listen-1.c2pa", "keep.txt"] {
             std::fs::write(dir.path().join(f), b"x").unwrap();
         }
         clear_prefix(dir.path(), "preview-");
