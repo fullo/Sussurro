@@ -1,18 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Ctl } from "../hooks/useAppController";
-import { audioSrcPath } from "../lib/replay";
+import { audioSrcPath, formatPlayerTime } from "../lib/replay";
 import {
-  LISTEN_NOTE,
   SYNTHETIC_NOTE,
   TRANSCRIPT_DOC,
+  createLabel,
   defaultLanguage,
   documentLabel,
   estimateMinutes,
   jobFraction,
   jobIsFor,
   jobLabel,
+  listenDisabled,
   readableDocs,
   readiness,
   speechFacts,
@@ -24,15 +25,17 @@ import {
 import type { CompanionDoc, Item, ReadAloudJob, ReadAloudOutcome, SpeechStatus, TtsStatus } from "../lib/types";
 import { ExperimentalBadge } from "./ReadAloudCard";
 
-/** The URL scheme of item audio and temporary files (archive::playback). */
+/** The URL scheme of item audio and generated speech (archive::playback). */
 const SCHEME = "sussurro-audio";
 
-/* The Audio tab's "Generated speech" section (read aloud, #256, P17/P21/
-   P24): the item's speech files — played, marked as synthetic, flagged when
-   out of date, deleted to the trash — and, while the experimental module is
-   on, Listen (a temporary file, deleted when the document closes) and Save
-   (speech.opus next to the item). Nothing is ever downloaded from here: a
-   missing model or voice points to Models → Voices. */
+/* The Audio tab's "Generated speech" section (read aloud, #256, #327,
+   P17/P21/P24): one button per document — Create when there is no speech
+   for it yet, Listen (playing the saved file at once, no generation) once
+   there is; Create again next to Listen when it's stale. One shared
+   in-app player for the section (no native <audio controls> anywhere
+   here, #327): play/pause, a seek bar with time, closed when the item
+   changes or the document pane unmounts. Nothing is ever downloaded from
+   here: a missing model or voice points to Models → Voices. */
 export function ReadAloudSection({
   ctl,
   item,
@@ -51,9 +54,15 @@ export function ReadAloudSection({
   const [doc, setDoc] = useState(TRANSCRIPT_DOC);
   const [language, setLanguage] = useState("");
   const [job, setJob] = useState<ReadAloudJob | null>(null);
-  const [listenSrc, setListenSrc] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  // The one in-app player (#327): which file plays, and its transport.
+  const [playing, setPlaying] = useState<{ file: string; label: string } | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [curMs, setCurMs] = useState(0);
+  const [durMs, setDurMs] = useState(0);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   const refreshFiles = useCallback(() => {
     invoke<SpeechStatus[]>("read_aloud_files", { id: item.id })
@@ -101,38 +110,46 @@ export function ReadAloudSection({
     };
   }, [refreshFiles]);
 
-  // A temporary Listen file goes when the document closes (P17).
-  useEffect(
-    () => () => {
-      invoke("read_aloud_discard").catch(() => {});
-    },
-    [item.id],
-  );
-  useEffect(() => setListenSrc(null), [item.id]);
+  // The player stops when another item opens (or this pane unmounts, which
+  // removes the <audio> element on its own).
+  useEffect(() => {
+    setPlaying(null);
+  }, [item.id]);
 
   const running = job !== null;
   const mine = jobIsFor(job, item.id);
   const ready = readiness(status, language);
   const existing = speechFor(files, doc);
   const docChars = doc === TRANSCRIPT_DOC ? item.body.length : 0;
+  const create = enabled ? createLabel(existing) : null;
 
-  const start = async (save: boolean) => {
+  const play = (file: string, label: string) => {
+    if (playing?.file === file) {
+      const el = audioRef.current;
+      if (el) {
+        if (el.paused) el.play().catch(() => {});
+        else el.pause();
+      }
+      return;
+    }
+    setCurMs(0);
+    setDurMs(0);
+    setPlaying({ file, label });
+  };
+
+  const start = async () => {
     setError("");
-    if (!save) setListenSrc(null);
+    // Create again replaces the file the player may be streaming.
+    if (existing && playing?.file === existing.file) setPlaying(null);
     try {
       const out = await invoke<ReadAloudOutcome>("read_aloud_start", {
         id: item.id,
         document: doc,
         language: language || null,
-        save,
       });
-      if (out.save) {
-        ctl.flash(`Speech saved as ${out.file} — ${Math.round(out.seconds)} s.`, 3000);
-        refreshFiles();
-        onChanged?.();
-      } else {
-        setListenSrc(convertFileSrc(out.file, SCHEME));
-      }
+      ctl.flash(`Speech saved as ${out.file} — ${Math.round(out.seconds)} s.`, 3000);
+      refreshFiles();
+      onChanged?.();
     } catch (e) {
       const msg = String(e);
       if (/cancelled/.test(msg)) ctl.flash("Read aloud cancelled — nothing was kept.", 3000);
@@ -145,6 +162,7 @@ export function ReadAloudSection({
     try {
       await invoke("read_aloud_delete", { id: item.id, file });
       ctl.flash(`${file} moved to the trash.`, 3000);
+      if (playing?.file === file) setPlaying(null);
       refreshFiles();
       onChanged?.();
     } catch (e) {
@@ -168,6 +186,8 @@ export function ReadAloudSection({
         <ul className="ra-files" aria-label="Speech files">
           {files.map((f) => {
             const note = staleNote(f);
+            const disabled = listenDisabled(job, item.id, f.document);
+            const nowPlaying = playing?.file === f.file;
             return (
               <li key={f.file} className="ra-file">
                 <div className="row-gap">
@@ -176,6 +196,15 @@ export function ReadAloudSection({
                     Synthetic
                   </span>
                   <span className="sh-muted mono ra-name">{f.file}</span>
+                  <button
+                    type="button"
+                    className="btn-ghost sh-btn"
+                    disabled={disabled}
+                    onClick={() => play(f.file, documentLabel(f.document, docs))}
+                    title={disabled ? "This file is being replaced" : "Play the saved speech"}
+                  >
+                    {nowPlaying && isPlaying ? "Pause" : "Listen"}
+                  </button>
                   <span className="push" />
                   {confirmDelete === f.file ? (
                     <span className="row-gap" role="alertdialog" aria-label={`Delete ${f.file}`}>
@@ -188,12 +217,7 @@ export function ReadAloudSection({
                       </button>
                     </span>
                   ) : (
-                    <button
-                      type="button"
-                      className="btn-ghost sh-btn"
-                      onClick={() => setConfirmDelete(f.file)}
-                      disabled={mine && job?.save === true && speechFor(files, job.document)?.file === f.file}
-                    >
+                    <button type="button" className="btn-ghost sh-btn" onClick={() => setConfirmDelete(f.file)} disabled={disabled}>
                       Delete…
                     </button>
                   )}
@@ -209,17 +233,61 @@ export function ReadAloudSection({
                     {speechSignatureNote(f)}
                   </p>
                 )}
-                <audio
-                  className="ra-audio"
-                  controls
-                  preload="metadata"
-                  src={convertFileSrc(audioSrcPath(item.id, f.file), SCHEME)}
-                  aria-label={`Generated speech of ${documentLabel(f.document, docs)} (synthetic voice)`}
-                />
               </li>
             );
           })}
         </ul>
+      )}
+
+      {playing && (
+        <div className="ra-player row-gap" role="group" aria-label={`Playing ${playing.label}`}>
+          <audio
+            key={playing.file}
+            ref={audioRef}
+            autoPlay
+            src={convertFileSrc(audioSrcPath(item.id, playing.file), SCHEME)}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => setIsPlaying(false)}
+            onLoadedMetadata={(e) => {
+              const d = e.currentTarget.duration;
+              if (Number.isFinite(d)) setDurMs(Math.round(d * 1000));
+            }}
+            onTimeUpdate={(e) => setCurMs(Math.round(e.currentTarget.currentTime * 1000))}
+            onError={() => setError(`${playing.file} could not be played.`)}
+            style={{ display: "none" }}
+          />
+          <button
+            type="button"
+            className="btn-dark au-play"
+            onClick={() => (isPlaying ? audioRef.current?.pause() : audioRef.current?.play().catch(() => {}))}
+            aria-label={isPlaying ? "Pause" : "Play"}
+          >
+            <span aria-hidden="true">{isPlaying ? "❚❚" : "▶"}</span>
+          </button>
+          <span className="ra-player-label sh-muted">{playing.label}</span>
+          <div className="au-seek">
+            <span className="au-time mono" aria-hidden="true">{formatPlayerTime(curMs)}</span>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(1, durMs)}
+              step={100}
+              value={Math.min(curMs, durMs)}
+              aria-label="Position"
+              aria-valuetext={`${formatPlayerTime(curMs)} of ${formatPlayerTime(durMs)}`}
+              onChange={(e) => {
+                const t = Number(e.target.value);
+                if (audioRef.current) audioRef.current.currentTime = t / 1000;
+                setCurMs(t);
+              }}
+            />
+            <span className="au-time mono" aria-hidden="true">{formatPlayerTime(durMs)}</span>
+          </div>
+          <button type="button" className="btn-ghost sh-btn" onClick={() => setPlaying(null)} aria-label="Close player">
+            ✕
+          </button>
+        </div>
       )}
 
       {!enabled ? (
@@ -287,35 +355,30 @@ export function ReadAloudSection({
             </div>
           ) : (
             <div className="row-gap">
-              <button
-                type="button"
-                className="btn-ghost sh-btn"
-                disabled={running || ready.state !== "ready"}
-                onClick={() => start(false)}
-                title="Make the speech in a temporary file and play it — nothing is saved"
-              >
-                Listen
-              </button>
-              <button
-                type="button"
-                className="btn-dark sh-btn"
-                disabled={running || ready.state !== "ready"}
-                onClick={() => start(true)}
-                title="Save the speech next to this item, as an Opus file marked as synthetic"
-              >
-                {existing ? (existing.stale ? "Make it again" : "Replace speech file") : "Save as speech file"}
-              </button>
+              {existing && (
+                <button
+                  type="button"
+                  className="btn-dark sh-btn"
+                  disabled={listenDisabled(job, item.id, doc)}
+                  onClick={() => play(existing.file, documentLabel(doc, docs))}
+                >
+                  {playing?.file === existing.file && isPlaying ? "Pause" : "Listen"}
+                </button>
+              )}
+              {create && (
+                <button
+                  type="button"
+                  className={existing ? "btn-ghost sh-btn" : "btn-dark sh-btn"}
+                  disabled={running || ready.state !== "ready"}
+                  onClick={start}
+                >
+                  {create}
+                </button>
+              )}
               {running && !mine && <span className="sh-muted">Another document is being read aloud.</span>}
-              {!running && docChars > 4000 && (
+              {!running && !existing && docChars > 4000 && (
                 <span className="sh-muted">This takes about {estimateMinutes(docChars, language)} min on this computer.</span>
               )}
-            </div>
-          )}
-
-          {listenSrc && !running && (
-            <div className="ra-listen">
-              <audio className="ra-audio" controls autoPlay src={listenSrc} aria-label="Temporary read-aloud (synthetic voice)" />
-              <p className="sh-muted">{LISTEN_NOTE}</p>
             </div>
           )}
         </div>

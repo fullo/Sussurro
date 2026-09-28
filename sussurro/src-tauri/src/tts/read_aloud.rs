@@ -1,9 +1,11 @@
-//! Read aloud (0.12, #256, P17): an item's transcript or one of its
+//! Read aloud (0.12, #256, #327, P17): an item's transcript or one of its
 //! companion documents becomes speech — saved next to the item
-//! (`speech.opus`, `speech-<document>.opus`, see [`crate::archive::speech`])
-//! or written to a temporary *Listen* file in app data that is deleted when
-//! the document closes, at the next *Listen*, at startup and when the module
-//! is turned off.
+//! (`speech.opus`, `speech-<document>.opus`, see [`crate::archive::speech`]).
+//! There is one button per document in the Audio tab: *Create* when there
+//! is no speech for it yet, *Listen* (playing the saved file, no
+//! generation) once there is. The temporary *Listen* path of #256 (`save:
+//! false`, `listen-N.opus`, `read_aloud_discard`) was removed in #327 —
+//! every job now saves.
 //!
 //! One narrator voice per document (P17): the voice picked for the text's
 //! language in Models → Voices ([`super::service::voice_for`]). The language
@@ -38,7 +40,7 @@ use super::catalog::{self, Language, Voice};
 use super::engine::{self, TtsEngine};
 use super::marking::{self, Marker, Provenance};
 use super::resample::Resampler;
-use super::service::{self, ENGINE_NAME, LISTEN_PREFIX, PREVIEW_PREFIX};
+use super::service::{self, ENGINE_NAME};
 use super::signing::{self, Identity};
 use super::text::{self, Chunk, Lang, PrepOptions};
 use super::watermark::{AudioSealGenerator, WatermarkModel};
@@ -50,7 +52,7 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Bumped when [`prepared`] changes what it hashes, so speech made by an
@@ -203,8 +205,6 @@ pub fn load_watermark(models_dir: &Path) -> Result<Box<dyn WatermarkModel>> {
 pub struct JobStatus {
     pub item_id: String,
     pub document: String,
-    /// Saved next to the item (else a temporary *Listen* file).
-    pub save: bool,
     pub language: String,
     pub voice: String,
     /// Chunks spoken so far, of `total`.
@@ -329,15 +329,8 @@ fn sign_to(
     })
 }
 
-/// Where the result goes.
-pub enum Target<'a> {
-    /// Next to the item (`speech*.opus`).
-    Save,
-    /// A temporary file in `dir` (the app data's `tts-preview/`).
-    Listen { dir: &'a Path },
-}
-
-/// One read-aloud request.
+/// One read-aloud request: always saved next to the item (`speech*.opus`,
+/// #327 — the temporary *Listen* path of #256 was removed).
 pub struct Request<'a> {
     pub archive: &'a Path,
     pub id: &'a str,
@@ -347,22 +340,17 @@ pub struct Request<'a> {
     pub language: Option<&'a str>,
     /// The voice picked per language (`Settings.tts_voices`).
     pub voices: &'a BTreeMap<String, String>,
-    pub target: Target<'a>,
 }
 
 /// What a finished job made.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Outcome {
-    /// Saved: the file name in the item folder. Listen: the
-    /// `sussurro-audio:` path (`tts-preview/listen-N.opus`).
+    /// The file name in the item folder.
     pub file: String,
-    pub save: bool,
     /// Length of the speech.
     pub seconds: f64,
     pub chunks: usize,
 }
-
-static LISTEN_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Read a document aloud (see the module docs). Blocking; `progress` gets
 /// the job's status as chunks are spoken.
@@ -388,44 +376,26 @@ pub fn run(
     let file = speech::speech_file_name(&source.document)?;
     // #257: no watermark, no speech — checked before any work.
     let watermark = speaker.watermark()?;
-    let save = matches!(req.target, Target::Save);
     let guard = jobs.begin(JobStatus {
         item_id: req.id.to_string(),
         document: source.document.clone(),
-        save,
         language: lang.code.to_string(),
         voice: voice.id.to_string(),
         done: 0,
         total: chunks.len(),
     })?;
-    let (out, listen, sidecar_out) = match req.target {
-        Target::Save => {
-            let dir = existing_item_dir(req.archive, req.id)?;
-            let part = speech::part_path(&dir, &file);
-            let sidecar = speech::part_path(
-                &dir,
-                &speech::sidecar_name(&file).context("speech file name")?,
-            );
-            if let Some(parent) = part.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("creating {}", parent.display()))?;
-            }
-            let _ = std::fs::remove_file(&part);
-            let _ = std::fs::remove_file(&sidecar);
-            (part, None, sidecar)
-        }
-        Target::Listen { dir } => {
-            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-            service::clear_prefix(dir, LISTEN_PREFIX);
-            let n = LISTEN_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
-            let name = format!("{LISTEN_PREFIX}{n}.opus");
-            (
-                dir.join(format!("{name}.part")),
-                Some((dir.join(&name), name)),
-                dir.join(format!("{LISTEN_PREFIX}{n}.{}", signing::SIDECAR_EXT)),
-            )
-        }
-    };
+    let dir = existing_item_dir(req.archive, req.id)?;
+    let out = speech::part_path(&dir, &file);
+    let sidecar_out = speech::part_path(
+        &dir,
+        &speech::sidecar_name(&file).context("speech file name")?,
+    );
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_file(&sidecar_out);
     let mut marker = Marker::new(
         Provenance {
             engine: ENGINE_NAME.into(),
@@ -453,49 +423,26 @@ pub fn run(
     if let Err(why) = &signed {
         eprintln!("read aloud: {file} is not signed: {why}");
     }
-    let file = match listen {
-        None => {
-            let info = SpeechInfo {
-                document: source.document.clone(),
-                generator: marking::generator(),
-                engine: ENGINE_NAME.into(),
-                voice: voice.id.into(),
-                language: lang.code.into(),
-                date: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
-                text_sha256,
-                marked: marker.marks(signed.is_ok()),
-                unsigned: signed.as_ref().err().cloned().unwrap_or_default(),
-                extra: BTreeMap::new(),
-            };
-            let sidecar = signed.is_ok().then_some(sidecar_out.as_path());
-            speech::commit(req.archive, req.id, &out, sidecar, &file, &info)?;
-            file
-        }
-        Some((path, name)) => {
-            if let Err(e) = std::fs::rename(&out, &path) {
-                let _ = std::fs::remove_file(&out);
-                let _ = std::fs::remove_file(&sidecar_out);
-                return Err(e).context("saving the temporary speech file");
-            }
-            format!("{PREVIEW_PREFIX}{name}")
-        }
+    let info = SpeechInfo {
+        document: source.document.clone(),
+        generator: marking::generator(),
+        engine: ENGINE_NAME.into(),
+        voice: voice.id.into(),
+        language: lang.code.into(),
+        date: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+        text_sha256,
+        marked: marker.marks(signed.is_ok()),
+        unsigned: signed.as_ref().err().cloned().unwrap_or_default(),
+        extra: BTreeMap::new(),
     };
+    let sidecar = signed.is_ok().then_some(sidecar_out.as_path());
+    speech::commit(req.archive, req.id, &out, sidecar, &file, &info)?;
     drop(guard);
     Ok(Outcome {
         file,
-        save,
         seconds: samples as f64 / f64::from(SPEECH_RATE),
         chunks: chunks.len(),
     })
-}
-
-/// Delete the temporary *Listen* files (the document closed). Skipped while
-/// a *Listen* job writes one.
-pub fn discard_listens(jobs: &Jobs, dir: &Path) {
-    if jobs.current().is_some_and(|j| !j.save) {
-        return;
-    }
-    service::clear_prefix(dir, LISTEN_PREFIX);
 }
 
 // ---- what the Audio tab lists ------------------------------------------------
@@ -575,10 +522,7 @@ pub fn statuses(archive: &Path, id: &str) -> Result<Vec<SpeechStatus>> {
 /// Delete a speech file (to the OS trash); refused while a job saves it.
 pub fn delete(jobs: &Jobs, archive: &Path, id: &str, file: &str) -> Result<()> {
     if let Some(j) = jobs.current() {
-        if j.save
-            && j.item_id == id
-            && speech::speech_file_name(&j.document).ok().as_deref() == Some(file)
-        {
+        if j.item_id == id && speech::speech_file_name(&j.document).ok().as_deref() == Some(file) {
             bail!("this speech is being made right now — cancel it first");
         }
     }
@@ -672,19 +616,13 @@ mod tests {
         id
     }
 
-    fn req<'a>(
-        archive: &'a Path,
-        id: &'a str,
-        voices: &'a BTreeMap<String, String>,
-        target: Target<'a>,
-    ) -> Request<'a> {
+    fn req<'a>(archive: &'a Path, id: &'a str, voices: &'a BTreeMap<String, String>) -> Request<'a> {
         Request {
             archive,
             id,
             document: None,
             language: None,
             voices,
-            target,
         }
     }
 
@@ -704,12 +642,12 @@ mod tests {
         let out = run(
             &jobs,
             &speaker,
-            &req(archive, &id, &voices, Target::Save),
+            &req(archive, &id, &voices),
             &mut |s| seen.push((s.done, s.total)),
         )
         .unwrap();
         assert_eq!(out.file, "speech.opus");
-        assert!(out.save && out.seconds > 0.0);
+        assert!(out.seconds > 0.0);
         assert!(!jobs.is_running(), "the job ends");
         assert_eq!(seen.last(), Some(&(out.chunks, out.chunks)));
         assert!(seen.first().unwrap().0 == 0);
@@ -784,7 +722,7 @@ mod tests {
         run(
             &jobs,
             &speaker,
-            &req(archive, &id, &voices, Target::Save),
+            &req(archive, &id, &voices),
             &mut |_| {},
         )
         .unwrap();
@@ -805,7 +743,7 @@ mod tests {
         run(
             &jobs,
             &FakeSpeaker::new(),
-            &req(archive, &id, &voices, Target::Save),
+            &req(archive, &id, &voices),
             &mut |_| {},
         )
         .unwrap();
@@ -823,7 +761,7 @@ mod tests {
         run(
             &jobs,
             &FakeSpeaker::new(),
-            &req(archive, &id, &voices, Target::Save),
+            &req(archive, &id, &voices),
             &mut |_| {},
         )
         .unwrap();
@@ -864,7 +802,7 @@ mod tests {
         .unwrap();
         let jobs = Jobs::default();
         let voices = BTreeMap::new();
-        let mut r = req(archive, &id, &voices, Target::Save);
+        let mut r = req(archive, &id, &voices);
         r.document = Some(&doc);
         let out = run(&jobs, &FakeSpeaker::new(), &r, &mut |_| {}).unwrap();
         assert_eq!(out.file, "speech-action-items.opus");
@@ -879,74 +817,6 @@ mod tests {
         assert!(test_trash::contains(&dir.join("speech-action-items.opus")));
         assert!(test_trash::contains(&dir.join("speech-action-items.c2pa")));
         assert!(statuses(archive, &id).unwrap().is_empty());
-    }
-
-    #[test]
-    fn listening_writes_a_temporary_file_and_never_touches_the_item() {
-        let tmp = tempfile::tempdir().unwrap();
-        let archive = tmp.path().join("archive");
-        let listen = tmp.path().join("tts-preview");
-        let id = item(&archive, "it", "Ciao a tutti.\n");
-        let before = std::fs::read(
-            existing_item_dir(&archive, &id)
-                .unwrap()
-                .join(TRANSCRIPT_FILE),
-        )
-        .unwrap();
-        let jobs = Jobs::default();
-        let voices = BTreeMap::new();
-        let out = run(
-            &jobs,
-            &FakeSpeaker::new(),
-            &req(&archive, &id, &voices, Target::Listen { dir: &listen }),
-            &mut |_| {},
-        )
-        .unwrap();
-        assert!(!out.save);
-        let name = service::preview_file_name(&out.file).expect("served by the scheme");
-        assert!(listen.join(name).is_file());
-        // Signed too, in the same temporary folder; never served.
-        let sidecar = listen.join(name.replace(".opus", ".c2pa"));
-        assert!(sidecar.is_file());
-        assert!(service::preview_file_name(&format!(
-            "{PREVIEW_PREFIX}{}",
-            name.replace(".opus", ".c2pa")
-        ))
-        .is_none());
-        let layer = signing::verify_sidecar(
-            &std::fs::read(&sidecar).unwrap(),
-            &mut std::fs::File::open(listen.join(name)).unwrap(),
-        );
-        assert_eq!(layer.status, signing::SignatureStatus::Valid);
-        let item = crate::archive::read_item(&archive, &id).unwrap();
-        assert!(item.speech.is_empty() && !speech::has_keys(&item.meta));
-        assert_eq!(
-            std::fs::read(
-                existing_item_dir(&archive, &id)
-                    .unwrap()
-                    .join(TRANSCRIPT_FILE)
-            )
-            .unwrap(),
-            before
-        );
-        // The next Listen replaces it; closing the document discards it.
-        let again = run(
-            &jobs,
-            &FakeSpeaker::new(),
-            &req(&archive, &id, &voices, Target::Listen { dir: &listen }),
-            &mut |_| {},
-        )
-        .unwrap();
-        assert!(!listen.join(name).exists());
-        assert!(!sidecar.exists(), "the old sidecar goes with its file");
-        let name2 = service::preview_file_name(&again.file).unwrap();
-        discard_listens(&jobs, &listen);
-        assert!(!listen.join(name2).exists());
-        assert_eq!(
-            std::fs::read_dir(&listen).unwrap().count(),
-            0,
-            "nothing left"
-        );
     }
 
     #[test]
@@ -965,7 +835,7 @@ mod tests {
         let err = run(
             jobs,
             &speaker,
-            &req(archive, &id, &voices, Target::Save),
+            &req(archive, &id, &voices),
             &mut |_| {},
         )
         .unwrap_err();
@@ -981,7 +851,7 @@ mod tests {
         let err = run(
             jobs,
             &broken,
-            &req(archive, &id, &voices, Target::Save),
+            &req(archive, &id, &voices),
             &mut |_| {},
         )
         .unwrap_err();
@@ -997,7 +867,7 @@ mod tests {
         let err = run(
             jobs,
             &unmarked,
-            &req(archive, &id, &voices, Target::Save),
+            &req(archive, &id, &voices),
             &mut |_| {},
         )
         .unwrap_err();
@@ -1022,13 +892,13 @@ mod tests {
         let err = run(
             &jobs,
             &speaker,
-            &req(archive, &id, &voices, Target::Save),
+            &req(archive, &id, &voices),
             &mut |_| {},
         )
         .unwrap_err();
         assert!(err.to_string().contains("'fr'"), "{err}");
         // …unless one is picked.
-        let mut r = req(archive, &id, &voices, Target::Save);
+        let mut r = req(archive, &id, &voices);
         r.language = Some("en");
         assert!(run(&jobs, &speaker, &r, &mut |_| {}).is_ok());
         // Nothing to read.
@@ -1036,7 +906,7 @@ mod tests {
         let err = run(
             &jobs,
             &speaker,
-            &req(archive, &empty, &voices, Target::Save),
+            &req(archive, &empty, &voices),
             &mut |_| {},
         )
         .unwrap_err();
@@ -1054,13 +924,13 @@ mod tests {
         let err = run(
             &jobs,
             &speaker,
-            &req(archive, &live, &voices, Target::Save),
+            &req(archive, &live, &voices),
             &mut |_| {},
         )
         .unwrap_err();
         assert!(err.to_string().contains("recorded"), "{err}");
         // A document that isn't one.
-        let mut r = req(archive, &id, &voices, Target::Save);
+        let mut r = req(archive, &id, &voices);
         r.document = Some("../x.md");
         assert!(run(&jobs, &speaker, &r, &mut |_| {}).is_err());
         assert!(speaker.spoken.lock().unwrap().iter().all(|s| !s.is_empty()));
@@ -1072,7 +942,6 @@ mod tests {
         let status = JobStatus {
             item_id: "x".into(),
             document: TRANSCRIPT_FILE.into(),
-            save: true,
             language: "it".into(),
             voice: "giovanni".into(),
             done: 0,

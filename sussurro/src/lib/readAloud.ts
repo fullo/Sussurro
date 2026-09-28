@@ -1,9 +1,12 @@
-/* Read aloud of an item (#256, P17/P21/P24): pure helpers for the Audio
-   tab's "Generated speech" section. The backend owns the job
-   (`read_aloud_start`, `read_aloud_cancel`, `read_aloud_job`), the files
-   (`read_aloud_files`, `read_aloud_delete`) and the temporary Listen file
-   (`read_aloud_discard`). Nothing here downloads: a missing model or voice
-   sends the user to Models → Voices. */
+/* Read aloud of an item (#256, #327, P17/P21/P24): pure helpers for the
+   Audio tab's "Generated speech" section — one button per document: Create
+   when there is no speech yet, Listen (playing the saved file, no
+   generation) once there is. The backend owns the job (`read_aloud_start`,
+   `read_aloud_cancel`, `read_aloud_job`) and the files (`read_aloud_files`,
+   `read_aloud_delete`). #327 removed the temporary Listen path of #256
+   (`save: false`, `listen-N.opus`, `read_aloud_discard`) — every job now
+   saves. Nothing here downloads: a missing model or voice sends the user
+   to Models → Voices. */
 
 import { formatBytes } from "./format";
 import type { ReadAloudJob, SpeechStatus, TtsLanguage, TtsStatus } from "./types";
@@ -14,9 +17,6 @@ export const TRANSCRIPT_DOC = "transcript.md";
 
 /** Said wherever generated speech is shown (P21): never a recording. */
 export const SYNTHETIC_NOTE = "Synthetic voice made by Sussurro on this computer — not a recording of anyone.";
-
-/** Said next to a temporary Listen player. */
-export const LISTEN_NOTE = "Temporary: not saved, and deleted when you close this document.";
 
 /** A document the user can pick: the transcript or a companion. */
 export interface ReadableDoc {
@@ -71,9 +71,9 @@ export function defaultLanguage(status: TtsStatus | null, itemLanguage: string):
   return (langs.find((l) => l.model_downloaded) ?? langs[0])?.code ?? "";
 }
 
-/** "Reading aloud… 12 of 40". */
+/** "Making the speech file… 12 of 40 passages". */
 export function jobLabel(job: ReadAloudJob): string {
-  const what = job.save ? "Making the speech file" : "Preparing to listen";
+  const what = "Making the speech file";
   return job.total > 0 ? `${what}… ${Math.min(job.done, job.total)} of ${job.total} passages` : `${what}…`;
 }
 
@@ -97,7 +97,7 @@ export function speechFacts(s: SpeechStatus, languages: TtsLanguage[] = []): str
 /** Why a speech file may no longer match its document, or null. */
 export function staleNote(s: SpeechStatus): string | null {
   if (s.source_missing) return "The document it was read from has been deleted.";
-  if (s.stale) return "Out of date: the text changed after this speech was made. Make it again to match.";
+  if (s.stale) return "Out of date: the text changed after this speech was made. Create it again to match.";
   if (!s.recorded) return "Sussurro has no record of what this file was read from.";
   return null;
 }
@@ -112,6 +112,24 @@ export function speechSignatureNote(s: SpeechStatus): string | null {
 /** The speech file already made from `document`, if any. */
 export function speechFor(files: SpeechStatus[], document: string): SpeechStatus | undefined {
   return files.find((f) => f.document === document);
+}
+
+/** The Audio tab's single button per document (#327): "Create" when there
+ *  is no speech yet, "Create again" once there is but it's stale (a
+ *  secondary action next to Listen), or `null` when the existing file is
+ *  current — Listen alone is enough then. A missing source document
+ *  doesn't change this (Listen still plays what was made; the note about
+ *  it is separate, see `staleNote`). */
+export function createLabel(existing: SpeechStatus | undefined): "Create" | "Create again" | null {
+  if (!existing) return "Create";
+  return existing.stale ? "Create again" : null;
+}
+
+/** Listen (playing the file already made for `document`) is disabled only
+ *  while a job is about to replace that exact file — it may be gone by the
+ *  time playback would start. */
+export function listenDisabled(job: ReadAloudJob | null, itemId: string, document: string): boolean {
+  return jobIsFor(job, itemId) && job?.document === document;
 }
 
 /** A rough "about N min" for a document of `chars` characters on this
