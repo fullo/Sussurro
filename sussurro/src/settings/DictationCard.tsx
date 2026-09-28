@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { HotkeyRecorder } from "../components/HotkeyRecorder";
+import { LevelMeter } from "../components/LevelMeter";
 import { Card, Switch, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 
@@ -52,7 +53,7 @@ export function DictationCard({ ctl, footer }: CardProps & { footer?: ReactNode 
               {ctl.micTest ? "Stop" : "Test"}
             </button>
           </div>
-          {(ctl.micTest || ctl.recordingNow) && (
+          {ctl.micTest || ctl.recordingNow ? (
             <div
               className="vu"
               role="meter"
@@ -63,6 +64,11 @@ export function DictationCard({ ctl, footer }: CardProps & { footer?: ReactNode 
             >
               <div className="vu-fill" style={{ width: `${ctl.vuPct}%` }} />
             </div>
+          ) : (
+            // Live level while the picker is on screen, even without pressing
+            // Test (#314) — its own preview stream, released on unmount or a
+            // device change.
+            <LevelMeter kind="mic" device={settings.input_device} />
           )}
         </div>
       </div>

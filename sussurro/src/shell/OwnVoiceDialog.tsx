@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LevelMeter } from "../components/LevelMeter";
 import type { Ctl } from "../hooks/useAppController";
 import {
   ENROL_PARAGRAPHS,
@@ -145,6 +146,7 @@ export function OwnVoiceDialog({
                 </option>
               ))}
             </select>
+            <LevelMeter kind="mic" device={device} label="Microphone level" />
           </label>
         )}
 

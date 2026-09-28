@@ -35,6 +35,12 @@ const params = new URLSearchParams(window.location.search);
 /** `?perms=ask`: the microphone counts as asked once a mic test ran. */
 let micAsked = false;
 
+/** Level previews (#314): which kinds are currently "open", faked with a
+ *  moving level — `?levelfail=mic` / `?levelfail=system` simulates a device
+ *  that can't be opened, `?levelsilence=1` a device that opens but never
+ *  reads signal (the silence hint). */
+const levelPreviews = new Set<"mic" | "system">();
+
 const settings: Settings = {
   hotkey: "CommandOrControl+Shift+Space",
   push_to_talk: true,
@@ -1627,6 +1633,22 @@ function handle(cmd: string, a: Args): unknown {
       return 0.02 + Math.random() * 0.05;
     case "whisper_gpu":
       return params.get("gpu") !== "0";
+    case "level_preview_start": {
+      const kind = a.kind === "system" ? "system" : "mic";
+      if (params.get("levelfail") === kind) throw "the device could not be opened";
+      levelPreviews.add(kind);
+      if (kind === "mic") micAsked = true; // the first mic access asks the OS (#115)
+      return null;
+    }
+    case "level_preview": {
+      const kind = a.kind === "system" ? "system" : "mic";
+      if (!levelPreviews.has(kind)) throw "no preview is running";
+      if (params.get("levelsilence") === "1") return 0;
+      return 0.02 + Math.random() * 0.08;
+    }
+    case "level_preview_stop":
+      levelPreviews.delete(a.kind === "system" ? "system" : "mic");
+      return null;
     case "start_mic_test":
       // The first mic access is what asks the OS (#115, ?perms=ask).
       micAsked = true;

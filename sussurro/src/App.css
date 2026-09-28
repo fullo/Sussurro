@@ -456,6 +456,11 @@ kbd {
   transition: width 120ms linear;
 }
 
+/* Live level preview next to a device picker (#314). */
+.level-meter-wrap { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.4rem; }
+.level-meter-hint { max-width: 320px; }
+.level-meter-error { margin-top: 0.4rem; }
+
 /* A select disguised as a ghost button (per-row Translate…). */
 .translate-select {
   appearance: none;

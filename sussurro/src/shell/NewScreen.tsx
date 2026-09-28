@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { detectsLanguage, engineLabel } from "../lib/engines";
 import { invoke } from "@tauri-apps/api/core";
 import { TranscriptView, toLines } from "@sussurro/transcript";
+import { LevelMeter } from "../components/LevelMeter";
 import type { Ctl } from "../hooks/useAppController";
 import type { EngineRuns, RunArgs } from "../hooks/useEngineRuns";
 import {
@@ -626,6 +627,7 @@ function SystemPanel({
               <option key={d.name} value={d.name}>{deviceLabel(d, defaultInput)}</option>
             ))}
           </select>
+          <LevelMeter kind="mic" device={mic || ctl.settings.input_device || ""} label="Microphone level" />
         </label>
 
         <label className="field-stack">
@@ -646,6 +648,7 @@ function SystemPanel({
               </optgroup>
             ) : null}
           </select>
+          <LevelMeter kind="system" device={system === NATIVE ? "" : system} native={isNative} label="System audio level" />
         </label>
         {listError && <p className="link-notice">Could not list the audio devices: {listError}</p>}
         {problem && system && <p className="link-notice">{problem}</p>}
