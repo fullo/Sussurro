@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   canPreview,
+  checkNotes,
+  checkSummary,
+  metadataLine,
+  signatureLine,
+  watermarkLine,
+  watermarkMissing,
+  watermarkPrompt,
   downloadBytes,
   downloadPrompt,
   languageStatus,
@@ -10,7 +17,7 @@ import {
   selectedVoice,
   withVoice,
 } from "./tts";
-import type { TtsLanguage, TtsStatus, TtsVoice } from "./types";
+import type { TtsLanguage, TtsStatus, TtsVoice, TtsWatermark, WatermarkCheck } from "./types";
 
 const voice = (over: Partial<TtsVoice> = {}): TtsVoice => ({
   id: "giovanni",
@@ -109,5 +116,91 @@ describe("voice per language", () => {
   it("sets one language and keeps the others", () => {
     expect(withVoice(undefined, "it", "alba")).toEqual({ it: "alba" });
     expect(withVoice({ en: "alba" }, "it", "marius")).toEqual({ en: "alba", it: "marius" });
+  });
+});
+
+const wm = (over: Partial<TtsWatermark> = {}): TtsWatermark => ({
+  bytes: 93_481_274,
+  downloaded: false,
+  detector_downloaded: false,
+  licence: "MIT",
+  attribution: "AudioSeal by Meta, ONNX export by DarumaHQ",
+  ...over,
+});
+
+describe("the watermark models (#257)", () => {
+  it("come with the first download and are named in the confirmation", () => {
+    expect(downloadBytes(lang(), undefined, wm())).toBe(1_307_501_592 + 18_486_272 + 93_481_274);
+    expect(downloadBytes(lang(), undefined, wm({ downloaded: true }))).toBe(1_307_501_592 + 18_486_272);
+    const p = downloadPrompt({ ...status(), watermark: wm() }, lang());
+    expect(p).toContain("the Italian model (24 layers, 1.3 GB), the voice Giovanni (18.5 MB) and the watermark models");
+    expect(p).toContain("(93.5 MB, MIT, AudioSeal by Meta, ONNX export by DarumaHQ)");
+    expect(p).toContain("Total 1.4 GB");
+    // Nothing else to fetch: no watermark-only surprise in a language prompt.
+    const done = lang({ model_downloaded: true, voices: [voice({ downloaded: true })] });
+    expect(downloadPrompt({ ...status([done]), watermark: wm() }, done)).toContain("nothing new");
+    expect(watermarkPrompt(wm())).toBe(
+      "Download the watermark models that mark every file Sussurro speaks (93.5 MB, MIT, AudioSeal by Meta, ONNX export by DarumaHQ) from huggingface.co? Total 93.5 MB.",
+    );
+  });
+
+  it("block previews and are explained only when a model is there", () => {
+    const l = lang({ model_downloaded: true });
+    const v = voice({ downloaded: true });
+    expect(canPreview(l, v, wm())).toBe(false);
+    expect(canPreview(l, v, wm({ downloaded: true }))).toBe(true);
+    expect(canPreview(l, v)).toBe(true);
+    expect(watermarkMissing({ ...status([lang()]), watermark: wm() })).toBeNull();
+    expect(watermarkMissing({ ...status([l]), watermark: wm() })).toMatch(/watermark/);
+    expect(watermarkMissing({ ...status([l]), watermark: wm({ downloaded: true }) })).toBeNull();
+    expect(watermarkMissing(status([l]))).toBeNull();
+  });
+});
+
+const check = (over: Partial<WatermarkCheck> = {}): WatermarkCheck => ({
+  file_name: "speech.opus",
+  format: "Ogg Opus",
+  seconds: 12.3,
+  truncated: false,
+  short: false,
+  summary: "made_by_sussurro",
+  watermark: { verdict: "found", frames_marked: 0.954, bit_errors: 0 },
+  metadata: { status: "sussurro", tags: [["SYNTHETIC", "1"]] },
+  signature: { status: "not_checked" },
+  ...over,
+});
+
+describe("Check a file wording (E17)", () => {
+  it("says made by Sussurro only with the code", () => {
+    expect(checkSummary(check())).toMatch(/^Made by Sussurro/);
+    expect(watermarkLine(check())).toBe("Watermark: found — 95% of the audio marked, with Sussurro's code (0 of 16 bits off).");
+  });
+
+  it("never names another tool nor a human", () => {
+    const inc = check({ summary: "inconclusive", watermark: { verdict: "inconclusive", frames_marked: 0.89, bit_errors: 9 } });
+    expect(checkSummary(inc)).toMatch(/^Inconclusive/);
+    expect(watermarkLine(inc)).toContain("9 of the 16 code bits differ");
+    const none = check({ summary: "no_mark", watermark: { verdict: "not_found", frames_marked: 0.01, bit_errors: 8 }, metadata: { status: "none", tags: [] } });
+    expect(checkSummary(none)).toBe("No Sussurro mark found. That doesn't say who or what made the audio.");
+    for (const r of [inc, none]) {
+      const all = [checkSummary(r), watermarkLine(r), metadataLine(r)].join(" ").toLowerCase();
+      expect(all).not.toMatch(/human|person|real recording|another tool|other tool's/);
+    }
+    expect(watermarkLine(none)).toContain("not found");
+  });
+
+  it("describes tags as unsigned and the C2PA slot as not checked", () => {
+    expect(checkSummary(check({ summary: "tags_only" }))).toMatch(/tags can be copied/);
+    expect(metadataLine(check())).toMatch(/not signed/);
+    expect(metadataLine(check({ metadata: { status: "synthetic", tags: [] } }))).toMatch(/other software/);
+    expect(metadataLine(check({ format: "MP3", metadata: { status: "not_read", tags: [] } }))).toBe("Tags: not read for MP3 files.");
+    expect(signatureLine(check())).toBe("Signed metadata (C2PA): not checked yet.");
+  });
+
+  it("notes short and long files, and that nothing left the computer", () => {
+    expect(checkNotes(check())).toEqual(["Checked on this computer: nothing was uploaded."]);
+    const notes = checkNotes(check({ short: true, truncated: true }));
+    expect(notes).toHaveLength(3);
+    expect(notes[0]).toMatch(/under 3 seconds/);
   });
 });

@@ -743,6 +743,17 @@ export interface TtsDownloadProgress {
   total_bytes: number;
 }
 
+/** Read aloud (#257): the AudioSeal watermark models every generated file
+ *  needs — downloaded with the first model or voice. */
+export interface TtsWatermark {
+  bytes: number;
+  downloaded: boolean;
+  /** The detector alone is there (Check a file). */
+  detector_downloaded: boolean;
+  licence: string;
+  attribution: string;
+}
+
 /** Read aloud (#255): what Models → Voices shows. */
 export interface TtsStatus {
   enabled: boolean;
@@ -750,6 +761,8 @@ export interface TtsStatus {
   licence: string;
   attribution: string;
   languages: TtsLanguage[];
+  /** The watermark models (#257); absent from an older backend. */
+  watermark?: TtsWatermark;
   bytes_on_disk: number;
   downloading: TtsDownloadProgress | null;
   /** Language whose model is in memory now. */
@@ -796,4 +809,31 @@ export interface ReadAloudOutcome {
   save: boolean;
   seconds: number;
   chunks: number;
+}
+
+/** *Check a file* (#257, `watermark_check_file`): what each marking layer
+ *  says about a local audio file. */
+export interface WatermarkCheck {
+  file_name: string;
+  /** "Ogg Opus", "WAV", "MP3"… */
+  format: string;
+  seconds: number;
+  /** Only the first hour was read. */
+  truncated: boolean;
+  /** Under 3 s: a missing mark says little. */
+  short: boolean;
+  summary: "made_by_sussurro" | "inconclusive" | "tags_only" | "no_mark";
+  watermark: {
+    verdict: "found" | "inconclusive" | "not_found";
+    /** Share of the audio the detector found marked, 0–1. */
+    frames_marked: number;
+    /** Payload bits that differ from Sussurro's code, 0–16. */
+    bit_errors: number;
+  };
+  metadata: {
+    status: "sussurro" | "synthetic" | "none" | "not_read";
+    tags: [string, string][];
+  };
+  /** Signed metadata (C2PA) — #257's second part; "not_checked" until then. */
+  signature: { status: "not_checked" };
 }

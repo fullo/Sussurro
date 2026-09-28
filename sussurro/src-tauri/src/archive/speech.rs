@@ -38,7 +38,7 @@
 //!     language: it
 //!     date: 2026-09-26T10:00:00+02:00
 //!     text_sha256: 9f…        # of the speakable text: "out of date" when it changes
-//!     marked: [metadata]      # "watermark" joins with #257
+//!     marked: [metadata, watermark]   # the layers the file carries (#257); older files: [metadata]
 //! ```
 //!
 //! `synthetic:` is one entry per file (the plan's single block, keyed by

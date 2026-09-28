@@ -5,21 +5,26 @@
 //!
 //! Two layers, as the plan asks:
 //!
-//! 1. **Metadata** (done here): the Ogg Opus comments of [`Marker::tags`]
-//!    — `SYNTHETIC=1`, the generator, engine, voice, language and the IPTC
+//! 1. **Metadata**: the Ogg Opus comments of [`Marker::tags`] —
+//!    `SYNTHETIC=1`, the generator, engine, voice, language and the IPTC
 //!    digital source type `trainedAlgorithmicMedia` — plus, in the item's
 //!    frontmatter, the `synthetic:` record of [`crate::archive::speech`]
 //!    (its `marked:` list comes from [`Marker::marks`]). Previews are WAVs
 //!    and carry the `LIST/INFO` comment of [`super::engine::wav_bytes`].
-//! 2. **Watermark** (#257, not built yet): an inaudible AudioSeal mark on
-//!    the PCM. [`Marker::process`] is the hook — every block of audio goes
-//!    through it before it is encoded; today it leaves the samples as they
-//!    are and [`Marker::marks`] does not claim a watermark. When #257 fills
-//!    it in, `marks()` adds `"watermark"` and every new file records it.
+//!    Signed metadata (C2PA) is #257's second part, not built yet.
+//! 2. **Watermark** (#257): an inaudible AudioSeal mark on the PCM, "M16"
+//!    ([`super::watermark::M16`]). [`Marker::process`] is the hook — every
+//!    block of audio goes through it before it is encoded, and
+//!    [`Marker::finish`] returns the rest at the end. There is no switch:
+//!    a [`Marker`] can't be made without the watermark model, so nothing is
+//!    spoken when it is missing (fail closed).
 //!
 //! Nothing the app generates is ever presented as a recording: speech files
 //! have their own names (`speech*.opus`, never `audio*`), the Audio tab
 //! labels them "Generated speech", and the file says so itself.
+
+use super::watermark::{WatermarkModel, M16};
+use anyhow::Result;
 
 /// Who made it.
 pub const GENERATOR: &str = "Sussurro";
@@ -29,7 +34,7 @@ pub const DIGITAL_SOURCE_TYPE: &str =
     "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia";
 /// The `marked:` entry for the metadata layer.
 pub const MARK_METADATA: &str = "metadata";
-/// The `marked:` entry for the watermark layer (#257).
+/// The `marked:` entry for the watermark layer (AudioSeal, #257).
 pub const MARK_WATERMARK: &str = "watermark";
 
 /// What produced a piece of synthetic audio.
@@ -49,14 +54,19 @@ pub fn generator() -> String {
 }
 
 /// Marks one generated file (see the module docs).
-#[derive(Debug, Clone)]
 pub struct Marker {
     provenance: Provenance,
+    m16: M16,
 }
 
 impl Marker {
-    pub fn new(provenance: Provenance) -> Self {
-        Self { provenance }
+    /// A marker for audio at `rate` Hz, watermarked by `watermark` (the
+    /// AudioSeal generator in the app, [`super::watermark`]).
+    pub fn new(provenance: Provenance, watermark: Box<dyn WatermarkModel>, rate: u32) -> Self {
+        Self {
+            provenance,
+            m16: M16::new(watermark, rate),
+        }
     }
 
     /// The Ogg Opus user comments every generated file carries.
@@ -77,33 +87,43 @@ impl Marker {
     }
 
     /// **The watermark hook (#257).** Every block of generated audio, at
-    /// `rate` Hz, passes through here before it is written, in order —
-    /// 24 kHz for saved speech, *Listen* files (#309) and previews. #257's
-    /// "M16" scheme (spike #240, E17) computes the mark on the 16 kHz
-    /// resample of the block and adds it, upsampled, to the 24 kHz audio,
-    /// so one 16 kHz detector reads every file. Not built yet: the samples
-    /// are left as they are.
-    pub fn process(&mut self, pcm: &mut [f32], rate: u32) {
-        let _ = (pcm, rate);
+    /// the marker's rate (24 kHz for saved speech, *Listen* files and
+    /// previews), passes through here in order before it is written; what
+    /// comes back is the marked audio ready so far — later than it went in
+    /// (up to 10 s wait for their watermark window), never reordered.
+    /// [`Self::finish`] returns the rest. Errors (the model failing) must
+    /// stop the file: nothing unmarked is written.
+    pub fn process(&mut self, pcm: &[f32]) -> Result<Vec<f32>> {
+        self.m16.push(pcm)
     }
 
-    /// The marks the files of this marker actually carry, for the
-    /// frontmatter's `marked:` list.
+    /// The rest of the marked audio, at the end of the file.
+    pub fn finish(&mut self) -> Result<Vec<f32>> {
+        self.m16.finish()
+    }
+
+    /// The marks the files of this marker carry, for the frontmatter's
+    /// `marked:` list.
     pub fn marks(&self) -> Vec<String> {
-        vec![MARK_METADATA.to_string()]
+        vec![MARK_METADATA.to_string(), MARK_WATERMARK.to_string()]
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tts::watermark::tests::FakeWatermark;
 
     fn marker() -> Marker {
-        Marker::new(Provenance {
-            engine: "Pocket TTS".into(),
-            voice: "giovanni".into(),
-            language: "it".into(),
-        })
+        Marker::new(
+            Provenance {
+                engine: "Pocket TTS".into(),
+                voice: "giovanni".into(),
+                language: "it".into(),
+            },
+            FakeWatermark::boxed(),
+            24_000,
+        )
     }
 
     #[test]
@@ -125,11 +145,12 @@ mod tests {
     }
 
     #[test]
-    fn marks_claim_only_what_is_applied() {
+    fn every_block_is_watermarked_and_both_marks_are_claimed() {
         let mut m = marker();
-        let mut pcm = vec![0.25f32; 16];
-        m.process(&mut pcm, 24_000);
-        assert_eq!(pcm, vec![0.25f32; 16], "no watermark until #257");
-        assert_eq!(m.marks(), [MARK_METADATA]);
+        let mut out = m.process(&[0.25f32; 16]).unwrap();
+        out.extend(m.finish().unwrap());
+        assert_eq!(out.len(), 16);
+        assert!(out.iter().all(|&x| x != 0.25), "the watermark was added");
+        assert_eq!(m.marks(), [MARK_METADATA, MARK_WATERMARK]);
     }
 }

@@ -178,9 +178,34 @@ and Cancel. Generated speech is always labelled *Synthetic*, is never
 named like a recording
 (`audio*.opus`), and says so in the file itself (Ogg Opus comments
 `SYNTHETIC=1`, engine, voice) and in the item's frontmatter (`speech:`,
-`synthetic:`); an inaudible watermark follows in a later release. When the
-text changes after the speech was made, the tab says it is out of date.
-*Delete…* moves a speech file to the trash.
+`synthetic:`). When the text changes after the speech was made, the tab
+says it is out of date. *Delete…* moves a speech file to the trash.
+
+**Every generated file is marked**, as the EU AI Act (art. 50) asks of
+synthetic audio: besides the tags above, an **inaudible watermark** —
+[AudioSeal](https://github.com/facebookresearch/audioseal) by Meta (MIT),
+16-bit, with one fixed Sussurro code that is the same for every user and
+never identifies anyone — is added to saved speech, *Listen* files and
+voice previews alike. There is no switch to turn it off. Its two models
+(93.5 MB, our ONNX export at
+[DarumaHQ/audioseal-onnx](https://huggingface.co/DarumaHQ/audioseal-onnx))
+come with the first read-aloud download, in the same confirmation; without
+them nothing is spoken. The watermark survives the app's own Opus, MP3 and
+resampling, but not heavy noise, speed changes or very short excerpts.
+Signed metadata (C2PA) comes in a later release.
+
+**Check a file** (Models → Voices, with the module on) tells whether any
+audio file carries Sussurro's marks: pick a file (Opus, Ogg, WAV, MP3, M4A,
+FLAC) and it says what the watermark and the tags each found. It runs on
+this computer; nothing is uploaded. "Made by Sussurro" needs the watermark
+over at least half the audio *and* Sussurro's code; a watermark-like signal
+with another code is reported as inconclusive (music and steady tones can
+look like one), and a file with no mark is reported as "no Sussurro mark
+found" — which doesn't say whether a person or a machine made it.
+
+**Please don't strip the marks.** Don't remove the tags, re-encode to hide
+the watermark or pass generated speech off as a recording: the marks are
+how people can tell synthetic speech from a real voice.
 
 ## Getting started
 
@@ -464,7 +489,7 @@ account:
 | Dictation history and usage stats | `history.jsonl`, `stats.json` in the app's data folder |
 | Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
 | Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
-| Read-aloud models and voices (experimental, only if you download them) | `models/pocket-tts/` in the same folder; voice previews and *Listen* files are temporary files in `tts-preview/` in the app's data folder, deleted when replaced, when the document closes and at the next start |
+| Read-aloud models, voices and watermark models (experimental, only if you download them) | `models/pocket-tts/` in the same folder (the watermark models in `pocket-tts/audioseal/`); voice previews and *Listen* files are temporary files in `tts-preview/` in the app's data folder, deleted when replaced, when the document closes and at the next start |
 | Generated speech (read aloud → *Save as speech file*) | `speech.opus` / `speech-<document>.opus` in the item's archive folder, marked synthetic in the file and the frontmatter |
 | Voice profiles of people with *Recognise this voice* on, and your own voice if you recorded it (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
 | *Not X* answers to voice suggestions (0.11) | `voice_dismissals.json` in the app's data folder (ids only; readable only by you on macOS and Linux) |

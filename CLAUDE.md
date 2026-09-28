@@ -790,8 +790,8 @@ project decisions here, not in per-machine memory.**
   loaded at a time (`tts::service`), unloaded after 5 min idle on the
   shared idle thread. Previews are temporary WAVs (`<app data>/tts-preview/`,
   swept at startup) served by `sussurro-audio:` under `tts-preview/` — no
-  CSP change. WAVs carry a `LIST/INFO` "synthetic speech" comment; the
-  watermark is #257 (E17). Generation per #254 chunk, re-cut at 50 tokens; voice
+  CSP change. WAVs carry a `LIST/INFO` "synthetic speech" comment and
+  the #257 watermark. Generation per #254 chunk, re-cut at 50 tokens; voice
   and decoder state restart per piece; temperature 0.7, fixed seed (same
   text = same audio). Live test (`tts::live_tests`, env vars in the file)
   on the M1 Pro at 2 threads: Italian RTF ≈ 1.2–1.4, English ≈ 0.4; Whisper
@@ -830,9 +830,8 @@ project decisions here, not in per-machine memory.**
   goes through `tts::marking::Marker` — Opus comments `SYNTHETIC=1`,
   `DIGITAL_SOURCE_TYPE=…trainedAlgorithmicMedia`, engine, voice, language
   (`OpusWriter::create_with`, `opus::read_tags`); `Marker::process` is the
-  single **watermark hook for #257** (no-op now, `marked: [metadata]`), the
-  preview passes it too; it gets 24 kHz blocks, and #257's "M16" (E17)
-  computes the mark on their 16 kHz resample and adds it upsampled. **Stale** = SHA-256 of the speakable text (not the
+  single **watermark hook** (#257, below), the preview passes it too.
+  **Stale** = SHA-256 of the speakable text (not the
   frontmatter) ≠ the recorded one. One job at a time (`read_aloud::jobs()`),
   progress `read-aloud-progress`, cancel between chunks; refused while off,
   on a live item, or with the model/voice missing (points to Models →
@@ -841,6 +840,38 @@ project decisions here, not in per-machine memory.**
   `_cancel`, `_job`, `_files`, `_delete`, `_discard`. Live test
   `live_read_aloud_saves_a_marked_speech_file` (English M1 Pro, 2 threads:
   6.3 s of speech in 3.4 s).
+- **Marking generated audio: watermark + Check a file (0.12, #257 part 1,
+  P21/E17)** (`tts/watermark.rs`, `tts/marking.rs`, `tts/check.rs`,
+  `shell/CheckFileCard.tsx`): AudioSeal 0.2 16-bit (MIT, Meta) in our ONNX
+  export `DarumaHQ/audioseal-onnx` @`55477a4c` (generator 58.8 MB, detector
+  34.7 MB, pinned size + SHA-256 in `tts/catalog.rs`; made by
+  `scripts/export_audioseal_onnx.py`, a dev tool that never ships) through
+  the app's `ort`, 2 threads. Files in `<models>/pocket-tts/audioseal/`
+  (so `tts_delete` of everything removes them); **every download job that
+  finds them missing brings them** (same click, counted in the
+  confirmation — P24; `tts_download { watermarkOnly }` for models from before
+  #257). **Fail closed**: `Marker::new` needs the generator; read aloud,
+  *Listen* and previews refuse without it (checked before any work), no
+  switch anywhere. **M16**: `watermark::M16` streams — audio → 16 kHz
+  (`tts/resample.rs`), generator on ≤ 10 s windows padded to the 320-sample
+  hop, watermark → back to the audio's rate and added; the output lags up
+  to one window, every sample once. Payload `watermark::PAYLOAD` = 0xB2E5,
+  one fixed code (never per user/install). Frontmatter `marked: [metadata,
+  watermark]` for new files. *Check a file* (Models → Voices, module on,
+  command `watermark_check_file`): Rust-side picker, `config_io::
+  open_picked_file` guards (audio extensions, no links, ≤ 2 GiB), Ogg Opus
+  via `OpusReader::open` (16 kHz), others symphonia at native rate +
+  band-limited resample, ≤ 10 s detector windows, ≤ 1 h read; tags from
+  `opus::read_tags` / WAV `LIST/INFO`. Verdict per E17: found = ≥ 50 % of
+  samples with prob > 0.5 **and** ≤ 2 of 16 bits wrong; frames without the
+  code = *inconclusive*; nothing = "no Sussurro mark found" (never
+  "human"); summary `made_by_sussurro | inconclusive | tags_only | no_mark`.
+  The result's `signature` slot (C2PA) reads `not_checked` until part 2
+  (per-install self-signed cert, sidecar `speech.c2pa`, `c2pa` crate with
+  `rust_native_crypto`). Never downloads from Check. Live test
+  `live_watermark_survives_the_app_opus_and_is_read_back` (env vars in
+  `tts/live_tests.rs`): `say` speech at 24 kHz → Opus 32 kb/s: 95–98 % of
+  frames, 0 bits wrong; unmarked: ≤ 0.4 % frames, 9 bits wrong.
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at

@@ -304,6 +304,7 @@ pub fn run() {
             commands::tts_cancel_download,
             commands::tts_delete,
             commands::tts_preview,
+            commands::watermark_check_file,
             commands::read_aloud_start,
             commands::read_aloud_cancel,
             commands::read_aloud_job,

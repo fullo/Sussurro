@@ -16,7 +16,8 @@
 //! background, with progress by chunk and cancel between chunks (and inside
 //! Pocket's generation loop). The text goes through
 //! [`super::text::prepare`] (#254), each chunk is spoken, passed through
-//! the marking hook ([`super::marking::Marker::process`], P21) and encoded
+//! the marking hook ([`super::marking::Marker::process`], P21: tags plus
+//! the AudioSeal watermark of #257 — no watermark model, no speech) and encoded
 //! to Ogg Opus at 24 kHz ([`crate::archive::opus::SPEECH`], #309: Pocket's
 //! own rate, so its 8–12 kHz band is kept) with the synthetic-speech
 //! comments. An engine at another rate is resampled to 24 kHz first
@@ -35,6 +36,7 @@ use super::marking::{self, Marker, Provenance};
 use super::resample::Resampler;
 use super::service::{self, ENGINE_NAME, LISTEN_PREFIX, PREVIEW_PREFIX};
 use super::text::{self, Chunk, Lang, PrepOptions};
+use super::watermark::{AudioSealGenerator, WatermarkModel};
 use crate::archive::audio::MAX_SAMPLES;
 use crate::archive::opus::{OpusWriter, SPEECH, SPEECH_RATE};
 use crate::archive::speech::{self, SpeechInfo};
@@ -115,6 +117,11 @@ pub fn resolve_language(requested: Option<&str>, item_language: &str) -> Result<
 
 /// Runs `f` on an engine ready to speak `lang` with `voice`.
 pub trait Speaker {
+    /// The watermark model every generated file goes through (#257). An
+    /// error — the model is missing — stops the job before anything is
+    /// spoken (fail closed).
+    fn watermark(&self) -> Result<Box<dyn WatermarkModel>>;
+
     fn speak_with(
         &self,
         lang: &'static Language,
@@ -132,6 +139,10 @@ pub struct PocketSpeaker<'a> {
 }
 
 impl Speaker for PocketSpeaker<'_> {
+    fn watermark(&self) -> Result<Box<dyn WatermarkModel>> {
+        load_watermark(self.models_dir)
+    }
+
     fn speak_with(
         &self,
         lang: &'static Language,
@@ -154,6 +165,18 @@ impl Speaker for PocketSpeaker<'_> {
                 f(e)
             })
     }
+}
+
+/// The AudioSeal generator from `models_dir`, or the error that sends the
+/// user to Models → Voices (never downloaded here, P24).
+pub fn load_watermark(models_dir: &Path) -> Result<Box<dyn WatermarkModel>> {
+    if !super::models::watermark_present(models_dir) {
+        bail!(
+            "The watermark model that marks generated speech is not downloaded — download it in Models → Voices."
+        );
+    }
+    let path = super::models::watermark_path(models_dir, &catalog::WATERMARK_GENERATOR);
+    Ok(Box::new(AudioSealGenerator::load(&path)?))
 }
 
 // ---- the job -----------------------------------------------------------------
@@ -234,7 +257,8 @@ impl Drop for JobGuard<'_> {
 }
 
 /// Speak `chunks` into a new Ogg Opus file at `out` (24 kHz mono,
-/// [`SPEECH`], with `marker`'s comments; every block through its hook).
+/// [`SPEECH`], with `marker`'s comments; every block through its hook, so
+/// the file is watermarked — `marker` must be made for [`SPEECH_RATE`]).
 /// Returns the samples written, at [`SPEECH_RATE`]. On any error, `out` is
 /// removed.
 pub fn render_to_opus(
@@ -250,14 +274,13 @@ pub fn render_to_opus(
     let mut rs = Resampler::new(engine.sample_rate(), SPEECH_RATE);
     let spoken = (|| -> Result<()> {
         engine::render(engine, chunks, cancel, progress, &mut |pcm| {
-            let mut block = rs.push(pcm);
-            marker.process(&mut block, SPEECH_RATE);
-            w.write(&block)?;
+            let block = rs.push(pcm);
+            w.write(&marker.process(&block)?)?;
             Ok(())
         })?;
-        let mut tail = rs.flush();
-        marker.process(&mut tail, SPEECH_RATE);
-        w.write(&tail)?;
+        let tail = rs.flush();
+        w.write(&marker.process(&tail)?)?;
+        w.write(&marker.finish()?)?;
         Ok(())
     })();
     let result = spoken.and_then(|()| {
@@ -328,6 +351,8 @@ pub fn run(
         bail!("There is nothing to read in this document.");
     }
     let file = speech::speech_file_name(&source.document)?;
+    // #257: no watermark, no speech — checked before any work.
+    let watermark = speaker.watermark()?;
     let save = matches!(req.target, Target::Save);
     let guard = jobs.begin(JobStatus {
         item_id: req.id.to_string(),
@@ -360,11 +385,15 @@ pub fn run(
             )
         }
     };
-    let mut marker = Marker::new(Provenance {
-        engine: ENGINE_NAME.into(),
-        voice: voice.id.into(),
-        language: lang.code.into(),
-    });
+    let mut marker = Marker::new(
+        Provenance {
+            engine: ENGINE_NAME.into(),
+            voice: voice.id.into(),
+            language: lang.code.into(),
+        },
+        watermark,
+        SPEECH_RATE,
+    );
     let mut samples = 0;
     speaker.speak_with(lang, voice, &mut |e| {
         samples = render_to_opus(e, &chunks, &out, &mut marker, &jobs.cancel, &mut |i, n| {
@@ -511,6 +540,8 @@ mod tests {
     /// `fail` makes the engine unavailable.
     struct FakeSpeaker {
         fail: bool,
+        /// The watermark model is missing.
+        no_watermark: bool,
         spoken: Mutex<Vec<String>>,
         /// Cancel this job before speaking.
         cancel_first: Option<&'static Jobs>,
@@ -520,6 +551,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 fail: false,
+                no_watermark: false,
                 spoken: Mutex::new(Vec::new()),
                 cancel_first: None,
             }
@@ -527,6 +559,13 @@ mod tests {
     }
 
     impl Speaker for FakeSpeaker {
+        fn watermark(&self) -> Result<Box<dyn WatermarkModel>> {
+            if self.no_watermark {
+                bail!("The watermark model that marks generated speech is not downloaded");
+            }
+            Ok(crate::tts::watermark::tests::FakeWatermark::boxed())
+        }
+
         fn speak_with(
             &self,
             lang: &'static Language,
@@ -632,7 +671,11 @@ mod tests {
             (info.voice.as_str(), info.language.as_str()),
             ("marius", "it")
         );
-        assert_eq!(info.marked, [marking::MARK_METADATA]);
+        assert_eq!(
+            info.marked,
+            [marking::MARK_METADATA, marking::MARK_WATERMARK],
+            "#257: both layers"
+        );
 
         let st = statuses(archive, &id).unwrap();
         assert_eq!(st.len(), 1);
@@ -791,6 +834,23 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("not downloaded"), "{err}");
+        assert!(!jobs.is_running());
+        assert!(crate::archive::speech::files_in(&dir).is_empty());
+
+        // #257: without the watermark model nothing is spoken.
+        let unmarked = FakeSpeaker {
+            no_watermark: true,
+            ..FakeSpeaker::new()
+        };
+        let err = run(
+            jobs,
+            &unmarked,
+            &req(archive, &id, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("watermark"), "{err}");
+        assert!(unmarked.spoken.lock().unwrap().is_empty());
         assert!(!jobs.is_running());
         assert!(crate::archive::speech::files_in(&dir).is_empty());
         assert!(!speech::has_keys(
