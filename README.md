@@ -14,8 +14,9 @@ to a server yourself.
 🌐 Project site: [`docs/index.html`](docs/index.html) · 📖 User manual:
 [`docs/manual/`](docs/manual/index.html) · 📰 Guides:
 [`docs/blog/`](docs/blog/index.html) · 🛠️ Building & contributing:
-[`docs/development.md`](docs/development.md) · 📝 What's new in 0.10:
-[`docs/releases/0.10.0.md`](docs/releases/0.10.0.md)
+[`docs/development.md`](docs/development.md) · 📝 What's new in 0.11:
+[`docs/releases/0.11.0.md`](docs/releases/0.11.0.md) · 🔒 Privacy policy
+(app and extension): [fullo.github.io/Sussurro/privacy.html](https://fullo.github.io/Sussurro/privacy.html)
 
 ## Why Sussurro
 
@@ -160,7 +161,7 @@ Choose on the **Models** screen:
   prompt, and Whisper large-v3-turbo stays more accurate on Italian, so it
   is never the default.
 
-### Read aloud (experimental, 0.12)
+### Read aloud (experimental)
 
 An optional text-to-speech module, **off by default** (Settings →
 Experimental). It uses [Pocket TTS](https://kyutai.org) by Kyutai — the
@@ -395,7 +396,15 @@ Recording a meeting records other people: read
 [Recording meetings and consent](#recording-meetings-and-consent). The side
 panel shows the same notice as the app before your first recording.
 
+Every permission the extension asks for, and why, is listed in the
+[privacy policy](https://fullo.github.io/Sussurro/privacy.html#extension-permissions).
+
 ## Privacy
+
+The [privacy policy](https://fullo.github.io/Sussurro/privacy.html) (app and
+browser extension) sums up what Sussurro processes, the few things that
+leave your computer and when, and how to delete your data; this section and
+the ones below give the details.
 
 Speech-to-text always runs on your device, and the default LLM profile is
 Ollama on this machine. An LLM profile whose server is not on this machine
@@ -769,8 +778,8 @@ empty list.
 
 ## Documentation
 
-- [`docs/releases/0.10.0.md`](docs/releases/0.10.0.md): what's new in 0.10
-  and upgrade notes.
+- [`docs/releases/0.11.0.md`](docs/releases/0.11.0.md): what's new in 0.11
+  and upgrade notes (previously [0.10.0](docs/releases/0.10.0.md)).
 - [`docs/manual/`](docs/manual/index.html): the user manual, screen by screen.
 - [`docs/blog/`](docs/blog/index.html): a guide for each feature.
 - [`docs/development.md`](docs/development.md): build from source, tests, CI,

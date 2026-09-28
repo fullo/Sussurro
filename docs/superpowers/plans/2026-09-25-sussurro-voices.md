@@ -10,16 +10,22 @@
 > Steps use checkbox (`- [ ]`) syntax. Workflow as per `CLAUDE.md`:
 > branch → PR → merge, no direct pushes to `main`.
 
-## Status (2026-09-25)
+## Status (2026-09-28)
 
-Plan drafted; milestones and issues created (section 7). Nothing merged.
+Phase V0 spikes and every 0.11 issue — now including read aloud — are
+merged to `main`; 0.11.0's docs and version bump are prepared in #253
+(this PR), but **no tag has been pushed and nothing is published yet** —
+the release is gated on manual QA (section 9) on real macOS, Windows and
+Linux hardware. **Maintainer decision (2026-09-28, on #259)**: "0.11 now
+ships read aloud (#254–#258)" — the two-voice podcast recipe (#259) is the
+only 0.12 issue that stays out, moved to the 0.13 milestone.
 
 | Milestone | Epic | State |
 |---|---|---|
-| Phase V0 — Voices spikes | #274 | all six spikes agent-ready (#235–#240) |
-| 0.11 — Known voices | #275 | waits on P12–P16 and the spikes; archive-API tokens (#249) and calendar files (#252) agent-ready |
-| 0.12 — Read aloud | #276 | P18 decided (Pocket TTS, file generation); engine (#255), read aloud (#256) and #264 agent-ready; marking (#257): watermark and *Check a file* built (part 1), C2PA signing built (part 2) |
-| 0.13 — Your voice, with consent | #277 | waits on P19, P20 and the legal review (#261) |
+| Phase V0 — Voices spikes | #274 | done — all six spikes merged (#235–#240) |
+| 0.11 — Known voices (now including read aloud) | #275 | done — all seventeen issues merged (#241–#252, #254–#258); docs (#253) prepared, **0.11.0 not yet tagged/published** (awaiting manual QA, section 9) |
+| 0.12 — Read aloud | #276 | absorbed into 0.11 (2026-09-28 decision on #259), apart from its own docs/release issue (#260, not yet acted on) — see the 0.11 row |
+| 0.13 — Your voice, with consent | #277 | waits on P19, P20 and the legal review (#261); also now holds the two-voice podcast recipe stretch goal moved from 0.12 (#259) |
 | Track A — Accounts and stores | #278 | maintainer accounts (P22, P23); privacy policy page (#267) agent-ready |
 
 #146 stays open as the umbrella. In the text, spikes V0-1 … V0-6 are
@@ -1079,7 +1085,7 @@ maintainer's own voice only if he provides it.
       1 s pages, the scheme always serves WAV. The Windows MSVC and Linux
       builds and the WebView2/WebKitGTK cells are checked by #247's CI and
       the 0.11 test matrix.
-- [ ] **Teams web / Zoom web names**: desk study with the #105 method and a
+- [x] **Teams web / Zoom web names**: desk study with the #105 method and a
       live-check checklist for #184. (#239)
 - [x] **Marking**: AudioSeal through `ort`, detection after Opus 24 kb/s,
       Vorbis tags, C2PA on supported exports. (#240) Results in 4.7 and
@@ -1092,43 +1098,57 @@ maintainer's own voice only if he provides it.
       compatible licence and a no-Python runtime; the watermark survives
       Opus 24 kb/s.
 
-### 0.11 — Known voices (~5–6 weeks)
+### 0.11 — Known voices, now including read aloud (~5–6 weeks) — done, prepared for release
 
-- [ ] **Voice profiles**: store in app data, enrolment from confirmed lines,
+- [x] **Voice profiles**: store in app data, enrolment from confirmed lines,
       rebuild, forget (P12, P13, E13). (#241)
-- [ ] **Suggestions**: speaker panel chip, People toggle, first-use sheet,
+- [x] **Suggestions**: speaker panel chip, People toggle, first-use sheet,
       *Forget all voices*. (#242)
-- [ ] **"You" enrolment** (P14): read-aloud enrolment, best voice ≥ 0.45 labelled "You" in single-channel documents. (#243)
-- [ ] **Overlap-aware speaker labels** (E19 as reshaped by #237): spans
+- [x] **"You" enrolment** (P14): read-aloud enrolment, best voice ≥ 0.45 labelled "You" in single-channel documents. (#243)
+- [x] **Overlap-aware speaker labels** (E19 as reshaped by #237): spans
       found when lines are labelled, second speaker per span, recomputed by
       Re-detect and speaker edits, overlapped lines out of profiles. (#244)
-- [ ] **Teams web names** (E20). (#245)
-- [ ] **Zoom web names** (E20). (#246)
-- [ ] **Opus writer** and *Saved audio format* setting (P16, E15). (#247)
-- [ ] **Opus playback, decode, *Compress audio***. (#248)
-- [ ] **Archive API tokens**: scopes, hash storage, `api_archive`,
+- [x] **Teams web names** (E20). (#245)
+- [x] **Zoom web names** (E20). (#246)
+- [x] **Opus writer** and *Saved audio format* setting (P16, E15). (#247)
+- [x] **Opus playback, decode, *Compress audio***. (#248)
+- [x] **Archive API tokens**: scopes, hash storage, `api_archive`,
       Settings → Scripting (E14). *Agent-ready.* (#249)
-- [ ] **Archive API read routes** (P15). (#250)
-- [ ] **Archive API: note from text** (P15). (#251)
-- [ ] **Attendees from an ICS file or link** (P22, E21). *Agent-ready.* (#252)
-- [ ] Docs and release. (#253)
+- [x] **Archive API read routes** (P15). (#250)
+- [x] **Archive API: note from text** (P15). (#251)
+- [x] **Attendees from an ICS file or link** (P22, E21). *Agent-ready.* (#252)
+- [x] Docs and release. (#253) — this PR: `docs/releases/0.11.0.md`,
+      README/CLAUDE.md/blog updates, version bump, `licenses.json`
+      regenerated. Refreshed 2026-09-28 for read aloud joining 0.11
+      (#254–#258) and other `main` merges (#317, #318/0.10.3, #325, #329).
+      **Not tagged or published**: manual QA (section 9)
+      on macOS, Windows and Linux hardware is still open.
+- [x] **Read aloud, folded into 0.11** (maintainer decision 2026-09-28 on
+      #259): text preparation (#254); the Pocket TTS engine, model
+      download and *Models → Voices* (P18, E16, E22, #255); reading a
+      document aloud, speech file next to the item, Audio tab (P17, #256)
+      — plus 24 kHz speech output (#309), merged after #256; marking every
+      generated file (watermark + metadata) and *Check a file* (P21, E17,
+      #257 — part 1 watermark + *Check a file*, part 2 C2PA signing);
+      article links extracting a web page's text into a readable item
+      (P17, #258).
 
-### 0.12 — Read aloud (~3–4 weeks)
+### 0.12 — Read aloud (~3–4 weeks) — absorbed into 0.11 (2026-09-28)
 
-- [ ] **Text preparation**: markdown to speakable text, Italian and English
-      normalisation, chunking. *Agent-ready.* (#254)
-- [ ] **Engine** per the bake-off, model download, *Models → Voices* (P18,
-      E16, E22). (#255)
-- [ ] **Read aloud**: speech file next to the item, Audio tab, temporary
-      playback (P17). (#256)
-- [x] **Marking** of every generated file and *Check a file* (P21, E17). (#257;
-      part 1 — watermark + *Check a file*; part 2 — C2PA signing)
-- [x] **Article links** to text items and audio (P17). (#258)
-- [ ] Stretch: **two-voice podcast recipe** (P17). (#259)
-- [ ] Docs and release. (#260)
+Everything under this milestone shipped as part of 0.11 above, per the
+maintainer's 2026-09-28 decision on #259. Only its stretch goal and its
+own docs/release issue are still open here:
+
+- [ ] Stretch: **two-voice podcast recipe** (P17). (#259) — **moved to the
+      0.13 milestone** (maintainer decision, 2026-09-28); listed under
+      0.13 below too.
+- [ ] Docs and release. (#260) — not acted on; 0.12's release-notes content
+      is folded into `docs/releases/0.11.0.md` instead.
 
 ### 0.13 — Your voice, with consent (~3–4 weeks, after the legal review)
 
+- [ ] Stretch, moved from 0.12: **two-voice podcast recipe** (P17). (#259;
+      maintainer decision, 2026-09-28)
 - [ ] **Legal review** by a lawyer, recorded in the decision log (P20;
       maintainer). (#261)
 - [ ] **Consent capture and verification** (E18). (#262)

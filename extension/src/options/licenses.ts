@@ -22,6 +22,9 @@ export interface LicenseEntry {
 
 export const SOURCE_URL = "https://github.com/fullo/Sussurro";
 
+/** The privacy policy of the app and the extension (#267), on the project site. */
+export const PRIVACY_URL = "https://fullo.github.io/Sussurro/privacy.html";
+
 /** The shipped dependencies with their licence texts, by name. */
 export function licenseEntries(file: LicenseFile = generated): LicenseEntry[] {
   return file.packages

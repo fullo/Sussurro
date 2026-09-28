@@ -1269,7 +1269,18 @@ fn a_dropped_connection_still_keeps_the_meeting() {
     // The run finishes on its own; the item is kept, titled from its text.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
-        let items = archive::list_items(&r.host.0.archive).unwrap();
+        // The archive folder is made with the first item: until then the
+        // scan says it is missing (#328), which here only means "not yet".
+        let items = match archive::list_items(&r.host.0.archive) {
+            Ok(items) => items,
+            Err(e)
+                if archive::unreadable::find(&e).map(|u| u.kind)
+                    == Some(archive::unreadable::UnreadableKind::Missing) =>
+            {
+                Vec::new()
+            }
+            Err(e) => panic!("{e:#}"),
+        };
         if let Some(it) = items.iter().find(|i| !i.recording) {
             assert_eq!(it.meta.item_type, ItemType::Meeting);
             assert_eq!(it.meta.source, "browser:teams.microsoft.com");
@@ -2935,6 +2946,8 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
             body,
         )
     };
+    // Every creation from here counts against the bucket (see below).
+    let t0 = std::time::Instant::now();
     let first = with_key(body);
     assert_eq!(first.status, 201);
     let again = with_key(body);
@@ -2950,6 +2963,10 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
     );
 
     // Creations have their own, tighter limit (the first note used one).
+    // The bucket refills in real time here, and a slow runner (Windows CI)
+    // spends seconds on these requests, so a few refilled tokens may get
+    // through: bound the count by the elapsed time. The exact burst is
+    // pinned with an injected clock in `archive_write`'s own tests.
     let mut created = 1;
     let limited = loop {
         let reply = post_note(&r, &[("Authorization", &write)], body);
@@ -2959,7 +2976,12 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
         created += 1;
         assert!(created < 100, "never limited");
     };
-    assert_eq!(created, archive_write::CREATE_BURST as usize);
+    let refills = (t0.elapsed().as_secs_f64() * archive_write::CREATE_PER_SEC).ceil() as usize;
+    let burst = archive_write::CREATE_BURST as usize;
+    assert!(
+        (burst..=burst + refills).contains(&created),
+        "created {created}, burst {burst} + at most {refills} refilled"
+    );
     assert_eq!(
         (limited.status, limited.json()["code"].as_str()),
         (429, Some("rate_limited"))
