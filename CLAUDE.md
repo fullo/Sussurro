@@ -957,7 +957,8 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03; current version 0.10.2 — released 2026-09-28)
+## Roadmap (agreed 2026-07-03; current *released* version 0.10.2 — 2026-09-28;
+0.11.0 prepared, not yet published — see below)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -1155,6 +1156,25 @@ legal review) carry `needs maintainer`. Milestones and epics:
   plays Ogg Opus only from macOS 15.4, so older macOS needs a decode path),
   archive HTTP API with scoped hashed tokens (every browser Origin refused),
   calendar attendees from ICS.
+  **0.11.0 — prepared, not yet published** (docs/version-bump PR #253,
+  2026-09-28): all twelve 0.11 issues (#241–#252) are merged to `main`,
+  each already updating the README, blog and manual for its own feature.
+  #253 adds `docs/releases/0.11.0.md`, this roadmap paragraph, the voices
+  plan's status section, bumps the version 0.10.0 → 0.11.0 in
+  `package.json`, `package-lock.json`, `tauri.conf.json`, `Cargo.toml` and
+  `Cargo.lock`, and regenerates `licenses.json` (unchanged — the per-issue
+  PRs already kept it current; regenerating it needed a small
+  cross-platform fix to `scripts/gen-licenses.mjs`, which called `npm`
+  without `shell: true`, silently finding zero packages on Windows).
+  **Not tagged or released**: no `v0.11.0` tag has been
+  pushed, so the draft/publish/un-draft release step and the manual QA
+  from the plan's section 9 (macOS, Windows, Linux hardware) are still
+  open, tracked by #253's acceptance criteria. `main` also carries the
+  first slice of 0.12 (TTS, #254/#255/#256/#309) ahead of 0.11.0 — it
+  ships inside the same tag since it is fully gated behind the
+  off-by-default `Settings.tts_enabled` (Settings → Experimental) with no
+  download until the user asks; see `docs/releases/0.11.0.md` for the
+  explicit call-out to the maintainer.
 - **0.12 — Read aloud** (**experimental, optional module — P24**: off by
   default under Settings → Experimental; TTS/cloning models are downloaded
   ONLY on the user's explicit request, never at install, onboarding or in

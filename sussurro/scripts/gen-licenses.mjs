@@ -194,7 +194,15 @@ function npmPackages(root = ROOT) {
     paths = execFileSync(
       "npm",
       ["ls", "--all", "--omit=dev", "--parseable"],
-      { cwd: root, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" },
+      {
+        cwd: root,
+        maxBuffer: 64 * 1024 * 1024,
+        encoding: "utf8",
+        // Windows has no bare "npm" executable (it's npm.cmd); execFileSync
+        // needs the shell to resolve it there, else it throws ENOENT and
+        // this function silently returns no packages.
+        shell: process.platform === "win32",
+      },
     );
   } catch (e) {
     // `npm ls` exits non-zero on peer-dep warnings but still prints paths.
