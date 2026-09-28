@@ -2946,6 +2946,8 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
             body,
         )
     };
+    // Every creation from here counts against the bucket (see below).
+    let t0 = std::time::Instant::now();
     let first = with_key(body);
     assert_eq!(first.status, 201);
     let again = with_key(body);
@@ -2961,6 +2963,10 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
     );
 
     // Creations have their own, tighter limit (the first note used one).
+    // The bucket refills in real time here, and a slow runner (Windows CI)
+    // spends seconds on these requests, so a few refilled tokens may get
+    // through: bound the count by the elapsed time. The exact burst is
+    // pinned with an injected clock in `archive_write`'s own tests.
     let mut created = 1;
     let limited = loop {
         let reply = post_note(&r, &[("Authorization", &write)], body);
@@ -2970,7 +2976,12 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
         created += 1;
         assert!(created < 100, "never limited");
     };
-    assert_eq!(created, archive_write::CREATE_BURST as usize);
+    let refills = (t0.elapsed().as_secs_f64() * archive_write::CREATE_PER_SEC).ceil() as usize;
+    let burst = archive_write::CREATE_BURST as usize;
+    assert!(
+        (burst..=burst + refills).contains(&created),
+        "created {created}, burst {burst} + at most {refills} refilled"
+    );
     assert_eq!(
         (limited.status, limited.json()["code"].as_str()),
         (429, Some("rate_limited"))
