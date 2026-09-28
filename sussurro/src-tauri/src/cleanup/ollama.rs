@@ -159,6 +159,9 @@ pub struct ChatOptions {
     /// Ignored by the OpenAI-compatible API, where the server decides.
     pub num_ctx: Option<u32>,
     pub temperature: f32,
+    /// Ollama only: the most tokens the answer may take (`num_predict`),
+    /// so a model stuck repeating itself stops. `None`: the server's own.
+    pub num_predict: Option<u32>,
 }
 
 impl Default for ChatOptions {
@@ -167,6 +170,7 @@ impl Default for ChatOptions {
             timeout_secs: 60,
             num_ctx: None,
             temperature: 0.2,
+            num_predict: None,
         }
     }
 }
@@ -193,17 +197,30 @@ pub fn chat_with(profile: &LlmProfile, messages: &[Value], opts: &ChatOptions) -
     }
 }
 
-fn chat_ollama(url: &str, model: &str, messages: &[Value], opts: &ChatOptions) -> Result<String> {
+/// The `/api/chat` request body. Reasoning is always off (`think: false`):
+/// cleanup and recipes want the answer only, and a thinking model (Qwen3,
+/// Gemma 4…) left to Ollama's default spent the whole output on hidden
+/// reasoning for a long recipe prompt, returning an empty `content`.
+/// Models without thinking accept and ignore the flag.
+fn ollama_body(model: &str, messages: &[Value], opts: &ChatOptions) -> Value {
     let mut options = json!({"temperature": opts.temperature});
     if let Some(n) = opts.num_ctx {
         options["num_ctx"] = json!(n);
     }
-    let body = json!({
+    if let Some(n) = opts.num_predict {
+        options["num_predict"] = json!(n);
+    }
+    json!({
         "model": model,
         "messages": messages,
         "stream": false,
+        "think": false,
         "options": options
-    });
+    })
+}
+
+fn chat_ollama(url: &str, model: &str, messages: &[Value], opts: &ChatOptions) -> Result<String> {
+    let body = ollama_body(model, messages, opts);
     let resp: Value = http_client(opts.timeout_secs)?
         .post(format!("{}/api/chat", url.trim_end_matches('/')))
         .json(&body)
@@ -312,6 +329,27 @@ mod tests {
 
     fn profile(api: CleanupApi, url: &str) -> LlmProfile {
         LlmProfile::new("t", "Test", api, url, "", "llama3.2:3b")
+    }
+
+    #[test]
+    fn ollama_requests_turn_thinking_off_and_carry_the_caps() {
+        let msgs = [json!({"role": "user", "content": "hi"})];
+        // Cleanup: no window, no cap — but never thinking.
+        let b = ollama_body("m", &msgs, &ChatOptions::default());
+        assert_eq!(b["think"], json!(false));
+        assert_eq!(b["stream"], json!(false));
+        assert!(b["options"].get("num_ctx").is_none());
+        assert!(b["options"].get("num_predict").is_none());
+        // Recipes: the planned window and output cap.
+        let opts = ChatOptions {
+            num_ctx: Some(4096),
+            num_predict: Some(1024),
+            ..ChatOptions::default()
+        };
+        let b = ollama_body("m", &msgs, &opts);
+        assert_eq!(b["think"], json!(false));
+        assert_eq!(b["options"]["num_ctx"], json!(4096));
+        assert_eq!(b["options"]["num_predict"], json!(1024));
     }
 
     /// Settings whose cleanup profile is `api` at `url`.
