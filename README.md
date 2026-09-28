@@ -160,7 +160,7 @@ Choose on the **Models** screen:
   prompt, and Whisper large-v3-turbo stays more accurate on Italian, so it
   is never the default.
 
-### Read aloud (experimental, 0.12)
+### Read aloud (experimental, 0.11)
 
 An optional text-to-speech module, **off by default** (Settings →
 Experimental). It uses [Pocket TTS](https://kyutai.org) by Kyutai — the
