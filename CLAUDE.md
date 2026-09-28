@@ -1084,8 +1084,7 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03; current *released* version 0.11.0 — 2026-09-28;
-0.12.0 prepared, not yet published — see below)
+## Roadmap (agreed 2026-07-03; current version 0.12.0 — released 2026-09-29)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -1325,8 +1324,9 @@ legal review) carry `needs maintainer`. Milestones and epics:
   acceptance criteria.
 - **0.12 — Read aloud**: absorbed into 0.11 above by the maintainer's
   2026-09-28 decision, apart from its stretch goal, the two-voice podcast
-  recipe (#259), moved to the 0.13 milestone. **0.12.0 prepared, not yet
-  published** (#260, PR opened same day): docs only, plus one merged
+  recipe (#259), moved to the 0.13 milestone. **0.12.0 published 2026-09-29** (tag `v0.12.0` on `abf64b8`, PR #333; the
+  0.11.0 release went out the same night, tag `v0.11.0` on `a412e88`, PR #316).
+  Contents (#260): docs only, plus one merged
   behaviour change on top of 0.11.0 — the Audio tab's *Generated speech*
   section now shows one Create/Listen button per document with a single
   in-app player, and the temporary *Listen* scratch-file path (backend
