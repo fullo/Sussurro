@@ -316,7 +316,6 @@ pub fn run() {
             commands::read_aloud_job,
             commands::read_aloud_files,
             commands::read_aloud_delete,
-            commands::read_aloud_discard,
             commands::archive_export,
             commands::archive_subtitles_status,
             commands::archive_create_subtitles,

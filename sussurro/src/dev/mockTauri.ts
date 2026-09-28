@@ -595,10 +595,9 @@ function toItem(s: Stored): Item {
   };
 }
 
-// ---- Read aloud of an item (#256): mirrors tts::read_aloud ----
+// ---- Read aloud of an item (#256, #327): mirrors tts::read_aloud ----
 let readJob: ReadAloudJob | null = null;
 let readCancel = false;
-let readListens = 0;
 
 /** Mirrors archive::speech::speech_file_name (the hash is faked). */
 function speechFileName(document: string): string {
@@ -621,7 +620,7 @@ function speechStatuses(s: Stored): SpeechStatus[] {
   });
 }
 
-async function readAloud(id: string, document: string | null, language: string | null, save: boolean) {
+async function readAloud(id: string, document: string | null, language: string | null) {
   if (!settings.tts_enabled) throw "Read aloud is off — turn it on in Settings → Experimental.";
   const s = find(id);
   if (!s) throw `no archive item '${id}'`;
@@ -638,7 +637,7 @@ async function readAloud(id: string, document: string | null, language: string |
   if (readJob) throw "Sussurro is already reading a document aloud — wait for it or cancel it.";
   const total = Math.max(1, Math.ceil(text.length / 160));
   readCancel = false;
-  readJob = { item_id: id, document: doc, save, language: code, voice, done: 0, total };
+  readJob = { item_id: id, document: doc, language: code, voice, done: 0, total };
   try {
     for (let i = 0; i <= total; i++) {
       if (readCancel) throw "reading cancelled";
@@ -647,7 +646,6 @@ async function readAloud(id: string, document: string | null, language: string |
       if (i < total) await new Promise((r) => setTimeout(r, 300));
     }
     const seconds = Math.round(text.length / 15);
-    if (!save) return { file: `tts-preview/listen-${++readListens}.opus`, save, seconds, chunks: total };
     const file = speechFileName(doc);
     const entry = {
       file,
@@ -666,7 +664,7 @@ async function readAloud(id: string, document: string | null, language: string |
       text,
     };
     s.speech = [...(s.speech ?? []).filter((f) => f.file !== file), entry].sort((x, y) => x.file.localeCompare(y.file));
-    return { file, save, seconds, chunks: total };
+    return { file, seconds, chunks: total };
   } finally {
     readJob = null;
     ev("read-aloud-progress", null);
@@ -1741,7 +1739,7 @@ function handle(cmd: string, a: Args): unknown {
       return null;
     }
     case "read_aloud_start":
-      return readAloud(String(a.id), (a.document as string | null) ?? null, (a.language as string | null) ?? null, !!a.save);
+      return readAloud(String(a.id), (a.document as string | null) ?? null, (a.language as string | null) ?? null);
     case "read_aloud_cancel":
       readCancel = readJob !== null;
       return readCancel;
@@ -1759,8 +1757,6 @@ function handle(cmd: string, a: Args): unknown {
       s.speech = (s.speech ?? []).filter((f) => f.file !== a.file);
       return null;
     }
-    case "read_aloud_discard":
-      return null;
     case "tts_preview": {
       if (!settings.tts_enabled) throw "Read aloud is off — turn it on in Settings → Experimental.";
       const code = String(a.language);

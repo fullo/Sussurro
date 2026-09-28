@@ -177,26 +177,28 @@ engine leaves memory after 5 minutes unused.
 
 With the module on, an item's **Audio** tab gets a *Generated speech*
 section: pick the transcript or one of its documents and a language, then
-**Listen** (a temporary file, deleted when you close the document) or
-**Save as speech file** — `speech.opus` (or `speech-<document>.opus`) next
-to the item, read with the voice picked for that language in Models →
-Voices. The speech keeps the voice model's full 24 kHz band (Ogg Opus at
-32 kb/s, about 14 MB per hour). It runs in the background with progress
-and Cancel. Generated speech is always labelled *Synthetic*, is never
-named like a recording
-(`audio*.opus`), and says so in the file itself (Ogg Opus comments
-`SYNTHETIC=1`, engine, voice) and in the item's frontmatter (`speech:`,
-`synthetic:`). When the text changes after the speech was made, the tab
-says it is out of date. *Delete…* moves a speech file to the trash.
-An article saved from New → Link (*Article*) is read like any other item,
-in the language the page declares.
+one button — **Create** when there is no speech for that document yet, or
+**Listen** once there is, which plays the saved file at once in the
+section's own player (no generation). Speech is written as `speech.opus`
+(or `speech-<document>.opus`) next to the item, read with the voice picked
+for that language in Models → Voices, and keeps the voice model's full
+24 kHz band (Ogg Opus at 32 kb/s, about 14 MB per hour). Making it runs in
+the background with progress and Cancel. Generated speech is always
+labelled *Synthetic*, is never named like a recording (`audio*.opus`), and
+says so in the file itself (Ogg Opus comments `SYNTHETIC=1`, engine,
+voice) and in the item's frontmatter (`speech:`, `synthetic:`). When the
+text changes after the speech was made, the tab says it is out of date —
+*Listen* still plays what was made, and a secondary **Create again**
+replaces it. *Delete…* moves a speech file to the trash. An article saved
+from New → Link (*Article*) is read like any other item, in the language
+the page declares.
 
 **Every generated file is marked**, as the EU AI Act (art. 50) asks of
 synthetic audio: besides the tags above, an **inaudible watermark** —
 [AudioSeal](https://github.com/facebookresearch/audioseal) by Meta (MIT),
 16-bit, with one fixed Sussurro code that is the same for every user and
-never identifies anyone — is added to saved speech, *Listen* files and
-voice previews alike. There is no switch to turn it off. Its two models
+never identifies anyone — is added to saved speech and voice previews
+alike. There is no switch to turn it off. Its two models
 (93.5 MB, our ONNX export at
 [DarumaHQ/audioseal-onnx](https://huggingface.co/DarumaHQ/audioseal-onnx))
 come with the first read-aloud download, in the same confirmation; without
@@ -210,8 +212,8 @@ Generated files also carry **signed metadata**
 computer's clock — no time-stamp service is contacted). Ogg can't hold a
 C2PA manifest, so each saved `speech.opus` gets a `speech.c2pa` file next
 to it (keep them together: the pair travels, is replaced and moves to the
-trash as one); *Listen* files get one too, and voice previews (WAV) carry
-it inside. Each install signs with **its own self-signed certificate**,
+trash as one); voice previews (WAV) carry it inside. Each install signs
+with **its own self-signed certificate**,
 made the first time the module generates a file: its private key is kept
 only in the OS credential store (service `com.sussurro.app`, account
 `c2pa-signing-key`), and the certificate names no one
@@ -536,8 +538,8 @@ account:
 | Dictation history and usage stats | `history.jsonl`, `stats.json` in the app's data folder |
 | Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
 | Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
-| Read-aloud models, voices and watermark models (experimental, only if you download them) | `models/pocket-tts/` in the same folder (the watermark models in `pocket-tts/audioseal/`); voice previews and *Listen* files are temporary files in `tts-preview/` in the app's data folder, deleted when replaced, when the document closes and at the next start |
-| Generated speech (read aloud → *Save as speech file*) | `speech.opus` / `speech-<document>.opus` in the item's archive folder, marked synthetic in the file and the frontmatter, with its signed manifest `speech.c2pa` / `speech-<document>.c2pa` next to it |
+| Read-aloud models, voices and watermark models (experimental, only if you download them) | `models/pocket-tts/` in the same folder (the watermark models in `pocket-tts/audioseal/`); voice previews are temporary files in `tts-preview/` in the app's data folder, deleted when replaced and at the next start |
+| Generated speech (read aloud → *Create*) | `speech.opus` / `speech-<document>.opus` in the item's archive folder, marked synthetic in the file and the frontmatter, with its signed manifest `speech.c2pa` / `speech-<document>.c2pa` next to it |
 | Voice profiles of people with *Recognise this voice* on, and your own voice if you recorded it (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
 | *Not X* answers to voice suggestions (0.11) | `voice_dismissals.json` in the app's data folder (ids only; readable only by you on macOS and Linux) |
 

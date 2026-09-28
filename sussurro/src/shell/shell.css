@@ -1177,10 +1177,14 @@ button.pchip-name:hover { text-decoration: underline; }
 .ra-name { font-size: 11.5px; }
 .ra-facts { font-size: 12px; }
 .ra-stale, .ra-missing { margin: 0; font-size: 12.5px; color: var(--warn); }
-.ra-audio { width: 100%; max-width: 520px; height: 36px; }
 .ra-make { display: flex; flex-direction: column; gap: 8px; }
-.ra-listen { display: flex; flex-direction: column; gap: 2px; }
-.ra-listen p, .ra-off { margin: 0; font-size: 12px; }
+.ra-off { margin: 0; font-size: 12px; }
+/* The one in-app player (#327): reuses the Audio tab's transport look
+   (au-play/au-seek/au-time) at a smaller scale — no native <audio controls>
+   anywhere in this section. */
+.ra-player { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 6px 0; }
+.ra-player .au-play { width: 32px; height: 32px; min-height: 32px; font-size: 11px; }
+.ra-player-label { font-size: 12px; overflow-wrap: anywhere; }
 .au-with-speech { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .au-speech-slot { flex: 0 1 auto; max-height: 45%; overflow-y: auto; }
 .au-recorded-head { margin: 8px 18px 0; font-size: 13px; color: var(--c-dark); }

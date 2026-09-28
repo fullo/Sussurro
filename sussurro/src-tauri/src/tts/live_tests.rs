@@ -246,7 +246,7 @@ fn word_recall(said: &str, heard: &str) -> f32 {
 #[test]
 #[ignore = "needs the downloaded read-aloud models (SUSSURRO_TTS_MODELS)"]
 fn live_read_aloud_saves_a_marked_speech_file() {
-    use super::read_aloud::{self, Jobs, PocketSpeaker, Request, Target};
+    use super::read_aloud::{self, Jobs, PocketSpeaker, Request};
     let dir = models_dir();
     let l = languages()[0];
     let threads = std::env::var("SUSSURRO_TTS_THREADS")
@@ -300,7 +300,6 @@ fn live_read_aloud_saves_a_marked_speech_file() {
             document: None,
             language: None,
             voices: &voices,
-            target: Target::Save,
         },
         &mut |s| eprintln!("read aloud: {}/{}", s.done, s.total),
     )

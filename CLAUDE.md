@@ -843,12 +843,10 @@ project decisions here, not in per-machine memory.**
   stays 16 kHz for STT/Identify voices; `opus::verify` counts native
   samples; `repair` accepts both rates. An engine at another rate goes
   through the windowed-sinc `tts/resample.rs` to 24 kHz (Pocket: pass-
-  through). Previews were already 24 kHz WAVs. **Save** =
-  `speech.opus` / `speech-<slug>.opus` (clean companion stem, else slug +
-  8 hex of its SHA-256), written to `.sussurro/<file>.part` and moved in
-  under the archive lock (old file → OS trash); **Listen** =
-  `<app data>/tts-preview/listen-N.opus`, deleted at the next Listen, when
-  the document closes (`read_aloud_discard`), at startup and module off.
+  through). Previews were already 24 kHz WAVs. **Save** (the only path
+  since #327) = `speech.opus` / `speech-<slug>.opus` (clean companion stem,
+  else slug + 8 hex of its SHA-256), written to `.sussurro/<file>.part` and
+  moved in under the archive lock (old file → OS trash).
   Names `speech(-[a-z0-9-]+)?.(opus|wav)` never match `audio*` (Delete/
   Compress audio don't touch them); the scheme serves both
   (`is_playable_file_name`). Frontmatter app-owned `speech: [...]` +
@@ -864,10 +862,28 @@ project decisions here, not in per-machine memory.**
   progress `read-aloud-progress`, cancel between chunks; refused while off,
   on a live item, or with the model/voice missing (points to Models →
   Voices, never downloads); `tts_delete` refuses during a job; files list
-  and delete work while the module is off. Commands `read_aloud_start`,
-  `_cancel`, `_job`, `_files`, `_delete`, `_discard`. Live test
+  and delete work while the module is off. Commands `read_aloud_start`
+  (no more `save` flag), `_cancel`, `_job`, `_files`, `_delete`. Live test
   `live_read_aloud_saves_a_marked_speech_file` (English M1 Pro, 2 threads:
   6.3 s of speech in 3.4 s).
+  **One button per document (0.12, #327)**: the Audio tab shows *Create*
+  when a document has no speech yet, or *Listen* once it does — playing the
+  saved file at once through one in-app player in the section (no
+  generation, no native `<audio controls>`); a stale file still plays via
+  *Listen*, with a secondary *Create again* next to it. The temporary
+  *Listen* path of #256 (`save: false`, `<app data>/tts-preview/listen-
+  N.opus`, `read_aloud_discard`, its sweep in `service::clear_previews`,
+  tests, docs and dev mock) was removed outright — every job now saves
+  (maintainer, 2026-09-28: no later "preview" use planned). Voice previews
+  in Models → Voices (`tts_preview`, still temporary WAVs in
+  `tts-preview/`) are unaffected. Pure button-state helpers
+  `createLabel`/`listenDisabled` in `src/lib/readAloud.ts`. **Migration**:
+  `service::clear_previews` (already run at startup and when the module is
+  turned off) keeps sweeping `listen-*` in `tts-preview/` alongside
+  `preview-*`, so any file a pre-#327 install left behind is cleared on the
+  next start — nothing writes that prefix any more, so this is a one-time
+  cleanup in effect, kept as an ordinary sweep rather than special-cased
+  code that would need removing again later.
 - **Marking generated audio: watermark + Check a file (0.12, #257 part 1,
   P21/E17)** (`tts/watermark.rs`, `tts/marking.rs`, `tts/check.rs`,
   `shell/CheckFileCard.tsx`): AudioSeal 0.2 16-bit (MIT, Meta) in our ONNX
@@ -878,8 +894,8 @@ project decisions here, not in per-machine memory.**
   (so `tts_delete` of everything removes them); **every download job that
   finds them missing brings them** (same click, counted in the
   confirmation — P24; `tts_download { watermarkOnly }` for models from before
-  #257). **Fail closed**: `Marker::new` needs the generator; read aloud,
-  *Listen* and previews refuse without it (checked before any work), no
+  #257). **Fail closed**: `Marker::new` needs the generator; read aloud
+  and previews refuse without it (checked before any work), no
   switch anywhere. **M16**: `watermark::M16` streams — audio → 16 kHz
   (`tts/resample.rs`), generator on ≤ 10 s windows padded to the 320-sample
   hop, watermark → back to the audio's rate and added; the output lags up
@@ -927,8 +943,7 @@ project decisions here, not in per-machine memory.**
   to the trash with the old audio (also when the new file is unsigned);
   *Delete speech* trashes both; `is_speech_sidecar_name` is not playable
   (the scheme never serves `.c2pa`); Delete/Compress audio untouched.
-  *Listen* gets `listen-N.c2pa` in `tts-preview/` (cleared with it);
-  previews (WAV) embed the manifest. Frontmatter `marked` gains
+  Voice previews (WAV) embed the manifest. Frontmatter `marked` gains
   `signature`. No speech export path exists, so nothing else embeds.
   *Check a file*: embedded manifest (wav/mp3/m4a/flac) first, else the
   `<same stem>.c2pa` next to the picked file through `open_picked_file`

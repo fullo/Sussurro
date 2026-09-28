@@ -3336,9 +3336,9 @@ pub async fn watermark_check_file(
 
 /// *Read aloud* an item's transcript (or its companion `document`) in
 /// `language` (default: the item's) with the voice picked for it (#256):
-/// `save` writes `speech*.opus` next to the item, else a temporary *Listen*
-/// file whose `sussurro-audio:` path is returned. Only while the module is
-/// on (P24), never on a live item, one job at a time; progress goes out as
+/// writes `speech*.opus` next to the item (#327: every job saves — the
+/// temporary *Listen* path was removed). Only while the module is on
+/// (P24), never on a live item, one job at a time; progress goes out as
 /// `read-aloud-progress` (null when the job ends). Never downloads: a
 /// missing model or voice is an error pointing to Models → Voices.
 #[tauri::command]
@@ -3348,14 +3348,12 @@ pub async fn read_aloud_start(
     id: String,
     document: Option<String>,
     language: Option<String>,
-    save: bool,
 ) -> Result<crate::tts::read_aloud::Outcome, String> {
-    use crate::tts::read_aloud::{self, PocketSpeaker, Request, Target};
+    use crate::tts::read_aloud::{self, PocketSpeaker, Request};
     use tauri::Emitter;
     let (models, voices) = tts_on(&state)?;
     let (archive, _) = archive_paths(&state)?;
     let journal = crate::engine::session::journal_path(&state);
-    let listen_dir = tts_preview_dir(&app)?;
     let sign_dir = signing_dir(&app)?;
     let emitter = app.clone();
     let result = blocking(move || {
@@ -3366,18 +3364,12 @@ pub async fn read_aloud_start(
             options: crate::tts::pocket::PocketOptions::default(),
             signer: &|| crate::tts::signing::identity(&sign_dir),
         };
-        let target = if save {
-            Target::Save
-        } else {
-            Target::Listen { dir: &listen_dir }
-        };
         let req = Request {
             archive: &archive,
             id: &id,
             document: document.as_deref(),
             language: language.as_deref(),
             voices: &voices,
-            target,
         };
         let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
         read_aloud::run(read_aloud::jobs(), &speaker, &req, &mut |s| {
@@ -3433,14 +3425,6 @@ pub async fn read_aloud_delete(
         crate::tts::read_aloud::delete(crate::tts::read_aloud::jobs(), &archive, &id, &file)
     })
     .await
-}
-
-/// Delete the temporary *Listen* files (the document closed).
-#[tauri::command]
-pub fn read_aloud_discard(app: AppHandle) {
-    if let Ok(dir) = tts_preview_dir(&app) {
-        crate::tts::read_aloud::discard_listens(crate::tts::read_aloud::jobs(), &dir);
-    }
 }
 
 /// Read aloud was turned off (P24): cancel a download and a read-aloud job,
