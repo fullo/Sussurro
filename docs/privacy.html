@@ -112,6 +112,9 @@
     <h3 id="links">Links you ask to transcribe</h3>
     <p>When you paste a link into New → Link, Sussurro downloads that audio or video from the site you named. For known video platforms (YouTube, Vimeo, SoundCloud and a few others) it runs <code>yt-dlp</code>, a separate program you install yourself, which contacts that platform. Those sites see an ordinary download request from your computer. Addresses on your computer or your local network are refused unless you allow them for that run. The downloaded file is temporary and deleted after the run.</p>
 
+    <h3 id="articles">Articles you ask to save</h3>
+    <p>New → Link → <em>Article</em> fetches the HTML of the one page you named (at most 10 MB), under the same rules as a transcribed link: addresses on your computer or local network are refused unless you allow them for that run, every redirect is checked, and no system proxy is used. Nothing else is requested — no images, scripts, styles or other pages — and no script from the page ever runs. The site sees an ordinary request from your computer. The main text is extracted on your computer and saved as a note in your archive, with the link as its source; the page itself is not kept.</p>
+
     <h3 id="models">Model downloads</h3>
     <p>Speech, speaker and language models are not in the installer. Sussurro downloads each one when you ask for it (Models screen, first-run setup), or the first time you use a feature that needs it (for example speaker labels in your first meeting). Downloads come only from fixed addresses, and each file is checked against a known checksum before use:</p>
     <div class="table-scroll"><table>
