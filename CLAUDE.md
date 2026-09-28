@@ -539,7 +539,14 @@ project decisions here, not in per-machine memory.**
   `cleanup_before_exit`, which also covers `restart()` and the updater's
   Windows install). Crash of Sussurro: Windows kill-on-close job object,
   Linux `PR_SET_PDEATHSIG` (spawned from one long-lived thread — the signal
-  follows the spawning *thread*), macOS nothing (documented). Spawned
+  follows the spawning *thread*), macOS a startup reaper (#319,
+  `stt/remote/orphans.rs`): at startup and before the first spawn of each
+  sidecar path it SIGTERMs (2 s, then SIGKILL after a re-check) processes
+  that are ours (uid), orphaned (ppid 1), run the same canonical
+  executable (`proc_pidpath`, never by name) and whose argv `--host` is
+  `…/sc-<pid>-…/llama.sock` of a dead Sussurro pid (libproc +
+  `KERN_PROCARGS2`, libc only; pure `select_orphans` tested everywhere;
+  `#[ignore]` live test `live_an_orphaned_sidecar_is_reaped`). Spawned
   without a shell, `-ngl 99 -c 4096 -np 1 --cache-ram 0 --no-webui`
   (#109's settings) `--no-slots`. **Who can reach it (#216,
   `stt/remote/endpoint.rs`)**: macOS/Linux `--host <dir>/llama.sock`, a
