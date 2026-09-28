@@ -85,6 +85,13 @@ keyring-core = "1"
 # muxer (BSD-3).
 opus = "0.4"
 ogg = "0.9"
+# Signed metadata (C2PA) on generated speech (#257 part 2, E17): `c2pa`
+# (MIT OR Apache-2.0) with its pure-Rust crypto — no OpenSSL, no HTTP client
+# (default features off: nothing is fetched, no TSA, no OCSP). `rcgen`
+# (MIT OR Apache-2.0) over `ring` (already in the tree) makes the
+# per-install self-signed certificate.
+c2pa = { version = "0.91.1", default-features = false, features = ["rust_native_crypto"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 # Article links (0.12, #258, P17): Readability-style main-text extraction
 # (MIT, pure Rust, no network/JS) over the dom_query/html5ever parser
 # already in the tree via tauri-utils/wry (0.17 = the release on the same

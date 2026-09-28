@@ -12,6 +12,7 @@ import {
   readiness,
   speechFacts,
   speechFor,
+  speechSignatureNote,
   staleNote,
 } from "./readAloud";
 import type { ReadAloudJob, SpeechStatus, TtsLanguage, TtsStatus } from "./types";
@@ -47,6 +48,8 @@ const speech = (over: Partial<SpeechStatus> = {}): SpeechStatus => ({
   engine: "Pocket TTS",
   date: "2026-09-26T10:00:00+02:00",
   marked: ["metadata"],
+  signed: false,
+  unsigned: "",
   recorded: true,
   stale: false,
   source_missing: false,
@@ -102,6 +105,14 @@ describe("read aloud", () => {
     expect(jobFraction(null)).toBe(0);
     expect(jobIsFor(job(), "2026/09/x")).toBe(true);
     expect(jobIsFor(job(), "other")).toBe(false);
+  });
+
+  it("says why a speech file is unsigned, only when the app recorded a reason", () => {
+    expect(speechSignatureNote(speech({ signed: true, marked: ["metadata", "watermark", "signature"] }))).toBeNull();
+    expect(speechSignatureNote(speech())).toBeNull(); // made before signing existed
+    const note = speechSignatureNote(speech({ unsigned: "the macOS Keychain is not available" }));
+    expect(note).toMatch(/^Not signed: the macOS Keychain is not available\./);
+    expect(note).toMatch(/watermark/);
   });
 
   it("explains speech that no longer matches its document", () => {

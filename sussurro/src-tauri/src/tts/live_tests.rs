@@ -280,6 +280,14 @@ fn live_read_aloud_saves_a_marked_speech_file() {
             threads,
             ..PocketOptions::default()
         },
+        // A throwaway signing key (never the real credential store).
+        signer: &|| {
+            super::signing::load_or_create(
+                &tmp.path().join("c2pa"),
+                &crate::secrets::tests::FakeStore::default(),
+            )
+            .map(std::sync::Arc::new)
+        },
     };
     let voices = std::collections::BTreeMap::new();
     let started = Instant::now();
@@ -313,7 +321,8 @@ fn live_read_aloud_saves_a_marked_speech_file() {
     assert!(tags.contains(&("SYNTHETIC".into(), "1".into())), "{tags:?}");
     let st = read_aloud::statuses(archive, &id).unwrap();
     assert!(st[0].recorded && !st[0].stale);
-    assert_eq!(st[0].marked, ["metadata", "watermark"]);
+    assert_eq!(st[0].marked, ["metadata", "watermark", "signature"]);
+    assert!(st[0].signed);
     // #257: the saved file carries Sussurro's watermark.
     let det = models::watermark_path(&dir, &catalog::WATERMARK_DETECTOR);
     let mut detector = super::watermark::AudioSealDetector::load(&det).unwrap();
@@ -321,6 +330,9 @@ fn live_read_aloud_saves_a_marked_speech_file() {
     let r = super::check::check_file(&path, file, &mut detector).unwrap();
     eprintln!("check: {r:?}");
     assert_eq!(r.summary, super::check::Summary::MadeBySussurro);
+    // #257 part 2: and its sidecar signature holds.
+    assert_eq!(r.signature.status, super::signing::SignatureStatus::Valid);
+    assert_eq!(r.signature.source, Some(super::signing::SignatureSource::Sidecar));
     if let Ok(keep) = std::env::var("SUSSURRO_TTS_OUT") {
         let to = PathBuf::from(keep).join(format!("live-read-aloud-{}.opus", l.code));
         let _ = std::fs::copy(&path, to);

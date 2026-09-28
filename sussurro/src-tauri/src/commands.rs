@@ -3134,6 +3134,16 @@ fn tts_preview_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
+/// `<app data>/c2pa`: the signing certificate chain of generated speech
+/// (#257 part 2; the key is in the OS credential store).
+fn signing_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join(crate::tts::signing::SIGNING_DIR))
+        .map_err(|e| e.to_string())
+}
+
 /// Models → Voices: languages, voices, sizes, what is downloaded.
 #[tauri::command]
 pub async fn tts_status(
@@ -3259,6 +3269,7 @@ pub async fn tts_preview(
     let voice =
         voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
     let preview_dir = tts_preview_dir(&app)?;
+    let sign_dir = signing_dir(&app)?;
     blocking(move || {
         let name = crate::tts::service::global().preview(
             &dir,
@@ -3266,6 +3277,7 @@ pub async fn tts_preview(
             lang.code,
             &voice,
             text.as_deref(),
+            &|| crate::tts::signing::identity(&sign_dir),
         )?;
         Ok(format!("{}{name}", crate::tts::service::PREVIEW_PREFIX))
     })
@@ -3275,7 +3287,9 @@ pub async fn tts_preview(
 /// *Check a file* (#257, E17): the native picker opens from Rust (no path
 /// crosses IPC), the picked audio file is opened with the import guards
 /// (audio extensions only, no links, ≤ 2 GiB) and read by the AudioSeal
-/// detector plus its tags — on this computer, nothing is uploaded. Needs
+/// detector plus its tags and its signed C2PA metadata (embedded, or a
+/// `<same stem>.c2pa` next to it, same guards, ≤ 1 MiB) — on this
+/// computer, nothing is uploaded. Needs
 /// the detector, downloaded with the read-aloud models: never downloaded
 /// here. `None` when the user cancelled. Main window only.
 #[tauri::command]
@@ -3341,6 +3355,7 @@ pub async fn read_aloud_start(
     let (archive, _) = archive_paths(&state)?;
     let journal = crate::engine::session::journal_path(&state);
     let listen_dir = tts_preview_dir(&app)?;
+    let sign_dir = signing_dir(&app)?;
     let emitter = app.clone();
     let result = blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &archive, &id)?;
@@ -3348,6 +3363,7 @@ pub async fn read_aloud_start(
             service: crate::tts::service::global(),
             models_dir: &models,
             options: crate::tts::pocket::PocketOptions::default(),
+            signer: &|| crate::tts::signing::identity(&sign_dir),
         };
         let target = if save {
             Target::Save
