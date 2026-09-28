@@ -1021,6 +1021,38 @@ function linkInspect(input: string) {
   return { kind: platform ? "platform" : "direct", error: null, local, label: `${host}${u.pathname.replace(/\/$/, "")}${u.search}`.slice(0, 60) };
 }
 
+/** `article_save` (#258): the page's text as a note, `source: url:<link>`.
+ *  A link containing "login" plays a page with too little text. */
+async function saveArticle(url: string, title: string | null, allowLocal: boolean, tags: string[], categories: string[]) {
+  const info = linkInspect(url);
+  if (info.error) throw info.error;
+  if (info.kind === "platform") throw `${new URL(url).hostname} is a video site: use Transcribe to turn the video's audio into text`;
+  if (MEDIA.test(new URL(url).pathname)) throw "the link names an audio or video file: use Transcribe instead";
+  if (info.local && !allowLocal)
+    throw `${new URL(url).hostname} is on this computer or the local network: tick "Allow local network addresses" to use it`;
+  await new Promise((r) => window.setTimeout(r, 900));
+  if (/login/i.test(url))
+    throw "the page has too little readable text (42 characters). It may need a login, sit behind a paywall or build its text with JavaScript, which Sussurro doesn't run — nothing was saved";
+  const blocks = [
+    "Ogni faro lungo la costa ha il suo ritmo di luce e di buio: i marinai lo chiamano la caratteristica.",
+    "## Come nascono i ritmi",
+    "I primi fari usavano un meccanismo a orologeria per far girare le lenti attorno alla lampada.",
+    "- Fissa: una luce che non si spegne mai.",
+    "- Lampeggiante: accesa meno di quanto resta spenta.",
+  ];
+  const t = title?.trim() || "Perché i fari lampeggiano";
+  const u = new URL(url);
+  u.hash = "";
+  const id = `2026/09/${new Date().toISOString().slice(0, 10)}-${t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  items.push({
+    id,
+    meta: meta(t, "note", new Date().toISOString(), "", `url:${u.toString()}`, { language: "it", engine: "", tags, categories }),
+    segments: blocks.map((b, i) => ({ id: i, start_ms: i * 2000, end_ms: i * 2000, raw: b, text: b })),
+  });
+  ev("archive-item-created", id);
+  return { id, title: t, paragraphs: blocks.length, language: "it" };
+}
+
 let linkRun: { id: number; cancelled: boolean; label: string } | null = null;
 
 function startLink(url: string, title: string | null, language: string, identify: boolean, saveAudio = false): number {
@@ -2242,6 +2274,14 @@ function handle(cmd: string, a: Args): unknown {
       return YT_DLP
         ? { found: true, path: "/opt/homebrew/bin/yt-dlp", version: "2025.09.26", install_help: "" }
         : { found: false, path: null, version: null, install_help: "Install yt-dlp with Homebrew: `brew install yt-dlp` (or `pipx install yt-dlp`). It is not bundled with Sussurro: video sites change often and yt-dlp is updated to follow them." };
+    case "article_save":
+      return saveArticle(
+        String(a.url ?? ""),
+        (a.title as string | null) ?? null,
+        !!a.allowLocal,
+        (a.tags as string[] | undefined) ?? [],
+        (a.categories as string[] | undefined) ?? [],
+      );
     case "engine_start_link":
       return startLink(String(a.url), (a.title as string | null) ?? null, runLanguage(a), !!a.identifyVoices, runSavesAudio(a));
     case "engine_start_mic":

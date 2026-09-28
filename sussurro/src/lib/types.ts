@@ -629,6 +629,15 @@ export interface LinkInfo {
   label: string;
 }
 
+/** `article_save` (#258): the note made from a web page's text. */
+export interface ArticleSaved {
+  id: string;
+  title: string;
+  paragraphs: number;
+  /** From the page's `<html lang>` (`en`, `it`), or empty. */
+  language: string;
+}
+
 /** `yt_dlp_status`. */
 export interface YtDlpStatus {
   found: boolean;

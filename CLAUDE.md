@@ -915,6 +915,23 @@ project decisions here, not in per-machine memory.**
   signer, generator, `claims_sussurro`, `ai_generated`, problem codes; UI
   says "signed by a Sussurro install, not a trusted signer". Live keychain
   test `real_signing_key_in_the_os_store` (`#[ignore]`).
+- **Article links (0.12, #258, P17)** (`sources/url/article.rs`,
+  command `article_save`, New → Link → *Article*): a web page's main text
+  becomes a **note** (not a transcription — no audio, speakers or
+  subtitles; P17's "transcription-like" = link source + generated audio),
+  `source: url:<link>`, date now, `language` from `<html lang>`, New's
+  default tags/categories, one segment per markdown block and per list item
+  (the #251 note shape), indexed at once, `archive-item-created`. Network =
+  `direct::fetch_bytes` only (the #123/#216 rules, 10 MiB cap, never a
+  second client); video sites, media links and non-HTML types are refused
+  pointing to Transcribe. Charset: header, BOM, `<meta>` prescan, UTF-8,
+  else windows-1252 (`encoding_rs`). Extraction: `dom_smoothie` **0.17**
+  (MIT; the release on the `dom_query` 0.27 / `html5ever` already in the
+  tree via tauri-utils/wry — bump with them), markdown mode, escapes
+  removed, links → text, images dropped, ≤ 200k elements; < 300 letters =
+  `TooLittleText` (login, paywall, JS page), nothing saved. Read aloud is
+  the ordinary Audio tab (module on only, P24); off, the tab just says
+  there is no audio. Live check `live_article_extraction` (`#[ignore]`).
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at

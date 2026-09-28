@@ -92,6 +92,13 @@ ogg = "0.9"
 # per-install self-signed certificate.
 c2pa = { version = "0.91.1", default-features = false, features = ["rust_native_crypto"] }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
+# Article links (0.12, #258, P17): Readability-style main-text extraction
+# (MIT, pure Rust, no network/JS) over the dom_query/html5ever parser
+# already in the tree via tauri-utils/wry (0.17 = the release on the same
+# dom_query 0.27), and page charsets through encoding_rs (MIT OR
+# Apache-2.0, already in the tree via reqwest).
+dom_smoothie = "0.17"
+encoding_rs = "0.8"
 
 # GPU acceleration per platform: Vulkan on Windows (needs the Vulkan SDK at
 # build time), Metal on macOS (ships with Xcode). Linux stays CPU-only by

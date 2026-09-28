@@ -1084,6 +1084,43 @@ pub fn link_inspect(url: String) -> LinkInfo {
     }
 }
 
+/// Save the main text of a web page as a note (#258, P17): fetched with the
+/// link rules (`allow_local` as for a transcribed link), extracted, saved
+/// with `source: url:<link>` and indexed; the Library refreshes on
+/// `archive-item-created`. `title` replaces the page's when not empty;
+/// `tags`/`categories` are New's defaults. Nothing is saved when the page
+/// has too little text or isn't HTML.
+#[tauri::command]
+pub async fn article_save(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    title: Option<String>,
+    allow_local: Option<bool>,
+    tags: Option<Vec<String>>,
+    categories: Option<Vec<String>>,
+) -> Result<crate::sources::url::article::Saved, String> {
+    use tauri::Emitter;
+    let (dir, db) = archive_paths(&state)?;
+    let saved = blocking(move || {
+        archive::prepare_archive_dir(&dir)?;
+        crate::sources::url::article::save_article(
+            &dir,
+            &db,
+            &url,
+            allow_local.unwrap_or(false),
+            &crate::sources::url::article::Extras {
+                title: title.unwrap_or_default(),
+                tags: tags.unwrap_or_default(),
+                categories: categories.unwrap_or_default(),
+            },
+        )
+    })
+    .await?;
+    let _ = app.emit_to("main", "archive-item-created", saved.id.clone());
+    Ok(saved)
+}
+
 /// Whether yt-dlp is installed (#123), for the Link tab.
 #[derive(serde::Serialize)]
 pub struct YtDlpStatus {
