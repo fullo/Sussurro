@@ -629,6 +629,15 @@ export interface LinkInfo {
   label: string;
 }
 
+/** `article_save` (#258): the note made from a web page's text. */
+export interface ArticleSaved {
+  id: string;
+  title: string;
+  paragraphs: number;
+  /** From the page's `<html lang>` (`en`, `it`), or empty. */
+  language: string;
+}
+
 /** `yt_dlp_status`. */
 export interface YtDlpStatus {
   found: boolean;
@@ -743,6 +752,17 @@ export interface TtsDownloadProgress {
   total_bytes: number;
 }
 
+/** Read aloud (#257): the AudioSeal watermark models every generated file
+ *  needs — downloaded with the first model or voice. */
+export interface TtsWatermark {
+  bytes: number;
+  downloaded: boolean;
+  /** The detector alone is there (Check a file). */
+  detector_downloaded: boolean;
+  licence: string;
+  attribution: string;
+}
+
 /** Read aloud (#255): what Models → Voices shows. */
 export interface TtsStatus {
   enabled: boolean;
@@ -750,6 +770,8 @@ export interface TtsStatus {
   licence: string;
   attribution: string;
   languages: TtsLanguage[];
+  /** The watermark models (#257); absent from an older backend. */
+  watermark?: TtsWatermark;
   bytes_on_disk: number;
   downloading: TtsDownloadProgress | null;
   /** Language whose model is in memory now. */
@@ -767,8 +789,12 @@ export interface SpeechStatus {
   language: string;
   engine: string;
   date: string;
-  /** Marks the file carries (P21): "metadata", "watermark" (#257). */
+  /** Marks the file carries (P21): "metadata", "watermark", "signature" (#257). */
   marked: string[];
+  /** Its signed C2PA manifest (`.c2pa` sidecar) is next to it (#257). */
+  signed: boolean;
+  /** Why it was left unsigned (no credential store…); empty otherwise. */
+  unsigned: string;
   /** The frontmatter records the file. */
   recorded: boolean;
   /** The document's text changed since the speech was made. */
@@ -796,4 +822,55 @@ export interface ReadAloudOutcome {
   save: boolean;
   seconds: number;
   chunks: number;
+}
+
+/** *Check a file* (#257, `watermark_check_file`): what each marking layer
+ *  says about a local audio file. */
+export interface WatermarkCheck {
+  file_name: string;
+  /** "Ogg Opus", "WAV", "MP3"… */
+  format: string;
+  seconds: number;
+  /** Only the first hour was read. */
+  truncated: boolean;
+  /** Under 3 s: a missing mark says little. */
+  short: boolean;
+  summary: "made_by_sussurro" | "inconclusive" | "signed_only" | "tags_only" | "no_mark";
+  watermark: {
+    verdict: "found" | "inconclusive" | "not_found";
+    /** Share of the audio the detector found marked, 0–1. */
+    frames_marked: number;
+    /** Payload bits that differ from Sussurro's code, 0–16. */
+    bit_errors: number;
+  };
+  metadata: {
+    status: "sussurro" | "synthetic" | "none" | "not_read";
+    tags: [string, string][];
+  };
+  /** Signed metadata (C2PA, #257 part 2): embedded, or a `.c2pa` sidecar
+   *  next to the file. Strings come from the file: show them as text. */
+  signature: WatermarkCheckSignature;
+}
+
+export interface WatermarkCheckSignature {
+  /** valid = signed and unchanged since, by a certificate no trust list
+   *  knows; invalid = changed after signing, another file's sidecar, or
+   *  damaged; none = no signed metadata. */
+  status: "valid" | "invalid" | "none";
+  source: "sidecar" | "embedded" | null;
+  /** The certificate's common name and issuer. */
+  signer: string;
+  issuer: string;
+  /** "Sussurro 0.12.0". */
+  generator: string;
+  /** A `c2pa.created` action says trainedAlgorithmicMedia. */
+  ai_generated: boolean;
+  /** The claim generator is Sussurro (a claim: anyone can sign one). */
+  claims_sussurro: boolean;
+  when: string;
+  engine: string;
+  voice: string;
+  language: string;
+  /** Why it is invalid. */
+  problem: string;
 }

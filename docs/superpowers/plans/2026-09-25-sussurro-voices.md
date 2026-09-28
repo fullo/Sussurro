@@ -12,18 +12,20 @@
 
 ## Status (2026-09-28)
 
-Phase V0 spikes and every 0.11 issue are merged to `main`; 0.11.0's docs and
-version bump are prepared in #253 (this PR), but **no tag has been pushed
-and nothing is published yet** — the release is gated on manual QA
-(section 9) on real macOS, Windows and Linux hardware. 0.12 work has also
-started on `main` ahead of its own release (see the 0.12 row).
+Phase V0 spikes and every 0.11 issue — now including read aloud — are
+merged to `main`; 0.11.0's docs and version bump are prepared in #253
+(this PR), but **no tag has been pushed and nothing is published yet** —
+the release is gated on manual QA (section 9) on real macOS, Windows and
+Linux hardware. **Maintainer decision (2026-09-28, on #259)**: "0.11 now
+ships read aloud (#254–#258)" — the two-voice podcast recipe (#259) is the
+only 0.12 issue that stays out, moved to the 0.13 milestone.
 
 | Milestone | Epic | State |
 |---|---|---|
 | Phase V0 — Voices spikes | #274 | done — all six spikes merged (#235–#240) |
-| 0.11 — Known voices | #275 | done — all twelve issues merged (#241–#253); **0.11.0 prepared, not yet tagged/published** (awaiting manual QA, section 9) |
-| 0.12 — Read aloud | #276 | in progress on `main` ahead of 0.11.0's tag: text prep (#254), engine (#255), read aloud (#256) and 24 kHz speech (#309) merged, all behind the off-by-default `Settings.tts_enabled` (Settings → Experimental); marking (#257), article links (#258) and its own docs/release (#260) still open |
-| 0.13 — Your voice, with consent | #277 | waits on P19, P20 and the legal review (#261) |
+| 0.11 — Known voices (now including read aloud) | #275 | done — all seventeen issues merged (#241–#252, #254–#258); docs (#253) prepared, **0.11.0 not yet tagged/published** (awaiting manual QA, section 9) |
+| 0.12 — Read aloud | #276 | absorbed into 0.11 (2026-09-28 decision on #259), apart from its own docs/release issue (#260, not yet acted on) — see the 0.11 row |
+| 0.13 — Your voice, with consent | #277 | waits on P19, P20 and the legal review (#261); also now holds the two-voice podcast recipe stretch goal moved from 0.12 (#259) |
 | Track A — Accounts and stores | #278 | maintainer accounts (P22, P23); privacy policy page (#267) agent-ready |
 
 #146 stays open as the umbrella. In the text, spikes V0-1 … V0-6 are
@@ -241,8 +243,18 @@ assume.
   the future commercial licence (standing decision). Engines that tokenize
   text directly (Pocket TTS, Qwen3-TTS, Chatterbox) avoid the question.
 - **E17 — Marking synthetic audio.** *Settled by spike V0-6 (#240, numbers
-  in 4.7), except where the signed metadata of `speech.opus` lives, which
-  the maintainer confirms in #257.* Two layers, as the Commission's Code of
+  in 4.7); the maintainer confirmed the hosting (`DarumaHQ/audioseal-onnx`)
+  and the signed metadata (item 2's recommendation) in #257. Status
+  (2026-09-28): all three items built — items 1 and 3 in #257 part 1 (the
+  M16 watermark on every generated file, *Check a file*), item 2 in part 2
+  (`tts/signing.rs`: `c2pa` 0.91.1 with `rust_native_crypto` and no HTTP
+  client, per-install self-signed ES256 chain made on first need with the
+  key only in the OS credential store and no clear-text fallback — without
+  a store the file is kept unsigned and says why; sidecar `speech*.c2pa`
+  for saved speech and *Listen* files, embedded in preview WAVs; the time
+  is the local clock, no TSA; *Check a file* reads the embedded manifest or
+  the sidecar and reports valid/invalid/none with the layer that answered).
+  The app has no export of speech files yet, so nothing else embeds.* Two layers, as the Commission's Code of
   Practice on marking and labelling (final, 10 June 2026) asks:
   1. **Watermark: Meta AudioSeal 0.2, the 16-bit base models**
      (`audioseal_wm_16bits` + `audioseal_detector_16bits`). Code MIT; the
@@ -1086,7 +1098,7 @@ maintainer's own voice only if he provides it.
       compatible licence and a no-Python runtime; the watermark survives
       Opus 24 kb/s.
 
-### 0.11 — Known voices (~5–6 weeks) — done, prepared for release
+### 0.11 — Known voices, now including read aloud (~5–6 weeks) — done, prepared for release
 
 - [x] **Voice profiles**: store in app data, enrolment from confirmed lines,
       rebuild, forget (P12, P13, E13). (#241)
@@ -1107,25 +1119,36 @@ maintainer's own voice only if he provides it.
 - [x] **Attendees from an ICS file or link** (P22, E21). *Agent-ready.* (#252)
 - [x] Docs and release. (#253) — this PR: `docs/releases/0.11.0.md`,
       README/CLAUDE.md/blog updates, version bump, `licenses.json`
-      regenerated. **Not tagged or published**: manual QA (section 9)
+      regenerated. Refreshed 2026-09-28 for read aloud joining 0.11
+      (#254–#258) and other `main` merges (#317, #318/0.10.3, #325, #329).
+      **Not tagged or published**: manual QA (section 9)
       on macOS, Windows and Linux hardware is still open.
+- [x] **Read aloud, folded into 0.11** (maintainer decision 2026-09-28 on
+      #259): text preparation (#254); the Pocket TTS engine, model
+      download and *Models → Voices* (P18, E16, E22, #255); reading a
+      document aloud, speech file next to the item, Audio tab (P17, #256)
+      — plus 24 kHz speech output (#309), merged after #256; marking every
+      generated file (watermark + metadata) and *Check a file* (P21, E17,
+      #257 — part 1 watermark + *Check a file*, part 2 C2PA signing);
+      article links extracting a web page's text into a readable item
+      (P17, #258).
 
-### 0.12 — Read aloud (~3–4 weeks) — in progress on `main`, ahead of its own release
+### 0.12 — Read aloud (~3–4 weeks) — absorbed into 0.11 (2026-09-28)
 
-- [x] **Text preparation**: markdown to speakable text, Italian and English
-      normalisation, chunking. *Agent-ready.* (#254)
-- [x] **Engine** per the bake-off, model download, *Models → Voices* (P18,
-      E16, E22). (#255)
-- [x] **Read aloud**: speech file next to the item, Audio tab, temporary
-      playback (P17). (#256) — plus 24 kHz speech output (#309), merged
-      after #256.
-- [ ] **Marking** of every generated file and *Check a file* (P21, E17). (#257)
-- [ ] **Article links** to text items and audio (P17). (#258)
-- [ ] Stretch: **two-voice podcast recipe** (P17). (#259)
-- [ ] Docs and release. (#260)
+Everything under this milestone shipped as part of 0.11 above, per the
+maintainer's 2026-09-28 decision on #259. Only its stretch goal and its
+own docs/release issue are still open here:
+
+- [ ] Stretch: **two-voice podcast recipe** (P17). (#259) — **moved to the
+      0.13 milestone** (maintainer decision, 2026-09-28); listed under
+      0.13 below too.
+- [ ] Docs and release. (#260) — not acted on; 0.12's release-notes content
+      is folded into `docs/releases/0.11.0.md` instead.
 
 ### 0.13 — Your voice, with consent (~3–4 weeks, after the legal review)
 
+- [ ] Stretch, moved from 0.12: **two-voice podcast recipe** (P17). (#259;
+      maintainer decision, 2026-09-28)
 - [ ] **Legal review** by a lawyer, recorded in the decision log (P20;
       maintainer). (#261)
 - [ ] **Consent capture and verification** (E18). (#262)
@@ -1157,7 +1180,7 @@ Track A depends on the maintainer's accounts and the stores' review times.
 | Blind listening test of the bake-off samples (P18) | 0.12 | #236 |
 | Lawyer's review of cloning (P20) | 0.13 | #261 |
 | Read the Pocket TTS gated-weights terms before the app downloads them | 0.12/0.13 | #236 |
-| Confirm the signed metadata of `speech.opus` (sidecar `speech.c2pa` with a per-install key, or no signature on the Ogg file) and host the pinned AudioSeal ONNX export (e.g. a release asset) | 0.12 | #257 |
+| ~~Confirm the signed metadata of `speech.opus` (sidecar `speech.c2pa` with a per-install key, or no signature on the Ogg file) and host the pinned AudioSeal ONNX export (e.g. a release asset)~~ Done 2026-09-28: sidecar with a per-install key, export on `DarumaHQ/audioseal-onnx`; both built | 0.12 | #257 |
 | Chrome Web Store: $5 fee, 2-Step Verification, trader declaration | Track A | #270 |
 | Partner Center account (Edge) | Track A | #271 |
 | AMO: switch or add a listed version; answer reviewers | Track A | #269 |

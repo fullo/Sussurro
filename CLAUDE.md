@@ -449,6 +449,27 @@ project decisions here, not in per-machine memory.**
   frontmatter day vs. the viewer's local today sent by the UI; the date
   facet takes one bucket or one custom range. Index schema v2 (rebuilt
   automatically). Selection is kept in localStorage (`libraryFacets`).
+- **An unreadable archive is an error, never an empty archive (#328)**
+  (`archive/unreadable.rs`, `store::scan_item_dirs` → `ArchiveScan`): a
+  root that is missing, not a folder or refused (`read_dir` error, macOS
+  TCC = EPERM) makes the scan fail with `ArchiveUnreadable` (path + kind);
+  `Index::sync` scans **before** touching the database and
+  `rebuild_index` scans **before** its reset, so the index is left as it
+  is — except a **missing** root while the index knows none of its items
+  (no index, or one of another folder: an archive not created yet), which
+  syncs as empty (`Slot::scan`). Subfolders that can't be read are logged and listed as
+  `unreadable`: rows under them are kept (`ArchiveScan::is_unknown`). A
+  readable empty root still clears the index. Every derived-state writer
+  follows the same rule: voice profiles (`rebuild_all`/`enable` refuse
+  when a profile's document lies under an unreadable folder;
+  `document_changed` refuses on an unreadable root or document — an OS
+  read error is never "document gone"), `source-files.json` pruning and
+  the crash journal keep entries of an archive that can't be read. The
+  UI gets a JSON error `code: "archive_unreadable"` (`ui_error` in
+  `commands::blocking`; `src/lib/archiveError.ts`) and the Library shows
+  the folder, the OS reason, the macOS Files and Folders hint and
+  Settings → Archive; the archive API answers `503 archive_unreadable`
+  (no path). Dev mock: `?archive=unreadable|missing`.
 - **Saved audio (0.10, #141, P9)** (`archive/audio.rs`,
   `engine/audio_out.rs`): only on request — New's "Save audio" per run
   (`RunOptions.save_audio`), else `Settings.save_audio` (off; also covers
@@ -539,7 +560,14 @@ project decisions here, not in per-machine memory.**
   `cleanup_before_exit`, which also covers `restart()` and the updater's
   Windows install). Crash of Sussurro: Windows kill-on-close job object,
   Linux `PR_SET_PDEATHSIG` (spawned from one long-lived thread — the signal
-  follows the spawning *thread*), macOS nothing (documented). Spawned
+  follows the spawning *thread*), macOS a startup reaper (#319,
+  `stt/remote/orphans.rs`): at startup and before the first spawn of each
+  sidecar path it SIGTERMs (2 s, then SIGKILL after a re-check) processes
+  that are ours (uid), orphaned (ppid 1), run the same canonical
+  executable (`proc_pidpath`, never by name) and whose argv `--host` is
+  `…/sc-<pid>-…/llama.sock` of a dead Sussurro pid (libproc +
+  `KERN_PROCARGS2`, libc only; pure `select_orphans` tested everywhere;
+  `#[ignore]` live test `live_an_orphaned_sidecar_is_reaped`). Spawned
   without a shell, `-ngl 99 -c 4096 -np 1 --cache-ram 0 --no-webui`
   (#109's settings) `--no-slots`. **Who can reach it (#216,
   `stt/remote/endpoint.rs`)**: macOS/Linux `--host <dir>/llama.sock`, a
@@ -790,8 +818,8 @@ project decisions here, not in per-machine memory.**
   loaded at a time (`tts::service`), unloaded after 5 min idle on the
   shared idle thread. Previews are temporary WAVs (`<app data>/tts-preview/`,
   swept at startup) served by `sussurro-audio:` under `tts-preview/` — no
-  CSP change. WAVs carry a `LIST/INFO` "synthetic speech" comment; the
-  watermark is #257 (E17). Generation per #254 chunk, re-cut at 50 tokens; voice
+  CSP change. WAVs carry a `LIST/INFO` "synthetic speech" comment and
+  the #257 watermark. Generation per #254 chunk, re-cut at 50 tokens; voice
   and decoder state restart per piece; temperature 0.7, fixed seed (same
   text = same audio). Live test (`tts::live_tests`, env vars in the file)
   on the M1 Pro at 2 threads: Italian RTF ≈ 1.2–1.4, English ≈ 0.4; Whisper
@@ -830,9 +858,8 @@ project decisions here, not in per-machine memory.**
   goes through `tts::marking::Marker` — Opus comments `SYNTHETIC=1`,
   `DIGITAL_SOURCE_TYPE=…trainedAlgorithmicMedia`, engine, voice, language
   (`OpusWriter::create_with`, `opus::read_tags`); `Marker::process` is the
-  single **watermark hook for #257** (no-op now, `marked: [metadata]`), the
-  preview passes it too; it gets 24 kHz blocks, and #257's "M16" (E17)
-  computes the mark on their 16 kHz resample and adds it upsampled. **Stale** = SHA-256 of the speakable text (not the
+  single **watermark hook** (#257, below), the preview passes it too.
+  **Stale** = SHA-256 of the speakable text (not the
   frontmatter) ≠ the recorded one. One job at a time (`read_aloud::jobs()`),
   progress `read-aloud-progress`, cancel between chunks; refused while off,
   on a live item, or with the model/voice missing (points to Models →
@@ -841,6 +868,91 @@ project decisions here, not in per-machine memory.**
   `_cancel`, `_job`, `_files`, `_delete`, `_discard`. Live test
   `live_read_aloud_saves_a_marked_speech_file` (English M1 Pro, 2 threads:
   6.3 s of speech in 3.4 s).
+- **Marking generated audio: watermark + Check a file (0.12, #257 part 1,
+  P21/E17)** (`tts/watermark.rs`, `tts/marking.rs`, `tts/check.rs`,
+  `shell/CheckFileCard.tsx`): AudioSeal 0.2 16-bit (MIT, Meta) in our ONNX
+  export `DarumaHQ/audioseal-onnx` @`55477a4c` (generator 58.8 MB, detector
+  34.7 MB, pinned size + SHA-256 in `tts/catalog.rs`; made by
+  `scripts/export_audioseal_onnx.py`, a dev tool that never ships) through
+  the app's `ort`, 2 threads. Files in `<models>/pocket-tts/audioseal/`
+  (so `tts_delete` of everything removes them); **every download job that
+  finds them missing brings them** (same click, counted in the
+  confirmation — P24; `tts_download { watermarkOnly }` for models from before
+  #257). **Fail closed**: `Marker::new` needs the generator; read aloud,
+  *Listen* and previews refuse without it (checked before any work), no
+  switch anywhere. **M16**: `watermark::M16` streams — audio → 16 kHz
+  (`tts/resample.rs`), generator on ≤ 10 s windows padded to the 320-sample
+  hop, watermark → back to the audio's rate and added; the output lags up
+  to one window, every sample once. Payload `watermark::PAYLOAD` = 0xB2E5,
+  one fixed code (never per user/install). Frontmatter `marked: [metadata,
+  watermark]` for new files. *Check a file* (Models → Voices, module on,
+  command `watermark_check_file`): Rust-side picker, `config_io::
+  open_picked_file` guards (audio extensions, no links, ≤ 2 GiB), Ogg Opus
+  via `OpusReader::open` (16 kHz), others symphonia at native rate +
+  band-limited resample, ≤ 10 s detector windows, ≤ 1 h read; tags from
+  `opus::read_tags` / WAV `LIST/INFO`. Verdict per E17: found = ≥ 50 % of
+  samples with prob > 0.5 **and** ≤ 2 of 16 bits wrong; frames without the
+  code = *inconclusive*; nothing = "no Sussurro mark found" (never
+  "human"); summary `made_by_sussurro | inconclusive | signed_only |
+  tags_only | no_mark` (watermark first, then a valid signature claiming
+  Sussurro, then tags). Never downloads from Check. Live test
+  `live_watermark_survives_the_app_opus_and_is_read_back` (env vars in
+  `tts/live_tests.rs`): `say` speech at 24 kHz → Opus 32 kb/s: 95–98 % of
+  frames, 0 bits wrong; unmarked: ≤ 0.4 % frames, 9 bits wrong.
+- **Signed metadata (C2PA) on generated speech (0.12, #257 part 2, E17
+  item 2)** (`tts/signing.rs`): `c2pa` 0.91 (MIT/Apache) with default
+  features off + `rust_native_crypto` (no OpenSSL, no HTTP client: no TSA,
+  no OCSP, no remote manifests) and `rcgen` over `ring` for the cert
+  (~103 new crates, all permissive). **Per-install self-signed** ES256
+  chain, made on first need (a file generated with the module on — never at
+  install/startup): a root that signs one end-entity cert and is dropped,
+  `CN=Sussurro install <8 hex of the public key>`, `O=Sussurro
+  (self-signed, one per install)`, EKU emailProtection, 30 years (no TSA →
+  verifiers check validity against *their* clock). Key only in the OS
+  credential store (`secrets.rs`, account `c2pa-signing-key`, write +
+  read-back verified); chain in `<app data>/c2pa/signing-chain.pem` (dir
+  0700, file 0600); a key/chain mismatch (self-test sign + verify at load)
+  makes a new pair; `signing::identity` caches it per run. The key and
+  chain **stay** when the module is turned off or `tts_delete` runs
+  (maintainer, 2026-09-28: not personal data; keeps the signer stable). **No clear-text
+  fallback**: no working store = the file is still made (watermark + tags)
+  but unsigned, `synthetic.<file>.unsigned: <reason>` in the frontmatter,
+  `SpeechStatus.unsigned` shown in the Audio tab. Manifest (Code 1.3, no
+  personal data): claim generator `Sussurro <version>`, fixed title
+  "Synthetic speech", one `c2pa.created` action with
+  `trainedAlgorithmicMedia`, `when` (UTC), engine/voice/language in
+  `parameters`; no soft binding. **Sidecar** for Ogg: `speech*.c2pa` (data
+  hash over the whole file) written to `.sussurro/<name>.c2pa.part` and
+  moved in by `speech::commit` together with the audio; an old sidecar goes
+  to the trash with the old audio (also when the new file is unsigned);
+  *Delete speech* trashes both; `is_speech_sidecar_name` is not playable
+  (the scheme never serves `.c2pa`); Delete/Compress audio untouched.
+  *Listen* gets `listen-N.c2pa` in `tts-preview/` (cleared with it);
+  previews (WAV) embed the manifest. Frontmatter `marked` gains
+  `signature`. No speech export path exists, so nothing else embeds.
+  *Check a file*: embedded manifest (wav/mp3/m4a/flac) first, else the
+  `<same stem>.c2pa` next to the picked file through `open_picked_file`
+  (regular file, no link, ≤ 1 MiB); `valid | invalid | none` + source,
+  signer, generator, `claims_sussurro`, `ai_generated`, problem codes; UI
+  says "signed by a Sussurro install, not a trusted signer". Live keychain
+  test `real_signing_key_in_the_os_store` (`#[ignore]`).
+- **Article links (0.12, #258, P17)** (`sources/url/article.rs`,
+  command `article_save`, New → Link → *Article*): a web page's main text
+  becomes a **note** (not a transcription — no audio, speakers or
+  subtitles; P17's "transcription-like" = link source + generated audio),
+  `source: url:<link>`, date now, `language` from `<html lang>`, New's
+  default tags/categories, one segment per markdown block and per list item
+  (the #251 note shape), indexed at once, `archive-item-created`. Network =
+  `direct::fetch_bytes` only (the #123/#216 rules, 10 MiB cap, never a
+  second client); video sites, media links and non-HTML types are refused
+  pointing to Transcribe. Charset: header, BOM, `<meta>` prescan, UTF-8,
+  else windows-1252 (`encoding_rs`). Extraction: `dom_smoothie` **0.17**
+  (MIT; the release on the `dom_query` 0.27 / `html5ever` already in the
+  tree via tauri-utils/wry — bump with them), markdown mode, escapes
+  removed, links → text, images dropped, ≤ 200k elements; < 300 letters =
+  `TooLittleText` (login, paywall, JS page), nothing saved. Read aloud is
+  the ordinary Audio tab (module on only, P24); off, the tab just says
+  there is no audio. Live check `live_article_extraction` (`#[ignore]`).
 - **Workspace only + onboarding (#115)**: the left-rail workspace is the
   only UI (the classic window and its preview flag are gone; the old
   settings key is ignored and dropped on save). The main window opens at
@@ -957,7 +1069,7 @@ project decisions here, not in per-machine memory.**
   <branch>`) — it validated PR #53 end-to-end (tests, clippy, E2E smoke).
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
-## Roadmap (agreed 2026-07-03; current *released* version 0.10.2 — 2026-09-28;
+## Roadmap (agreed 2026-07-03; current *released* version 0.10.3 — 2026-09-28;
 0.11.0 prepared, not yet published — see below)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
@@ -1098,6 +1210,11 @@ Windows and an unauthenticated `/live` closed at the 2 s auth deadline;
 `cargo test` runs on Windows, with the `rust-windows` CI job (without the
 opus step on 0.10, which has no libopus).
 
+**0.10.3 — published 2026-09-28** (notes `docs/releases/0.10.3.md`): same
+route (PR #320, cherry-pick of #318): every Ollama request sends
+`think: false` (thinking models returned empty recipe results), recipe
+steps cap `num_predict`, bullet-only runaway lines are dropped.
+
 - **Phase 0** — spikes #106–#108 closed (Silero VAD, WeSpeaker embeddings,
   word timings). #104/#105 (browser capture, Meet names) were desk studies
   that the implementation followed; they stay open until #184 checks real
@@ -1149,42 +1266,54 @@ legal review) carry `needs maintainer`. Milestones and epics:
 (#275), `0.12 — Read aloud` (#276), `0.13 — Your voice, with consent`
 (#277), `Track A — Accounts and stores` (#278).
 
-- **0.11 — Known voices**: suggest-only voice recognition from confirmed
-  speaker links (profiles in app data, never in the archive: GDPR art. 9),
-  own-voice enrolment, overlap-aware Re-detect (pyannote segmentation-3.0,
-  MIT, through `ort`), Teams/Zoom web names, Ogg Opus saved audio (WebKit
-  plays Ogg Opus only from macOS 15.4, so older macOS needs a decode path),
-  archive HTTP API with scoped hashed tokens (every browser Origin refused),
-  calendar attendees from ICS.
+- **0.11 — Known voices, now including read aloud** (**maintainer decision,
+  2026-09-28, on #259**: "0.11 now ships read aloud (#254–#258)" — the
+  two-voice podcast recipe, #259, is the only 0.12 issue that stays out,
+  moved to the 0.13 milestone): suggest-only voice recognition from
+  confirmed speaker links (profiles in app data, never in the archive:
+  GDPR art. 9), own-voice enrolment, overlap-aware Re-detect (pyannote
+  segmentation-3.0, MIT, through `ort`), Teams/Zoom web names, Ogg Opus
+  saved audio (WebKit plays Ogg Opus only from macOS 15.4, so older macOS
+  needs a decode path), archive HTTP API with scoped hashed tokens (every
+  browser Origin refused), calendar attendees from ICS — plus **local read
+  aloud**, still an **experimental, optional module** (P24: off by default
+  under Settings → Experimental, `Settings.tts_enabled`; models download
+  only on the user's explicit request, never at install/onboarding/in the
+  background): text preparation (#254), the Pocket TTS engine and Models →
+  Voices (#255, MIT + CC-BY-4.0, native Italian, decided by the #236
+  bake-off + listening test), reading a document aloud (#256, plus 24 kHz
+  speech output, #309), marking every generated file — AudioSeal watermark
+  that can't be switched off, plus C2PA-signed metadata — and *Check a
+  file* (#257, AI Act art. 50 applies from 2 Aug 2026), and article links
+  that extract a web page's text into a readable item (#258).
   **0.11.0 — prepared, not yet published** (docs/version-bump PR #253,
-  2026-09-28): all twelve 0.11 issues (#241–#252) are merged to `main`,
-  each already updating the README, blog and manual for its own feature.
-  #253 adds `docs/releases/0.11.0.md`, this roadmap paragraph, the voices
-  plan's status section, bumps the version 0.10.0 → 0.11.0 in
-  `package.json`, `package-lock.json`, `tauri.conf.json`, `Cargo.toml` and
-  `Cargo.lock`, and regenerates `licenses.json` (unchanged — the per-issue
-  PRs already kept it current; regenerating it needed a small
-  cross-platform fix to `scripts/gen-licenses.mjs`, which called `npm`
-  without `shell: true`, silently finding zero packages on Windows).
-  **Not tagged or released**: no `v0.11.0` tag has been
-  pushed, so the draft/publish/un-draft release step and the manual QA
-  from the plan's section 9 (macOS, Windows, Linux hardware) are still
-  open, tracked by #253's acceptance criteria. `main` also carries the
-  first slice of 0.12 (TTS, #254/#255/#256/#309) ahead of 0.11.0 — it
-  ships inside the same tag since it is fully gated behind the
-  off-by-default `Settings.tts_enabled` (Settings → Experimental) with no
-  download until the user asks; see `docs/releases/0.11.0.md` for the
-  explicit call-out to the maintainer.
-- **0.12 — Read aloud** (**experimental, optional module — P24**: off by
-  default under Settings → Experimental; TTS/cloning models are downloaded
-  ONLY on the user's explicit request, never at install, onboarding or in
-  the background): local TTS (default candidate Kyutai Pocket TTS,
-  MIT + CC-BY-4.0, native Italian; decided by a bake-off + listening test),
-  every generated file marked (watermark + metadata: AI Act art. 50 applies
-  from 2 Aug 2026).
+  2026-09-28, refreshed 2026-09-28 for #257/#258 and other main merges):
+  all seventeen other 0.11 issues (#241–#252, #254–#258) are merged to
+  `main`, each already
+  updating the README, blog and manual for its own feature. #253 adds
+  `docs/releases/0.11.0.md`, this roadmap paragraph, the voices plan's
+  status section, bumps the version 0.10.0 → 0.11.0 in `package.json`,
+  `package-lock.json`, `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`,
+  and regenerates `licenses.json` (unchanged versus what the per-issue PRs
+  already produced; regenerating it needed a small cross-platform fix to
+  `scripts/gen-licenses.mjs`, which called `npm` without `shell: true`,
+  silently finding zero packages on Windows). Also folded in since the
+  first pass: the orphaned-macOS-sidecar reaper (#325/#319), an unreadable
+  archive folder no longer emptying the Library (#329/#328), a live level
+  meter on every audio source picker (#317/#314), and Ollama
+  thinking-model/runaway-output fixes (#318, released as the `release/
+  0.10.x`-branch patch **0.10.3**, also present on `main`). **Not tagged
+  or released**: no `v0.11.0` tag has been pushed, so the draft/publish/
+  un-draft release step and the manual QA from the plan's section 9
+  (macOS, Windows, Linux hardware) are still open, tracked by #253's
+  acceptance criteria.
+- **0.12 — Read aloud**: absorbed into 0.11 above by the maintainer's
+  2026-09-28 decision, apart from its stretch goal, the two-voice podcast
+  recipe (#259), moved to the 0.13 milestone.
 - **0.13 — Your voice, with consent**: own voice first; live consent with a
   nonce, transcript + voice match; never cloned from files, meetings or the
-  archive; gated by a lawyer's review.
+  archive; gated by a lawyer's review. Also holds the two-voice podcast
+  recipe stretch goal moved from 0.12 (#259).
 - **Track A**: store listings (Chrome, Edge, AMO listed), privacy policy
   page, Google/Microsoft calendar OAuth — maintainer accounts.
 - Licence rule for all of it: code **and** weights must allow commercial

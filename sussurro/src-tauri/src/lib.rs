@@ -84,6 +84,11 @@ pub fn run() {
             // restart, the updater's Windows install): no sidecar outlives
             // the app (#117).
             app.resources_table().add(stt::remote::ExitGuard);
+            // A sidecar left running by a crash of an earlier run (macOS
+            // only: nothing stops it with the app) is stopped now (#319).
+            if let Some(paths) = stt::sidecar::locate(handle) {
+                std::thread::spawn(move || stt::remote::orphans::reap_orphans(&paths.binary));
+            }
             // whisper.cpp's log keeps going to stderr; its backend lines are
             // kept for Settings → Diagnostics (#101).
             diagnostics::backend::install_whisper_log_capture();
@@ -132,6 +137,7 @@ pub fn run() {
                 recipe_runs: Default::default(),
                 recipe_answers: Default::default(),
                 consents: Default::default(),
+                level_previews: Default::default(),
             });
             // Long-form sessions the last run never finished (crash, forced
             // quit): keep their items as "interrupted" (#153). Off the main
@@ -214,6 +220,9 @@ pub fn run() {
             commands::start_mic_test,
             commands::stop_mic_test,
             commands::mic_level,
+            commands::level_preview_start,
+            commands::level_preview,
+            commands::level_preview_stop,
             commands::whisper_gpu,
             commands::trigger_dictation,
             commands::copy_text,
@@ -227,6 +236,7 @@ pub fn run() {
             commands::engine_start_mic,
             commands::engine_start_link,
             commands::link_inspect,
+            commands::article_save,
             commands::yt_dlp_status,
             commands::engine_stop_mic,
             commands::engine_start_system,
@@ -300,6 +310,7 @@ pub fn run() {
             commands::tts_cancel_download,
             commands::tts_delete,
             commands::tts_preview,
+            commands::watermark_check_file,
             commands::read_aloud_start,
             commands::read_aloud_cancel,
             commands::read_aloud_job,

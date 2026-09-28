@@ -1159,6 +1159,11 @@ button.pchip-name:hover { text-decoration: underline; }
 .tts-voices li { font-size: 13px; }
 .tts-voice-pick { display: inline-flex; align-items: center; gap: 6px; min-width: 90px; }
 .tts-voice-source { font-size: 12px; }
+/* Check a file (#257): the answer, then one line per marking layer. */
+.check-result { margin-top: 10px; }
+.check-result p { margin: 4px 0; }
+.check-layers { margin: 6px 0; padding-left: 18px; }
+.check-layers li { margin: 2px 0; overflow-wrap: anywhere; }
 .tts-progress .progress { width: 200px; }
 /* Generated speech in the Audio tab (read aloud, #256): always labelled
    synthetic, kept apart from recorded audio. */

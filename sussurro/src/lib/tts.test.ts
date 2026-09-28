@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   canPreview,
+  checkNotes,
+  checkSummary,
+  metadataLine,
+  signatureDetails,
+  signatureLine,
+  watermarkLine,
+  watermarkMissing,
+  watermarkPrompt,
   downloadBytes,
   downloadPrompt,
   languageStatus,
@@ -10,7 +18,7 @@ import {
   selectedVoice,
   withVoice,
 } from "./tts";
-import type { TtsLanguage, TtsStatus, TtsVoice } from "./types";
+import type { TtsLanguage, TtsStatus, TtsVoice, TtsWatermark, WatermarkCheck, WatermarkCheckSignature } from "./types";
 
 const voice = (over: Partial<TtsVoice> = {}): TtsVoice => ({
   id: "giovanni",
@@ -109,5 +117,132 @@ describe("voice per language", () => {
   it("sets one language and keeps the others", () => {
     expect(withVoice(undefined, "it", "alba")).toEqual({ it: "alba" });
     expect(withVoice({ en: "alba" }, "it", "marius")).toEqual({ en: "alba", it: "marius" });
+  });
+});
+
+const wm = (over: Partial<TtsWatermark> = {}): TtsWatermark => ({
+  bytes: 93_481_274,
+  downloaded: false,
+  detector_downloaded: false,
+  licence: "MIT",
+  attribution: "AudioSeal by Meta, ONNX export by DarumaHQ",
+  ...over,
+});
+
+describe("the watermark models (#257)", () => {
+  it("come with the first download and are named in the confirmation", () => {
+    expect(downloadBytes(lang(), undefined, wm())).toBe(1_307_501_592 + 18_486_272 + 93_481_274);
+    expect(downloadBytes(lang(), undefined, wm({ downloaded: true }))).toBe(1_307_501_592 + 18_486_272);
+    const p = downloadPrompt({ ...status(), watermark: wm() }, lang());
+    expect(p).toContain("the Italian model (24 layers, 1.3 GB), the voice Giovanni (18.5 MB) and the watermark models");
+    expect(p).toContain("(93.5 MB, MIT, AudioSeal by Meta, ONNX export by DarumaHQ)");
+    expect(p).toContain("Total 1.4 GB");
+    // Nothing else to fetch: no watermark-only surprise in a language prompt.
+    const done = lang({ model_downloaded: true, voices: [voice({ downloaded: true })] });
+    expect(downloadPrompt({ ...status([done]), watermark: wm() }, done)).toContain("nothing new");
+    expect(watermarkPrompt(wm())).toBe(
+      "Download the watermark models that mark every file Sussurro speaks (93.5 MB, MIT, AudioSeal by Meta, ONNX export by DarumaHQ) from huggingface.co? Total 93.5 MB.",
+    );
+  });
+
+  it("block previews and are explained only when a model is there", () => {
+    const l = lang({ model_downloaded: true });
+    const v = voice({ downloaded: true });
+    expect(canPreview(l, v, wm())).toBe(false);
+    expect(canPreview(l, v, wm({ downloaded: true }))).toBe(true);
+    expect(canPreview(l, v)).toBe(true);
+    expect(watermarkMissing({ ...status([lang()]), watermark: wm() })).toBeNull();
+    expect(watermarkMissing({ ...status([l]), watermark: wm() })).toMatch(/watermark/);
+    expect(watermarkMissing({ ...status([l]), watermark: wm({ downloaded: true }) })).toBeNull();
+    expect(watermarkMissing(status([l]))).toBeNull();
+  });
+});
+
+const sig = (over: Partial<WatermarkCheckSignature> = {}): WatermarkCheckSignature => ({
+  status: "valid",
+  source: "sidecar",
+  signer: "Sussurro install 1a2b3c4d",
+  issuer: "Sussurro (self-signed, one per install)",
+  generator: "Sussurro 0.12.0",
+  ai_generated: true,
+  claims_sussurro: true,
+  when: "2026-09-28T10:00:00Z",
+  engine: "Pocket TTS",
+  voice: "giovanni",
+  language: "it",
+  problem: "",
+  ...over,
+});
+
+const check = (over: Partial<WatermarkCheck> = {}): WatermarkCheck => ({
+  file_name: "speech.opus",
+  format: "Ogg Opus",
+  seconds: 12.3,
+  truncated: false,
+  short: false,
+  summary: "made_by_sussurro",
+  watermark: { verdict: "found", frames_marked: 0.954, bit_errors: 0 },
+  metadata: { status: "sussurro", tags: [["SYNTHETIC", "1"]] },
+  signature: sig(),
+  ...over,
+});
+
+describe("Check a file wording (E17)", () => {
+  it("says made by Sussurro only with the code", () => {
+    expect(checkSummary(check())).toMatch(/^Made by Sussurro/);
+    expect(watermarkLine(check())).toBe("Watermark: found — 95% of the audio marked, with Sussurro's code (0 of 16 bits off).");
+  });
+
+  it("never names another tool nor a human", () => {
+    const inc = check({ summary: "inconclusive", watermark: { verdict: "inconclusive", frames_marked: 0.89, bit_errors: 9 } });
+    expect(checkSummary(inc)).toMatch(/^Inconclusive/);
+    expect(watermarkLine(inc)).toContain("9 of the 16 code bits differ");
+    const none = check({ summary: "no_mark", watermark: { verdict: "not_found", frames_marked: 0.01, bit_errors: 8 }, metadata: { status: "none", tags: [] } });
+    expect(checkSummary(none)).toBe("No Sussurro mark found. That doesn't say who or what made the audio.");
+    for (const r of [inc, none]) {
+      const all = [checkSummary(r), watermarkLine(r), metadataLine(r)].join(" ").toLowerCase();
+      expect(all).not.toMatch(/human|person|real recording|another tool|other tool's/);
+    }
+    expect(watermarkLine(none)).toContain("not found");
+  });
+
+  it("describes tags as unsigned", () => {
+    expect(checkSummary(check({ summary: "tags_only" }))).toMatch(/tags can be copied/);
+    expect(metadataLine(check())).toMatch(/not signed/);
+    expect(metadataLine(check({ metadata: { status: "synthetic", tags: [] } }))).toMatch(/other software/);
+    expect(metadataLine(check({ format: "MP3", metadata: { status: "not_read", tags: [] } }))).toBe("Tags: not read for MP3 files.");
+  });
+
+  it("words a valid C2PA signature honestly: a Sussurro install, not a trusted signer", () => {
+    const line = signatureLine(check());
+    expect(line).toBe(
+      'Signed metadata (C2PA) (in the .c2pa file next to it): valid — says synthetic speech made by Sussurro 0.12.0; signed by a Sussurro install ("Sussurro install 1a2b3c4d"), not a trusted signer. The file hasn\'t changed since it was signed.',
+    );
+    expect(signatureDetails(check())).toBe("engine Pocket TTS · voice giovanni · language it · made 2026-09-28T10:00:00Z (the signer's clock)");
+    const embedded = signatureLine(check({ signature: sig({ source: "embedded" }) }));
+    expect(embedded).toContain("(inside the file)");
+    // Someone else's manifest: named as they sign it, no Sussurro wording.
+    const other = signatureLine(check({ signature: sig({ claims_sussurro: false, generator: "OtherTTS 2", signer: "Acme" }) }));
+    expect(other).toContain('says made by OtherTTS 2 (AI-generated); signed by "Acme"');
+    expect(other).not.toMatch(/Sussurro install/);
+    expect(checkSummary(check({ summary: "signed_only" }))).toMatch(/not a trusted signer/);
+  });
+
+  it("says a changed file no longer matches its signature, and when there is none", () => {
+    const bad = signatureLine(check({ signature: sig({ status: "invalid", problem: "assertion.dataHash.mismatch" }) }));
+    expect(bad).toMatch(/does not match — the file changed after it was signed, or the signature belongs to another file/);
+    expect(bad).toContain("assertion.dataHash.mismatch");
+    expect(signatureDetails(check({ signature: sig({ status: "invalid" }) }))).toBeNull();
+    expect(signatureLine(check({ signature: sig({ status: "none", source: null }) }))).toMatch(/^Signed metadata \(C2PA\): none/);
+    for (const s of ["valid", "invalid", "none"] as const) {
+      expect(signatureLine(check({ signature: sig({ status: s }) })).toLowerCase()).not.toMatch(/human|person|real recording/);
+    }
+  });
+
+  it("notes short and long files, and that nothing left the computer", () => {
+    expect(checkNotes(check())).toEqual(["Checked on this computer: nothing was uploaded."]);
+    const notes = checkNotes(check({ short: true, truncated: true }));
+    expect(notes).toHaveLength(3);
+    expect(notes[0]).toMatch(/under 3 seconds/);
   });
 });

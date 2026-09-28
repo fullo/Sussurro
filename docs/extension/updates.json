@@ -31,6 +31,16 @@
               "strict_min_version": "140.0"
             }
           }
+        },
+        {
+          "version": "0.10.3",
+          "update_link": "https://github.com/fullo/Sussurro/releases/download/v0.10.3/sussurro-extension-firefox-0.10.3.xpi",
+          "update_hash": "sha256:6a7622e42a945d98566d03b8ff7eaa5cf7cee3dc3e98c1db0071709c89cd100b",
+          "browser_specific_settings": {
+            "gecko": {
+              "strict_min_version": "140.0"
+            }
+          }
         }
       ]
     }

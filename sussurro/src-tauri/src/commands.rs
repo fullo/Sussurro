@@ -493,6 +493,8 @@ pub fn start_mic_test(state: State<'_, AppState>) -> Result<(), String> {
     if recorder.is_recording() {
         return Err("already recording".to_string());
     }
+    // Never compete with a picker's level preview for the device (#314).
+    state.level_previews.stop_all();
     let device = state.settings.lock().unwrap().input_device.clone();
     recorder.start(&device).map_err(|e| e.to_string())?;
     state
@@ -517,6 +519,70 @@ pub fn stop_mic_test(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub fn mic_level(state: State<'_, AppState>) -> f32 {
     state.recorder.lock().unwrap().level().unwrap_or(0.0)
+}
+
+/// Open a lightweight level preview for a picked device (#314): the New
+/// screen's mic/system pickers, Settings → Dictation's input device and the
+/// own-voice enrolment dialog use this (never the dictation/session
+/// recorder) so checking a device never competes with a real recording. Only
+/// a level (RMS of the last ~100 ms) ever crosses to the UI — no audio is
+/// kept, written or sent. `kind` is `"mic"` or `"system"`; for `"system"`,
+/// `native: true` opens the computer's own loopback capture (`device`
+/// ignored, #140), otherwise `device` names an input device (a virtual
+/// cable, a monitor source) and must be exact — never the default-input
+/// fallback the mic kind uses.
+#[tauri::command]
+pub fn level_preview_start(
+    state: State<'_, AppState>,
+    kind: String,
+    device: Option<String>,
+    native: Option<bool>,
+) -> Result<(), String> {
+    let kind = crate::audio::level_preview::PreviewKind::parse(&kind)
+        .ok_or_else(|| format!("unknown level preview kind '{kind}'"))?;
+    use crate::audio::level_preview::PreviewKind;
+    match kind {
+        PreviewKind::Mic => state
+            .level_previews
+            .start_mic(&device.unwrap_or_default())
+            .map_err(|e| format!("{e:#}")),
+        PreviewKind::System => {
+            if native.unwrap_or(false) {
+                state
+                    .level_previews
+                    .start_system_native()
+                    .map_err(|e| format!("{e:#}"))
+            } else {
+                let device = device.unwrap_or_default();
+                if device.is_empty() {
+                    return Err("choose a device first".to_string());
+                }
+                state
+                    .level_previews
+                    .start_system_device(&device)
+                    .map_err(|e| format!("{e:#}"))
+            }
+        }
+    }
+}
+
+/// The preview's current level (see [`level_preview_start`]); an error once
+/// it was never started or the device stopped delivering audio (shown as
+/// "unavailable" with the message).
+#[tauri::command]
+pub fn level_preview(state: State<'_, AppState>, kind: String) -> Result<f32, String> {
+    let kind = crate::audio::level_preview::PreviewKind::parse(&kind)
+        .ok_or_else(|| format!("unknown level preview kind '{kind}'"))?;
+    state.level_previews.level(kind)
+}
+
+/// Close the picker's preview and release the device (unmount, device
+/// change, or a real recording about to start).
+#[tauri::command]
+pub fn level_preview_stop(state: State<'_, AppState>, kind: String) {
+    if let Some(kind) = crate::audio::level_preview::PreviewKind::parse(&kind) {
+        state.level_previews.stop(kind);
+    }
 }
 
 /// Whisper runs on the GPU in this build (Metal / Vulkan). Settings uses it
@@ -859,8 +925,10 @@ pub async fn transcribe_file(
 /// recording as `audio.wav` in the item folder (P9, #141; omitted = the
 /// per-app default).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn engine_start_mic(
     app: AppHandle,
+    state: State<'_, AppState>,
     item_type: Option<crate::archive::ItemType>,
     title: Option<String>,
     defer: Option<bool>,
@@ -868,6 +936,8 @@ pub fn engine_start_mic(
     cleanup_level: Option<crate::settings::CleanupLevel>,
     save_audio: Option<bool>,
 ) -> Result<u64, String> {
+    // Never compete with a picker's level preview for the device (#314).
+    state.level_previews.stop_all();
     crate::engine::session::start_mic(
         &app,
         item_type.unwrap_or_default(),
@@ -895,6 +965,7 @@ pub fn engine_start_mic(
 #[allow(clippy::too_many_arguments)]
 pub async fn engine_start_system(
     app: AppHandle,
+    state: State<'_, AppState>,
     system_device: String,
     native: Option<bool>,
     mic_device: Option<String>,
@@ -904,6 +975,8 @@ pub async fn engine_start_system(
     cleanup_level: Option<crate::settings::CleanupLevel>,
     save_audio: Option<bool>,
 ) -> Result<u64, String> {
+    // Never compete with a picker's level preview for either device (#314).
+    state.level_previews.stop_all();
     // Off the main thread: it enumerates the audio devices first.
     let system = if native.unwrap_or(false) {
         crate::engine::session::SystemInput::Native
@@ -1009,6 +1082,43 @@ pub fn link_inspect(url: String) -> LinkInfo {
             label: String::new(),
         },
     }
+}
+
+/// Save the main text of a web page as a note (#258, P17): fetched with the
+/// link rules (`allow_local` as for a transcribed link), extracted, saved
+/// with `source: url:<link>` and indexed; the Library refreshes on
+/// `archive-item-created`. `title` replaces the page's when not empty;
+/// `tags`/`categories` are New's defaults. Nothing is saved when the page
+/// has too little text or isn't HTML.
+#[tauri::command]
+pub async fn article_save(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+    title: Option<String>,
+    allow_local: Option<bool>,
+    tags: Option<Vec<String>>,
+    categories: Option<Vec<String>>,
+) -> Result<crate::sources::url::article::Saved, String> {
+    use tauri::Emitter;
+    let (dir, db) = archive_paths(&state)?;
+    let saved = blocking(move || {
+        archive::prepare_archive_dir(&dir)?;
+        crate::sources::url::article::save_article(
+            &dir,
+            &db,
+            &url,
+            allow_local.unwrap_or(false),
+            &crate::sources::url::article::Extras {
+                title: title.unwrap_or_default(),
+                tags: tags.unwrap_or_default(),
+                categories: categories.unwrap_or_default(),
+            },
+        )
+    })
+    .await?;
+    let _ = app.emit_to("main", "archive-item-created", saved.id.clone());
+    Ok(saved)
 }
 
 /// Whether yt-dlp is installed (#123), for the Link tab.
@@ -1449,7 +1559,8 @@ fn archive_paths(state: &AppState) -> Result<(PathBuf, PathBuf), String> {
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || f().map_err(|e| format!("{e:#}")))
+    // An unreadable archive root reaches the UI as a coded JSON error (#328).
+    tauri::async_runtime::spawn_blocking(move || f().map_err(|e| archive::unreadable::ui_error(&e)))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1504,7 +1615,7 @@ pub async fn archive_prepare(state: State<'_, AppState>) -> Result<String, Strin
 #[tauri::command]
 pub async fn archive_list(state: State<'_, AppState>) -> Result<Vec<ItemSummary>, String> {
     let (dir, _) = archive_paths(&state)?;
-    blocking(move || Ok(archive::list_items(&dir))).await
+    blocking(move || archive::list_items(&dir)).await
 }
 
 /// Full-text search with facets over the index (synced with the folder
@@ -1875,7 +1986,7 @@ pub async fn archive_uncompressed_audio(
 ) -> Result<UncompressedAudio, String> {
     let (dir, _) = archive_paths(&state)?;
     blocking(move || {
-        let items = archive::compress::items_with_wav(&dir);
+        let items = archive::compress::items_with_wav(&dir)?;
         Ok(UncompressedAudio {
             items: items.len(),
             bytes: items.iter().map(|(_, b)| b).sum(),
@@ -1907,7 +2018,7 @@ pub async fn archive_compress_audio(
                 let item = archive::paths::item_dir(&dir, &id)?;
                 vec![(id, archive::compress::wav_bytes(&item))]
             }
-            None => archive::compress::items_with_wav(&dir),
+            None => archive::compress::items_with_wav(&dir)?,
         };
         let total_bytes: u64 = targets.iter().map(|(_, b)| b).sum();
         let items_total = targets.len();
@@ -2391,7 +2502,10 @@ pub async fn own_voice_status(state: State<'_, AppState>) -> Result<OwnVoiceStat
 /// Start recording the enrolment paragraph from `device` (empty = the
 /// system default input). A recording already running is restarted.
 #[tauri::command]
-pub fn own_voice_enrol_start(device: String) -> Result<(), String> {
+pub fn own_voice_enrol_start(state: State<'_, AppState>, device: String) -> Result<(), String> {
+    // Never compete with the enrolment dialog's own level preview for the
+    // device (#314).
+    state.level_previews.stop_all();
     let mut slot = enrolment();
     if let Some((mut old, _)) = slot.take() {
         let _ = old.stop();
@@ -2989,7 +3103,6 @@ pub fn recipe_reveal_document(
         .map_err(|e| e.to_string())
 }
 
-
 // ---- Read aloud (0.12, #255, P18/P24): experimental, off by default ----
 
 /// The models folder, whether read aloud is on, and the voice picks.
@@ -3004,7 +3117,9 @@ fn tts_context(state: &AppState) -> (PathBuf, bool, std::collections::BTreeMap<S
 
 /// The models folder, or why read aloud can't be used now (P24: it acts
 /// only while the module is on).
-fn tts_on(state: &AppState) -> Result<(PathBuf, std::collections::BTreeMap<String, String>), String> {
+fn tts_on(
+    state: &AppState,
+) -> Result<(PathBuf, std::collections::BTreeMap<String, String>), String> {
     let (dir, enabled, picks) = tts_context(state);
     if !enabled {
         return Err("Read aloud is off — turn it on in Settings → Experimental.".into());
@@ -3020,9 +3135,21 @@ fn tts_preview_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
+/// `<app data>/c2pa`: the signing certificate chain of generated speech
+/// (#257 part 2; the key is in the OS credential store).
+fn signing_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join(crate::tts::signing::SIGNING_DIR))
+        .map_err(|e| e.to_string())
+}
+
 /// Models → Voices: languages, voices, sizes, what is downloaded.
 #[tauri::command]
-pub async fn tts_status(state: State<'_, AppState>) -> Result<crate::tts::service::TtsStatus, String> {
+pub async fn tts_status(
+    state: State<'_, AppState>,
+) -> Result<crate::tts::service::TtsStatus, String> {
     let (dir, enabled, picks) = tts_context(&state);
     blocking(move || Ok(crate::tts::service::global().status(&dir, enabled, &picks))).await
 }
@@ -3030,8 +3157,10 @@ pub async fn tts_status(state: State<'_, AppState>) -> Result<crate::tts::servic
 /// Download a language's model (when missing) and a voice — only on the
 /// user's click in Models → Voices, after the size and licence were shown,
 /// and only while the module is on (P24). `voice` defaults to the
-/// language's selected voice; `voice_only` skips the model. Progress goes
-/// out as `tts-download-progress` (null when the job ends).
+/// language's selected voice; `voice_only` skips the model. The watermark
+/// models (#257) come too when missing; `watermark_only` fetches just them
+/// (TTS models downloaded before #257). Progress goes out as
+/// `tts-download-progress` (null when the job ends).
 #[tauri::command]
 pub async fn tts_download(
     app: AppHandle,
@@ -3039,32 +3168,40 @@ pub async fn tts_download(
     language: String,
     voice: Option<String>,
     voice_only: Option<bool>,
+    watermark_only: Option<bool>,
 ) -> Result<(), String> {
     use tauri::Emitter;
     let (dir, picks) = tts_on(&state)?;
     let lang = crate::tts::catalog::language(&language)
         .ok_or_else(|| format!("no read-aloud model for '{language}'"))?;
-    let voice = voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
+    let voice =
+        voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
     let emitter = app.clone();
     let result = blocking(move || {
         let fetch = crate::tts::models::HttpFetch::new()?;
         let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
         let mut file = String::new();
-        crate::tts::service::global().download(
-            &fetch,
-            &dir,
-            lang.code,
-            &voice,
-            voice_only.unwrap_or(false),
-            &mut |p| {
-                // A few updates a second, and every new file.
-                if p.file != file || last.elapsed() >= std::time::Duration::from_millis(250) {
-                    file = p.file.clone();
-                    last = std::time::Instant::now();
-                    let _ = emitter.emit("tts-download-progress", p);
-                }
-            },
-        )
+        let mut report = |p: &crate::tts::models::Progress| {
+            // A few updates a second, and every new file.
+            if p.file != file || last.elapsed() >= std::time::Duration::from_millis(250) {
+                file = p.file.clone();
+                last = std::time::Instant::now();
+                let _ = emitter.emit("tts-download-progress", p);
+            }
+        };
+        let service = crate::tts::service::global();
+        if watermark_only.unwrap_or(false) {
+            service.download_watermark(&fetch, &dir, lang.code, &mut report)
+        } else {
+            service.download(
+                &fetch,
+                &dir,
+                lang.code,
+                &voice,
+                voice_only.unwrap_or(false),
+                &mut report,
+            )
+        }
     })
     .await;
     let _ = app.emit("tts-download-progress", Option::<()>::None);
@@ -3130,13 +3267,71 @@ pub async fn tts_preview(
     let (dir, picks) = tts_on(&state)?;
     let lang = crate::tts::catalog::language(&language)
         .ok_or_else(|| format!("no read-aloud model for '{language}'"))?;
-    let voice = voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
+    let voice =
+        voice.unwrap_or_else(|| crate::tts::service::voice_for(&picks, lang).id.to_string());
     let preview_dir = tts_preview_dir(&app)?;
+    let sign_dir = signing_dir(&app)?;
     blocking(move || {
-        let name = crate::tts::service::global().preview(&dir, &preview_dir, lang.code, &voice, text.as_deref())?;
+        let name = crate::tts::service::global().preview(
+            &dir,
+            &preview_dir,
+            lang.code,
+            &voice,
+            text.as_deref(),
+            &|| crate::tts::signing::identity(&sign_dir),
+        )?;
         Ok(format!("{}{name}", crate::tts::service::PREVIEW_PREFIX))
     })
     .await
+}
+
+/// *Check a file* (#257, E17): the native picker opens from Rust (no path
+/// crosses IPC), the picked audio file is opened with the import guards
+/// (audio extensions only, no links, ≤ 2 GiB) and read by the AudioSeal
+/// detector plus its tags and its signed C2PA metadata (embedded, or a
+/// `<same stem>.c2pa` next to it, same guards, ≤ 1 MiB) — on this
+/// computer, nothing is uploaded. Needs
+/// the detector, downloaded with the read-aloud models: never downloaded
+/// here. `None` when the user cancelled. Main window only.
+#[tauri::command]
+pub async fn watermark_check_file(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Option<crate::tts::check::CheckResult>, String> {
+    use crate::tts::check;
+    use tauri_plugin_dialog::DialogExt;
+
+    crate::config_io::check_import_caller(window.label())?;
+    let (models, _, _) = tts_context(&state);
+    if !crate::tts::models::detector_present(&models) {
+        return Err("Check a file needs the watermark detector, which is downloaded with the read-aloud models — download a voice in Models → Voices.".into());
+    }
+    let dialog = window
+        .dialog()
+        .file()
+        .set_title("Choose an audio file to check")
+        .add_filter("Audio", check::EXTENSIONS)
+        .set_parent(&window);
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(picked) = dialog.blocking_pick_file() else {
+            return Ok(None);
+        };
+        let path = picked
+            .into_path()
+            .map_err(|e| format!("could not read file: {e}"))?;
+        let file =
+            crate::config_io::open_picked_file(&path, check::EXTENSIONS, check::MAX_FILE_BYTES)
+                .map_err(|e| format!("could not read file: {e:#}"))?;
+        let detector_path =
+            crate::tts::models::watermark_path(&models, &crate::tts::catalog::WATERMARK_DETECTOR);
+        let mut detector = crate::tts::watermark::AudioSealDetector::load(&detector_path)
+            .map_err(|e| format!("{e:#}"))?;
+        check::check_file(&path, file, &mut detector)
+            .map(Some)
+            .map_err(|e| format!("could not check the file: {e:#}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// *Read aloud* an item's transcript (or its companion `document`) in
@@ -3161,6 +3356,7 @@ pub async fn read_aloud_start(
     let (archive, _) = archive_paths(&state)?;
     let journal = crate::engine::session::journal_path(&state);
     let listen_dir = tts_preview_dir(&app)?;
+    let sign_dir = signing_dir(&app)?;
     let emitter = app.clone();
     let result = blocking(move || {
         crate::engine::session::ensure_not_live(&journal, &archive, &id)?;
@@ -3168,6 +3364,7 @@ pub async fn read_aloud_start(
             service: crate::tts::service::global(),
             models_dir: &models,
             options: crate::tts::pocket::PocketOptions::default(),
+            signer: &|| crate::tts::signing::identity(&sign_dir),
         };
         let target = if save {
             Target::Save
@@ -3184,7 +3381,10 @@ pub async fn read_aloud_start(
         };
         let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
         read_aloud::run(read_aloud::jobs(), &speaker, &req, &mut |s| {
-            if s.done == 0 || s.done == s.total || last.elapsed() >= std::time::Duration::from_millis(250) {
+            if s.done == 0
+                || s.done == s.total
+                || last.elapsed() >= std::time::Duration::from_millis(250)
+            {
                 last = std::time::Instant::now();
                 let _ = emitter.emit("read-aloud-progress", s);
             }
@@ -3229,7 +3429,10 @@ pub async fn read_aloud_delete(
     file: String,
 ) -> Result<(), String> {
     let (archive, _) = archive_paths(&state)?;
-    blocking(move || crate::tts::read_aloud::delete(crate::tts::read_aloud::jobs(), &archive, &id, &file)).await
+    blocking(move || {
+        crate::tts::read_aloud::delete(crate::tts::read_aloud::jobs(), &archive, &id, &file)
+    })
+    .await
 }
 
 /// Delete the temporary *Listen* files (the document closed).
@@ -3263,7 +3466,8 @@ fn serve_tts_preview(
     request: &tauri::http::Request<Vec<u8>>,
     range: Option<&str>,
 ) -> Option<archive::playback::Reply> {
-    let decoded = archive::playback::percent_decode(request.uri().path().trim_start_matches('/')).ok()?;
+    let decoded =
+        archive::playback::percent_decode(request.uri().path().trim_start_matches('/')).ok()?;
     let name = crate::tts::service::preview_file_name(&decoded)?;
     let head = match request.method().as_str() {
         "GET" => false,

@@ -11,11 +11,15 @@
 //! - [`catalog`] / [`models`]: the pinned files and voices, and their
 //!   download (on request only), verification and deletion.
 //! - [`service`]: the loaded engine, its idle unload, the preview.
+//! - [`marking`] / [`watermark`]: every generated file carries tags and an
+//!   AudioSeal watermark (P21, #257), and [`signing`] adds signed C2PA
+//!   metadata with a per-install key; [`check`] is *Check a file*.
 //!
 //! File generation only, not real-time playback (P18). Read-aloud of
-//! archive items and the marking of generated files are #256 and #264.
+//! archive items is #256.
 
 pub mod catalog;
+pub mod check;
 pub mod engine;
 pub mod marking;
 pub mod models;
@@ -23,7 +27,9 @@ pub mod pocket;
 pub mod read_aloud;
 pub mod resample;
 pub mod service;
+pub mod signing;
 pub mod text;
+pub mod watermark;
 
 #[cfg(test)]
 mod live_tests;

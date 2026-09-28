@@ -12,6 +12,8 @@ import {
   languageStatus,
   progressFraction,
   progressLabel,
+  watermarkMissing,
+  watermarkPrompt,
   withVoice,
 } from "../lib/tts";
 import type { TtsDownloadProgress, TtsLanguage, TtsStatus, TtsVoice } from "../lib/types";
@@ -24,8 +26,9 @@ export function ExperimentalBadge() {
   );
 }
 
-/** What the user asked to download, waiting for the confirmation (P24). */
-type Ask = { lang: TtsLanguage; voice?: TtsVoice; voiceOnly: boolean };
+/** What the user asked to download, waiting for the confirmation (P24);
+ *  `watermarkOnly` fetches just the watermark models (#257). */
+type Ask = { lang: TtsLanguage; voice?: TtsVoice; voiceOnly: boolean; watermarkOnly?: boolean };
 
 /** Models → Voices (#255, P18/P24): the read-aloud languages and voices —
  *  download (size and licence first, then a confirmation), delete, preview
@@ -68,8 +71,20 @@ export function ReadAloudCard({ ctl, onOpenExperimental }: { ctl: Ctl; onOpenExp
   const download = async (a: Ask) => {
     setAsk(null);
     try {
-      await invoke("tts_download", { language: a.lang.code, voice: a.voice?.id ?? null, voiceOnly: a.voiceOnly });
-      ctl.flash(a.voiceOnly ? `Voice ${a.voice?.label ?? ""} downloaded.` : `${a.lang.label} read-aloud model downloaded.`, 3000);
+      await invoke("tts_download", {
+        language: a.lang.code,
+        voice: a.voice?.id ?? null,
+        voiceOnly: a.voiceOnly,
+        watermarkOnly: !!a.watermarkOnly,
+      });
+      ctl.flash(
+        a.watermarkOnly
+          ? "Watermark models downloaded."
+          : a.voiceOnly
+            ? `Voice ${a.voice?.label ?? ""} downloaded.`
+            : `${a.lang.label} read-aloud model downloaded.`,
+        3000,
+      );
     } catch (e) {
       const msg = String(e);
       if (!/cancelled/.test(msg)) ctl.setBusy(msg);
@@ -141,8 +156,37 @@ export function ReadAloudCard({ ctl, onOpenExperimental }: { ctl: Ctl; onOpenExp
       <p className="card-hint">
         {status?.engine ?? "Pocket TTS"} reads documents aloud on this computer, into an audio file. Models download
         only when you click Download, after you see their size and licence. {status?.attribution}; models under{" "}
-        {status?.licence ?? "CC-BY-4.0"}, each voice with the licence of its recording.
+        {status?.licence ?? "CC-BY-4.0"}, each voice with the licence of its recording. Every file it makes is marked as
+        synthetic speech — tags plus an inaudible watermark ({status?.watermark?.attribution ?? "AudioSeal by Meta"},{" "}
+        {status?.watermark?.licence ?? "MIT"}), downloaded with the first model — and there is no switch to turn that off.
       </p>
+      {status && watermarkMissing(status) && status.watermark && (
+        <div className="row-gap" role="status">
+          <span className="sh-muted">{watermarkMissing(status)}</span>
+          <button
+            type="button"
+            className="btn-ghost sh-btn push"
+            disabled={downloading}
+            onClick={() => {
+              const lang = status.languages.find((l) => l.model_downloaded) ?? status.languages[0];
+              setAsk({ lang, voiceOnly: false, watermarkOnly: true });
+            }}
+          >
+            Download… ({formatBytes(status.watermark.bytes)})
+          </button>
+        </div>
+      )}
+      {ask?.watermarkOnly && status?.watermark && (
+        <div className="row-gap prof-actions" role="alertdialog" aria-label="Confirm the download">
+          <span>{watermarkPrompt(status.watermark)}</span>
+          <button type="button" className="btn-dark sh-btn push" onClick={() => download(ask)}>
+            Download
+          </button>
+          <button type="button" className="btn-ghost sh-btn" autoFocus onClick={() => setAsk(null)}>
+            Cancel
+          </button>
+        </div>
+      )}
       {!status ? (
         <p className="card-hint" role="status">
           Can't read the read-aloud models right now.
@@ -188,7 +232,7 @@ export function ReadAloudCard({ ctl, onOpenExperimental }: { ctl: Ctl; onOpenExp
                         disabled={downloading}
                         onClick={() => setAsk({ lang, voiceOnly: false })}
                       >
-                        Download… ({formatBytes(downloadBytes(lang))})
+                        Download… ({formatBytes(downloadBytes(lang, undefined, status.watermark))})
                       </button>
                     ) : (
                       <button
@@ -203,7 +247,7 @@ export function ReadAloudCard({ ctl, onOpenExperimental }: { ctl: Ctl; onOpenExp
                     )}
                   </div>
                 )}
-                {ask?.lang.code === lang.code && (
+                {ask?.lang.code === lang.code && !ask.watermarkOnly && (
                   <div className="row-gap prof-actions" role="alertdialog" aria-label="Confirm the download">
                     <span>{downloadPrompt(status, ask.lang, ask.voice)}</span>
                     <button type="button" className="btn-dark sh-btn push" onClick={() => download(ask)}>
@@ -236,9 +280,15 @@ export function ReadAloudCard({ ctl, onOpenExperimental }: { ctl: Ctl; onOpenExp
                             <button
                               type="button"
                               className="btn-ghost sh-btn"
-                              disabled={!canPreview(lang, v) || previewing !== null || downloading}
+                              disabled={!canPreview(lang, v, status.watermark) || previewing !== null || downloading}
                               onClick={() => preview(lang, v)}
-                              title={lang.model_downloaded ? `Read a sample sentence with ${v.label}` : "Download the model first"}
+                              title={
+                                !lang.model_downloaded
+                                  ? "Download the model first"
+                                  : status.watermark && !status.watermark.downloaded
+                                    ? "Download the watermark models first"
+                                    : `Read a sample sentence with ${v.label}`
+                              }
                             >
                               {previewing === key ? "Reading…" : "Preview"}
                             </button>
@@ -259,7 +309,8 @@ export function ReadAloudCard({ ctl, onOpenExperimental }: { ctl: Ctl; onOpenExp
                             onClick={() => setAsk({ lang, voice: v, voiceOnly: lang.model_downloaded })}
                           >
                             Download… ({formatBytes(v.bytes)}
-                            {lang.model_downloaded ? "" : " + model"})
+                            {lang.model_downloaded ? "" : " + model"}
+                            {status.watermark && !status.watermark.downloaded ? " + watermark" : ""})
                           </button>
                         )}
                       </li>

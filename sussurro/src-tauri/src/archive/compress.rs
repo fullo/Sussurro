@@ -69,15 +69,17 @@ pub fn wav_bytes(dir: &Path) -> u64 {
         .sum()
 }
 
-/// Items of the archive that hold WAV audio: `(id, WAV bytes)`.
-pub fn items_with_wav(archive: &Path) -> Vec<(String, u64)> {
-    store::scan_item_dirs(archive)
+/// Items of the archive that hold WAV audio: `(id, WAV bytes)`. An archive
+/// root that can't be read is an error (#328), not "nothing to compress".
+pub fn items_with_wav(archive: &Path) -> Result<Vec<(String, u64)>> {
+    Ok(store::scan_item_dirs(archive)?
+        .items
         .into_iter()
         .filter_map(|(id, dir)| {
             let bytes = wav_bytes(&dir);
             (bytes > 0).then_some((id, bytes))
         })
-        .collect()
+        .collect())
 }
 
 /// Refuse an item a session is writing (its frontmatter marker; the app
@@ -455,7 +457,10 @@ mod tests {
             .map(|f| decode_wav(&dir.join(f)))
             .collect();
         let wav_total = wav_bytes(&dir);
-        assert_eq!(items_with_wav(&archive), vec![(id.clone(), wav_total)]);
+        assert_eq!(
+            items_with_wav(&archive).unwrap(),
+            vec![(id.clone(), wav_total)]
+        );
 
         let mut seen = 0u64;
         let done =
@@ -492,7 +497,7 @@ mod tests {
         let names: Vec<&str> = item.audio.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["audio-mic.opus", "audio-remote.opus"]);
         assert!(!tmp_path(&dir, "audio-mic.opus").exists());
-        assert!(items_with_wav(&archive).is_empty());
+        assert!(items_with_wav(&archive).unwrap().is_empty());
         // Nothing left to do: a second run is a no-op.
         let again = compress_item(&archive, &id, &AtomicBool::new(false), &mut |_| {}).unwrap();
         assert_eq!(again, Compressed::default());

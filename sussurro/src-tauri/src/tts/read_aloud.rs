@@ -16,13 +16,18 @@
 //! background, with progress by chunk and cancel between chunks (and inside
 //! Pocket's generation loop). The text goes through
 //! [`super::text::prepare`] (#254), each chunk is spoken, passed through
-//! the marking hook ([`super::marking::Marker::process`], P21) and encoded
+//! the marking hook ([`super::marking::Marker::process`], P21: tags plus
+//! the AudioSeal watermark of #257 — no watermark model, no speech) and encoded
 //! to Ogg Opus at 24 kHz ([`crate::archive::opus::SPEECH`], #309: Pocket's
 //! own rate, so its 8–12 kHz band is kept) with the synthetic-speech
 //! comments. An engine at another rate is resampled to 24 kHz first
-//! ([`super::resample`]). A saved file is written to the item's
-//! `.sussurro/` and moved into place under the archive lock; a cancelled or
-//! failed run leaves nothing.
+//! ([`super::resample`]). The finished file is then **signed** (#257 part
+//! 2, [`super::signing`]): a `.c2pa` sidecar with the same stem, made with
+//! this install's key — created on this first need; without a working
+//! credential store the file is kept unsigned and the frontmatter says why
+//! (`unsigned:`). A saved file and its sidecar are written to the item's
+//! `.sussurro/` and moved into place together under the archive lock; a
+//! cancelled or failed run leaves nothing.
 //!
 //! **Out of date**: the frontmatter records the SHA-256 of the speakable
 //! text that was read ([`prepared`]); when the document's text changes
@@ -34,7 +39,9 @@ use super::engine::{self, TtsEngine};
 use super::marking::{self, Marker, Provenance};
 use super::resample::Resampler;
 use super::service::{self, ENGINE_NAME, LISTEN_PREFIX, PREVIEW_PREFIX};
+use super::signing::{self, Identity};
 use super::text::{self, Chunk, Lang, PrepOptions};
+use super::watermark::{AudioSealGenerator, WatermarkModel};
 use crate::archive::audio::MAX_SAMPLES;
 use crate::archive::opus::{OpusWriter, SPEECH, SPEECH_RATE};
 use crate::archive::speech::{self, SpeechInfo};
@@ -44,7 +51,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Bumped when [`prepared`] changes what it hashes, so speech made by an
 /// older build is not wrongly reported as current.
@@ -115,6 +122,16 @@ pub fn resolve_language(requested: Option<&str>, item_language: &str) -> Result<
 
 /// Runs `f` on an engine ready to speak `lang` with `voice`.
 pub trait Speaker {
+    /// The watermark model every generated file goes through (#257). An
+    /// error — the model is missing — stops the job before anything is
+    /// spoken (fail closed).
+    fn watermark(&self) -> Result<Box<dyn WatermarkModel>>;
+
+    /// This install's signing identity (#257 part 2), asked for only once a
+    /// file has been spoken. `Err` = the file stays unsigned, for this
+    /// reason (no working credential store).
+    fn signer(&self) -> Result<Arc<Identity>, String>;
+
     fn speak_with(
         &self,
         lang: &'static Language,
@@ -129,9 +146,20 @@ pub struct PocketSpeaker<'a> {
     pub service: &'a service::Service,
     pub models_dir: &'a Path,
     pub options: super::pocket::PocketOptions,
+    /// This install's signing identity (in the app:
+    /// [`signing::identity`] over `<app data>/c2pa` and the OS store).
+    pub signer: &'a (dyn Fn() -> Result<Arc<Identity>, String> + Sync),
 }
 
 impl Speaker for PocketSpeaker<'_> {
+    fn watermark(&self) -> Result<Box<dyn WatermarkModel>> {
+        load_watermark(self.models_dir)
+    }
+
+    fn signer(&self) -> Result<Arc<Identity>, String> {
+        (self.signer)()
+    }
+
     fn speak_with(
         &self,
         lang: &'static Language,
@@ -154,6 +182,18 @@ impl Speaker for PocketSpeaker<'_> {
                 f(e)
             })
     }
+}
+
+/// The AudioSeal generator from `models_dir`, or the error that sends the
+/// user to Models → Voices (never downloaded here, P24).
+pub fn load_watermark(models_dir: &Path) -> Result<Box<dyn WatermarkModel>> {
+    if !super::models::watermark_present(models_dir) {
+        bail!(
+            "The watermark model that marks generated speech is not downloaded — download it in Models → Voices."
+        );
+    }
+    let path = super::models::watermark_path(models_dir, &catalog::WATERMARK_GENERATOR);
+    Ok(Box::new(AudioSealGenerator::load(&path)?))
 }
 
 // ---- the job -----------------------------------------------------------------
@@ -234,7 +274,8 @@ impl Drop for JobGuard<'_> {
 }
 
 /// Speak `chunks` into a new Ogg Opus file at `out` (24 kHz mono,
-/// [`SPEECH`], with `marker`'s comments; every block through its hook).
+/// [`SPEECH`], with `marker`'s comments; every block through its hook, so
+/// the file is watermarked — `marker` must be made for [`SPEECH_RATE`]).
 /// Returns the samples written, at [`SPEECH_RATE`]. On any error, `out` is
 /// removed.
 pub fn render_to_opus(
@@ -250,14 +291,13 @@ pub fn render_to_opus(
     let mut rs = Resampler::new(engine.sample_rate(), SPEECH_RATE);
     let spoken = (|| -> Result<()> {
         engine::render(engine, chunks, cancel, progress, &mut |pcm| {
-            let mut block = rs.push(pcm);
-            marker.process(&mut block, SPEECH_RATE);
-            w.write(&block)?;
+            let block = rs.push(pcm);
+            w.write(&marker.process(&block)?)?;
             Ok(())
         })?;
-        let mut tail = rs.flush();
-        marker.process(&mut tail, SPEECH_RATE);
-        w.write(&tail)?;
+        let tail = rs.flush();
+        w.write(&marker.process(&tail)?)?;
+        w.write(&marker.finish()?)?;
         Ok(())
     })();
     let result = spoken.and_then(|()| {
@@ -269,6 +309,24 @@ pub fn render_to_opus(
         let _ = std::fs::remove_file(out);
     }
     result
+}
+
+/// Sign the finished Ogg file `audio` and write its manifest to `sidecar`.
+/// `Err` = unsigned, with the reason (nothing written).
+fn sign_to(
+    speaker: &dyn Speaker,
+    marker: &Marker,
+    audio: &Path,
+    sidecar: &Path,
+) -> Result<(), String> {
+    let identity = speaker.signer()?;
+    let manifest =
+        signing::sign_sidecar(&identity, marker.provenance(), &signing::now_utc(), audio)
+            .map_err(|e| format!("{e:#}"))?;
+    std::fs::write(sidecar, manifest).map_err(|e| {
+        let _ = std::fs::remove_file(sidecar);
+        format!("writing the signature: {e}")
+    })
 }
 
 /// Where the result goes.
@@ -328,6 +386,8 @@ pub fn run(
         bail!("There is nothing to read in this document.");
     }
     let file = speech::speech_file_name(&source.document)?;
+    // #257: no watermark, no speech — checked before any work.
+    let watermark = speaker.watermark()?;
     let save = matches!(req.target, Target::Save);
     let guard = jobs.begin(JobStatus {
         item_id: req.id.to_string(),
@@ -338,16 +398,21 @@ pub fn run(
         done: 0,
         total: chunks.len(),
     })?;
-    let (out, listen) = match req.target {
+    let (out, listen, sidecar_out) = match req.target {
         Target::Save => {
             let dir = existing_item_dir(req.archive, req.id)?;
             let part = speech::part_path(&dir, &file);
+            let sidecar = speech::part_path(
+                &dir,
+                &speech::sidecar_name(&file).context("speech file name")?,
+            );
             if let Some(parent) = part.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("creating {}", parent.display()))?;
             }
             let _ = std::fs::remove_file(&part);
-            (part, None)
+            let _ = std::fs::remove_file(&sidecar);
+            (part, None, sidecar)
         }
         Target::Listen { dir } => {
             std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -357,14 +422,19 @@ pub fn run(
             (
                 dir.join(format!("{name}.part")),
                 Some((dir.join(&name), name)),
+                dir.join(format!("{LISTEN_PREFIX}{n}.{}", signing::SIDECAR_EXT)),
             )
         }
     };
-    let mut marker = Marker::new(Provenance {
-        engine: ENGINE_NAME.into(),
-        voice: voice.id.into(),
-        language: lang.code.into(),
-    });
+    let mut marker = Marker::new(
+        Provenance {
+            engine: ENGINE_NAME.into(),
+            voice: voice.id.into(),
+            language: lang.code.into(),
+        },
+        watermark,
+        SPEECH_RATE,
+    );
     let mut samples = 0;
     speaker.speak_with(lang, voice, &mut |e| {
         samples = render_to_opus(e, &chunks, &out, &mut marker, &jobs.cancel, &mut |i, n| {
@@ -377,6 +447,12 @@ pub fn run(
     if let Some(s) = guard.update(chunks.len(), chunks.len()) {
         progress(&s);
     }
+    // #257 part 2: the signed manifest, made from the finished file. The
+    // key is made on this first need; no store = unsigned, never an error.
+    let signed = sign_to(speaker, &marker, &out, &sidecar_out);
+    if let Err(why) = &signed {
+        eprintln!("read aloud: {file} is not signed: {why}");
+    }
     let file = match listen {
         None => {
             let info = SpeechInfo {
@@ -387,15 +463,18 @@ pub fn run(
                 language: lang.code.into(),
                 date: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
                 text_sha256,
-                marked: marker.marks(),
+                marked: marker.marks(signed.is_ok()),
+                unsigned: signed.as_ref().err().cloned().unwrap_or_default(),
                 extra: BTreeMap::new(),
             };
-            speech::commit(req.archive, req.id, &out, &file, &info)?;
+            let sidecar = signed.is_ok().then_some(sidecar_out.as_path());
+            speech::commit(req.archive, req.id, &out, sidecar, &file, &info)?;
             file
         }
         Some((path, name)) => {
             if let Err(e) = std::fs::rename(&out, &path) {
                 let _ = std::fs::remove_file(&out);
+                let _ = std::fs::remove_file(&sidecar_out);
                 return Err(e).context("saving the temporary speech file");
             }
             format!("{PREVIEW_PREFIX}{name}")
@@ -434,6 +513,10 @@ pub struct SpeechStatus {
     pub engine: String,
     pub date: String,
     pub marked: Vec<String>,
+    /// Its signed-manifest sidecar (`.c2pa`) is next to it.
+    pub signed: bool,
+    /// Why it was left unsigned (from the frontmatter), else empty.
+    pub unsigned: String,
     /// The frontmatter records the file.
     pub recorded: bool,
     /// The document's text changed since the speech was made.
@@ -458,6 +541,8 @@ pub fn statuses(archive: &Path, id: &str) -> Result<Vec<SpeechStatus>> {
             engine: String::new(),
             date: String::new(),
             marked: Vec::new(),
+            signed: speech::has_sidecar(&dir, &f.name),
+            unsigned: String::new(),
             recorded: false,
             stale: false,
             source_missing: false,
@@ -470,6 +555,7 @@ pub fn statuses(archive: &Path, id: &str) -> Result<Vec<SpeechStatus>> {
             s.engine = info.engine.clone();
             s.date = info.date.clone();
             s.marked = info.marked.clone();
+            s.unsigned = info.unsigned.clone();
             let text = if info.document == TRANSCRIPT_FILE {
                 Ok(item.body.clone())
             } else {
@@ -511,22 +597,44 @@ mod tests {
     /// `fail` makes the engine unavailable.
     struct FakeSpeaker {
         fail: bool,
+        /// The watermark model is missing.
+        no_watermark: bool,
         spoken: Mutex<Vec<String>>,
         /// Cancel this job before speaking.
         cancel_first: Option<&'static Jobs>,
+        /// No working credential store: nothing can be signed.
+        no_store: bool,
+        /// Where the signing chain goes.
+        sign_dir: tempfile::TempDir,
     }
 
     impl FakeSpeaker {
         fn new() -> Self {
             Self {
                 fail: false,
+                no_watermark: false,
                 spoken: Mutex::new(Vec::new()),
                 cancel_first: None,
+                no_store: false,
+                sign_dir: tempfile::tempdir().unwrap(),
             }
         }
     }
 
     impl Speaker for FakeSpeaker {
+        fn watermark(&self) -> Result<Box<dyn WatermarkModel>> {
+            if self.no_watermark {
+                bail!("The watermark model that marks generated speech is not downloaded");
+            }
+            Ok(crate::tts::watermark::tests::FakeWatermark::boxed())
+        }
+
+        fn signer(&self) -> Result<Arc<Identity>, String> {
+            let store = crate::secrets::tests::FakeStore::default();
+            store.broken.set(self.no_store);
+            signing::load_or_create(self.sign_dir.path(), &store).map(Arc::new)
+        }
+
         fn speak_with(
             &self,
             lang: &'static Language,
@@ -632,11 +740,77 @@ mod tests {
             (info.voice.as_str(), info.language.as_str()),
             ("marius", "it")
         );
-        assert_eq!(info.marked, [marking::MARK_METADATA]);
+        assert_eq!(
+            info.marked,
+            [
+                marking::MARK_METADATA,
+                marking::MARK_WATERMARK,
+                marking::MARK_SIGNATURE
+            ],
+            "#257: every layer"
+        );
+        assert!(info.unsigned.is_empty());
+
+        // The sidecar moved in with the audio and verifies against it.
+        let sidecar = std::fs::read(dir.join("speech.c2pa")).unwrap();
+        assert!(!speech::part_path(&dir, "speech.c2pa").exists());
+        let layer = signing::verify_sidecar(&sidecar, &mut std::fs::File::open(&path).unwrap());
+        assert_eq!(
+            layer.status,
+            signing::SignatureStatus::Valid,
+            "{}",
+            layer.problem
+        );
+        assert_eq!(layer.voice, "marius");
+        assert!(layer.claims_sussurro && layer.ai_generated);
 
         let st = statuses(archive, &id).unwrap();
         assert_eq!(st.len(), 1);
         assert!(st[0].recorded && !st[0].stale && !st[0].source_missing);
+        assert!(st[0].signed && st[0].unsigned.is_empty());
+    }
+
+    #[test]
+    fn without_a_credential_store_the_speech_is_kept_unsigned_and_says_why() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = item(archive, "en", "Hello there.\n");
+        let jobs = Jobs::default();
+        let voices = BTreeMap::new();
+        let speaker = FakeSpeaker {
+            no_store: true,
+            ..FakeSpeaker::new()
+        };
+        run(
+            &jobs,
+            &speaker,
+            &req(archive, &id, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap();
+        let dir = existing_item_dir(archive, &id).unwrap();
+        assert!(dir.join("speech.opus").is_file(), "the file is still made");
+        assert!(!dir.join("speech.c2pa").exists());
+        assert!(!speech::part_path(&dir, "speech.c2pa").exists());
+        let item = crate::archive::read_item(archive, &id).unwrap();
+        let info = &speech::infos(&item.meta)["speech.opus"];
+        assert_eq!(
+            info.marked,
+            [marking::MARK_METADATA, marking::MARK_WATERMARK]
+        );
+        assert!(info.unsigned.contains("not available"), "{}", info.unsigned);
+        let st = statuses(archive, &id).unwrap();
+        assert!(!st[0].signed && !st[0].unsigned.is_empty());
+        // Signed again later: the sidecar arrives.
+        run(
+            &jobs,
+            &FakeSpeaker::new(),
+            &req(archive, &id, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert!(dir.join("speech.c2pa").is_file());
+        assert!(statuses(archive, &id).unwrap()[0].unsigned.is_empty());
     }
 
     #[test]
@@ -700,8 +874,10 @@ mod tests {
         std::fs::remove_file(dir.join("action-items.md")).unwrap();
         assert!(statuses(archive, &id).unwrap()[0].source_missing);
 
+        assert!(dir.join("speech-action-items.c2pa").is_file());
         delete(&jobs, archive, &id, "speech-action-items.opus").unwrap();
         assert!(test_trash::contains(&dir.join("speech-action-items.opus")));
+        assert!(test_trash::contains(&dir.join("speech-action-items.c2pa")));
         assert!(statuses(archive, &id).unwrap().is_empty());
     }
 
@@ -729,6 +905,19 @@ mod tests {
         assert!(!out.save);
         let name = service::preview_file_name(&out.file).expect("served by the scheme");
         assert!(listen.join(name).is_file());
+        // Signed too, in the same temporary folder; never served.
+        let sidecar = listen.join(name.replace(".opus", ".c2pa"));
+        assert!(sidecar.is_file());
+        assert!(service::preview_file_name(&format!(
+            "{PREVIEW_PREFIX}{}",
+            name.replace(".opus", ".c2pa")
+        ))
+        .is_none());
+        let layer = signing::verify_sidecar(
+            &std::fs::read(&sidecar).unwrap(),
+            &mut std::fs::File::open(listen.join(name)).unwrap(),
+        );
+        assert_eq!(layer.status, signing::SignatureStatus::Valid);
         let item = crate::archive::read_item(&archive, &id).unwrap();
         assert!(item.speech.is_empty() && !speech::has_keys(&item.meta));
         assert_eq!(
@@ -749,9 +938,15 @@ mod tests {
         )
         .unwrap();
         assert!(!listen.join(name).exists());
+        assert!(!sidecar.exists(), "the old sidecar goes with its file");
         let name2 = service::preview_file_name(&again.file).unwrap();
         discard_listens(&jobs, &listen);
         assert!(!listen.join(name2).exists());
+        assert_eq!(
+            std::fs::read_dir(&listen).unwrap().count(),
+            0,
+            "nothing left"
+        );
     }
 
     #[test]
@@ -791,6 +986,23 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("not downloaded"), "{err}");
+        assert!(!jobs.is_running());
+        assert!(crate::archive::speech::files_in(&dir).is_empty());
+
+        // #257: without the watermark model nothing is spoken.
+        let unmarked = FakeSpeaker {
+            no_watermark: true,
+            ..FakeSpeaker::new()
+        };
+        let err = run(
+            jobs,
+            &unmarked,
+            &req(archive, &id, &voices, Target::Save),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("watermark"), "{err}");
+        assert!(unmarked.spoken.lock().unwrap().is_empty());
         assert!(!jobs.is_running());
         assert!(crate::archive::speech::files_in(&dir).is_empty());
         assert!(!speech::has_keys(

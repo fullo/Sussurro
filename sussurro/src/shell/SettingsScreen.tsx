@@ -4,6 +4,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Card, Switch, Tip } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import { fileManagerName, fmtCount } from "../lib/format";
+import { errorText } from "../lib/archiveError";
 import { AUDIO_MB_PER_HOUR, savedAudioFormat } from "../lib/audio";
 import type { SavedAudioFormat, SubtitlesMode } from "../lib/types";
 import { BehaviorCard } from "../settings/BehaviorCard";
@@ -249,7 +250,7 @@ function ArchiveCard({ ctl }: { ctl: Ctl }) {
               const n = await invoke<number>("archive_rebuild_index");
               ctl.flash(`Search index rebuilt: ${n} item${n === 1 ? "" : "s"}.`);
             } catch (e) {
-              setBusy(String(e));
+              setBusy(errorText(e));
             } finally {
               setRebuilding(false);
             }

@@ -88,6 +88,18 @@ pub struct LanguageInfo {
     pub voices: Vec<VoiceInfo>,
 }
 
+/// The watermark models (#257) as the UI lists them: downloaded with the
+/// first model or voice (the confirmation counts them), needed to speak.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WatermarkInfo {
+    pub bytes: u64,
+    pub downloaded: bool,
+    /// The detector alone is there (*Check a file*).
+    pub detector_downloaded: bool,
+    pub licence: String,
+    pub attribution: String,
+}
+
 /// What Models → Voices shows.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct TtsStatus {
@@ -96,6 +108,8 @@ pub struct TtsStatus {
     pub licence: String,
     pub attribution: String,
     pub languages: Vec<LanguageInfo>,
+    /// The watermark models every generated file needs (#257).
+    pub watermark: WatermarkInfo,
     /// Bytes of this module's files on disk.
     pub bytes_on_disk: u64,
     /// The download in progress, if any.
@@ -178,6 +192,13 @@ impl Service {
             licence: catalog::MODEL_LICENCE.into(),
             attribution: catalog::ATTRIBUTION.into(),
             languages,
+            watermark: WatermarkInfo {
+                bytes: catalog::watermark_bytes(),
+                downloaded: models::watermark_present(models_dir),
+                detector_downloaded: models::detector_present(models_dir),
+                licence: catalog::WATERMARK_LICENCE.into(),
+                attribution: catalog::WATERMARK_ATTRIBUTION.into(),
+            },
             bytes_on_disk: models::bytes_on_disk(models_dir),
             downloading: self.job.lock().unwrap().clone(),
             loaded,
@@ -185,8 +206,9 @@ impl Service {
     }
 
     /// Download `code`'s model (when missing) and `voice_id` (default: the
-    /// language's selected voice), or only the voice when `voice_only`.
-    /// One download at a time. `progress` gets snapshots. Blocking.
+    /// language's selected voice), or only the voice when `voice_only` —
+    /// with the watermark models when they are missing (#257). One download
+    /// at a time. `progress` gets snapshots. Blocking.
     pub fn download(
         &self,
         fetch: &dyn models::Fetch,
@@ -196,8 +218,36 @@ impl Service {
         voice_only: bool,
         progress: &mut dyn FnMut(&Progress),
     ) -> Result<()> {
+        self.download_what(fetch, models_dir, code, Some((voice_id, voice_only)), progress)
+    }
+
+    /// Download only the missing watermark models (a TTS model downloaded
+    /// before #257 can't speak without them); `code` names the job.
+    pub fn download_watermark(
+        &self,
+        fetch: &dyn models::Fetch,
+        models_dir: &Path,
+        code: &str,
+        progress: &mut dyn FnMut(&Progress),
+    ) -> Result<()> {
+        self.download_what(fetch, models_dir, code, None, progress)
+    }
+
+    fn download_what(
+        &self,
+        fetch: &dyn models::Fetch,
+        models_dir: &Path,
+        code: &str,
+        voice: Option<(&str, bool)>,
+        progress: &mut dyn FnMut(&Progress),
+    ) -> Result<()> {
+        let voice_id = voice.map_or("", |v| v.0);
+        let voice_only = voice.is_some_and(|v| v.1);
         let lang = lang(code)?;
-        let voice = voice(lang, voice_id)?;
+        let voice = match voice {
+            Some(_) => Some(self::voice(lang, voice_id)?),
+            None => None,
+        };
         {
             let mut job = self.job.lock().unwrap();
             if job.is_some() {
@@ -209,18 +259,22 @@ impl Service {
             });
         }
         self.cancel.store(false, Ordering::Relaxed);
-        let result = models::download(
-            fetch,
-            models_dir,
-            lang,
-            &[voice],
-            !voice_only,
-            &self.cancel,
-            &mut |p| {
-                *self.job.lock().unwrap() = Some(p.clone());
-                progress(p);
-            },
-        );
+        let mut report = |p: &Progress| {
+            *self.job.lock().unwrap() = Some(p.clone());
+            progress(p);
+        };
+        let result = match voice {
+            Some(v) => models::download(
+                fetch,
+                models_dir,
+                lang,
+                &[v],
+                !voice_only,
+                &self.cancel,
+                &mut report,
+            ),
+            None => models::download_watermark(fetch, models_dir, lang, &self.cancel, &mut report),
+        };
         *self.job.lock().unwrap() = None;
         result
     }
@@ -296,6 +350,9 @@ impl Service {
 
     /// Render `text` (plain text or markdown) in `code` with `voice_id`
     /// into a new preview WAV in `preview_dir`, deleting older ones.
+    /// `signer` gives this install's signing identity once the audio is
+    /// made (#257 part 2): the WAV then carries the C2PA manifest inside;
+    /// without one it is left unsigned (watermark and tags still there).
     /// Returns the file name (see [`preview_file_name`]).
     pub fn preview(
         &self,
@@ -304,8 +361,11 @@ impl Service {
         code: &str,
         voice_id: &str,
         text: Option<&str>,
+        signer: &dyn Fn() -> std::result::Result<std::sync::Arc<super::signing::Identity>, String>,
     ) -> Result<String> {
         let lang = lang(code)?;
+        // #257: no watermark model, no preview (checked before any work).
+        let watermark = super::read_aloud::load_watermark(models_dir)?;
         let text = match text.map(str::trim).filter(|t| !t.is_empty()) {
             Some(t) => t.chars().take(MAX_PREVIEW_CHARS).collect::<String>(),
             None => lang.preview.to_string(),
@@ -326,15 +386,20 @@ impl Service {
                 })?;
                 Ok((e.sample_rate(), audio))
             })?;
-        // P21: every generated file passes the marking hook (#257 adds the
-        // watermark there); the WAV itself carries the synthetic comment.
-        let mut audio = audio;
-        super::marking::Marker::new(super::marking::Provenance {
-            engine: ENGINE_NAME.into(),
-            voice: voice_id.into(),
-            language: lang.code.into(),
-        })
-        .process(&mut audio, rate);
+        // P21: every generated file passes the marking hook (the AudioSeal
+        // watermark, #257); the WAV itself carries the synthetic comment.
+        let mut marker = super::marking::Marker::new(
+            super::marking::Provenance {
+                engine: ENGINE_NAME.into(),
+                voice: voice_id.into(),
+                language: lang.code.into(),
+            },
+            watermark,
+            rate,
+        );
+        let mut marked = marker.process(&audio)?;
+        marked.extend(marker.finish()?);
+        let audio = marked;
         std::fs::create_dir_all(preview_dir)
             .with_context(|| format!("creating {}", preview_dir.display()))?;
         clear_prefix(preview_dir, "preview-");
@@ -344,7 +409,18 @@ impl Service {
             *seq
         };
         let name = format!("preview-{n}.wav");
-        engine::write_wav(&preview_dir.join(&name), rate, &audio)?;
+        let mut wav = engine::wav_bytes(rate, &audio);
+        match signer().and_then(|id| {
+            super::signing::embed_in_wav(&id, marker.provenance(), &super::signing::now_utc(), &wav)
+                .map_err(|e| format!("{e:#}"))
+        }) {
+            Ok(signed) => wav = signed,
+            Err(why) => eprintln!("read aloud: the preview is not signed: {why}"),
+        }
+        let path = preview_dir.join(&name);
+        let tmp = path.with_extension("wav.part");
+        std::fs::write(&tmp, wav)?;
+        std::fs::rename(&tmp, &path)?;
         Ok(name)
     }
 }
@@ -366,7 +442,11 @@ pub fn clear_prefix(preview_dir: &Path, prefix: &str) {
     for e in rd.flatten() {
         let name = e.file_name();
         let name = name.to_string_lossy();
-        let temp = name.ends_with(".wav") || name.ends_with(".opus") || name.ends_with(".part");
+        // `.c2pa`: a *Listen* file's signed-manifest sidecar (#257).
+        let temp = name.ends_with(".wav")
+            || name.ends_with(".opus")
+            || name.ends_with(".c2pa")
+            || name.ends_with(".part");
         if name.starts_with(prefix) && temp {
             let _ = std::fs::remove_file(e.path());
         }
@@ -433,6 +513,21 @@ mod tests {
         assert!(it.voices.iter().all(|v| !v.downloaded));
         assert_eq!(it.voices.iter().filter(|v| v.selected).count(), 1);
         assert_eq!(s.bytes_on_disk, 0);
+        assert!(!s.watermark.downloaded && !s.watermark.detector_downloaded);
+        assert_eq!(s.watermark.bytes, catalog::watermark_bytes());
+        assert_eq!(s.watermark.licence, "MIT");
+    }
+
+    #[test]
+    fn a_preview_needs_the_watermark_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = global()
+            .preview(dir.path(), &dir.path().join("p"), "it", "giovanni", None, &|| {
+                Err("no store".into())
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("watermark"), "{err}");
+        assert!(!dir.path().join("p").exists(), "nothing written");
     }
 
     #[test]
@@ -476,6 +571,8 @@ mod tests {
             "tts-preview/listen-3.wav",
             "tts-preview/listen-.opus",
             "tts-preview/listen-3.opus.part",
+            "tts-preview/listen-3.c2pa",
+            "tts-preview/preview-3.c2pa",
             "tts-preview/../settings.json",
             "tts-preview/preview-3.wav/x",
             "tts-preview/preview-1a.wav",
@@ -490,7 +587,7 @@ mod tests {
     #[test]
     fn old_previews_are_cleared_and_nothing_else() {
         let dir = tempfile::tempdir().unwrap();
-        for f in ["preview-1.wav", "preview-2.wav.part", "listen-1.opus", "keep.txt"] {
+        for f in ["preview-1.wav", "preview-2.wav.part", "listen-1.opus", "listen-1.c2pa", "keep.txt"] {
             std::fs::write(dir.path().join(f), b"x").unwrap();
         }
         clear_prefix(dir.path(), "preview-");

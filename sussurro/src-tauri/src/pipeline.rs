@@ -106,6 +106,9 @@ pub fn handle_trigger(app: &AppHandle, pressed: bool) {
     match trigger_action(push_to_talk, pressed, recording) {
         TriggerAction::Ignore => {}
         TriggerAction::Start => {
+            // A picker's level preview never competes with the real
+            // recording for the device (#314).
+            state.level_previews.stop_all();
             let device = state.settings.lock().unwrap().input_device.clone();
             // Long-form segments yield from now until the final pass is
             // done (`process_recording` ends the turn, #154).
@@ -959,6 +962,7 @@ mod tests {
             recipe_runs: Default::default(),
             recipe_answers: Default::default(),
             consents: Default::default(),
+            level_previews: Default::default(),
         }
     }
 

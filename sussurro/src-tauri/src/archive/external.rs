@@ -288,7 +288,7 @@ mod tests {
                 .external_hosts
                 .clone()
         };
-        let listed = crate::archive::list_items(&archive);
+        let listed = crate::archive::list_items(&archive).unwrap();
         assert_eq!(hosts(&listed, &id), ["api.example.com"]);
         assert!(hosts(&listed, &other).is_empty());
         let db = tmp.path().join("index.sqlite");

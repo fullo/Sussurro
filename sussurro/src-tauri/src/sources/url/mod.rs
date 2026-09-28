@@ -14,6 +14,8 @@
 //!   pasted link to a platform, or a direct link on a platform host that
 //!   turns out to be a web page. Any other web page is refused, never
 //!   handed to yt-dlp's generic extractor.
+//! - **Articles** ([`article`], #258): a web page's main text saved as a
+//!   note, fetched with [`direct::fetch_bytes`] under the same rules.
 //!
 //! **Which addresses a link may reach.** Only `http` and `https`, no user
 //! name or password in the link (it is saved in the item's `source`). Hosts
@@ -44,6 +46,7 @@
 //! run's leftovers are swept at the next start ([`sweep_stale`]), like the
 //! engine's mic spools.
 
+pub mod article;
 pub mod direct;
 pub mod proxy;
 pub mod ytdlp;
@@ -173,10 +176,16 @@ fn path_extension(url: &Url) -> Option<String> {
         .then_some(ext)
 }
 
+/// Whether the link's path names an audio or video file (`.mp3`, `.mp4`…).
+/// Pure.
+pub fn names_media_file(url: &Url) -> bool {
+    path_extension(url).is_some_and(|e| MEDIA_EXTENSIONS.contains(&e.as_str()))
+}
+
 /// Direct when the path names a media file, platform when the host is a
 /// known video platform, direct otherwise. Pure.
 pub fn classify(url: &Url) -> LinkKind {
-    if path_extension(url).is_some_and(|e| MEDIA_EXTENSIONS.contains(&e.as_str())) {
+    if names_media_file(url) {
         return LinkKind::Direct;
     }
     match url.host_str() {
@@ -638,7 +647,7 @@ fn not_a_platform_page(url: &Url) -> anyhow::Error {
     anyhow!(
         "the link opens a web page on {}, not an audio or video file. Sussurro fetches videos \
          from web pages only on known video sites (YouTube, Vimeo, SoundCloud, …); for this \
-         page, link the audio or video file itself",
+         page, link the audio or video file itself — or choose Article to save the page's text",
         url.host_str().unwrap_or("the site")
     )
 }

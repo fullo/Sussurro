@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { detectsLanguage, engineLabel } from "../lib/engines";
 import { invoke } from "@tauri-apps/api/core";
 import { TranscriptView, toLines } from "@sussurro/transcript";
+import { LevelMeter } from "../components/LevelMeter";
 import type { Ctl } from "../hooks/useAppController";
 import type { EngineRuns, RunArgs } from "../hooks/useEngineRuns";
 import {
@@ -18,7 +19,7 @@ import {
 import { baseName, formatClock, progressPercent } from "../lib/format";
 import { TYPE_LABEL } from "../lib/library";
 import { savedAudioFormat } from "../lib/audio";
-import type { ItemType, LinkInfo, SavedAudioFormat, SystemAudioDevices, YtDlpStatus } from "../lib/types";
+import type { ArticleSaved, ItemType, LinkInfo, SavedAudioFormat, SystemAudioDevices, YtDlpStatus } from "../lib/types";
 import {
   ECHO_NOTE,
   NATIVE,
@@ -36,6 +37,8 @@ import {
   saveSystemDevice,
 } from "../lib/systemAudio";
 import {
+  articleProblem,
+  canSaveArticle,
   canTranscribeLink,
   describeDownload,
   downloadPercent,
@@ -43,6 +46,7 @@ import {
   linkPhase,
   linkProblem,
   looksLikeLink,
+  type LinkAction,
   viaLabel,
 } from "../lib/links";
 import { CleanupLevelPicker } from "../settings/CleanupCard";
@@ -133,7 +137,16 @@ export function NewScreen({
             {tab === "file" && (
               <FilePanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             )}
-            {tab === "link" && <LinkPanel engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />}
+            {tab === "link" && (
+              <LinkPanel
+                engine={engine}
+                options={options}
+                ttsEnabled={!!ctl.settings.tts_enabled}
+                labels={defaults}
+                onRunStart={onRunStart}
+                onOpenItem={onOpenItem}
+              />
+            )}
             {tab === "system" && (
               <SystemPanel ctl={ctl} engine={engine} options={options} onRunStart={onRunStart} onOpenItem={onOpenItem} />
             )}
@@ -626,6 +639,7 @@ function SystemPanel({
               <option key={d.name} value={d.name}>{deviceLabel(d, defaultInput)}</option>
             ))}
           </select>
+          <LevelMeter kind="mic" device={mic || ctl.settings.input_device || ""} label="Microphone level" />
         </label>
 
         <label className="field-stack">
@@ -646,6 +660,7 @@ function SystemPanel({
               </optgroup>
             ) : null}
           </select>
+          <LevelMeter kind="system" device={system === NATIVE ? "" : system} native={isNative} label="System audio level" />
         </label>
         {listError && <p className="link-notice">Could not list the audio devices: {listError}</p>}
         {problem && system && <p className="link-notice">{problem}</p>}
@@ -934,15 +949,25 @@ function WithCode({ text }: { text: string }) {
 function LinkPanel({
   engine,
   options,
+  ttsEnabled,
+  labels,
   onRunStart,
   onOpenItem,
 }: {
   engine: EngineRuns;
   options: RunArgs;
+  /** The experimental read-aloud module is on (P24): only then is *Read
+   *  aloud* mentioned as the next step for an article. */
+  ttsEnabled: boolean;
+  /** New's default tags and category, added to a saved article. */
+  labels: Pick<NewDefaults, "tags" | "categories">;
   onRunStart: (kind: RunKind) => void;
   onOpenItem: (id: string) => void;
 }) {
   const run = engine.runs.link;
+  const [action, setAction] = useState<LinkAction>("transcribe");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<ArticleSaved | null>(null);
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [allowLocal, setAllowLocal] = useState(false);
@@ -986,6 +1011,48 @@ function LinkPanel({
     };
   }, [url]);
 
+  const reset = () => {
+    setUrl("");
+    setTitle("");
+    setAllowLocal(false);
+    setIdentify(false);
+    setStartError(null);
+  };
+
+  // An article is saved in one step (#258): no run, no progress.
+  if (saved) {
+    return (
+      <div className="stack">
+        <div className="run-outcome ok" role="status">
+          <p>
+            Saved as a <strong>{TYPE_LABEL.note}</strong>: “{saved.title}”
+            <span className="sh-muted"> · {saved.paragraphs} paragraphs</span>
+          </p>
+          {ttsEnabled && (
+            <p className="sh-muted">
+              To listen to it, open the item and use <b>Read aloud</b> in its <b>Audio</b> tab.
+            </p>
+          )}
+          <div className="row-gap">
+            <button type="button" className="btn-dark" onClick={() => onOpenItem(saved.id)}>
+              Open in Library
+            </button>
+            <button
+              type="button"
+              className="btn-ghost sh-btn"
+              onClick={() => {
+                setSaved(null);
+                reset();
+              }}
+            >
+              Save another article
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (run && !live) {
     return (
       <div className="stack">
@@ -994,10 +1061,7 @@ function LinkPanel({
           onOpenItem={onOpenItem}
           onDismiss={() => {
             engine.dismiss("link");
-            setUrl("");
-            setTitle("");
-            setAllowLocal(false);
-            setIdentify(false);
+            reset();
           }}
           againLabel="Transcribe another link"
         />
@@ -1068,16 +1132,45 @@ function LinkPanel({
     );
   }
 
-  const problem = linkProblem(info, ytDlp, allowLocal);
-  const needsYtDlp = info?.kind === "platform" && ytDlp !== null && !ytDlp.found;
+  const article = action === "article";
+  const problem = article ? articleProblem(info, allowLocal) : linkProblem(info, ytDlp, allowLocal);
+  const needsYtDlp = !article && info?.kind === "platform" && ytDlp !== null && !ytDlp.found;
+  const saveArticle = async () => {
+    setStartError(null);
+    setSaving(true);
+    try {
+      setSaved(
+        await invoke<ArticleSaved>("article_save", {
+          url: url.trim(),
+          title: title.trim() || null,
+          allowLocal,
+          tags: labels.tags,
+          categories: labels.categories,
+        }),
+      );
+    } catch (e) {
+      setStartError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className="stack">
       <div className="mic-start">
         <div>
-          <h2 className="sh-h2">Transcribe from a link</h2>
+          <h2 className="sh-h2">{article ? "Save an article from a link" : "Transcribe from a link"}</h2>
           <p className="sh-muted">
-            A direct link to an audio or video file, or a video page (YouTube, Vimeo, SoundCloud…) through yt-dlp.
-            Saved as a <strong>Transcription</strong>.
+            {article ? (
+              <>
+                The main text of a web page — headings, paragraphs and lists, without menus, ads or comments. Saved
+                as a <strong>Note</strong>.
+              </>
+            ) : (
+              <>
+                A direct link to an audio or video file, or a video page (YouTube, Vimeo, SoundCloud…) through
+                yt-dlp. Saved as a <strong>Transcription</strong>.
+              </>
+            )}
           </p>
         </div>
         <label className="field-stack">
@@ -1097,12 +1190,39 @@ function LinkPanel({
           />
         </label>
         <div id="link-status" className="row-gap" aria-live="polite">
-          {info?.kind && <span className={`tb ${info.kind === "platform" ? "meeting" : "note"}`}>{kindLabel(info.kind)}</span>}
-          {info?.kind === "platform" && ytDlp?.found && (
+          {info?.kind && !article && (
+            <span className={`tb ${info.kind === "platform" ? "meeting" : "note"}`}>{kindLabel(info.kind)}</span>
+          )}
+          {!article && info?.kind === "platform" && ytDlp?.found && (
             <span className="sh-muted">yt-dlp {ytDlp.version ?? ""} found</span>
           )}
           {problem && <span className="field-err">{problem}</span>}
         </div>
+        <fieldset className="types">
+          <legend className="sh-sect">What to do with the link</legend>
+          {([
+            ["transcribe", "Transcribe", "The audio of a file or a video, as text."],
+            ["article", "Article", "The text of a web page."],
+          ] as const).map(([value, label, hint]) => (
+            <label key={value} className={`typecard${action === value ? " sel" : ""}`}>
+              <input
+                type="radio"
+                name="link-action"
+                value={value}
+                checked={action === value}
+                disabled={saving}
+                onChange={() => {
+                  setAction(value);
+                  setStartError(null);
+                }}
+              />
+              <span className="typecard-body">
+                <b>{label}</b>
+                <span className="sh-muted">{hint}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
         {needsYtDlp && ytDlp && (
           <p className="link-notice">
             <WithCode text={ytDlp.install_help} />
@@ -1115,43 +1235,73 @@ function LinkPanel({
             <span className="sh-muted">(this computer, your router, a NAS — off unless you need it)</span>
           </span>
         </label>
-        <IdentifyVoices checked={identify} onChange={setIdentify} />
-        {identify && (
+        {!article && <IdentifyVoices checked={identify} onChange={setIdentify} />}
+        {!article && identify && (
           <p className="sh-note">
             Decide now: the download is deleted after the transcription, so voices can't be identified later without
             transcribing the link again.
           </p>
         )}
         <label className="field-stack">
-          <span className="opt-k">Title <span className="sh-muted">(optional — the video's title, or the file name, if empty)</span></span>
+          <span className="opt-k">
+            Title{" "}
+            <span className="sh-muted">
+              {article
+                ? "(optional — the page's title if empty)"
+                : "(optional — the video's title, or the file name, if empty)"}
+            </span>
+          </span>
           <input value={title} onChange={(e) => setTitle(e.target.value)} spellCheck={false} />
         </label>
         {startError && <p className="run-outcome err" role="alert">{startError}</p>}
-        <div className="row-gap">
-          <span className="tb transcription" title="Audio recorded by others">Transcription</span>
-          <button
-            type="button"
-            className="btn-dark push"
-            disabled={!canTranscribeLink(info, ytDlp, allowLocal) || !engine.canStartLink}
-            onClick={async () => {
-              if (!info?.label) return;
-              onRunStart("link");
-              const err = await engine.startLink(url, title, info.label, allowLocal, {
-                ...options,
-                identifyVoices: identifyVoicesArg("transcription", identify),
-              });
-              setStartError(err);
-            }}
-          >
-            {engine.linkStarting ? "Starting…" : "Transcribe"}
-          </button>
-        </div>
+        {article ? (
+          <div className="row-gap">
+            <span className="tb note" title="Text you keep">Note</span>
+            <button
+              type="button"
+              className="btn-dark push"
+              disabled={!canSaveArticle(info, allowLocal) || saving}
+              onClick={saveArticle}
+            >
+              {saving ? "Saving…" : "Save article"}
+            </button>
+          </div>
+        ) : (
+          <div className="row-gap">
+            <span className="tb transcription" title="Audio recorded by others">Transcription</span>
+            <button
+              type="button"
+              className="btn-dark push"
+              disabled={!canTranscribeLink(info, ytDlp, allowLocal) || !engine.canStartLink}
+              onClick={async () => {
+                if (!info?.label) return;
+                onRunStart("link");
+                const err = await engine.startLink(url, title, info.label, allowLocal, {
+                  ...options,
+                  identifyVoices: identifyVoicesArg("transcription", identify),
+                });
+                setStartError(err);
+              }}
+            >
+              {engine.linkStarting ? "Starting…" : "Transcribe"}
+            </button>
+          </div>
+        )}
       </div>
-      <p className="sh-note" role="note">
-        Downloading from video platforms is subject to their terms of service and to copyright. Transcribe only
-        media you have the right to use — you are responsible for what you download. The downloaded audio is a
-        temporary file, deleted when the transcription ends.
-      </p>
+      {article ? (
+        <p className="sh-note" role="note">
+          Only the page itself is fetched — no images, scripts or other pages — with the same rules as any link.
+          Pages behind a login or a paywall, and pages that build their text with JavaScript, can't be saved. Keep
+          only pages you have the right to copy. Of the options on the right, only the default tags and category
+          apply to an article.
+        </p>
+      ) : (
+        <p className="sh-note" role="note">
+          Downloading from video platforms is subject to their terms of service and to copyright. Transcribe only
+          media you have the right to use — you are responsible for what you download. The downloaded audio is a
+          temporary file, deleted when the transcription ends.
+        </p>
+      )}
     </div>
   );
 }

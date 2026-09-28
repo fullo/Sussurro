@@ -85,10 +85,28 @@ pub fn clean_output(raw: &str) -> String {
         if let Some(inner) = inner.strip_suffix("```") {
             // Drop the info string (```markdown) on the opening line.
             let inner = inner.split_once('\n').map(|(_, rest)| rest).unwrap_or("");
-            return inner.trim().to_string();
+            return drop_empty_items(inner).trim().to_string();
         }
     }
-    t.to_string()
+    drop_empty_items(t).trim().to_string()
+}
+
+/// Drop list markers with nothing after them (`*`, `-`, `+`, `•`) and fold
+/// runs of blank lines into one. A small model stuck repeating itself
+/// emitted thousands of bare `*` lines in *Who said what* (gemma2:2b).
+fn drop_empty_items(s: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for line in s.lines() {
+        let t = line.trim();
+        if matches!(t, "*" | "-" | "+" | "•") {
+            continue;
+        }
+        if t.is_empty() && out.last().is_some_and(|l| l.trim().is_empty()) {
+            continue;
+        }
+        out.push(line);
+    }
+    out.join("\n")
 }
 
 fn check(cancel: &AtomicBool) -> Result<()> {
@@ -579,6 +597,25 @@ pub(crate) mod tests {
         assert_eq!(clean_output("```\nx\n```\n"), "x");
         assert_eq!(clean_output("<think>never closed"), "");
         assert_eq!(clean_output("a ```code``` b"), "a ```code``` b");
+    }
+
+    #[test]
+    fn clean_output_drops_runaway_empty_bullets() {
+        // A small model stuck emitting bare markers (gemma2:2b, *Who said
+        // what*): the real lines survive, the markers and blank runs don't.
+        let raw = format!(
+            "## Giulia Verdi\n- Opened the meeting\n{}\n\n\n\n- Asked for the budget\n",
+            "*  \n".repeat(5000)
+        );
+        assert_eq!(
+            clean_output(&raw),
+            "## Giulia Verdi\n- Opened the meeting\n\n- Asked for the budget"
+        );
+        // Markers with text, numbered items and table rows are untouched.
+        let ok = "- a\n* b\n+ c\n1. d\n| x | y |\n|---|---|";
+        assert_eq!(clean_output(ok), ok);
+        // One blank line between paragraphs stays.
+        assert_eq!(clean_output("a\n\nb"), "a\n\nb");
     }
 
     #[test]

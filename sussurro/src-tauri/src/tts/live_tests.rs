@@ -13,7 +13,19 @@
 //!
 //! The models folder can be filled by the app (Models → Voices) or by
 //! hand from the pinned URLs in [`super::catalog`]; files are checked
-//! against their pinned sizes here and never downloaded by the test.
+//! against their pinned sizes here and never downloaded by the test. Since
+//! #257 it also needs the watermark models in `pocket-tts/audioseal/`.
+//!
+//! The watermark alone (#257) has its own test, with no TTS model:
+//!
+//! ```text
+//! SUSSURRO_WATERMARK_MODELS=<folder with audioseal_{generator,detector}_16bits.onnx>
+//! SUSSURRO_WATERMARK_SPEECH=<a speech WAV, any rate, 16-bit PCM>  (optional:
+//!     else a synthetic voice; e.g. `say -o s.wav --file-format=WAVE
+//!     --data-format=LEI16@24000 "…"` for Pocket-like 24 kHz speech)
+//! SUSSURRO_TTS_OUT=<folder to keep the marked files>             (optional)
+//! cargo test --lib live_watermark -- --ignored --nocapture
+//! ```
 
 use super::catalog::{self, Language};
 use super::engine;
@@ -268,6 +280,14 @@ fn live_read_aloud_saves_a_marked_speech_file() {
             threads,
             ..PocketOptions::default()
         },
+        // A throwaway signing key (never the real credential store).
+        signer: &|| {
+            super::signing::load_or_create(
+                &tmp.path().join("c2pa"),
+                &crate::secrets::tests::FakeStore::default(),
+            )
+            .map(std::sync::Arc::new)
+        },
     };
     let voices = std::collections::BTreeMap::new();
     let started = Instant::now();
@@ -301,8 +321,204 @@ fn live_read_aloud_saves_a_marked_speech_file() {
     assert!(tags.contains(&("SYNTHETIC".into(), "1".into())), "{tags:?}");
     let st = read_aloud::statuses(archive, &id).unwrap();
     assert!(st[0].recorded && !st[0].stale);
+    assert_eq!(st[0].marked, ["metadata", "watermark", "signature"]);
+    assert!(st[0].signed);
+    // #257: the saved file carries Sussurro's watermark.
+    let det = models::watermark_path(&dir, &catalog::WATERMARK_DETECTOR);
+    let mut detector = super::watermark::AudioSealDetector::load(&det).unwrap();
+    let file = std::fs::File::open(&path).unwrap();
+    let r = super::check::check_file(&path, file, &mut detector).unwrap();
+    eprintln!("check: {r:?}");
+    assert_eq!(r.summary, super::check::Summary::MadeBySussurro);
+    // #257 part 2: and its sidecar signature holds.
+    assert_eq!(r.signature.status, super::signing::SignatureStatus::Valid);
+    assert_eq!(r.signature.source, Some(super::signing::SignatureSource::Sidecar));
     if let Ok(keep) = std::env::var("SUSSURRO_TTS_OUT") {
         let to = PathBuf::from(keep).join(format!("live-read-aloud-{}.opus", l.code));
         let _ = std::fs::copy(&path, to);
+    }
+}
+
+/// A speech WAV (16-bit PCM, any rate, mono or stereo) → mono samples and
+/// its rate.
+fn read_wav_16bit(path: &std::path::Path) -> (Vec<f32>, u32) {
+    let bytes = std::fs::read(path).unwrap();
+    assert_eq!(&bytes[0..4], b"RIFF");
+    let mut at = 12;
+    let (mut rate, mut channels) = (0u32, 1usize);
+    loop {
+        let id = &bytes[at..at + 4];
+        let len = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize;
+        let body = &bytes[at + 8..(at + 8 + len).min(bytes.len())];
+        if id == b"fmt " {
+            assert_eq!(u16::from_le_bytes([body[14], body[15]]), 16, "16-bit PCM only");
+            channels = u16::from_le_bytes([body[2], body[3]]) as usize;
+            rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
+        } else if id == b"data" {
+            let pcm: Vec<f32> = body
+                .chunks_exact(2 * channels)
+                .map(|f| {
+                    f.chunks_exact(2)
+                        .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+                        .sum::<f32>()
+                        / channels as f32
+                })
+                .collect();
+            return (pcm, rate);
+        }
+        at += 8 + len + (len & 1);
+    }
+}
+
+/// A crude synthetic voice at 24 kHz: a glottal pulse train with a gliding
+/// pitch through three formant resonators, in syllables with pauses.
+fn synthetic_voice(seconds: usize) -> Vec<f32> {
+    let rate = 24_000.0f32;
+    let n = seconds * 24_000;
+    let mut out = vec![0f32; n];
+    let formants = [(700.0f32, 90.0f32), (1_200.0, 110.0), (2_600.0, 160.0)];
+    let mut state = [[0f32; 2]; 3];
+    let mut phase = 0f32;
+    for (i, o) in out.iter_mut().enumerate() {
+        let t = i as f32 / rate;
+        let syllable = (t * 4.0).fract();
+        let voiced = (t % 3.0) < 2.4 && syllable < 0.8;
+        let f0 = 110.0 + 30.0 * (t * 1.3).sin() + 15.0 * (t * 7.0).sin();
+        phase += f0 / rate;
+        let pulse = if voiced && phase >= 1.0 { 1.0 } else { 0.0 };
+        if phase >= 1.0 {
+            phase -= 1.0;
+        }
+        let mut y = 0.0;
+        for (k, &(f, bw)) in formants.iter().enumerate() {
+            let r = (-std::f32::consts::PI * bw / rate).exp();
+            let c = 2.0 * r * (std::f32::consts::TAU * f * (1.0 + 0.1 * (t * 2.0 + k as f32).sin()) / rate).cos();
+            let v = pulse + c * state[k][0] - r * r * state[k][1];
+            state[k][1] = state[k][0];
+            state[k][0] = v;
+            y += v / (k as f32 + 1.0);
+        }
+        *o = y;
+    }
+    let peak = out.iter().fold(0f32, |m, x| m.max(x.abs())).max(1e-6);
+    out.iter_mut().for_each(|x| *x *= 0.5 / peak);
+    out
+}
+
+/// #257 end to end through the real models: speech at Pocket's 24 kHz is
+/// marked ("M16", in 0.5 s blocks like a render), written with the app's
+/// Opus writer at the speech settings, then *Check a file* reads it back:
+/// the payload must be Sussurro's. The same speech unmarked must not be.
+/// Also a marked 24 kHz WAV (the preview path).
+#[test]
+#[ignore = "needs the AudioSeal ONNX models (SUSSURRO_WATERMARK_MODELS)"]
+fn live_watermark_survives_the_app_opus_and_is_read_back() {
+    use super::check::{check_file, Summary};
+    use super::marking::{Marker, Provenance};
+    use super::watermark::{AudioSealDetector, AudioSealGenerator, Verdict};
+
+    let dir = PathBuf::from(
+        std::env::var("SUSSURRO_WATERMARK_MODELS").expect("set SUSSURRO_WATERMARK_MODELS"),
+    );
+    for f in catalog::WATERMARK_FILES {
+        let p = dir.join(f.name);
+        assert_eq!(std::fs::metadata(&p).unwrap().len(), f.bytes, "{}", f.name);
+        assert_eq!(crate::stt::models::sha256_hex(&p).unwrap(), f.sha256, "{}", f.name);
+    }
+    let speech = match std::env::var("SUSSURRO_WATERMARK_SPEECH") {
+        Ok(p) => {
+            let (pcm, rate) = read_wav_16bit(std::path::Path::new(&p));
+            let mut rs = super::resample::Resampler::new(rate, 24_000);
+            let mut v = rs.push(&pcm);
+            v.extend(rs.flush());
+            eprintln!("speech: {p} ({rate} Hz, {:.1} s)", pcm.len() as f32 / rate as f32);
+            v
+        }
+        Err(_) => {
+            eprintln!("speech: synthetic voice, 12 s");
+            synthetic_voice(12)
+        }
+    };
+    let out_dir = std::env::var("SUSSURRO_TTS_OUT").ok().map(PathBuf::from);
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Mark.
+    let generator = AudioSealGenerator::load(&dir.join(catalog::WATERMARK_GENERATOR.name)).unwrap();
+    let mut marker = Marker::new(
+        Provenance {
+            engine: "Pocket TTS".into(),
+            voice: "live-test".into(),
+            language: "en".into(),
+        },
+        Box::new(generator),
+        24_000,
+    );
+    let started = Instant::now();
+    let mut marked = Vec::new();
+    for block in speech.chunks(12_000) {
+        marked.extend(marker.process(block).unwrap());
+    }
+    marked.extend(marker.finish().unwrap());
+    let mark_s = started.elapsed().as_secs_f32();
+    assert_eq!(marked.len(), speech.len());
+    let energy = |x: &[f32]| x.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>();
+    let diff: Vec<f32> = marked.iter().zip(&speech).map(|(m, s)| m - s).collect();
+    let db = 10.0 * (energy(&speech) / energy(&diff).max(1e-12)).log10();
+    let secs = speech.len() as f32 / 24_000.0;
+    eprintln!(
+        "marked {secs:.1} s in {mark_s:.2} s ({:.2} s per minute); watermark {db:.1} dB below the speech",
+        mark_s * 60.0 / secs
+    );
+    assert!(db > 15.0, "the watermark is too loud: {db:.1} dB");
+
+    // Encode like read aloud: 24 kHz Ogg Opus, 32 kb/s, with the tags.
+    let write_opus = |name: &str, pcm: &[f32]| {
+        let p = tmp.path().join(name);
+        let mut w = crate::archive::opus::OpusWriter::create_with(
+            &p,
+            crate::archive::audio::MAX_SAMPLES,
+            crate::archive::opus::SPEECH,
+            &marker.tags(),
+        )
+        .unwrap();
+        w.write(pcm).unwrap();
+        w.finish().unwrap();
+        p
+    };
+    let marked_opus = write_opus("speech.opus", &marked);
+    let plain_opus = write_opus("unmarked.opus", &speech);
+    let marked_wav = tmp.path().join("preview.wav");
+    super::engine::write_wav(&marked_wav, 24_000, &marked).unwrap();
+
+    let mut detector =
+        AudioSealDetector::load(&dir.join(catalog::WATERMARK_DETECTOR.name)).unwrap();
+    let mut check = |p: &std::path::Path| {
+        let started = Instant::now();
+        let r = check_file(p, std::fs::File::open(p).unwrap(), &mut detector).unwrap();
+        eprintln!(
+            "{}: {:?}, {:?}, frames {:.3}, {} bit(s) wrong, metadata {:?} — in {:.2} s",
+            r.file_name,
+            r.summary,
+            r.watermark.verdict,
+            r.watermark.frames_marked,
+            r.watermark.bit_errors,
+            r.metadata.status,
+            started.elapsed().as_secs_f32()
+        );
+        r
+    };
+    let r = check(&marked_opus);
+    assert_eq!(r.watermark.verdict, Verdict::Found);
+    assert!(r.watermark.bit_errors <= 2);
+    assert_eq!(r.summary, Summary::MadeBySussurro);
+    let r = check(&marked_wav);
+    assert_eq!(r.summary, Summary::MadeBySussurro);
+    let r = check(&plain_opus);
+    assert_eq!(r.watermark.verdict, Verdict::NotFound, "no mark on unmarked speech");
+    assert_eq!(r.summary, Summary::TagsOnly, "it still has the tags");
+    if let Some(out) = out_dir {
+        for p in [&marked_opus, &plain_opus, &marked_wav] {
+            let _ = std::fs::copy(p, out.join(format!("live-watermark-{}", p.file_name().unwrap().to_string_lossy())));
+        }
     }
 }

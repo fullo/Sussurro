@@ -64,6 +64,13 @@ Models · Settings**.
 - **New → Link** downloads a direct media link, or a video page through
   [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) if you have it installed, and
   transcribes it as a **transcription**. The download is temporary.
+  Choose **Article** instead to keep the main text of a web page — headings,
+  paragraphs and lists, without menus, ads or comments — as a **note**
+  (`source: url:<link>`); with the experimental Read aloud module on, its
+  Audio tab can then read it to you. Only the page itself is fetched, with
+  the same network rules as any link; pages behind a login or a paywall and
+  pages that build their text with JavaScript are refused rather than saved
+  empty.
 - Long recordings are cut at pauses (Silero voice-activity detection),
   transcribed and cleaned segment by segment while you talk, and saved after
   every segment, so a crash leaves an *Interrupted* item, not nothing. A hotkey
@@ -178,9 +185,62 @@ and Cancel. Generated speech is always labelled *Synthetic*, is never
 named like a recording
 (`audio*.opus`), and says so in the file itself (Ogg Opus comments
 `SYNTHETIC=1`, engine, voice) and in the item's frontmatter (`speech:`,
-`synthetic:`); an inaudible watermark follows in a later release. When the
-text changes after the speech was made, the tab says it is out of date.
-*Delete…* moves a speech file to the trash.
+`synthetic:`). When the text changes after the speech was made, the tab
+says it is out of date. *Delete…* moves a speech file to the trash.
+An article saved from New → Link (*Article*) is read like any other item,
+in the language the page declares.
+
+**Every generated file is marked**, as the EU AI Act (art. 50) asks of
+synthetic audio: besides the tags above, an **inaudible watermark** —
+[AudioSeal](https://github.com/facebookresearch/audioseal) by Meta (MIT),
+16-bit, with one fixed Sussurro code that is the same for every user and
+never identifies anyone — is added to saved speech, *Listen* files and
+voice previews alike. There is no switch to turn it off. Its two models
+(93.5 MB, our ONNX export at
+[DarumaHQ/audioseal-onnx](https://huggingface.co/DarumaHQ/audioseal-onnx))
+come with the first read-aloud download, in the same confirmation; without
+them nothing is spoken. The watermark survives the app's own Opus, MP3 and
+resampling, but not heavy noise, speed changes or very short excerpts.
+
+Generated files also carry **signed metadata**
+([C2PA](https://c2pa.org) Content Credentials): who made the file
+(`Sussurro <version>`), that it is AI-generated speech
+(`trainedAlgorithmicMedia`), the engine, voice and language, and when (this
+computer's clock — no time-stamp service is contacted). Ogg can't hold a
+C2PA manifest, so each saved `speech.opus` gets a `speech.c2pa` file next
+to it (keep them together: the pair travels, is replaced and moves to the
+trash as one); *Listen* files get one too, and voice previews (WAV) carry
+it inside. Each install signs with **its own self-signed certificate**,
+made the first time the module generates a file: its private key is kept
+only in the OS credential store (service `com.sussurro.app`, account
+`c2pa-signing-key`), and the certificate names no one
+(`Sussurro install <8 hex digits>`). Verifiers show these signatures as
+valid but from an unknown signer — no trust list knows a per-install
+certificate. Files signed by the same install can be linked to each other
+through the certificate. Where no credential store works (a Linux box
+without a Secret Service keyring), files are still generated, watermarked
+and tagged, but left unsigned, and the Audio tab says why.
+
+**Check a file** (Models → Voices, with the module on) tells whether any
+audio file carries Sussurro's marks: pick a file (Opus, Ogg, WAV, MP3, M4A,
+FLAC) and it says what the watermark, the tags and the signed metadata
+each found — the manifest inside the file, or the `.c2pa` file with the
+same name next to it. It runs on this computer; nothing is uploaded, and
+no certificate is looked up online. A valid signature means the file is
+unchanged since it was signed, by a certificate no trust list knows
+("signed by a Sussurro install, not a trusted signer"): anyone can make
+such a certificate, so it says who *claims* to have made the file. A
+signature that doesn't match means the file changed after signing, or the
+`.c2pa` belongs to another file. "Made by Sussurro" needs the watermark
+over at least half the audio *and* Sussurro's code; a watermark-like signal
+with another code is reported as inconclusive (music and steady tones can
+look like one), and a file with no mark is reported as "no Sussurro mark
+found" — which doesn't say whether a person or a machine made it.
+
+**Please don't strip the marks.** Don't remove the tags or the `.c2pa`
+files, re-encode to hide the watermark or pass generated speech off as a
+recording: the marks are
+how people can tell synthetic speech from a real voice.
 
 ## Getting started
 
@@ -351,6 +411,8 @@ unless you tick *Allow local network addresses* for that run — checked on
 every address a host resolves to and every redirect. yt-dlp is used only for
 known video sites (YouTube, Vimeo, SoundCloud…), without its generic "any
 page" extractor, and every connection it makes goes through the same check.
+An *Article* link fetches the page's HTML only (no images, scripts or other
+pages, no script ever runs), capped at 10 MB, through the same check.
 
 - **Recipes and Ask questions** on an external profile show a confirmation
   **every time**: which document, roughly how much text (characters and
@@ -461,11 +523,12 @@ account:
 | People registry | `<archive>/.sussurro/people.json` (travels with the archive) |
 | Settings, including LLM profiles and the extension's pairing token | `settings.json` in the app's config folder (readable only by you on macOS and Linux) |
 | LLM profile API keys | the OS credential store, service `com.sussurro.app` |
+| The read-aloud signing key (experimental, made the first time a file is generated) | the OS credential store, service `com.sussurro.app`, account `c2pa-signing-key`; its public certificate in `c2pa/signing-chain.pem` in the app's data folder (readable only by you on macOS and Linux) |
 | Dictation history and usage stats | `history.jsonl`, `stats.json` in the app's data folder |
 | Search index (rebuildable), paths of files kept for *Identify voices*, temporary link downloads | `archive-index.sqlite`, `source-files.json`, `link-downloads/` in the app's data folder |
 | Speech, speaker and bundled LLM models | `models/` in the app's data folder, or the Models folder you choose |
-| Read-aloud models and voices (experimental, only if you download them) | `models/pocket-tts/` in the same folder; voice previews and *Listen* files are temporary files in `tts-preview/` in the app's data folder, deleted when replaced, when the document closes and at the next start |
-| Generated speech (read aloud → *Save as speech file*) | `speech.opus` / `speech-<document>.opus` in the item's archive folder, marked synthetic in the file and the frontmatter |
+| Read-aloud models, voices and watermark models (experimental, only if you download them) | `models/pocket-tts/` in the same folder (the watermark models in `pocket-tts/audioseal/`); voice previews and *Listen* files are temporary files in `tts-preview/` in the app's data folder, deleted when replaced, when the document closes and at the next start |
+| Generated speech (read aloud → *Save as speech file*) | `speech.opus` / `speech-<document>.opus` in the item's archive folder, marked synthetic in the file and the frontmatter, with its signed manifest `speech.c2pa` / `speech-<document>.c2pa` next to it |
 | Voice profiles of people with *Recognise this voice* on, and your own voice if you recorded it (0.11) | `voices/` in the app's data folder (readable only by you on macOS and Linux); never in the archive |
 | *Not X* answers to voice suggestions (0.11) | `voice_dismissals.json` in the app's data folder (ids only; readable only by you on macOS and Linux) |
 
@@ -630,7 +693,10 @@ has a rate limit (a burst of 60, then 10 per second: `429` with
 `Retry-After`), pages hold at most 200 rows, answers at most 16 MiB, and at
 most two archive requests run at once (`503`), so a busy script never
 stalls the extension. Revoking a token in Settings → Scripting applies to
-the very next request.
+the very next request. When the archive folder itself can't be read (moved,
+on a drive that isn't connected, or refused by macOS privacy settings),
+`GET /archive/items` answers `503` with code `archive_unreadable`, never an
+empty list.
 
 ## Removed in 0.10
 
@@ -656,10 +722,20 @@ the very next request.
   when the recording started. If you switch outputs mid-call, start a new
   recording. On macOS it needs 14.2 or later, and on Linux `pulseaudio-utils`.
   The Windows loopback has not been verified on real hardware yet.
+- **Articles**: the main text is guessed by a Readability-style extractor,
+  so an odd page layout can lose a paragraph or keep a caption. Pages
+  behind a login or a paywall, and pages that build their text with
+  JavaScript, can't be saved.
 - **Links**: video pages work only on known platforms, through `yt-dlp`.
   Videos whose only audio is Opus or AC-3 are refused, because no ffmpeg is
   bundled. Links are capped at 2 GB and ignore system proxy settings (so the
   local-network check can't be bypassed).
+- **The Library says "Can't open the archive folder"** when the archive
+  folder is missing (moved, renamed, a drive not connected) or the system
+  refuses it. Nothing is deleted, and the items come back as soon as the
+  folder can be read. On macOS, allow Sussurro in System Settings → Privacy
+  & Security → Files and Folders (or Full Disk Access); otherwise pick
+  another folder in Settings → Archive.
 - **The browser extension is not in the stores yet.** Chrome, Edge and
   Brave load it unpacked (Developer mode); Firefox installs the
   Mozilla-signed `.xpi` from the release.

@@ -32,7 +32,8 @@ use super::profiles::{
     build_profile, links_person, person_lines, VoiceLines, VoiceProfile, MIN_PROFILE_DOCUMENTS,
     MIN_PROFILE_SPEECH_MS,
 };
-use crate::archive::store::{existing_item_dir, read_linked_segments, scan_item_dirs};
+use crate::archive::paths::item_dir;
+use crate::archive::store::{open_root, read_linked_segments, scan_item_dirs, transcript_path};
 use crate::archive::SegmentsFile;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
@@ -268,19 +269,42 @@ impl VoiceStore {
     }
 
     /// One pass over the whole archive, building a profile for each of
-    /// `ids` (in that order).
+    /// `ids` (in that order). An archive root that can't be read is an
+    /// error (#328); so is a profile of `ids` with a document the scan
+    /// could not read — rebuilding without it would drop its lines.
     fn scan(&self, archive: &Path, ids: &[String]) -> Result<Vec<VoiceProfile>> {
         let mut per_person: BTreeMap<&str, Vec<(String, VoiceLines)>> =
             ids.iter().map(|id| (id.as_str(), Vec::new())).collect();
-        for (item, dir) in scan_item_dirs(archive) {
-            // An unreadable document contributes nothing (as in the Library).
-            let Ok(Some((source, file))) = read_linked_segments(&dir) else {
-                continue;
+        let mut found = scan_item_dirs(archive)?;
+        for (item, dir) in std::mem::take(&mut found.items) {
+            let (source, file) = match read_linked_segments(&dir) {
+                Ok(Some(doc)) => doc,
+                Ok(None) => continue,
+                // The OS refused the file: unknown, not "links nobody".
+                Err(e) if is_io(&e) => {
+                    eprintln!("voices: a document can't be read ({e:#})");
+                    found.unreadable.push(dir);
+                    continue;
+                }
+                // A broken document contributes nothing (as in the Library).
+                Err(_) => continue,
             };
             for (person, docs) in per_person.iter_mut() {
                 let lines = person_lines(&file, &source, person);
                 if !lines.is_empty() {
                     docs.push((item.clone(), lines));
+                }
+            }
+        }
+        if !found.unreadable.is_empty() {
+            for id in ids {
+                if let Ok(Some(p)) = self.read(id) {
+                    if p.documents.iter().any(|d| found.is_unknown(archive, d)) {
+                        bail!(
+                            "part of the archive can't be read, including documents of a voice \
+                             profile: the profile was left as it is"
+                        );
+                    }
                 }
             }
         }
@@ -301,7 +325,10 @@ impl VoiceStore {
         if profiles.is_empty() {
             return Ok(());
         }
-        let changed = load_document(archive, item);
+        // A document that can't be read is not a document gone (#328):
+        // nothing is rebuilt while the archive (or one of them) is unreadable.
+        open_root(archive)?;
+        let changed = load_document(archive, item)?;
         let mut cache: BTreeMap<String, Option<(String, SegmentsFile)>> = BTreeMap::new();
         cache.insert(item.to_string(), changed);
         for p in profiles {
@@ -316,10 +343,11 @@ impl VoiceStore {
             docs.insert(item.to_string());
             let mut lines: Vec<(String, VoiceLines)> = Vec::new();
             for d in docs {
-                let data = cache
-                    .entry(d.clone())
-                    .or_insert_with(|| load_document(archive, &d));
-                if let Some((source, file)) = data {
+                if !cache.contains_key(&d) {
+                    let data = load_document(archive, &d)?;
+                    cache.insert(d.clone(), data);
+                }
+                if let Some((source, file)) = &cache[&d] {
                     lines.push((d, person_lines(file, source, &p.person_id)));
                 }
             }
@@ -372,10 +400,28 @@ impl VoiceStore {
 }
 
 /// `(source, segments)` of item `id` when it links anyone; `None` when it
-/// is gone, links nobody, or can't be read.
-fn load_document(archive: &Path, id: &str) -> Option<(String, SegmentsFile)> {
-    let dir = existing_item_dir(archive, id).ok()?;
-    read_linked_segments(&dir).ok().flatten()
+/// is gone, links nobody, or is broken (not valid JSON/YAML). An error when
+/// the OS refuses to read it (#328): the caller must not take that for a
+/// deleted document.
+fn load_document(archive: &Path, id: &str) -> Result<Option<(String, SegmentsFile)>> {
+    let dir = item_dir(archive, id)?;
+    match std::fs::metadata(transcript_path(&dir)) {
+        Ok(m) if m.is_file() => {}
+        Ok(_) => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).context("a document of a voice profile can't be read"),
+    }
+    match read_linked_segments(&dir) {
+        Ok(doc) => Ok(doc),
+        Err(e) if is_io(&e) => Err(e),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Whether `e` comes from the OS (a read refused), not from a broken file.
+fn is_io(e: &anyhow::Error) -> bool {
+    e.chain()
+        .any(|c| c.downcast_ref::<std::io::Error>().is_some())
 }
 
 #[cfg(test)]
@@ -495,6 +541,60 @@ mod tests {
                 .person_id,
             anna
         );
+    }
+
+    /// #328: a folder that can't be read is not a deleted document. Neither
+    /// a rebuild nor an incremental update may shrink a profile then.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_archive_never_shrinks_a_profile() {
+        use std::os::unix::fs::PermissionsExt;
+        struct Locked(PathBuf);
+        impl Drop for Locked {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let lock = |p: &Path| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o000)).unwrap();
+            Locked(p.to_path_buf())
+        };
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("running as root: permission test skipped");
+            return;
+        }
+        let f = fixture();
+        let anna = add_person(&f.archive, "Anna");
+        let d1 = meeting(&f.archive, 1, 40_000);
+        let d2 = meeting(&f.archive, 2, 30_000);
+        link(&f.archive, &d1, "voice:1", &anna);
+        link(&f.archive, &d2, "voice:1", &anna);
+        f.store.enable(&f.archive, &anna).unwrap();
+        let before = f.store.read(&anna).unwrap().unwrap();
+        assert_eq!(before.documents.len(), 2);
+
+        // The whole archive refused.
+        {
+            let _l = lock(&f.archive);
+            let e = f.store.rebuild_all(&f.archive).unwrap_err();
+            assert!(crate::archive::unreadable::find(&e).is_some(), "{e:#}");
+            assert!(f.store.document_changed(&f.archive, &d1).is_err());
+            assert!(f.store.enable(&f.archive, &anna).is_err());
+        }
+        assert!(f.store.read(&anna).unwrap().unwrap().same_as(&before));
+
+        // One of its documents refused.
+        {
+            let _l = lock(&f.archive.join(&d2));
+            assert!(f.store.rebuild_all(&f.archive).is_err());
+            assert!(f.store.document_changed(&f.archive, &d1).is_err());
+        }
+        assert!(f.store.read(&anna).unwrap().unwrap().same_as(&before));
+
+        // Readable again: the same profile.
+        f.store.rebuild_all(&f.archive).unwrap();
+        assert!(f.store.read(&anna).unwrap().unwrap().same_as(&before));
     }
 
     #[test]
