@@ -183,6 +183,9 @@ impl ChatModel for ProfileModel {
                 timeout_secs: STEP_TIMEOUT_SECS,
                 num_ctx: Some(self.profile.effective_context_tokens()),
                 temperature: 0.2,
+                num_predict: Some(super::chunk::output_tokens(
+                    self.profile.effective_context_tokens(),
+                )),
             },
         )
     }

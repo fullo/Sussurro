@@ -151,13 +151,22 @@ pub fn is_generic_voice(label: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Tokens kept free for the model's answer in a `context_tokens` window: a
+/// quarter of it, at least 512, at most half. Also the cap on what a recipe
+/// step may generate (`num_predict`), so a model stuck repeating itself
+/// stops where the plan expected the answer to end.
+pub fn output_tokens(context_tokens: u32) -> u32 {
+    let ctx = context_tokens as usize;
+    (ctx / OUTPUT_SHARE).max(MIN_OUTPUT_TOKENS).min(ctx / 2) as u32
+}
+
 /// Characters of transcript input that fit in one call to a model with a
 /// `context_tokens` window, when the rest of the prompt (instructions,
 /// header) takes `overhead_chars`. A quarter of the window (at least 512
 /// tokens) stays free for the answer.
 pub fn input_budget_chars(context_tokens: u32, overhead_chars: usize) -> usize {
     let ctx = context_tokens as usize;
-    let output = (ctx / OUTPUT_SHARE).max(MIN_OUTPUT_TOKENS).min(ctx / 2);
+    let output = output_tokens(context_tokens) as usize;
     let overhead = overhead_chars.div_ceil(CHARS_PER_TOKEN);
     let input = ctx
         .saturating_sub(output)
@@ -519,6 +528,15 @@ mod tests {
         assert!(input_budget_chars(32_768, 3000) > 60_000);
         // A huge prompt never drives the budget to zero.
         assert_eq!(input_budget_chars(1024, 100_000), 256 * 3);
+    }
+
+    #[test]
+    fn output_cap_is_the_reserved_answer_space() {
+        assert_eq!(output_tokens(4096), 1024);
+        assert_eq!(output_tokens(1024), 512);
+        assert_eq!(output_tokens(32_768), 8192);
+        // Never more than half the window, even when 512 would be more.
+        assert_eq!(output_tokens(800), 400);
     }
 
     #[test]
