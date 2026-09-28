@@ -24,7 +24,7 @@ only 0.12 issue that stays out, moved to the 0.13 milestone.
 |---|---|---|
 | Phase V0 — Voices spikes | #274 | done — all six spikes merged (#235–#240) |
 | 0.11 — Known voices (now including read aloud) | #275 | done — all seventeen issues merged (#241–#252, #254–#258); docs (#253) prepared, **0.11.0 not yet tagged/published** (awaiting manual QA, section 9) |
-| 0.12 — Read aloud | #276 | absorbed into 0.11 (2026-09-28 decision on #259), apart from its own docs/release issue (#260, not yet acted on) — see the 0.11 row |
+| 0.12 — Read aloud | #276 | absorbed into 0.11 (2026-09-28 decision on #259); its own docs/release issue (#260) is prepared (this PR) — one merged behaviour change on top of 0.11.0 (Audio tab one-button-per-document + in-app player, temporary *Listen* path removed, #327), **0.12.0 not yet tagged/published** |
 | 0.13 — Your voice, with consent | #277 | waits on P19, P20 and the legal review (#261); also now holds the two-voice podcast recipe stretch goal moved from 0.12 (#259) |
 | Track A — Accounts and stores | #278 | maintainer accounts (P22, P23); privacy policy page (#267) agent-ready |
 
@@ -1142,8 +1142,14 @@ own docs/release issue are still open here:
 - [ ] Stretch: **two-voice podcast recipe** (P17). (#259) — **moved to the
       0.13 milestone** (maintainer decision, 2026-09-28); listed under
       0.13 below too.
-- [ ] Docs and release. (#260) — not acted on; 0.12's release-notes content
-      is folded into `docs/releases/0.11.0.md` instead.
+- [x] Docs and release. (#260) — prepared: `docs/releases/0.12.0.md`, an
+      "Update:" pointer on `docs/releases/0.11.0.md`, the
+      `read-aloud-and-marking.html` blog post, `CLAUDE.md` and this plan's
+      status updated, version bump 0.11.0 → 0.12.0. Not yet merged, tagged
+      or published; **its own content is thin** — 0.12's release-notes
+      content is mostly folded into `docs/releases/0.11.0.md` already, and
+      0.12.0 itself only documents the #327 Audio tab tidy-up merged after
+      0.11's docs were written.
 
 ### 0.13 — Your voice, with consent (~3–4 weeks, after the legal review)
 

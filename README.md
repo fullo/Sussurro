@@ -14,8 +14,8 @@ to a server yourself.
 🌐 Project site: [`docs/index.html`](docs/index.html) · 📖 User manual:
 [`docs/manual/`](docs/manual/index.html) · 📰 Guides:
 [`docs/blog/`](docs/blog/index.html) · 🛠️ Building & contributing:
-[`docs/development.md`](docs/development.md) · 📝 What's new in 0.11:
-[`docs/releases/0.11.0.md`](docs/releases/0.11.0.md)
+[`docs/development.md`](docs/development.md) · 📝 What's new in 0.12:
+[`docs/releases/0.12.0.md`](docs/releases/0.12.0.md)
 
 ## Why Sussurro
 
@@ -769,8 +769,8 @@ empty list.
 
 ## Documentation
 
-- [`docs/releases/0.11.0.md`](docs/releases/0.11.0.md): what's new in 0.11
-  and upgrade notes (previously [0.10.0](docs/releases/0.10.0.md)).
+- [`docs/releases/0.12.0.md`](docs/releases/0.12.0.md): what's new in 0.12
+  and upgrade notes (previously [0.11.0](docs/releases/0.11.0.md)).
 - [`docs/manual/`](docs/manual/index.html): the user manual, screen by screen.
 - [`docs/blog/`](docs/blog/index.html): a guide for each feature.
 - [`docs/development.md`](docs/development.md): build from source, tests, CI,

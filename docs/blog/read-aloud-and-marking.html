@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Read aloud, and why every file it makes is marked — Sussurro Blog</title>
+<meta name="description" content="Sussurro's experimental read-aloud module turns any document into speech with a local model — and marks every file it makes with an inaudible watermark and signed metadata, on by default with no switch to turn the marking off." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,900&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="../assets/blog.css" />
+<!-- seo:start -->
+<link rel="canonical" href="https://fullo.github.io/Sussurro/blog/read-aloud-and-marking.html" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#fafaf8" />
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml" />
+<meta property="og:site_name" content="Sussurro" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Read aloud, and why every file it makes is marked — Sussurro Blog" />
+<meta property="og:description" content="Sussurro's experimental read-aloud module turns any document into speech with a local model — and marks every file it makes with an inaudible watermark and signed metadata, on by default with no switch to turn the marking off." />
+<meta property="og:url" content="https://fullo.github.io/Sussurro/blog/read-aloud-and-marking.html" />
+<meta property="og:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="article:published_time" content="2026-09-28" />
+<meta property="article:author" content="DarumaHQ" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Read aloud, and why every file it makes is marked — Sussurro Blog" />
+<meta name="twitter:description" content="Sussurro's experimental read-aloud module turns any document into speech with a local model — and marks every file it makes with an inaudible watermark and signed metadata, on by default with no switch to turn the marking off." />
+<meta name="twitter:image" content="https://fullo.github.io/Sussurro/assets/og.png" />
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"TechArticle","headline":"Read aloud, and why every file it makes is marked","description":"Sussurro's experimental read-aloud module turns any document into speech with a local model — and marks every file it makes with an inaudible watermark and signed metadata, on by default with no switch to turn the marking off.","url":"https://fullo.github.io/Sussurro/blog/read-aloud-and-marking.html","image":"https://fullo.github.io/Sussurro/assets/og.png","datePublished":"2026-09-28","dateModified":"2026-09-28","inLanguage":"en","author":{"@type":"Organization","name":"DarumaHQ","url":"https://darumahq.it"},"publisher":{"@type":"Organization","name":"Sussurro","logo":{"@type":"ImageObject","url":"https://fullo.github.io/Sussurro/assets/og.png"}},"mainEntityOfPage":"https://fullo.github.io/Sussurro/blog/read-aloud-and-marking.html"}</script>
+<!-- seo:end -->
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<nav><div class="wrap">
+  <a class="brand" href="../index.html"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <div class="links">
+    <a class="hideable" href="../index.html#features">Features</a>
+    <a href="index.html">Blog</a>
+      <a href="../manual/index.html">Manual</a>
+    <a class="btn red" href="../index.html#download">Download</a>
+  </div>
+</div></nav>
+
+<main id="main">
+<article class="post">
+  <a class="back" href="index.html">← Blog</a>
+  <header class="post-head">
+    <span class="chip cat-feature">Feature</span>
+    <h1>Read aloud, and why every file it makes is marked</h1>
+    <p class="dek">Turn any document into speech with a local model — off by default, nothing downloaded until you ask — and why every file it produces carries an inaudible watermark and signed metadata that can't be switched off.</p>
+    <div class="meta">6 min read · Feature</div>
+  </header>
+
+  <div class="prose">
+<p>Since 0.11, Sussurro can read a document back to you — a transcript, a note, a companion document, or an article saved from a link — as an audio file, generated entirely on your own computer. It's an <strong>experimental, optional module</strong>: off by default, under Settings → Experimental, and it downloads nothing until you explicitly ask it to.</p>
+
+<h2>How it reads</h2>
+<p>Turn on <em>Read aloud</em>, then pick a voice per language in <em>Models → Voices</em> — each one lists its size and licence before you download it. The engine is <a href="https://kyutai.org">Pocket TTS</a> by Kyutai (MIT code, CC BY 4.0 voices), running through the same ONNX Runtime the app already uses for speaker labels — no Python, no GPL phonemizer, nothing sent anywhere.</p>
+<p>An item's <strong>Audio</strong> tab gets a <em>Generated speech</em> section: pick the transcript or one of its documents and a language, then one button. <strong>Create</strong> when there's no speech for that document yet, or <strong>Listen</strong> once there is — it plays the saved file at once in the tab's own player. There's no separate "try it first" step and no scratch file: what you generate is what gets saved, next to the item, as <code>speech.opus</code> (or <code>speech-&lt;document&gt;.opus</code>). If the source text changes afterwards, the tab says the speech is out of date; <em>Listen</em> still plays what was made, and a second <strong>Create again</strong> button replaces it.</p>
+<p>Article links (<em>New → Link → Article</em>) work the same way once you have them: the page's main text becomes a note, and with the module on its Audio tab reads it aloud like anything else.</p>
+
+<h2>Every file is marked — no switch to turn it off</h2>
+<p>Article 50 of the EU AI Act asks providers of text-to-speech systems to mark their output as artificially generated. Sussurro treats that as a baseline, not a checkbox: <strong>every</strong> file the module produces — a saved speech file or a voice preview in Models → Voices — is marked three ways, and none of them can be disabled.</p>
+<ul>
+  <li><strong>An inaudible watermark.</strong> <a href="https://github.com/facebookresearch/audioseal">AudioSeal</a> by Meta (MIT), our own ONNX export, embeds one fixed 16-bit code into the audio itself — the same code for every Sussurro install, identifying the software, never a person. It survives the app's own Ogg Opus encoding, MP3 and resampling, though not heavy noise, speed changes or very short clips. Its two models come bundled with your first read-aloud download, shown in the same size-and-licence confirmation; without them, nothing is spoken — marking isn't a pass added afterwards, it's part of the same pipeline that makes the audio.</li>
+  <li><strong>Tags in the file.</strong> Every saved <code>speech.opus</code> carries Ogg comments — <code>SYNTHETIC=1</code>, the engine, voice and language — and the item's own frontmatter records the same facts in <code>synthetic:</code>. A voice preview (WAV) gets the equivalent <code>LIST/INFO</code> comment.</li>
+  <li><strong>Signed metadata (C2PA).</strong> Each file also gets a <a href="https://c2pa.org">C2PA</a> Content Credentials manifest saying who made it (<code>Sussurro &lt;version&gt;</code>), that it's AI-generated speech, the engine/voice/language, and when — this computer's clock, no external time-stamp service. Because Ogg can't hold a manifest inline, a saved <code>speech.opus</code> gets a sidecar <code>speech.c2pa</code> next to it (the pair moves and deletes together); voice previews (WAV) carry the manifest inside the file.</li>
+</ul>
+
+<h2>Who signs it, and what that does (and doesn't) prove</h2>
+<p>Each Sussurro install makes its own self-signed certificate the first time it needs one — never at install or startup, only when the module actually generates a file. The private key lives only in the OS credential store (never on disk in the clear); the certificate names no one, just <code>Sussurro install &lt;8 hex digits&gt;</code>. A verifier will see a valid signature from an unknown, untrusted signer: no trust list vouches for a self-signed per-install certificate. What it does prove is that the file hasn't changed since it was signed, and that whoever holds that install's key made it — which is enough to link files back to the same install, but not to a real-world identity. Where no credential store is available (some Linux setups without a Secret Service keyring), files are still generated, watermarked and tagged — just left unsigned, and the app says why.</p>
+
+<h2>Check a file</h2>
+<p>Models → Voices has a <strong>Check a file</strong> tool, with the module on: pick any audio file (Opus, Ogg, WAV, MP3, M4A, FLAC) and it reports what the watermark detector, the tags and the signed metadata each found — running entirely on this computer, nothing uploaded, no certificate looked up online. It's built to be honest about uncertainty: a clean detection reads "made by Sussurro"; a partial or contradictory one reads "inconclusive"; a file with no trace at all reads "no Sussurro mark found" — never "human", since the absence of Sussurro's mark says nothing about a file made by something else.</p>
+
+<div class="callout"><span class="k">Why bother with all three</span><p>A watermark can survive re-encoding but says nothing about who made the file or when. Tags are easy to strip. A signature is strong but only as trustworthy as the key behind it, and a self-signed one doesn't carry a name. Together they give a verifier three independent things to check, which is more useful than any one of them alone — and asking "is this real" is exactly the situation where you want more than one kind of evidence.</p></div>
+
+<p>None of this needs you to do anything: it runs automatically on every file the module writes. The only thing you control is whether the module is on at all — see <a href="../../README.md#read-aloud-experimental">README → Read aloud</a> for the full picture, including build sizes, supported voices, and what happens when you turn the module off.</p>
+  </div>
+
+  <footer class="post-foot">
+    <div class="seealso">
+      <h3>See also</h3>
+      <ul>
+        <li><a href="known-voices.html">Known voices: suggestions, not surveillance</a></li>
+        <li><a href="archive-and-notes.html">The archive: notes, meetings and transcriptions</a></li>
+        <li><a href="where-data-lives.html">Where your data lives</a></li>
+      </ul>
+    </div>
+  </footer>
+</article>
+</main>
+
+<footer class="site-foot"><div class="wrap">
+  <a class="brand" href="../index.html" style="font-size:18px"><svg class="dmark" viewBox="0 0 60 68" aria-hidden="true"><path d="M30 4C16 4 8 16 8 34c0 18 9 30 22 30s22-12 22-30C52 16 44 4 30 4Z" fill="#e52520" stroke="#1a1a1a" stroke-width="3"/><ellipse cx="30" cy="40" rx="15" ry="13" fill="#f3f2ee"/><circle cx="22" cy="26" r="6" fill="#1a1a1a"/><circle cx="38" cy="26" r="6" fill="#fff" stroke="#1a1a1a" stroke-width="3"/></svg> Sussurro</a>
+  <ul class="foot-links">
+    <li><a href="https://github.com/fullo/Sussurro">GitHub</a></li>
+    <li><a href="index.html">Blog</a></li>
+    <li><a href="https://github.com/fullo/Sussurro/releases">Download</a></li>
+  </ul>
+  <div>Made by <a href="https://darumahq.it">DarumaHQ.it</a></div>
+</div></footer>
+</body>
+</html>

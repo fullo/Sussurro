@@ -1085,7 +1085,7 @@ project decisions here, not in per-machine memory.**
   Releases still need GitHub runners (macOS/Windows can't be mirrored).
 
 ## Roadmap (agreed 2026-07-03; current *released* version 0.10.3 — 2026-09-28;
-0.11.0 prepared, not yet published — see below)
+0.11.0 and 0.12.0 prepared, not yet published — see below)
 
 ### 0.3.0 — working everywhere (gate: every platform compiled AND verified)
 
@@ -1324,7 +1324,15 @@ legal review) carry `needs maintainer`. Milestones and epics:
   acceptance criteria.
 - **0.12 — Read aloud**: absorbed into 0.11 above by the maintainer's
   2026-09-28 decision, apart from its stretch goal, the two-voice podcast
-  recipe (#259), moved to the 0.13 milestone.
+  recipe (#259), moved to the 0.13 milestone. **0.12.0 prepared, not yet
+  published** (#260, PR opened same day): docs only, plus one merged
+  behaviour change on top of 0.11.0 — the Audio tab's *Generated speech*
+  section now shows one Create/Listen button per document with a single
+  in-app player, and the temporary *Listen* scratch-file path (backend
+  included) is gone (#327). `docs/releases/0.12.0.md` and a new blog post
+  cover it; no version has been tagged. Depends on #316 (0.11.0's own
+  release PR) and #330 (#327) merging to `main` first — this branch was
+  built from both directly since neither had merged yet.
 - **0.13 — Your voice, with consent**: own voice first; live consent with a
   nonce, transcript + voice match; never cloned from files, meetings or the
   archive; gated by a lawyer's review. Also holds the two-voice podcast
