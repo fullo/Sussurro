@@ -107,6 +107,21 @@ impl Reply {
         Self::error(500, "internal", "the archive could not be read")
     }
 
+    /// An index error: `503 archive_unreadable` when the archive folder
+    /// itself can't be read (#328; no path — the API never names one),
+    /// else [`Reply::internal`].
+    fn index_error(e: &anyhow::Error) -> Self {
+        if archive::unreadable::find(e).is_some() {
+            Self::error(
+                503,
+                archive::unreadable::CODE,
+                "the archive folder can't be read right now",
+            )
+        } else {
+            Self::internal()
+        }
+    }
+
     fn too_large() -> Self {
         Self::error(
             422,
@@ -482,7 +497,7 @@ fn get_items(archive_dir: &Path, index: &Path, auth: &Authorized, query: &str) -
         let (rows, facets) = archive::with_index(archive_dir, index, |idx| {
             idx.search_rows(&q, &filters, with_facets)
         })
-        .map_err(|_| Reply::internal())?;
+        .map_err(|e| Reply::index_error(&e))?;
         let total = rows.len();
         let (rows, next) = slice(rows, offset, limit);
         let mut body = json!({
@@ -1518,5 +1533,22 @@ mod tests {
         assert_eq!((big.status, code(&big).as_str()), (422, "too_large"));
         let small = Reply::ok(json!({"text": "x"}));
         assert_eq!(small.clone().bounded(), small);
+    }
+
+    /// #328: an archive folder that can't be read is a 503 with its own
+    /// code (never an empty list), and the answer names no path.
+    #[test]
+    fn an_unreadable_archive_folder_is_a_coded_503() {
+        let f = fixture();
+        assert_eq!(get(&f, &read(), "/archive/items").status, 200);
+        let moved = f.archive.with_file_name("moved-away");
+        std::fs::rename(&f.archive, &moved).unwrap();
+        let r = get(&f, &read(), "/archive/items");
+        assert_eq!((r.status, code(&r).as_str()), (503, "archive_unreadable"));
+        assert!(!text_of(&r).contains(f.archive.to_str().unwrap()));
+        std::fs::rename(&moved, &f.archive).unwrap();
+        let r = get(&f, &read(), "/archive/items");
+        assert_eq!(r.status, 200);
+        assert!(text_of(&r).contains(&f.note));
     }
 }

@@ -14,8 +14,9 @@
 
 use super::facets::{self, DateBounds, DateBucket, FacetedSearch};
 use super::people::{people_path, read_people, PeopleMatcher};
-use super::store::{scan_item_dirs, summary_at, ItemSummary};
+use super::store::{scan_item_dirs, summary_at, ArchiveScan, ItemSummary};
 use super::types::{ItemMeta, ItemType};
+use super::unreadable::UnreadableKind;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Deserialize;
@@ -253,6 +254,50 @@ fn reset_schema(conn: &mut Connection, archive: &Path) -> Result<()> {
 }
 
 impl Slot {
+    /// Whether the index holds items of `archive` (#328), looked at without
+    /// validating or resetting anything: no file, or an index of another
+    /// archive folder, holds none of them.
+    fn knows_items(&mut self, archive: &Path, db_path: &Path) -> bool {
+        if self.conn.is_none() {
+            if !db_path.is_file() {
+                return false;
+            }
+            match open_conn(db_path) {
+                Ok(c) => self.conn = Some(c),
+                // Can't tell: assume there is something to keep.
+                Err(_) => return true,
+            }
+        }
+        let conn = self.conn.as_ref().expect("opened above");
+        let root: Option<String> = conn
+            .query_row("SELECT value FROM meta WHERE key = 'archive'", [], |r| {
+                r.get(0)
+            })
+            .ok();
+        if root.is_some_and(|r| r != archive_key(archive)) {
+            return false;
+        }
+        conn.query_row("SELECT EXISTS (SELECT 1 FROM items)", [], |r| {
+            r.get::<_, bool>(0)
+        })
+        .unwrap_or(false)
+    }
+
+    /// Scan `archive` for a sync or a rebuild, before the database is
+    /// touched. An archive root that can't be read is an error (#328) —
+    /// except a missing root while the index knows none of its items: that
+    /// is an archive not created yet (a new install, a new folder picked in
+    /// Settings), where "empty" is the truth and nothing can be lost.
+    fn scan(&mut self, archive: &Path, db_path: &Path) -> Result<ArchiveScan> {
+        match scan_item_dirs(archive) {
+            Ok(scan) => Ok(scan),
+            Err(e) if e.kind == UnreadableKind::Missing && !self.knows_items(archive, db_path) => {
+                Ok(ArchiveScan::default())
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn close(&mut self) {
         self.conn = None;
         self.ready_for = None;
@@ -339,8 +384,20 @@ impl Index {
 
     /// Bring the index in line with the folder: index new or changed items,
     /// drop rows whose folder is gone. Returns the number of indexed items.
+    ///
+    /// An archive root that can't be read is an error and the index is left
+    /// as it is (#328): the folder is scanned first, under the lock, before
+    /// the database is touched. Rows under a subfolder that can't be read
+    /// are kept.
     pub fn sync(&mut self) -> Result<usize> {
-        self.with_conn(|conn| sync_conn(conn, &self.archive))
+        self.with_slot(|slot| {
+            let scan = slot.scan(&self.archive, &self.db_path)?;
+            sync_conn(
+                slot.ready(&self.archive, &self.db_path)?,
+                &self.archive,
+                &scan,
+            )
+        })
     }
 
     /// (Re)index one item after the app changed it.
@@ -449,8 +506,10 @@ impl Index {
     }
 }
 
-fn sync_conn(conn: &mut Connection, archive: &Path) -> Result<usize> {
-    let on_disk = scan_item_dirs(archive);
+/// Sync the index with `scan` of `archive`. Rows the scan could not see
+/// because their folder lies under one it could not read are kept.
+fn sync_conn(conn: &mut Connection, archive: &Path, scan: &ArchiveScan) -> Result<usize> {
+    let on_disk = &scan.items;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let mut known: HashMap<String, String> = {
         let mut stmt = tx.prepare("SELECT id, fingerprint FROM items")?;
@@ -459,7 +518,7 @@ fn sync_conn(conn: &mut Connection, archive: &Path) -> Result<usize> {
     };
     let matcher = refresh_people(&tx, archive)?;
     let mut count = 0;
-    for (id, dir) in &on_disk {
+    for (id, dir) in on_disk {
         let fp = fingerprint(dir);
         if known.remove(id).as_deref() == Some(fp.as_str()) {
             count += 1;
@@ -474,6 +533,10 @@ fn sync_conn(conn: &mut Connection, archive: &Path) -> Result<usize> {
         }
     }
     for gone in known.keys() {
+        if scan.is_unknown(archive, gone) {
+            count += 1;
+            continue;
+        }
         delete_rows(&tx, gone)?;
     }
     tx.commit()?;
@@ -562,12 +625,15 @@ fn refresh_people(conn: &Connection, archive: &Path) -> Result<PeopleMatcher> {
 
 /// Empty the index and rebuild it from the archive folder. Returns the
 /// number of items indexed. Runs under the shared lock, so concurrent
-/// searches simply wait for it instead of failing.
+/// searches simply wait for it instead of failing. The folder is scanned
+/// before the reset: an archive root that can't be read is an error and
+/// the index is not emptied (#328).
 pub fn rebuild_index(archive: &Path, db_path: &Path) -> Result<usize> {
     let index = Index::handle(archive, db_path);
     index.with_slot(|slot| {
+        let scan = slot.scan(archive, db_path)?;
         slot.reset(archive, db_path)?;
-        sync_conn(slot.ready(archive, db_path)?, archive)
+        sync_conn(slot.ready(archive, db_path)?, archive, &scan)
     })
 }
 
@@ -1234,5 +1300,180 @@ mod tests {
         assert_eq!(fts_query("a\"b").as_deref(), Some("\"a\"\"b\"*"));
         assert_eq!(fts_query(" - * "), None);
         assert_eq!(fts_query(""), None);
+    }
+
+    // ---- #328: an archive that can't be read never empties the index ----
+
+    /// Everything the index holds, without syncing.
+    fn indexed(f: &Fixture) -> Vec<String> {
+        let mut v = ids(Index::open(&f.archive, &f.db)
+            .unwrap()
+            .search("", &Default::default())
+            .unwrap());
+        v.sort();
+        v
+    }
+
+    fn all_three(f: &Fixture) -> Vec<String> {
+        let mut v = vec![f.note.clone(), f.meeting.clone(), f.podcast.clone()];
+        v.sort();
+        v
+    }
+
+    fn unreadable_of(e: &anyhow::Error) -> crate::archive::ArchiveUnreadable {
+        crate::archive::unreadable::find(e)
+            .unwrap_or_else(|| panic!("not an unreadable-archive error: {e:#}"))
+            .clone()
+    }
+
+    /// A folder with its permissions removed, given back on drop so the
+    /// temp dir can be cleaned up even when the test fails.
+    #[cfg(unix)]
+    struct Locked(PathBuf);
+
+    #[cfg(unix)]
+    impl Locked {
+        /// `None` when running as root: permissions would not stop us.
+        fn new(path: &Path) -> Option<Locked> {
+            use std::os::unix::fs::PermissionsExt;
+            // SAFETY: geteuid has no preconditions.
+            if unsafe { libc::geteuid() } == 0 {
+                eprintln!("running as root: permission test skipped");
+                return None;
+            }
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+            Some(Locked(path.to_path_buf()))
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Locked {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_root_leaves_the_index_intact() {
+        use crate::archive::unreadable::UnreadableKind;
+        let f = fixture();
+        assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+        let Some(lock) = Locked::new(&f.archive) else {
+            return;
+        };
+        let e = with_index(&f.archive, &f.db, |i| i.search("", &Default::default())).unwrap_err();
+        let u = unreadable_of(&e);
+        assert_eq!(u.path, f.archive);
+        assert_eq!(u.kind, UnreadableKind::PermissionDenied);
+        assert!(u.is_permission());
+        assert!(Index::open(&f.archive, &f.db).unwrap().sync().is_err());
+        assert!(crate::archive::list_items(&f.archive).is_err());
+        assert_eq!(indexed(&f), all_three(&f));
+
+        // Readable again: the same items, nothing lost.
+        drop(lock);
+        let all = with_index(&f.archive, &f.db, |i| i.search("", &Default::default())).unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rebuild_on_an_unreadable_root_does_not_wipe_the_index() {
+        let f = fixture();
+        assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+        let Some(_lock) = Locked::new(&f.archive) else {
+            return;
+        };
+        let e = rebuild_index(&f.archive, &f.db).unwrap_err();
+        assert!(unreadable_of(&e).is_permission());
+        assert_eq!(indexed(&f), all_three(&f));
+    }
+
+    #[test]
+    fn a_missing_root_leaves_the_index_intact() {
+        use crate::archive::unreadable::UnreadableKind;
+        let f = fixture();
+        assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+        // Moved away (or a drive unmounted).
+        let moved = f.archive.with_file_name("Moved");
+        std::fs::rename(&f.archive, &moved).unwrap();
+        let e = with_index(&f.archive, &f.db, |i| i.search("", &Default::default())).unwrap_err();
+        let u = unreadable_of(&e);
+        assert_eq!(u.kind, UnreadableKind::Missing);
+        assert!(!u.is_permission());
+        let e = rebuild_index(&f.archive, &f.db).unwrap_err();
+        assert_eq!(unreadable_of(&e).kind, UnreadableKind::Missing);
+        assert_eq!(indexed(&f), all_three(&f));
+
+        // A file where the folder was: not a folder, same answer.
+        std::fs::write(&f.archive, "not a folder").unwrap();
+        let e = Index::open(&f.archive, &f.db).unwrap().sync().unwrap_err();
+        assert_eq!(unreadable_of(&e).kind, UnreadableKind::NotADirectory);
+        assert_eq!(indexed(&f), all_three(&f));
+
+        std::fs::remove_file(&f.archive).unwrap();
+        std::fs::rename(&moved, &f.archive).unwrap();
+        assert_eq!(Index::open(&f.archive, &f.db).unwrap().sync().unwrap(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_subfolder_keeps_its_rows_and_the_rest_syncs() {
+        let f = fixture();
+        assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+        // The meeting lives in 2026/03; the podcast (2025/12) is deleted.
+        assert!(f.meeting.starts_with("2026/03/"), "{}", f.meeting);
+        std::fs::remove_dir_all(f.archive.join(&f.podcast)).unwrap();
+        let Some(_lock) = Locked::new(&f.archive.join("2026/03")) else {
+            return;
+        };
+        let scan = scan_item_dirs(&f.archive).unwrap();
+        assert_eq!(scan.unreadable, vec![f.archive.join("2026/03")]);
+        assert!(scan.is_unknown(&f.archive, &f.meeting));
+        assert!(!scan.is_unknown(&f.archive, &f.note));
+
+        let n = Index::open(&f.archive, &f.db).unwrap().sync().unwrap();
+        assert_eq!(n, 2);
+        let mut want = vec![f.note.clone(), f.meeting.clone()];
+        want.sort();
+        assert_eq!(indexed(&f), want);
+        // The folder listing skips it, without failing.
+        let listed = crate::archive::list_items(&f.archive).unwrap();
+        assert_eq!(ids(listed), vec![f.note.clone()]);
+    }
+
+    /// A folder not created yet (new install, a new folder picked in
+    /// Settings) is an empty archive while the index knows none of its
+    /// items — an index of another folder included.
+    #[test]
+    fn a_missing_root_the_index_knows_nothing_of_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("Sussurro");
+        let db = tmp.path().join("appdata").join("archive-index.sqlite");
+        let n = with_index(&archive, &db, |i| i.search("", &Default::default())).unwrap();
+        assert!(n.is_empty());
+        assert_eq!(rebuild_index(&archive, &db).unwrap(), 0);
+        // The folder list itself still says it isn't there.
+        assert!(crate::archive::list_items(&archive).is_err());
+
+        let f = fixture();
+        assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+        let other = f.archive.with_file_name("NotYet");
+        assert_eq!(Index::open(&other, &f.db).unwrap().sync().unwrap(), 0);
+    }
+
+    #[test]
+    fn an_empty_readable_root_still_clears_the_index() {
+        let f = fixture();
+        assert_eq!(rebuild_index(&f.archive, &f.db).unwrap(), 3);
+        for year in ["2025", "2026"] {
+            std::fs::remove_dir_all(f.archive.join(year)).unwrap();
+        }
+        assert!(f.archive.is_dir());
+        assert_eq!(Index::open(&f.archive, &f.db).unwrap().sync().unwrap(), 0);
+        assert!(indexed(&f).is_empty());
+        assert!(crate::archive::list_items(&f.archive).unwrap().is_empty());
     }
 }

@@ -1269,7 +1269,7 @@ fn a_dropped_connection_still_keeps_the_meeting() {
     // The run finishes on its own; the item is kept, titled from its text.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
-        let items = archive::list_items(&r.host.0.archive);
+        let items = archive::list_items(&r.host.0.archive).unwrap();
         if let Some(it) = items.iter().find(|i| !i.recording) {
             assert_eq!(it.meta.item_type, ItemType::Meeting);
             assert_eq!(it.meta.source, "browser:teams.microsoft.com");
@@ -1364,7 +1364,9 @@ fn live_takes_the_token_as_its_first_message() {
     .unwrap();
     assert_eq!(refused(&mut ws), "authentication required");
     assert!(
-        archive::list_items(&r.host.0.archive).is_empty(),
+        archive::list_items(&r.host.0.archive)
+            .unwrap_or_default()
+            .is_empty(),
         "no meeting started"
     );
     // Silent past the deadline: the server refuses and closes on its own
@@ -2762,7 +2764,9 @@ fn creating_a_note_is_guarded_like_every_archive_route() {
         assert_no_cors(&reply, k);
     }
     assert!(
-        archive::list_items(&r.host.0.archive).is_empty(),
+        archive::list_items(&r.host.0.archive)
+            .unwrap_or_default()
+            .is_empty(),
         "nothing created by a refused request"
     );
 
@@ -2822,7 +2826,7 @@ fn creating_a_note_is_guarded_like_every_archive_route() {
         body,
     );
     assert_eq!(with_query.status, 400);
-    assert_eq!(archive::list_items(&r.host.0.archive).len(), 1);
+    assert_eq!(archive::list_items(&r.host.0.archive).unwrap().len(), 1);
 }
 
 #[test]
@@ -2914,7 +2918,7 @@ fn note_cleanup_follows_the_settings_and_never_uses_an_external_profile() {
         (off.status, off.json()["code"].as_str()),
         (409, Some("cleanup_off"))
     );
-    assert_eq!(archive::list_items(&r.host.0.archive).len(), 2);
+    assert_eq!(archive::list_items(&r.host.0.archive).unwrap().len(), 2);
 }
 
 #[test]
@@ -2938,7 +2942,7 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
     assert_eq!(again.json()["id"], first.json()["id"]);
     assert_eq!(again.json()["replayed"], true);
     assert_eq!(again.header("Idempotent-Replayed"), Some("true"));
-    assert_eq!(archive::list_items(&r.host.0.archive).len(), 1);
+    assert_eq!(archive::list_items(&r.host.0.archive).unwrap().len(), 1);
     let changed = with_key(r#"{"text": "other"}"#);
     assert_eq!(
         (changed.status, changed.json()["code"].as_str()),
@@ -2971,5 +2975,8 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
     assert_no_cors(&limited, "429");
     // A replay creates nothing, so it still answers.
     assert_eq!(with_key(body).status, 201);
-    assert_eq!(archive::list_items(&r.host.0.archive).len(), created);
+    assert_eq!(
+        archive::list_items(&r.host.0.archive).unwrap().len(),
+        created
+    );
 }

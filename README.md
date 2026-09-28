@@ -693,7 +693,10 @@ has a rate limit (a burst of 60, then 10 per second: `429` with
 `Retry-After`), pages hold at most 200 rows, answers at most 16 MiB, and at
 most two archive requests run at once (`503`), so a busy script never
 stalls the extension. Revoking a token in Settings → Scripting applies to
-the very next request.
+the very next request. When the archive folder itself can't be read (moved,
+on a drive that isn't connected, or refused by macOS privacy settings),
+`GET /archive/items` answers `503` with code `archive_unreadable`, never an
+empty list.
 
 ## Removed in 0.10
 
@@ -727,6 +730,12 @@ the very next request.
   Videos whose only audio is Opus or AC-3 are refused, because no ffmpeg is
   bundled. Links are capped at 2 GB and ignore system proxy settings (so the
   local-network check can't be bypassed).
+- **The Library says "Can't open the archive folder"** when the archive
+  folder is missing (moved, renamed, a drive not connected) or the system
+  refuses it. Nothing is deleted, and the items come back as soon as the
+  folder can be read. On macOS, allow Sussurro in System Settings → Privacy
+  & Security → Files and Folders (or Full Disk Access); otherwise pick
+  another folder in Settings → Archive.
 - **The browser extension is not in the stores yet.** Chrome, Edge and
   Brave load it unpacked (Developer mode); Firefox installs the
   Mozilla-signed `.xpi` from the release.

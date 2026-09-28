@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Switch } from "../components/ui";
 import type { Ctl } from "../hooks/useAppController";
 import type { Person, VoiceStatus } from "../lib/types";
+import { errorText } from "../lib/archiveError";
 import {
   VOICE_DELETE,
   VOICE_STORED,
@@ -37,7 +38,7 @@ export function PersonVoice({
     let alive = true;
     invoke<VoiceStatus>("voice_status", { personId: person.id })
       .then((s) => alive && setStatus(s))
-      .catch((e) => alive && setError(String(e)));
+      .catch((e) => alive && setError(errorText(e)));
     return () => {
       alive = false;
     };
@@ -52,7 +53,7 @@ export function PersonVoice({
       onChanged?.(s);
       ctl.flash(message, 3000);
     } catch (e) {
-      setError(String(e));
+      setError(errorText(e));
     } finally {
       setBusy(false);
     }

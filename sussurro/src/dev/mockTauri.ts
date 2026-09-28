@@ -17,7 +17,10 @@
    listed in Settings → Scripting), ?calendar=1 (a private calendar link
    saved in Settings → Calendar, for a meeting's "Add attendees from
    calendar…"), ?api_note=1 (a script's `POST /archive/items` lands a
-   note 3 s after load: the Library refreshes). */
+   note 3 s after load: the Library refreshes), ?archive=unreadable (the
+   archive folder refused by macOS privacy settings, #328) or
+   ?archive=missing (moved or unmounted): the Library's error state, until
+   another folder is picked in Settings → Archive. */
 
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { normalizeScopes, tokenNameError, type ArchiveScope, type ArchiveTokenInfo } from "../lib/archiveTokens";
@@ -1567,7 +1570,42 @@ async function runRecipe(id: string, recipeId: string, profileId: string | null,
 
 type Args = Record<string, unknown>;
 
+/* #328: the archive folder can't be read (?archive=unreadable|missing).
+   Mirrors archive::unreadable::ui_error; lasts until the folder changes. */
+const archiveFault = params.get("archive");
+const faultyArchiveDir = settings.archive_dir;
+const ARCHIVE_SCAN_COMMANDS = new Set([
+  "archive_list",
+  "archive_search",
+  "archive_facets",
+  "archive_rebuild_index",
+  "people_usage",
+  "archive_uncompressed_audio",
+  "archive_compress_audio",
+  "voices_rebuild",
+]);
+
+function archiveUnreadableError(): string | null {
+  if (archiveFault !== "unreadable" && archiveFault !== "missing") return null;
+  if (settings.archive_dir !== faultyArchiveDir) return null;
+  const path = settings.archive_dir || ARCHIVE;
+  const missing = archiveFault === "missing";
+  const reason = missing ? "No such file or directory (os error 2)" : "Operation not permitted (os error 1)";
+  return JSON.stringify({
+    code: "archive_unreadable",
+    path,
+    kind: missing ? "missing" : "permission_denied",
+    permission: !missing,
+    reason,
+    message: `the archive folder ${path} can't be read: ${reason}`,
+  });
+}
+
 function handle(cmd: string, a: Args): unknown {
+  if (ARCHIVE_SCAN_COMMANDS.has(cmd)) {
+    const err = archiveUnreadableError();
+    if (err) throw err;
+  }
   switch (cmd) {
     case "get_settings":
       return { ...settings };

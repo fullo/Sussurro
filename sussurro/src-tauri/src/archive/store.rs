@@ -18,6 +18,7 @@ use super::render::render_transcript;
 use super::types::{
     normalize_participants, ItemMeta, SegmentsFile, SessionState, SEGMENTS_VERSION, SESSION_KEY,
 };
+use super::unreadable::ArchiveUnreadable;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -289,7 +290,7 @@ pub(super) fn commit_transcript(
     Ok(())
 }
 
-pub(super) fn transcript_path(dir: &Path) -> PathBuf {
+pub(crate) fn transcript_path(dir: &Path) -> PathBuf {
     dir.join(TRANSCRIPT_FILE)
 }
 
@@ -490,38 +491,114 @@ pub(crate) fn summary_at(id: &str, dir: &Path) -> Result<(ItemSummary, String)> 
     Ok((ItemSummary::new(id.to_string(), meta, edited, None), body))
 }
 
-/// Every item folder under `archive`: `(id, folder)`. Dot-dirs and symlinks
-/// are skipped (no escaping the archive, no loops); a folder holding a
-/// `transcript.md` is an item and is not descended into. A missing archive
-/// yields nothing.
-pub fn scan_item_dirs(archive: &Path) -> Vec<(String, PathBuf)> {
-    fn walk(archive: &Path, dir: &Path, depth: usize, out: &mut Vec<(String, PathBuf)>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
+/// What [`scan_item_dirs`] found.
+#[derive(Debug, Default)]
+pub struct ArchiveScan {
+    /// Every item folder: `(id, folder)`.
+    pub items: Vec<(String, PathBuf)>,
+    /// Folders under the root that could not be listed (#328): skipped,
+    /// and whatever lies under them is unknown — not gone.
+    pub unreadable: Vec<PathBuf>,
+}
+
+impl ArchiveScan {
+    /// Whether item `id` lies under a folder the scan could not read, so
+    /// its absence from [`ArchiveScan::items`] says nothing.
+    pub fn is_unknown(&self, archive: &Path, id: &str) -> bool {
+        if self.unreadable.is_empty() {
+            return false;
+        }
+        let mut path = archive.to_path_buf();
+        for part in id.split('/') {
+            path.push(part);
+        }
+        self.unreadable.iter().any(|u| path.starts_with(u))
+    }
+}
+
+/// Open the archive root for listing: an error (never "empty") when it is
+/// missing, not a folder, or the OS refuses (#328).
+pub fn open_root(archive: &Path) -> std::result::Result<std::fs::ReadDir, ArchiveUnreadable> {
+    match std::fs::metadata(archive) {
+        Err(e) => Err(ArchiveUnreadable::from_io(archive, &e)),
+        Ok(m) if !m.is_dir() => Err(ArchiveUnreadable::not_a_directory(archive)),
+        Ok(_) => std::fs::read_dir(archive).map_err(|e| ArchiveUnreadable::from_io(archive, &e)),
+    }
+}
+
+/// Every item folder under `archive`. Dot-dirs and symlinks are skipped
+/// (no escaping the archive, no loops); a folder holding a `transcript.md`
+/// is an item and is not descended into.
+///
+/// An archive root that can't be listed (missing, not a folder, refused)
+/// is an error, never an empty archive (#328). A folder deeper down that
+/// can't be read is logged, skipped and listed in
+/// [`ArchiveScan::unreadable`], so callers keep what they know about the
+/// items under it.
+pub fn scan_item_dirs(archive: &Path) -> std::result::Result<ArchiveScan, ArchiveUnreadable> {
+    fn unreadable(out: &mut ArchiveScan, path: &Path, e: &std::io::Error) {
+        eprintln!(
+            "archive: skipping a folder that can't be read, {} ({e})",
+            path.display()
+        );
+        out.unreadable.push(path.to_path_buf());
+    }
+    fn walk(
+        archive: &Path,
+        dir: &Path,
+        entries: std::fs::ReadDir,
+        depth: usize,
+        out: &mut ArchiveScan,
+    ) {
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    // The listing broke off: the rest of `dir` is unknown.
+                    unreadable(out, dir, &e);
+                    break;
+                }
+            };
             let name = entry.file_name();
             if name.to_string_lossy().starts_with('.') {
                 continue;
             }
+            let path = entry.path();
             // DirEntry::file_type does not follow symlinks.
-            let Ok(ft) = entry.file_type() else { continue };
+            let ft = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(e) => {
+                    unreadable(out, &path, &e);
+                    continue;
+                }
+            };
             if !ft.is_dir() {
                 continue;
             }
-            let path = entry.path();
-            if transcript_path(&path).is_file() {
+            let has_transcript = match std::fs::metadata(transcript_path(&path)) {
+                Ok(m) => m.is_file(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                Err(e) => {
+                    unreadable(out, &path, &e);
+                    continue;
+                }
+            };
+            if has_transcript {
                 if let Some(id) = id_from_dir(archive, &path) {
-                    out.push((id, path));
+                    out.items.push((id, path));
                 }
             } else if depth < MAX_SCAN_DEPTH {
-                walk(archive, &path, depth + 1, out);
+                match std::fs::read_dir(&path) {
+                    Ok(sub) => walk(archive, &path, sub, depth + 1, out),
+                    Err(e) => unreadable(out, &path, &e),
+                }
             }
         }
     }
-    let mut out = Vec::new();
-    walk(archive, archive, 1, &mut out);
-    out
+    let root = open_root(archive)?;
+    let mut out = ArchiveScan::default();
+    walk(archive, archive, root, 1, &mut out);
+    Ok(out)
 }
 
 /// Sort key: parsed date (newest first), unparseable dates last, then id.
@@ -535,9 +612,11 @@ pub(crate) fn sort_newest_first(items: &mut [ItemSummary]) {
 
 /// All items, newest first, by scanning the folder. Broken items (unreadable
 /// file, invalid YAML) are logged and skipped — one bad file must not hide
-/// the rest of the archive.
-pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
-    let mut items: Vec<ItemSummary> = scan_item_dirs(archive)
+/// the rest of the archive. An archive root that can't be read is an error
+/// ([`ArchiveUnreadable`], #328), never an empty list.
+pub fn list_items(archive: &Path) -> Result<Vec<ItemSummary>> {
+    let mut items: Vec<ItemSummary> = scan_item_dirs(archive)?
+        .items
         .into_iter()
         .filter_map(|(id, dir)| match summary_at(&id, &dir) {
             Ok((mut s, _)) => {
@@ -551,7 +630,7 @@ pub fn list_items(archive: &Path) -> Vec<ItemSummary> {
         })
         .collect();
     sort_newest_first(&mut items);
-    items
+    Ok(items)
 }
 
 /// Replace an item's metadata. The folder is never renamed (ids stay stable
@@ -1422,7 +1501,7 @@ mod tests {
     fn list_scans_sorts_and_skips_broken_items() {
         let tmp = tempfile::tempdir().unwrap();
         let archive = tmp.path();
-        assert!(list_items(&archive.join("missing")).is_empty());
+        assert!(list_items(&archive.join("missing")).is_err());
         let old = create_item(archive, &meta("Old", "2025-01-01T09:00:00Z"), &segs(&[])).unwrap();
         let new = create_item(archive, &meta("New", "2026-03-01T09:00:00Z"), &segs(&[])).unwrap();
         // Broken YAML: skipped, not fatal.
@@ -1434,7 +1513,11 @@ mod tests {
         std::fs::write(archive.join(".sussurro/fake/transcript.md"), "# no\n").unwrap();
         std::fs::write(archive.join("README.md"), "hi").unwrap();
 
-        let ids: Vec<String> = list_items(archive).into_iter().map(|s| s.id).collect();
+        let ids: Vec<String> = list_items(archive)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
         assert_eq!(ids, vec![new, old]);
     }
 

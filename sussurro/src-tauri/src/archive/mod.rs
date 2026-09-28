@@ -21,6 +21,7 @@
 //! - [`subtitles`]: SRT/WebVTT writers (pure, #133)
 //! - [`index`]: search index (rebuildable)
 //! - [`facets`]: the Library's facet filters and counts (#135)
+//! - [`unreadable`]: the archive folder can't be read (#328)
 
 pub mod audio;
 pub mod companion;
@@ -41,6 +42,7 @@ pub mod speech;
 pub mod store;
 pub mod subtitles;
 pub mod types;
+pub mod unreadable;
 
 pub use index::{rebuild_index, with_index, Index, SearchFilters};
 pub use paths::{prepare_archive_dir, resolve_archive_dir};
@@ -52,6 +54,7 @@ pub use types::{
     Channel, DocSpeaker, ItemMeta, ItemType, OverlapSpan, Participant, Segment, SegmentsFile,
     SessionState, Word, SESSION_KEY,
 };
+pub use unreadable::ArchiveUnreadable;
 
 /// File name of the search index inside the app data dir.
 pub const INDEX_FILE: &str = "archive-index.sqlite";
