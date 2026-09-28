@@ -2948,6 +2948,8 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
     };
     let first = with_key(body);
     assert_eq!(first.status, 201);
+    // The creation bucket starts draining here and refills as time passes.
+    let since_first = std::time::Instant::now();
     let again = with_key(body);
     assert_eq!(again.status, 201);
     assert_eq!(again.json()["id"], first.json()["id"]);
@@ -2970,7 +2972,16 @@ fn notes_are_idempotent_by_key_and_rate_limited() {
         created += 1;
         assert!(created < 100, "never limited");
     };
-    assert_eq!(created, archive_write::CREATE_BURST as usize);
+    // The burst, plus what refilled while the notes were written (a slow
+    // runner takes seconds; the exact burst is checked with a fixed clock
+    // in `archive_write`'s own tests).
+    let burst = archive_write::CREATE_BURST as usize;
+    let refilled =
+        (since_first.elapsed().as_secs_f64() * archive_write::CREATE_PER_SEC).ceil() as usize;
+    assert!(
+        (burst..=burst + refilled).contains(&created),
+        "{created} notes before the limit (burst {burst}, refilled {refilled})"
+    );
     assert_eq!(
         (limited.status, limited.json()["code"].as_str()),
         (429, Some("rate_limited"))
