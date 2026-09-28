@@ -807,19 +807,16 @@ export interface SpeechStatus {
 export interface ReadAloudJob {
   item_id: string;
   document: string;
-  save: boolean;
   language: string;
   voice: string;
   done: number;
   total: number;
 }
 
-/** What `read_aloud_start` made. */
+/** What `read_aloud_start` made (#327: always saved next to the item). */
 export interface ReadAloudOutcome {
-  /** Saved: the file in the item folder; Listen: the `sussurro-audio:`
-   *  path of the temporary file. */
+  /** The file in the item folder. */
   file: string;
-  save: boolean;
   seconds: number;
   chunks: number;
 }

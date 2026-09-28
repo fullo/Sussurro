@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   TRANSCRIPT_DOC,
   baseCode,
+  createLabel,
   defaultLanguage,
   documentLabel,
   estimateMinutes,
   jobFraction,
   jobIsFor,
   jobLabel,
+  listenDisabled,
   readableDocs,
   readiness,
   speechFacts,
@@ -59,7 +61,6 @@ const speech = (over: Partial<SpeechStatus> = {}): SpeechStatus => ({
 const job = (over: Partial<ReadAloudJob> = {}): ReadAloudJob => ({
   item_id: "2026/09/x",
   document: TRANSCRIPT_DOC,
-  save: true,
   language: "it",
   voice: "giovanni",
   done: 3,
@@ -100,11 +101,34 @@ describe("read aloud", () => {
 
   it("describes the job", () => {
     expect(jobLabel(job())).toBe("Making the speech file… 3 of 12 passages");
-    expect(jobLabel(job({ save: false, total: 0 }))).toBe("Preparing to listen…");
+    expect(jobLabel(job({ total: 0 }))).toBe("Making the speech file…");
     expect(jobFraction(job())).toBe(0.25);
     expect(jobFraction(null)).toBe(0);
     expect(jobIsFor(job(), "2026/09/x")).toBe(true);
     expect(jobIsFor(job(), "other")).toBe(false);
+  });
+
+  it("shows one button per document (#327): none / exists / stale / missing source / module off / job running", () => {
+    // none: no speech yet -> Create.
+    expect(createLabel(undefined)).toBe("Create");
+    // exists, current: Listen alone, no Create.
+    expect(createLabel(speech())).toBeNull();
+    // stale: Listen stays, plus the secondary Create again.
+    expect(createLabel(speech({ stale: true }))).toBe("Create again");
+    // missing source: the create label is unaffected (only the note differs).
+    expect(createLabel(speech({ source_missing: true }))).toBeNull();
+    expect(createLabel(speech({ stale: true, source_missing: true }))).toBe("Create again");
+    // module off: the section itself decides not to show Create at all —
+    // createLabel doesn't need `enabled`, the caller gates it. Listen is
+    // unaffected either way (it plays a file already on disk).
+
+    // job running: Listen for the file being replaced is disabled...
+    expect(listenDisabled(job({ document: TRANSCRIPT_DOC }), "2026/09/x", TRANSCRIPT_DOC)).toBe(true);
+    // ...but not another document of the same item...
+    expect(listenDisabled(job({ document: TRANSCRIPT_DOC }), "2026/09/x", "document.md")).toBe(false);
+    // ...nor while no job runs, nor for another item.
+    expect(listenDisabled(null, "2026/09/x", TRANSCRIPT_DOC)).toBe(false);
+    expect(listenDisabled(job({ document: TRANSCRIPT_DOC }), "other", TRANSCRIPT_DOC)).toBe(false);
   });
 
   it("says why a speech file is unsigned, only when the app recorded a reason", () => {

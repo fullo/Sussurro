@@ -30,9 +30,6 @@ pub const IDLE_UNLOAD: Duration = Duration::from_secs(5 * 60);
 pub const PREVIEW_DIR: &str = "tts-preview";
 /// Scheme path prefix of preview files (`sussurro-audio:`).
 pub const PREVIEW_PREFIX: &str = "tts-preview/";
-/// File name prefix of the temporary *Listen* files of read aloud (#256),
-/// kept in [`PREVIEW_DIR`] next to the previews.
-pub const LISTEN_PREFIX: &str = "listen-";
 /// Longest preview text accepted from the UI.
 pub const MAX_PREVIEW_CHARS: usize = 400;
 
@@ -425,16 +422,18 @@ impl Service {
     }
 }
 
-/// Delete every temporary file of the module — previews and read-aloud
-/// *Listen* files (at startup, when the module is turned off).
+/// Delete every temporary preview file of the module (at startup, when the
+/// module is turned off). Also sweeps `listen-*` (#327: the temporary
+/// *Listen* path of #256 was removed and nothing writes these any more —
+/// this is a one-time migration for files an older build may have left
+/// behind, kept as an ordinary startup sweep rather than special-cased).
 pub fn clear_previews(preview_dir: &Path) {
     clear_prefix(preview_dir, "preview-");
-    clear_prefix(preview_dir, LISTEN_PREFIX);
+    clear_prefix(preview_dir, "listen-");
 }
 
 /// Delete the temporary files whose name starts with `prefix` (a preview
-/// before the next preview, a *Listen* file before the next or when the
-/// document closes, #256).
+/// before the next preview).
 pub fn clear_prefix(preview_dir: &Path, prefix: &str) {
     let Ok(rd) = std::fs::read_dir(preview_dir) else {
         return;
@@ -442,7 +441,6 @@ pub fn clear_prefix(preview_dir: &Path, prefix: &str) {
     for e in rd.flatten() {
         let name = e.file_name();
         let name = name.to_string_lossy();
-        // `.c2pa`: a *Listen* file's signed-manifest sidecar (#257).
         let temp = name.ends_with(".wav")
             || name.ends_with(".opus")
             || name.ends_with(".c2pa")
@@ -453,15 +451,11 @@ pub fn clear_prefix(preview_dir: &Path, prefix: &str) {
     }
 }
 
-/// A `sussurro-audio:` path (decoded, no leading `/`) that names a
-/// temporary file → its file name: `tts-preview/preview-<digits>.wav` or a
-/// read-aloud `tts-preview/listen-<digits>.opus` (#256). Pure.
+/// A `sussurro-audio:` path (decoded, no leading `/`) that names a preview
+/// file → its file name: `tts-preview/preview-<digits>.wav`. Pure.
 pub fn preview_file_name(path: &str) -> Option<&str> {
     let name = path.strip_prefix(PREVIEW_PREFIX)?;
-    let digits = name
-        .strip_prefix("preview-")
-        .and_then(|n| n.strip_suffix(".wav"))
-        .or_else(|| name.strip_prefix(LISTEN_PREFIX)?.strip_suffix(".opus"))?;
+    let digits = name.strip_prefix("preview-")?.strip_suffix(".wav")?;
     (!digits.is_empty() && digits.len() <= 12 && digits.bytes().all(|b| b.is_ascii_digit()))
         .then_some(name)
 }
@@ -561,17 +555,11 @@ mod tests {
             preview_file_name("tts-preview/preview-3.wav"),
             Some("preview-3.wav")
         );
-        assert_eq!(
-            preview_file_name("tts-preview/listen-12.opus"),
-            Some("listen-12.opus")
-        );
         for bad in [
             "tts-preview/preview-.wav",
             "tts-preview/preview-3.opus",
             "tts-preview/listen-3.wav",
             "tts-preview/listen-.opus",
-            "tts-preview/listen-3.opus.part",
-            "tts-preview/listen-3.c2pa",
             "tts-preview/preview-3.c2pa",
             "tts-preview/../settings.json",
             "tts-preview/preview-3.wav/x",
@@ -587,11 +575,11 @@ mod tests {
     #[test]
     fn old_previews_are_cleared_and_nothing_else() {
         let dir = tempfile::tempdir().unwrap();
+        // `listen-*` (#327): an older build may have left one of these
+        // behind — still swept, though nothing writes them any more.
         for f in ["preview-1.wav", "preview-2.wav.part", "listen-1.opus", "listen-1.c2pa", "keep.txt"] {
             std::fs::write(dir.path().join(f), b"x").unwrap();
         }
-        clear_prefix(dir.path(), "preview-");
-        assert!(dir.path().join("listen-1.opus").exists(), "a preview leaves Listen files");
         clear_previews(dir.path());
         let left: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
