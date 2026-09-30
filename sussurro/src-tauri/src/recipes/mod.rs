@@ -1,9 +1,13 @@
 //! Recipes (0.8, #120; plan §4.5): a named prompt with a target — a
 //! *companion document* written next to the transcript, or an *answer*
-//! shown in the Ask panel (#121). Six are built in — two of them
+//! shown in the Ask panel (#121). Seven are built in — two of them
 //! (*Meeting minutes*, *Who said what*, #143) only for items whose
-//! transcript names its speakers; users add their own, stored in
-//! `settings.json` ([`crate::settings::Settings::recipes`]).
+//! transcript names its speakers; a seventh, *Podcast script* (0.13 stretch
+//! goal, #259, P17), writes a two-host dialogue that [`crate::tts::podcast`]
+//! and [`crate::tts::read_aloud`] can then read with two distinct built-in
+//! voices — never cloned — into one marked file; users add their own
+//! recipes too, stored in `settings.json`
+//! ([`crate::settings::Settings::recipes`]).
 //!
 //! - [`chunk`]: the transcript as prompt input, and chunking by size —
 //!   on speaker turns when the transcript names speakers (#143)
@@ -84,6 +88,11 @@ is said. Leave out proposals that were not agreed. If there are none, write one 
 pub const MEETING_MINUTES_ID: &str = "meeting-minutes";
 /// Id of the *Who said what* recipe (#143, speakers only).
 pub const WHO_SAID_WHAT_ID: &str = "who-said-what";
+/// Id of the *Podcast script* recipe (0.13 stretch goal, #259, P17): its
+/// companion document ([`companion_file_name`] gives `podcast-script.md`,
+/// pinned as [`crate::tts::podcast::SCRIPT_FILE`] — a test keeps the two in
+/// step) is the one document read aloud speaks with two voices.
+pub const PODCAST_SCRIPT_ID: &str = "podcast-script";
 
 const MEETING_MINUTES_PROMPT: &str = "\
 Write the minutes of this meeting in markdown, with these sections in this order (translate the headings into the \
@@ -103,6 +112,19 @@ For each speaker, in order of first appearance, write a `##` heading with the sp
 the transcript, then a bullet list of what that speaker said: main points, proposals, questions, objections and \
 commitments, each with the [HH:MM:SS] where it was said. Put under a speaker only what that speaker said, never what \
 someone else said about them. Skip small talk.";
+
+const PODCAST_SCRIPT_PROMPT: &str = "\
+Turn this document into a two-host podcast script: an engaging spoken conversation between Host A and Host B that \
+explains and discusses the document's content for a general audience who has not read it. Use only what the \
+document says — never invent facts, names, numbers or dates.
+- Write only the spoken lines, alternating naturally between the two hosts: introduce the topic, walk through the \
+key points in an accessible order, have the hosts ask each other questions, react to and build on what the other \
+just said, and close with a short wrap-up.
+- Every line of output is one turn and starts with exactly `Host A:` or `Host B:` (nothing before it) followed by \
+what that host says. One turn per line; a long turn may wrap onto more lines, but every new turn starts its own \
+line with the tag.
+- Do not write anything else: no title, no headings, no stage directions, no scene-setting, no markdown emphasis \
+or lists inside a turn — plain spoken sentences only.";
 
 /// The recipes shipped with the app, in display order: the general ones,
 /// then the speaker-aware meeting ones (#143).
@@ -134,6 +156,7 @@ pub fn builtin_recipes() -> Vec<Recipe> {
             MEETING_MINUTES_PROMPT,
         ),
         speakers(WHO_SAID_WHAT_ID, "Who said what", WHO_SAID_WHAT_PROMPT),
+        r(PODCAST_SCRIPT_ID, "Podcast script", PODCAST_SCRIPT_PROMPT),
     ]
 }
 
@@ -209,7 +232,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn six_builtins_all_writing_documents() {
+    fn seven_builtins_all_writing_documents() {
         let b = builtin_recipes();
         let names: Vec<_> = b.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(
@@ -220,7 +243,8 @@ mod tests {
                 "Action items",
                 "Decisions",
                 "Meeting minutes",
-                "Who said what"
+                "Who said what",
+                "Podcast script",
             ]
         );
         assert!(b
@@ -229,13 +253,33 @@ mod tests {
         assert!(b.iter().all(|r| !r.prompt.trim().is_empty()));
         let fd = &b[0].prompt;
         assert!(fd.contains("tl;dr") && fd.contains("######") && fd.contains("table"));
-        // Only the meeting recipes need speakers.
+        // Only the meeting recipes need speakers; the podcast script runs
+        // on any document, like the other general recipes.
         let speakers: Vec<_> = b
             .iter()
             .filter(|r| r.speakers_only)
             .map(|r| r.id.as_str())
             .collect();
         assert_eq!(speakers, [MEETING_MINUTES_ID, WHO_SAID_WHAT_ID]);
+        assert!(!find_recipe(&[], PODCAST_SCRIPT_ID).unwrap().speakers_only);
+    }
+
+    #[test]
+    fn podcast_script_asks_for_tagged_alternating_turns() {
+        let podcast = find_recipe(&[], PODCAST_SCRIPT_ID).unwrap().prompt;
+        for part in [
+            "Host A",
+            "Host B",
+            "alternating",
+            "never invent",
+            "One turn per line",
+        ] {
+            assert!(podcast.contains(part), "{part}: {podcast}");
+        }
+        // #259: never cloning — the recipe only ever describes two
+        // *labels* for the LLM to alternate; the actual voices are picked
+        // later, from the built-in catalogue, by `tts::podcast`.
+        assert!(!podcast.to_lowercase().contains("clon"));
     }
 
     #[test]
@@ -285,7 +329,8 @@ mod tests {
                 "action-items.md",
                 "decisions.md",
                 "meeting-minutes.md",
-                "who-said-what.md"
+                "who-said-what.md",
+                "podcast-script.md",
             ]
         );
         let user = |name: &str| Recipe {
@@ -303,6 +348,15 @@ mod tests {
         );
         assert_eq!(companion_file_name(&user("Document")), "recipe-document.md");
         assert_eq!(companion_file_name(&user("??")), "untitled.md");
+    }
+
+    #[test]
+    fn podcast_script_file_name_matches_what_tts_podcast_expects() {
+        let recipe = find_recipe(&[], PODCAST_SCRIPT_ID).unwrap();
+        assert_eq!(
+            companion_file_name(&recipe),
+            crate::tts::podcast::SCRIPT_FILE
+        );
     }
 
     #[test]
@@ -356,7 +410,7 @@ mod tests {
         assert_eq!(find_recipe(&user, "summary").unwrap().name, "Summary");
         assert_eq!(find_recipe(&user, "mine").unwrap().name, "Mine");
         assert!(find_recipe(&user, "nope").is_none());
-        assert_eq!(all_recipes(&user).len(), 7);
+        assert_eq!(all_recipes(&user).len(), 8);
     }
 
     #[test]

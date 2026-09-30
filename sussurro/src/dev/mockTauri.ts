@@ -634,10 +634,21 @@ async function readAloud(id: string, document: string | null, language: string |
   const voice = ttsVoiceOf(code);
   if (!ttsDisk[code]?.model || !ttsDisk[code].voices.has(voice))
     throw `The read-aloud voice ${voice} is not downloaded — download it in Models → Voices.`;
+  // #259: the Podcast script recipe's companion document is read with two
+  // distinct built-in voices, alternating Host A / Host B, into one file.
+  const isPodcast = doc === "podcast-script.md";
+  let voiceB: string | null = null;
+  if (isPodcast) {
+    if (!/^\s*Host [AB]:/m.test(text))
+      throw `This podcast script has no "Host A:" / "Host B:" lines to read — run the Podcast script recipe first.`;
+    const lang = TTS_CATALOG.find((l) => l.code === code)!;
+    voiceB = lang.voices.find(([id]) => id !== voice)?.[0] ?? voice;
+    if (!ttsDisk[code].voices.has(voiceB)) throw `The read-aloud voice ${voiceB} is not downloaded — download it in Models → Voices.`;
+  }
   if (readJob) throw "Sussurro is already reading a document aloud — wait for it or cancel it.";
   const total = Math.max(1, Math.ceil(text.length / 160));
   readCancel = false;
-  readJob = { item_id: id, document: doc, language: code, voice, done: 0, total };
+  readJob = { item_id: id, document: doc, language: code, voice: voiceB ? `${voice}+${voiceB}` : voice, done: 0, total };
   try {
     for (let i = 0; i <= total; i++) {
       if (readCancel) throw "reading cancelled";
@@ -652,6 +663,7 @@ async function readAloud(id: string, document: string | null, language: string |
       bytes: seconds * 3_000,
       document: doc,
       voice,
+      ...(voiceB ? { voice_b: voiceB } : {}),
       language: code,
       engine: "Pocket TTS",
       date: new Date().toISOString().slice(0, 19),
@@ -1141,7 +1153,9 @@ const TTS_CATALOG: { code: string; label: string; variant: string; model_bytes: 
 ];
 /** What is "on disk": language code → model present + voice ids. */
 const ttsDisk: Record<string, { model: boolean; voices: Set<string> }> = {
-  it: { model: params.get("tts") === "on", voices: new Set(params.get("tts") === "on" ? ["giovanni"] : []) },
+  // #259: "alba" is also seeded downloaded, so the Podcast script demo item
+  // (two voices) plays without a trip to Models → Voices first.
+  it: { model: params.get("tts") === "on", voices: new Set(params.get("tts") === "on" ? ["giovanni", "alba"] : []) },
   en: { model: false, voices: new Set() },
 };
 /** The AudioSeal watermark models (#257): with the first download; `?tts=on`
@@ -1287,7 +1301,16 @@ const BUILTIN_RECIPES: Recipe[] = [
   // #143: only where the transcript names its speakers.
   { id: "meeting-minutes", name: "Meeting minutes", prompt: "Write the minutes of this meeting: Attendees, Agenda, Discussion, Decisions (who decided), Action items as a table Action | Owner | Due.", target: "companion_document", builtin: true, speakers_only: true },
   { id: "who-said-what", name: "Who said what", prompt: "For each speaker, a ## heading with their name, then what they said, with timestamps.", target: "companion_document", builtin: true, speakers_only: true },
+  // #259 (P17 stretch goal): a two-host dialogue script; read_aloud renders
+  // it with two distinct built-in voices into one marked file.
+  { id: "podcast-script", name: "Podcast script", prompt: "Turn this document into a two-host podcast script, alternating `Host A:` / `Host B:` lines.", target: "companion_document", builtin: true },
 ];
+
+/** #259: *Podcast script* is offered only while read aloud is on (P24) —
+ *  its only purpose is a two-voice speech file. */
+function podcastRecipeVisible(): Recipe[] {
+  return settings.tts_enabled ? BUILTIN_RECIPES : BUILTIN_RECIPES.filter((r) => r.id !== "podcast-script");
+}
 
 /** Speaker labels the item's lines carry (#143), in order. */
 function mockSpeakers(item: Stored): string[] {
@@ -1300,7 +1323,7 @@ function mockSpeakers(item: Stored): string[] {
   return out;
 }
 
-const allRecipes = (): Recipe[] => [...BUILTIN_RECIPES, ...settings.recipes];
+const allRecipes = (): Recipe[] => [...podcastRecipeVisible(), ...settings.recipes];
 
 function companionFile(r: Recipe): string {
   if (r.id === "formatted-document") return "document.md";
@@ -1454,6 +1477,11 @@ function fakeResult(r: Recipe, item: Stored): string {
       return `**tl;dr:** ${text[0] ?? ""}\n\n# ${item.meta.title}\n\n## Contenuto\n\n${text.slice(1).join(" ")}\n\n| Punto | Dettaglio |\n|---|---|\n${text.slice(0, 3).map((t, i) => `| ${i + 1} | ${t} |`).join("\n")}`;
     case "action-items":
       return text.slice(0, 2).map((t) => `- [ ] ${t}`).join("\n");
+    case "podcast-script":
+      return text
+        .slice(0, 6)
+        .map((t, i) => `Host ${i % 2 === 0 ? "A" : "B"}: ${t}`)
+        .join("\n") || "Host A: Welcome to the show.\nHost B: Great to be here.";
     default:
       return `${text[0] ?? ""}\n\n${text.slice(1, 4).map((t) => `- ${t}`).join("\n")}`;
   }

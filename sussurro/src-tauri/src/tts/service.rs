@@ -390,6 +390,7 @@ impl Service {
                 engine: ENGINE_NAME.into(),
                 voice: voice_id.into(),
                 language: lang.code.into(),
+                voice_b: None,
             },
             watermark,
             rate,

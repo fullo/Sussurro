@@ -368,6 +368,12 @@ pub fn run(
         );
     }
     let lang = resolve_language(req.language, &source.item_language)?;
+    // #259 (P17 stretch goal): the *Podcast script* recipe's companion
+    // document is the one case read aloud speaks with two voices — every
+    // other document keeps the ordinary single-narrator path below.
+    if source.document == super::podcast::SCRIPT_FILE {
+        return run_podcast(jobs, speaker, req, lang, &source, progress);
+    }
     let voice = service::voice_for(req.voices, lang);
     let (chunks, text_sha256) = prepared(&source.markdown, lang.code);
     if chunks.is_empty() {
@@ -401,6 +407,7 @@ pub fn run(
             engine: ENGINE_NAME.into(),
             voice: voice.id.into(),
             language: lang.code.into(),
+            voice_b: None,
         },
         watermark,
         SPEECH_RATE,
@@ -428,6 +435,7 @@ pub fn run(
         generator: marking::generator(),
         engine: ENGINE_NAME.into(),
         voice: voice.id.into(),
+        voice_b: None,
         language: lang.code.into(),
         date: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
         text_sha256,
@@ -445,6 +453,145 @@ pub fn run(
     })
 }
 
+/// The two-voice *Podcast script* path (#259, P17): `source.markdown` is
+/// parsed into dialogue turns ([`super::podcast::parse_script`]), spoken
+/// with two distinct built-in voices for `lang` — Host A with the
+/// document's ordinary read-aloud voice ([`service::voice_for`]), Host B
+/// with [`super::podcast::second_voice`] — into one continuous marked Ogg
+/// Opus file. Never cloning: both are catalogue voices, never a voice built
+/// from audio. Everything else (marking, signing, staleness, saving) is the
+/// same as [`run`].
+fn run_podcast(
+    jobs: &Jobs,
+    speaker: &dyn Speaker,
+    req: &Request,
+    lang: &'static Language,
+    source: &Source,
+    progress: &mut dyn FnMut(&JobStatus),
+) -> Result<Outcome> {
+    use super::podcast::{self, Host};
+
+    let voice_a = service::voice_for(req.voices, lang);
+    let voice_b = podcast::second_voice(lang, voice_a);
+    let turns = podcast::parse_script(&source.markdown);
+    if turns.is_empty() {
+        bail!(
+            "This podcast script has no “Host A:” / “Host B:” lines to read — run the Podcast \
+             script recipe first."
+        );
+    }
+    let groups = podcast::chunk_script(&turns, Lang::from_code(lang.code));
+    let total: usize = groups.iter().map(|(_, c)| c.len()).sum();
+    if total == 0 {
+        bail!("There is nothing to read in this podcast script.");
+    }
+    let text_sha256 = podcast::script_hash(&turns);
+    let file = speech::speech_file_name(&source.document)?;
+    // #257: no watermark, no speech — checked before any work.
+    let watermark = speaker.watermark()?;
+    let guard = jobs.begin(JobStatus {
+        item_id: req.id.to_string(),
+        document: source.document.clone(),
+        language: lang.code.to_string(),
+        voice: format!("{}+{}", voice_a.id, voice_b.id),
+        done: 0,
+        total,
+    })?;
+    let dir = existing_item_dir(req.archive, req.id)?;
+    let out = speech::part_path(&dir, &file);
+    let sidecar_out = speech::part_path(
+        &dir,
+        &speech::sidecar_name(&file).context("speech file name")?,
+    );
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_file(&sidecar_out);
+    let mut marker = Marker::new(
+        Provenance {
+            engine: ENGINE_NAME.into(),
+            voice: voice_a.id.into(),
+            voice_b: Some(voice_b.id.into()),
+            language: lang.code.into(),
+        },
+        watermark,
+        SPEECH_RATE,
+    );
+    let render: Result<u64> = (|| {
+        let mut w = OpusWriter::create_with(&out, MAX_SAMPLES, SPEECH, &marker.tags())?;
+        let mut done = 0usize;
+        for (host, group) in &groups {
+            let voice = match host {
+                Host::A => voice_a,
+                Host::B => voice_b,
+            };
+            speaker.speak_with(lang, voice, &mut |e| {
+                let mut rs = Resampler::new(e.sample_rate(), SPEECH_RATE);
+                engine::render(
+                    e,
+                    group,
+                    &jobs.cancel,
+                    &mut |i, _n| {
+                        if let Some(s) = guard.update(done + i, total) {
+                            progress(&s);
+                        }
+                    },
+                    &mut |pcm| {
+                        let block = rs.push(pcm);
+                        w.write(&marker.process(&block)?)?;
+                        Ok(())
+                    },
+                )?;
+                let tail = rs.flush();
+                w.write(&marker.process(&tail)?)?;
+                Ok(())
+            })?;
+            done += group.len();
+            if let Some(s) = guard.update(done, total) {
+                progress(&s);
+            }
+        }
+        w.write(&marker.finish()?)?;
+        let n = w.samples();
+        w.finish()?;
+        Ok(n)
+    })();
+    let samples = match render {
+        Ok(n) => n,
+        Err(e) => {
+            let _ = std::fs::remove_file(&out);
+            return Err(e);
+        }
+    };
+    let signed = sign_to(speaker, &marker, &out, &sidecar_out);
+    if let Err(why) = &signed {
+        eprintln!("read aloud: {file} is not signed: {why}");
+    }
+    let info = SpeechInfo {
+        document: source.document.clone(),
+        generator: marking::generator(),
+        engine: ENGINE_NAME.into(),
+        voice: voice_a.id.into(),
+        voice_b: Some(voice_b.id.into()),
+        language: lang.code.into(),
+        date: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false),
+        text_sha256,
+        marked: marker.marks(signed.is_ok()),
+        unsigned: signed.as_ref().err().cloned().unwrap_or_default(),
+        extra: BTreeMap::new(),
+    };
+    let sidecar = signed.is_ok().then_some(sidecar_out.as_path());
+    speech::commit(req.archive, req.id, &out, sidecar, &file, &info)?;
+    drop(guard);
+    Ok(Outcome {
+        file,
+        seconds: samples as f64 / f64::from(SPEECH_RATE),
+        chunks: total,
+    })
+}
+
 // ---- what the Audio tab lists ------------------------------------------------
 
 /// A speech file of an item, as the UI lists it.
@@ -456,6 +603,10 @@ pub struct SpeechStatus {
     /// the frontmatter has no record of the file.
     pub document: String,
     pub voice: String,
+    /// A second voice (#259): this file is a two-voice podcast, Host A read
+    /// by `voice`, Host B by `voice_b`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice_b: Option<String>,
     pub language: String,
     pub engine: String,
     pub date: String,
@@ -484,6 +635,7 @@ pub fn statuses(archive: &Path, id: &str) -> Result<Vec<SpeechStatus>> {
             bytes: f.bytes,
             document: String::new(),
             voice: String::new(),
+            voice_b: None,
             language: String::new(),
             engine: String::new(),
             date: String::new(),
@@ -498,6 +650,7 @@ pub fn statuses(archive: &Path, id: &str) -> Result<Vec<SpeechStatus>> {
             s.recorded = true;
             s.document = info.document.clone();
             s.voice = info.voice.clone();
+            s.voice_b = info.voice_b.clone();
             s.language = info.language.clone();
             s.engine = info.engine.clone();
             s.date = info.date.clone();
@@ -510,7 +663,14 @@ pub fn statuses(archive: &Path, id: &str) -> Result<Vec<SpeechStatus>> {
                     .map(|d| d.body)
             };
             match text {
-                Ok(md) => s.stale = prepared(&md, &info.language).1 != info.text_sha256,
+                Ok(md) => {
+                    s.stale = if info.document == super::podcast::SCRIPT_FILE {
+                        super::podcast::script_hash(&super::podcast::parse_script(&md))
+                            != info.text_sha256
+                    } else {
+                        prepared(&md, &info.language).1 != info.text_sha256
+                    }
+                }
                 Err(_) => s.source_missing = true,
             }
         }
@@ -544,6 +704,9 @@ mod tests {
         /// The watermark model is missing.
         no_watermark: bool,
         spoken: Mutex<Vec<String>>,
+        /// The voice id of every `speak_with` call, in order (#259: proves
+        /// the podcast path alternates two distinct voices).
+        voices_used: Mutex<Vec<String>>,
         /// Cancel this job before speaking.
         cancel_first: Option<&'static Jobs>,
         /// No working credential store: nothing can be signed.
@@ -558,6 +721,7 @@ mod tests {
                 fail: false,
                 no_watermark: false,
                 spoken: Mutex::new(Vec::new()),
+                voices_used: Mutex::new(Vec::new()),
                 cancel_first: None,
                 no_store: false,
                 sign_dir: tempfile::tempdir().unwrap(),
@@ -582,7 +746,7 @@ mod tests {
         fn speak_with(
             &self,
             lang: &'static Language,
-            _voice: &'static Voice,
+            voice: &'static Voice,
             f: &mut dyn FnMut(&mut dyn TtsEngine) -> Result<()>,
         ) -> Result<()> {
             if self.fail {
@@ -591,6 +755,7 @@ mod tests {
             if let Some(j) = self.cancel_first {
                 j.cancel();
             }
+            self.voices_used.lock().unwrap().push(voice.id.to_string());
             let mut e = FakeEngine { spoken: Vec::new() };
             let r = f(&mut e);
             self.spoken.lock().unwrap().extend(e.spoken);
@@ -616,7 +781,11 @@ mod tests {
         id
     }
 
-    fn req<'a>(archive: &'a Path, id: &'a str, voices: &'a BTreeMap<String, String>) -> Request<'a> {
+    fn req<'a>(
+        archive: &'a Path,
+        id: &'a str,
+        voices: &'a BTreeMap<String, String>,
+    ) -> Request<'a> {
         Request {
             archive,
             id,
@@ -639,12 +808,9 @@ mod tests {
         let voices = BTreeMap::from([("it".to_string(), "marius".to_string())]);
         let speaker = FakeSpeaker::new();
         let mut seen = Vec::new();
-        let out = run(
-            &jobs,
-            &speaker,
-            &req(archive, &id, &voices),
-            &mut |s| seen.push((s.done, s.total)),
-        )
+        let out = run(&jobs, &speaker, &req(archive, &id, &voices), &mut |s| {
+            seen.push((s.done, s.total))
+        })
         .unwrap();
         assert_eq!(out.file, "speech.opus");
         assert!(out.seconds > 0.0);
@@ -719,13 +885,7 @@ mod tests {
             no_store: true,
             ..FakeSpeaker::new()
         };
-        run(
-            &jobs,
-            &speaker,
-            &req(archive, &id, &voices),
-            &mut |_| {},
-        )
-        .unwrap();
+        run(&jobs, &speaker, &req(archive, &id, &voices), &mut |_| {}).unwrap();
         let dir = existing_item_dir(archive, &id).unwrap();
         assert!(dir.join("speech.opus").is_file(), "the file is still made");
         assert!(!dir.join("speech.c2pa").exists());
@@ -819,6 +979,92 @@ mod tests {
         assert!(statuses(archive, &id).unwrap().is_empty());
     }
 
+    // ---- #259 (P17 stretch goal): the two-voice podcast script ----
+
+    #[test]
+    fn a_podcast_script_is_read_with_two_distinct_voices_into_one_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = item(archive, "en", "The transcript.\n");
+        let meta = CompanionMeta {
+            title: "Podcast script".into(),
+            ..CompanionMeta::default()
+        };
+        let script =
+            "Host A: Welcome to the show.\nHost B: Great to be here.\nHost A: Let's wrap up.\n";
+        write_companion(
+            archive,
+            &id,
+            super::super::podcast::SCRIPT_FILE,
+            &meta,
+            script,
+        )
+        .unwrap();
+        let jobs = Jobs::default();
+        let voices = BTreeMap::from([("en".to_string(), "alba".to_string())]);
+        let speaker = FakeSpeaker::new();
+        let mut r = req(archive, &id, &voices);
+        r.document = Some(super::super::podcast::SCRIPT_FILE);
+        let out = run(&jobs, &speaker, &r, &mut |_| {}).unwrap();
+        assert_eq!(out.file, "speech-podcast-script.opus");
+        assert!(!jobs.is_running());
+
+        // Two distinct voices were used, alternating A, B, A.
+        let used = speaker.voices_used.lock().unwrap().clone();
+        assert_eq!(used, ["alba", "marius", "alba"], "{used:?}");
+
+        let dir = existing_item_dir(archive, &id).unwrap();
+        let path = dir.join("speech-podcast-script.opus");
+        let tags = crate::archive::opus::read_tags(&path).unwrap();
+        assert!(
+            tags.contains(&("TTS_VOICE".into(), "alba".into())),
+            "{tags:?}"
+        );
+        assert!(
+            tags.contains(&("TTS_VOICE_B".into(), "marius".into())),
+            "{tags:?}"
+        );
+
+        let item = crate::archive::read_item(archive, &id).unwrap();
+        let info = &speech::infos(&item.meta)["speech-podcast-script.opus"];
+        assert_eq!(info.voice, "alba");
+        assert_eq!(info.voice_b.as_deref(), Some("marius"));
+
+        let st = statuses(archive, &id).unwrap();
+        assert_eq!(st.len(), 1);
+        assert_eq!(st[0].voice_b.as_deref(), Some("marius"));
+        assert!(!st[0].stale);
+
+        // Editing the script (not the frontmatter) makes it stale.
+        let dir = existing_item_dir(archive, &id).unwrap();
+        let path_md = dir.join(super::super::podcast::SCRIPT_FILE);
+        let doc = std::fs::read_to_string(&path_md).unwrap();
+        std::fs::write(&path_md, doc.replace("wrap up", "wrap up now")).unwrap();
+        assert!(statuses(archive, &id).unwrap()[0].stale);
+    }
+
+    #[test]
+    fn a_script_with_no_host_lines_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path();
+        let id = item(archive, "en", "The transcript.\n");
+        write_companion(
+            archive,
+            &id,
+            super::super::podcast::SCRIPT_FILE,
+            &CompanionMeta::default(),
+            "Just a plain paragraph, no host tags.\n",
+        )
+        .unwrap();
+        let jobs = Jobs::default();
+        let voices = BTreeMap::new();
+        let mut r = req(archive, &id, &voices);
+        r.document = Some(super::super::podcast::SCRIPT_FILE);
+        let err = run(&jobs, &FakeSpeaker::new(), &r, &mut |_| {}).unwrap_err();
+        assert!(err.to_string().contains("Host A"), "{err}");
+        assert!(!jobs.is_running());
+    }
+
     #[test]
     fn cancel_and_failures_leave_nothing() {
         let tmp = tempfile::tempdir().unwrap();
@@ -832,13 +1078,7 @@ mod tests {
             cancel_first: Some(jobs),
             ..FakeSpeaker::new()
         };
-        let err = run(
-            jobs,
-            &speaker,
-            &req(archive, &id, &voices),
-            &mut |_| {},
-        )
-        .unwrap_err();
+        let err = run(jobs, &speaker, &req(archive, &id, &voices), &mut |_| {}).unwrap_err();
         assert!(format!("{err:#}").contains("cancelled"), "{err:#}");
         assert!(!jobs.is_running());
         assert!(!dir.join("speech.opus").exists());
@@ -848,13 +1088,7 @@ mod tests {
             fail: true,
             ..FakeSpeaker::new()
         };
-        let err = run(
-            jobs,
-            &broken,
-            &req(archive, &id, &voices),
-            &mut |_| {},
-        )
-        .unwrap_err();
+        let err = run(jobs, &broken, &req(archive, &id, &voices), &mut |_| {}).unwrap_err();
         assert!(err.to_string().contains("not downloaded"), "{err}");
         assert!(!jobs.is_running());
         assert!(crate::archive::speech::files_in(&dir).is_empty());
@@ -864,13 +1098,7 @@ mod tests {
             no_watermark: true,
             ..FakeSpeaker::new()
         };
-        let err = run(
-            jobs,
-            &unmarked,
-            &req(archive, &id, &voices),
-            &mut |_| {},
-        )
-        .unwrap_err();
+        let err = run(jobs, &unmarked, &req(archive, &id, &voices), &mut |_| {}).unwrap_err();
         assert!(err.to_string().contains("watermark"), "{err}");
         assert!(unmarked.spoken.lock().unwrap().is_empty());
         assert!(!jobs.is_running());
@@ -889,13 +1117,7 @@ mod tests {
         let speaker = FakeSpeaker::new();
         // No language the module speaks.
         let id = item(archive, "fr", "Bonjour.\n");
-        let err = run(
-            &jobs,
-            &speaker,
-            &req(archive, &id, &voices),
-            &mut |_| {},
-        )
-        .unwrap_err();
+        let err = run(&jobs, &speaker, &req(archive, &id, &voices), &mut |_| {}).unwrap_err();
         assert!(err.to_string().contains("'fr'"), "{err}");
         // …unless one is picked.
         let mut r = req(archive, &id, &voices);
@@ -903,13 +1125,7 @@ mod tests {
         assert!(run(&jobs, &speaker, &r, &mut |_| {}).is_ok());
         // Nothing to read.
         let empty = item(archive, "it", "```\ncode only\n```\n");
-        let err = run(
-            &jobs,
-            &speaker,
-            &req(archive, &empty, &voices),
-            &mut |_| {},
-        )
-        .unwrap_err();
+        let err = run(&jobs, &speaker, &req(archive, &empty, &voices), &mut |_| {}).unwrap_err();
         assert!(err.to_string().contains("nothing to read"), "{err}");
         // A live item.
         let live = crate::archive::live::begin_session(
@@ -921,13 +1137,7 @@ mod tests {
             },
         )
         .unwrap();
-        let err = run(
-            &jobs,
-            &speaker,
-            &req(archive, &live, &voices),
-            &mut |_| {},
-        )
-        .unwrap_err();
+        let err = run(&jobs, &speaker, &req(archive, &live, &voices), &mut |_| {}).unwrap_err();
         assert!(err.to_string().contains("recorded"), "{err}");
         // A document that isn't one.
         let mut r = req(archive, &id, &voices);

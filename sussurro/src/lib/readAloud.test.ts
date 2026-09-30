@@ -145,6 +145,10 @@ describe("read aloud", () => {
     expect(staleNote(speech({ source_missing: true }))).toMatch(/deleted/);
     expect(staleNote(speech({ recorded: false }))).toMatch(/no record/);
     expect(speechFacts(speech(), [lang("it")])).toBe("voice giovanni · Italian · Pocket TTS · 2 KB · 2026-09-26");
+    // #259: a two-voice podcast script names both hosts' voices.
+    expect(speechFacts(speech({ voice_b: "alba" }), [lang("it")])).toBe(
+      "voices giovanni (Host A), alba (Host B) · Italian · Pocket TTS · 2 KB · 2026-09-26",
+    );
     expect(speechFor([speech(), speech({ file: "speech-document.opus", document: "document.md" })], "document.md")?.file).toBe(
       "speech-document.opus",
     );

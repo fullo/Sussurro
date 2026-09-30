@@ -179,6 +179,11 @@ pub struct SpeechInfo {
     /// Voice id (`giovanni`).
     #[serde(default)]
     pub voice: String,
+    /// A second voice id (#259, the *Podcast script* recipe): `voice` reads
+    /// Host A's lines, `voice_b` Host B's. Absent for every ordinary,
+    /// single-narrator file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_b: Option<String>,
     /// Language code the text was prepared and read in.
     #[serde(default)]
     pub language: String,
@@ -541,6 +546,7 @@ mod tests {
             generator: "Sussurro test".into(),
             engine: "Pocket TTS".into(),
             voice: "giovanni".into(),
+            voice_b: None,
             language: "it".into(),
             date: "2026-09-26T10:00:00+02:00".into(),
             text_sha256: hash.into(),

@@ -2644,10 +2644,18 @@ pub async fn own_voice_find(
 
 use crate::recipes::{self, Recipe};
 
-/// Every recipe: the built-ins first, then the user's own.
+/// Every recipe: the built-ins first, then the user's own. *Podcast
+/// script* (#259) is left out while read aloud is off (P24: its only
+/// purpose is a two-voice speech file, which the module off can't make;
+/// existing script documents and speech files are unaffected).
 #[tauri::command]
 pub fn recipes_list(state: State<'_, AppState>) -> Vec<Recipe> {
-    recipes::all_recipes(&state.settings.lock().unwrap().recipes)
+    let settings = state.settings.lock().unwrap();
+    let mut recipes = recipes::all_recipes(&settings.recipes);
+    if !settings.tts_enabled {
+        recipes.retain(|r| r.id != recipes::PODCAST_SCRIPT_ID);
+    }
+    recipes
 }
 
 /// The companion documents next to an item's transcript (`document.md`

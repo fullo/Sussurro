@@ -15,6 +15,12 @@ import { selectedVoice } from "./tts";
 /** The transcript's document name (what `document` says for it). */
 export const TRANSCRIPT_DOC = "transcript.md";
 
+/** The *Podcast script* recipe's companion document (0.13 stretch goal,
+ *  #259, P17) — the one document read aloud speaks with two distinct
+ *  built-in voices instead of one narrator. Pinned to match the backend's
+ *  `tts::podcast::SCRIPT_FILE` (a Rust test keeps the two in step). */
+export const PODCAST_SCRIPT_DOC = "podcast-script.md";
+
 /** Said wherever generated speech is shown (P21): never a recording. */
 export const SYNTHETIC_NOTE = "Synthetic voice made by Sussurro on this computer — not a recording of anyone.";
 
@@ -87,11 +93,13 @@ export function jobIsFor(job: ReadAloudJob | null, itemId: string): boolean {
   return !!job && job.item_id === itemId;
 }
 
-/** One line under a speech file: voice, language, size, date. */
+/** One line under a speech file: voice(s), language, size, date. A
+ *  two-voice podcast script (#259) names both hosts' voices. */
 export function speechFacts(s: SpeechStatus, languages: TtsLanguage[] = []): string {
   const lang = languages.find((l) => l.code === s.language)?.label ?? s.language;
   const date = s.date ? s.date.slice(0, 10) : "";
-  return [s.voice && `voice ${s.voice}`, lang, s.engine, formatBytes(s.bytes), date].filter(Boolean).join(" · ");
+  const voice = s.voice_b ? `voices ${s.voice} (Host A), ${s.voice_b} (Host B)` : s.voice && `voice ${s.voice}`;
+  return [voice, lang, s.engine, formatBytes(s.bytes), date].filter(Boolean).join(" · ");
 }
 
 /** Why a speech file may no longer match its document, or null. */

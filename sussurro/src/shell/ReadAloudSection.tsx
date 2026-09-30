@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { Ctl } from "../hooks/useAppController";
 import { audioSrcPath, formatPlayerTime } from "../lib/replay";
 import {
+  PODCAST_SCRIPT_DOC,
   SYNTHETIC_NOTE,
   TRANSCRIPT_DOC,
   createLabel,
@@ -319,7 +320,11 @@ export function ReadAloudSection({
                 ))}
               </select>
             </label>
-            {ready.state === "ready" && <span className="sh-muted">Voice: {ready.voice}</span>}
+            {ready.state === "ready" && (
+              <span className="sh-muted">
+                {doc === PODCAST_SCRIPT_DOC ? "Two voices: Host A, Host B" : `Voice: ${ready.voice}`}
+              </span>
+            )}
           </div>
 
           {ready.state === "missing" && (
