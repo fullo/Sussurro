@@ -96,6 +96,12 @@ esplicita nell'app, mai in questa estensione. Codice sorgente, informativa
 sulla privacy e supporto: https://github.com/fullo/Sussurro
 ```
 
+## Name and summary
+
+- **Name**: Sussurro (8/75 characters).
+- **Summary**: taken from the manifest `description` (123/132 characters); do not override it in the dashboard.
+- **Minimum browser**: Chrome 116 (`minimum_chrome_version`).
+
 ## Permission justifications
 
 Chrome's Privacy practices tab asks for one justification per requested
@@ -105,11 +111,11 @@ permissions for the three meeting sites and `http://127.0.0.1/*`.
 
 | Permission | Justification |
 |---|---|
-| `storage` | Remembers, in the browser's own local storage, whether you dismissed the recording-consent notice and which meeting language you last picked per platform. No account data, no sync. |
+| `storage` | Remembers, in the browser's own local storage, whether you dismissed the recording-consent notice and which meeting language you last picked per platform. No account data, no sync. The pairing (port + token) is kept in the extension's own IndexedDB, not in this storage. |
 | `sidePanel` | Shows the extension's side panel (Start/Stop, the live transcript, item actions) — its only user interface besides the options page. |
 | `tabCapture` | A fallback only: if, after you press Start, no call audio has arrived from the page within 4 seconds (a meeting client that plays audio in a way the extension's normal capture can't reach), it captures that browser tab's own audio output so the meeting can still be transcribed. Not used otherwise, and not present at all in the Firefox build. |
 | `offscreen` | Required by Chrome to run the `tabCapture` fallback above (an offscreen document is where Chrome allows a captured tab stream to be processed); it has no other use. |
-| Host permission: `https://meet.google.com/*`, `https://teams.microsoft.com/*`, `https://teams.live.com/*`, `https://teams.cloud.microsoft/*`, `https://*.zoom.us/wc/*` | The extension's content scripts run only on these meeting pages, to capture the call's audio (via WebRTC) and to read the participants' names and who is speaking, directly from the page's own structure. No other site is requested — not `<all_urls>`, not a broad wildcard. |
+| Host permission: `https://meet.google.com/*`, `https://teams.microsoft.com/*`, `https://teams.live.com/*`, `https://teams.cloud.microsoft/*`, `https://*.zoom.us/wc/*` | The extension's content scripts run only on these meeting pages, to capture the call's audio (via WebRTC) and to read the participants' names and who is speaking, directly from the page's own structure. Before you press Start the page script only observes the call's audio streams; nothing is captured. No other site is requested — not `<all_urls>`, not a broad wildcard. |
 | Host permission: `http://127.0.0.1/*` | To reach the Sussurro desktop app running on the user's own computer (the local API the app exposes). No other host is contacted. |
 
 ## Data usage disclosure
