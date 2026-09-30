@@ -1317,11 +1317,10 @@ legal review) carry `needs maintainer`. Milestones and epics:
   archive folder no longer emptying the Library (#329/#328), a live level
   meter on every audio source picker (#317/#314), and Ollama
   thinking-model/runaway-output fixes (#318, released as the `release/
-  0.10.x`-branch patch **0.10.3**, also present on `main`). **Not tagged
-  or released**: no `v0.11.0` tag has been pushed, so the draft/publish/
-  un-draft release step and the manual QA from the plan's section 9
-  (macOS, Windows, Linux hardware) are still open, tracked by #253's
-  acceptance criteria.
+  0.10.x`-branch patch **0.10.3**, also present on `main`), and the privacy
+  policy page (#324/#267). Still open: the manual QA from the plan's
+  section 9 (macOS, Windows, Linux hardware), tracked by #253's acceptance
+  criteria.
 - **0.12 — Read aloud**: absorbed into 0.11 above by the maintainer's
   2026-09-28 decision, apart from its stretch goal, the two-voice podcast
   recipe (#259), moved to the 0.13 milestone. **0.12.0 published 2026-09-29** (tag `v0.12.0` on `abf64b8`, PR #333; the
@@ -1331,9 +1330,8 @@ legal review) carry `needs maintainer`. Milestones and epics:
   section now shows one Create/Listen button per document with a single
   in-app player, and the temporary *Listen* scratch-file path (backend
   included) is gone (#327). `docs/releases/0.12.0.md` and a new blog post
-  cover it; no version has been tagged. Depends on #316 (0.11.0's own
-  release PR) and #330 (#327) merging to `main` first — this branch was
-  built from both directly since neither had merged yet.
+  cover it. Still open: the manual QA from the plan's section 9 (0.12),
+  tracked by #260's acceptance criteria.
 - **0.13 — Your voice, with consent**: own voice first; live consent with a
   nonce, transcript + voice match; never cloned from files, meetings or the
   archive; gated by a lawyer's review. Also holds the two-voice podcast
