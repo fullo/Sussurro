@@ -315,7 +315,10 @@ it can record.
 
 ### Install
 
-The extension is not in the browser stores yet. Every
+The extension is not in the browser stores yet (store-ready builds and
+listing texts exist — `extension/store/` — but listing on the Chrome Web
+Store, Microsoft Edge Add-ons and addons.mozilla.org's listed channel is a
+maintainer account step, tracked in #269, #270, #271). Every
 [release](https://github.com/fullo/Sussurro/releases) carries
 `sussurro-extension-chrome-<version>.zip` and, for Firefox, the add-on
 signed by Mozilla, `sussurro-extension-firefox-<version>.xpi`; use the one

@@ -41,6 +41,26 @@ export function buildManifest(template: Manifest, target: Target, appVersion: st
   return out;
 }
 
+/** Build variants of the Firefox manifest (#268): `self-hosted` is today's
+ *  release build, with its own `update_url` (AMO's unlisted/self-distribution
+ *  channel, #228). `listed` is the build submitted to AMO's *listed* channel
+ *  (#269): AMO refuses `update_url` there (it manages updates itself once an
+ *  add-on is listed — see extension/README.md, "Releases, signing and
+ *  updates"), so it must come out of the manifest before packaging. Chrome
+ *  has no such variant: the same build serves both the Chrome Web Store and
+ *  Edge Add-ons. */
+export type FirefoxVariant = "self-hosted" | "listed";
+
+/** Strips `browser_specific_settings.gecko.update_url` for the `listed`
+ *  Firefox build. Leaves everything else, and any other target, untouched. */
+export function forVariant(manifest: Manifest, variant: FirefoxVariant): Manifest {
+  if (variant !== "listed") return manifest;
+  const bss = manifest.browser_specific_settings as { gecko?: Record<string, unknown> } | undefined;
+  if (!bss?.gecko || !("update_url" in bss.gecko)) return manifest;
+  const { update_url: _update_url, ...gecko } = bss.gecko;
+  return { ...manifest, browser_specific_settings: { ...bss, gecko } };
+}
+
 /** Every packaged file the manifest references (scripts, pages, icons), so the
  *  build can fail fast on a typo instead of shipping a broken zip. */
 export function referencedFiles(manifest: Manifest): string[] {
@@ -76,7 +96,11 @@ export function referencedFiles(manifest: Manifest): string[] {
   return [...files].sort();
 }
 
-/** Release asset name, e.g. `sussurro-extension-firefox-0.9.0.zip`. */
-export function zipName(target: Target, appVersion: string): string {
-  return `sussurro-extension-${target}-${appVersion.trim()}.zip`;
+/** Release asset name, e.g. `sussurro-extension-firefox-0.9.0.zip`, or, for
+ *  the `listed` Firefox variant, `sussurro-extension-firefox-listed-0.9.0.zip`
+ *  (kept out of the GitHub release: it is the file submitted to AMO's
+ *  listed channel, not something end users install directly, #268). */
+export function zipName(target: Target, appVersion: string, variant?: FirefoxVariant): string {
+  const suffix = variant === "listed" ? "-listed" : "";
+  return `sussurro-extension-${target}${suffix}-${appVersion.trim()}.zip`;
 }

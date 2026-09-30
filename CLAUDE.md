@@ -1340,6 +1340,20 @@ legal review) carry `needs maintainer`. Milestones and epics:
   recipe stretch goal moved from 0.12 (#259).
 - **Track A**: store listings (Chrome, Edge, AMO listed), privacy policy
   page, Google/Microsoft calendar OAuth — maintainer accounts.
+  **Store-ready builds and listing texts (#268)**: `npm run
+  build:firefox:listed` (`extension/scripts/manifest.ts`'s `forVariant`)
+  builds Firefox's AMO-listed manifest — the self-hosted one minus
+  `browser_specific_settings.gecko.update_url`, which AMO refuses on a
+  listed add-on (#228) — alongside the unchanged self-hosted `firefox`
+  build; `npm run lint:listed` runs `web-ext lint` on it in AMO's normal
+  (non-`--self-hosted`) mode. Chrome has no separate store variant: the
+  same build serves the Chrome Web Store and Edge Add-ons. The release
+  workflow builds, lints and attaches both Firefox variants plus an
+  AMO source archive to every release (unrelated to the existing unlisted
+  AMO signing, which is unchanged); listing texts (English + Italian),
+  Chrome's per-permission justifications and screenshot guidance are in
+  `extension/store/` (not submitted anywhere by CI — #269/#270/#271 stay
+  maintainer account actions).
 - Licence rule for all of it: code **and** weights must allow commercial
   use (dual-licence goal). Excluded: F5-TTS, XTTS-v2 (CPML), Fish-Speech,
   Spark-TTS (non-commercial), IndexTTS2, Higgs Audio (custom), DiariZen

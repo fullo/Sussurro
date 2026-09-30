@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildManifest, referencedFiles, toManifestVersion, zipName, type Manifest, type Target } from "./manifest";
+import { buildManifest, forVariant, referencedFiles, toManifestVersion, zipName, type Manifest, type Target } from "./manifest";
 import { ALL_FRAMES_MATCHES, APP_MATCH, MEETING_MATCHES, TOP_FRAME_MATCHES, detectPlatform } from "../src/shared/platform";
 
 const template = (t: Target): Manifest =>
@@ -42,6 +42,45 @@ describe("buildManifest", () => {
   });
 });
 
+describe("forVariant", () => {
+  it("strips update_url for the listed Firefox build (#268, #269)", () => {
+    const m = buildManifest(template("firefox"), "firefox", "0.12.0");
+    const listed = forVariant(m, "listed");
+    expect((listed.browser_specific_settings as { gecko: Record<string, unknown> }).gecko).not.toHaveProperty("update_url");
+    // Everything else survives, including the fields AMO still needs.
+    const gecko = (listed.browser_specific_settings as { gecko: Record<string, unknown> }).gecko;
+    expect(gecko.id).toBe("sussurro@darumahq.it");
+    expect(gecko.strict_min_version).toBe("140.0");
+    expect(gecko.data_collection_permissions).toEqual({ required: ["none"] });
+  });
+
+  it("leaves the self-hosted build's update_url alone", () => {
+    const m = buildManifest(template("firefox"), "firefox", "0.12.0");
+    const selfHosted = forVariant(m, "self-hosted");
+    expect(selfHosted).toBe(m);
+    expect((selfHosted.browser_specific_settings as { gecko: Record<string, unknown> }).gecko.update_url).toBe(
+      "https://fullo.github.io/Sussurro/extension/updates.json",
+    );
+  });
+
+  it("is a no-op for Chrome (no browser_specific_settings)", () => {
+    const m = buildManifest(template("chrome"), "chrome", "0.12.0");
+    expect(forVariant(m, "listed")).toBe(m);
+  });
+});
+
+describe("zipName", () => {
+  it("carries the target and the app version", () => {
+    expect(zipName("chrome", "0.9.0")).toBe("sussurro-extension-chrome-0.9.0.zip");
+    expect(zipName("firefox", "0.9.0")).toBe("sussurro-extension-firefox-0.9.0.zip");
+    expect(zipName("firefox", "0.9.0", "self-hosted")).toBe("sussurro-extension-firefox-0.9.0.zip");
+  });
+
+  it("marks the listed Firefox variant", () => {
+    expect(zipName("firefox", "0.9.0", "listed")).toBe("sussurro-extension-firefox-listed-0.9.0.zip");
+  });
+});
+
 describe("referencedFiles", () => {
   it("lists scripts, pages and icons of each manifest", () => {
     const common = ["content-isolated.js", "content-main.js", "icons/128.png", "icons/32.png", "icons/64.png", "options.html", "sidepanel.html", "background.js"];
@@ -53,10 +92,6 @@ describe("referencedFiles", () => {
     expect(referencedFiles({})).toEqual([]);
     expect(referencedFiles({ icons: "a.png", background: { scripts: ["b.js", 3] }, content_scripts: [null] })).toEqual(["a.png", "b.js"]);
   });
-});
-
-it("zipName carries the target and the app version", () => {
-  expect(zipName("chrome", "0.9.0")).toBe("sussurro-extension-chrome-0.9.0.zip");
 });
 
 describe.each(["chrome", "firefox"] as const)("manifest.%s.json", (t) => {
