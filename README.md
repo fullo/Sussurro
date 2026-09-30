@@ -189,7 +189,16 @@ says so in the file itself (Ogg Opus comments `SYNTHETIC=1`, engine,
 voice) and in the item's frontmatter (`speech:`, `synthetic:`). When the
 text changes after the speech was made, the tab says it is out of date —
 *Listen* still plays what was made, and a secondary **Create again**
-replaces it. *Delete…* moves a speech file to the trash. An article saved
+replaces it. *Delete…* moves a speech file to the trash.
+
+**Two-voice podcast** (with Read aloud on): the *Podcast script* recipe turns any
+document into a two-host dialogue (`Host A:` / `Host B:` lines, saved as
+`podcast-script.md`) through the usual recipe engine — including the
+external-profile confirmation. Creating speech for that document reads Host A and
+Host B with two different built-in voices (the picked one and the next one in the
+language's list; both must be downloaded) into one marked file, with both voices
+recorded in the frontmatter. Never cloned voices; the recipe is hidden while the
+module is off. An article saved
 from New → Link (*Article*) is read like any other item, in the language
 the page declares.
 

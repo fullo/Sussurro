@@ -51,6 +51,10 @@ pub struct Provenance {
     pub voice: String,
     /// Language code.
     pub language: String,
+    /// A second voice id, for a two-voice file (#259, the podcast recipe):
+    /// `voice` reads Host A's lines, `voice_b` Host B's. `None` for every
+    /// ordinary, single-narrator file.
+    pub voice_b: Option<String>,
 }
 
 /// `Sussurro <version>`.
@@ -77,7 +81,7 @@ impl Marker {
     /// The Ogg Opus user comments every generated file carries.
     pub fn tags(&self) -> Vec<(String, String)> {
         let p = &self.provenance;
-        vec![
+        let mut tags = vec![
             ("SYNTHETIC".into(), "1".into()),
             (
                 "COMMENT".into(),
@@ -88,7 +92,11 @@ impl Marker {
             ("TTS_VOICE".into(), p.voice.clone()),
             ("LANGUAGE".into(), p.language.clone()),
             ("DIGITAL_SOURCE_TYPE".into(), DIGITAL_SOURCE_TYPE.into()),
-        ]
+        ];
+        if let Some(voice_b) = &p.voice_b {
+            tags.push(("TTS_VOICE_B".into(), voice_b.clone()));
+        }
+        tags
     }
 
     /// **The watermark hook (#257).** Every block of generated audio, at
@@ -134,6 +142,7 @@ mod tests {
                 engine: "Pocket TTS".into(),
                 voice: "giovanni".into(),
                 language: "it".into(),
+                voice_b: None,
             },
             FakeWatermark::boxed(),
             24_000,
@@ -156,6 +165,26 @@ mod tests {
                 "{k}"
             );
         }
+    }
+
+    #[test]
+    fn a_two_voice_file_also_carries_its_second_voice() {
+        let tags = marker().tags();
+        assert!(tags.iter().all(|(n, _)| n != "TTS_VOICE_B"), "{tags:?}");
+        let two_voice = Marker::new(
+            Provenance {
+                engine: "Pocket TTS".into(),
+                voice: "giovanni".into(),
+                language: "it".into(),
+                voice_b: Some("alba".into()),
+            },
+            FakeWatermark::boxed(),
+            24_000,
+        );
+        let tags = two_voice.tags();
+        let get = |k: &str| tags.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("TTS_VOICE"), Some("giovanni"));
+        assert_eq!(get("TTS_VOICE_B"), Some("alba"));
     }
 
     #[test]

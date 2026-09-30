@@ -786,6 +786,10 @@ export interface SpeechStatus {
    *  the frontmatter has no record of the file. */
   document: string;
   voice: string;
+  /** A second voice (#259): a two-voice podcast script, Host A read by
+   *  `voice`, Host B by `voice_b`. Absent for an ordinary, single-narrator
+   *  file. */
+  voice_b?: string;
   language: string;
   engine: string;
   date: string;

@@ -24,6 +24,7 @@ pub mod engine;
 pub mod marking;
 pub mod models;
 pub mod pocket;
+pub mod podcast;
 pub mod read_aloud;
 pub mod resample;
 pub mod service;

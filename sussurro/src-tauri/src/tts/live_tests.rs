@@ -448,6 +448,7 @@ fn live_watermark_survives_the_app_opus_and_is_read_back() {
             engine: "Pocket TTS".into(),
             voice: "live-test".into(),
             language: "en".into(),
+            voice_b: None,
         },
         Box::new(generator),
         24_000,

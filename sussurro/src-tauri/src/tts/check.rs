@@ -783,6 +783,7 @@ mod tests {
             engine: "Pocket TTS".into(),
             voice: "alba".into(),
             language: "en".into(),
+            voice_b: None,
         };
         let manifest =
             crate::tts::signing::sign_sidecar(&id, &prov, "2026-09-28T10:00:00Z", &p).unwrap();
@@ -876,6 +877,7 @@ mod tests {
             engine: "Pocket TTS".into(),
             voice: "giovanni".into(),
             language: "it".into(),
+            voice_b: None,
         };
         let wav = crate::tts::engine::wav_bytes(24_000, &vec![0.3; 24_000 * 4]);
         let signed =

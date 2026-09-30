@@ -951,6 +951,19 @@ project decisions here, not in per-machine memory.**
   signer, generator, `claims_sussurro`, `ai_generated`, problem codes; UI
   says "signed by a Sussurro install, not a trusted signer". Live keychain
   test `real_signing_key_in_the_os_store` (`#[ignore]`).
+- **Two-voice podcast recipe (0.13 stretch, #259, P17)** (`tts/podcast.rs`, built-in
+  recipe *Podcast script* `podcast-script`): an ordinary recipe (engine, consent gate,
+  emails rules unchanged) writing `podcast-script.md` as `Host A:`/`Host B:` lines;
+  `read_aloud::run` dispatches to `run_podcast` **only for that document name**. Pure
+  parse (`parse_script`), per-host chunking through `text::prepare`, `script_hash` for
+  staleness. Host A = the language's picked voice, Host B = `second_voice` (first other
+  catalogue voice — never cloned, commercial-licence voices only; it must be downloaded,
+  else the usual Models → Voices error, no auto-download, P24). One marked file
+  (watermark + tags + C2PA, fail-closed as always); `Provenance.voice_b` adds the
+  `TTS_VOICE_B` comment, `synthetic.<file>.voice_b` the frontmatter record. The recipe
+  is hidden from `recipes_list` while `tts_enabled` is off. Voice switches reload the
+  engine per host run (perf open point). Built before the 0.13 milestone opens (owner's
+  request); merge timing is the maintainer's call.
 - **Article links (0.12, #258, P17)** (`sources/url/article.rs`,
   command `article_save`, New → Link → *Article*): a web page's main text
   becomes a **note** (not a transcription — no audio, speakers or

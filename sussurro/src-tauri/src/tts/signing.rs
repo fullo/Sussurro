@@ -174,6 +174,7 @@ fn self_test(identity: &Identity) -> Result<()> {
         engine: "self-test".into(),
         voice: "self-test".into(),
         language: "en".into(),
+        voice_b: None,
     };
     let manifest = sign_stream(
         identity,
@@ -584,6 +585,7 @@ pub(crate) mod tests {
             engine: "Pocket TTS".into(),
             voice: "giovanni".into(),
             language: "it".into(),
+            voice_b: None,
         }
     }
 
