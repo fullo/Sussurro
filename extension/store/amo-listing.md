@@ -48,8 +48,8 @@ character cap in the submission form, since AMO has changed it before.)
 ### English
 
 ```
-Sussurro is a local, offline meeting transcriber for Windows, macOS and
-Linux. This add-on is its Firefox half: it captures a web meeting you are
+Sussurro is a local, offline meeting transcriber for Windows, macOS (Apple Silicon)
+and Linux. This add-on is its Firefox half (Firefox desktop 140 or later): it captures a web meeting you are
 already in — Google Meet, Microsoft Teams or the Zoom web client — and
 streams it to the Sussurro desktop app running on your own computer, which
 transcribes it live. It requires that separate, free desktop app
@@ -85,7 +85,7 @@ Source code (AGPL-3.0-or-later): https://github.com/fullo/Sussurro
 
 ```
 Sussurro è un trascrittore di riunioni locale e offline per Windows, macOS
-e Linux. Questo componente aggiuntivo è la sua metà per Firefox: cattura
+(Apple Silicon) e Linux. Questo componente aggiuntivo è la sua metà per Firefox (Firefox desktop 140 o successivo): cattura
 una riunione web a cui stai già partecipando — Google Meet, Microsoft Teams
 o il client web di Zoom — e la trasmette all'app desktop Sussurro in
 esecuzione sullo stesso computer, che la trascrive in tempo reale.
@@ -97,7 +97,7 @@ Cosa fa:
 – Non cattura nulla finché non premi Start nella barra laterale — prima di
   allora, lo script sulla pagina della riunione osserva soltanto l'audio
   della chiamata, per poterlo registrare una volta avviato.
-– Cattura il tuo microfono (etichettato "Tu") e l'audio in arrivo della
+– Cattura il tuo microfono (etichettato "You") e l'audio in arrivo della
   riunione (tutti gli altri partecipanti, mixati).
 – Legge i nomi dei partecipanti e chi sta parlando direttamente dalla
   struttura della pagina della riunione — mai la chat, mai registrazioni,
