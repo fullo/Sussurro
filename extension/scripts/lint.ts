@@ -1,11 +1,15 @@
-/* `web-ext lint` on the Firefox build, failing on any error and on any
+/* `web-ext lint` on a Firefox build, failing on any error and on any
  * warning not accepted in lint-policy.ts (#234):
  *
- *   node scripts/lint.ts          (npm run lint, after npm run build:firefox)
+ *   node scripts/lint.ts                (npm run lint, after npm run build:firefox)
+ *   node scripts/lint.ts listed         (npm run lint:listed, after npm run build:firefox:listed)
  *
- * `--self-hosted`: the add-on is distributed outside AMO's listing with its
- * own update_url, which listed-mode lint rejects (MANIFEST_UPDATE_URL).
- * Runs directly under Node's type stripping (Node >= 24).
+ * `--self-hosted` (the default target): the add-on is distributed outside
+ * AMO's listing with its own update_url, which listed-mode lint rejects
+ * (MANIFEST_UPDATE_URL). The `listed` argument instead lints dist/firefox-listed
+ * (no update_url, #268/#269) in AMO's normal, listed mode — the check the
+ * AMO listed-channel submission must pass. Runs directly under Node's type
+ * stripping (Node >= 24).
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,10 +18,16 @@ import webExt from "web-ext";
 import { unacceptedFindings, type LintResult } from "./lint-policy.ts";
 
 const EXT = dirname(dirname(fileURLToPath(import.meta.url)));
-const sourceDir = join(EXT, "dist", "firefox");
+const arg = process.argv[2];
+if (arg !== undefined && arg !== "listed") {
+  console.error("usage: node scripts/lint.ts [listed]");
+  process.exit(2);
+}
+const listed = arg === "listed";
+const sourceDir = join(EXT, "dist", listed ? "firefox-listed" : "firefox");
 
 const result = (await webExt.cmd.lint(
-  { sourceDir, selfHosted: true, output: "text" },
+  { sourceDir, selfHosted: !listed, output: "text" },
   { shouldExitProgram: false },
 )) as LintResult;
 
@@ -34,4 +44,6 @@ if (bad.length) {
   console.error("Fix them, or accept them there and explain why in AMO-REVIEWER-NOTES.md and the README.");
   process.exit(1);
 }
-console.log(`\nweb-ext lint: ${result.errors.length} errors; ${result.warnings.length} warnings, all accepted (AMO-REVIEWER-NOTES.md).`);
+console.log(
+  `\nweb-ext lint (${listed ? "listed" : "self-hosted"}): ${result.errors.length} errors; ${result.warnings.length} warnings, all accepted (AMO-REVIEWER-NOTES.md).`,
+);

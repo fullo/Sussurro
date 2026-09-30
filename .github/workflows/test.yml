@@ -9,10 +9,11 @@ on:
   pull_request:
 
 jobs:
-  # Browser extension (extension/): type-check, unit tests, both builds,
-  # `web-ext lint` on the Firefox build and the Playwright capture harness
-  # (e2e/). Its own job, so it runs in parallel
-  # with the Rust one and needs no Rust toolchain.
+  # Browser extension (extension/): type-check, unit tests, the Chrome and
+  # Firefox (self-hosted) builds, the Firefox listed-channel build for AMO
+  # (#268, #269), `web-ext lint` on both Firefox builds and the Playwright
+  # capture harness (e2e/). Its own job, so it runs in parallel with the
+  # Rust one and needs no Rust toolchain.
   extension:
     runs-on: ubuntu-24.04
     defaults:
@@ -39,8 +40,18 @@ jobs:
       - name: Build (Chrome + Firefox)
         run: npm run build
 
-      - name: web-ext lint (Firefox build)
+      - name: web-ext lint (Firefox self-hosted build)
         run: npm run lint
+
+      # AMO's listed channel refuses update_url (#268, #269): a separate
+      # build without it, checked with the linter's normal (listed) mode
+      # instead of --self-hosted, so a regression there fails CI before a
+      # real AMO submission would.
+      - name: Build (Firefox, listed channel)
+        run: npm run build:firefox:listed
+
+      - name: web-ext lint (Firefox listed build)
+        run: npm run lint:listed
 
       # Capture harness (#128): both builds in headless Chromium and Firefox
       # against a local two-peer call and a fake /live; ~90 s plus the

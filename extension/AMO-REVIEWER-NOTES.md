@@ -2,12 +2,15 @@
 
 Sussurro captures the audio of a web meeting (Google Meet, Microsoft Teams,
 Zoom web) and streams it to the Sussurro desktop app on the same computer
-(ws://127.0.0.1, after a pairing code). Nothing is sent anywhere else. The
-add-on is self-distributed (unlisted channel, own update_url).
+(ws://127.0.0.1, after a pairing code). Nothing is sent anywhere else.
 
-Build from the attached sources (Node.js >= 24): unzip, cd extension,
-npm ci, npm run build:firefox. dist/firefox/ is the signed directory; the
-build is deterministic. extension/README.md has the details.
+This submission is on the unlisted channel (self-distribution, own
+update_url). Build from the attached sources (Node.js >= 24): unzip, cd
+extension, npm ci, npm run build:firefox. dist/firefox/ is the signed
+directory; the build is deterministic. extension/README.md has the
+details. (A listed-channel submission instead uses
+npm run build:firefox:listed, whose manifest has no update_url — AMO
+refuses one on a listed add-on; everything below still applies.)
 
 The validator reports three warnings, all known:
 

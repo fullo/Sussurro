@@ -18,19 +18,29 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { baseConfig } from "../vite.config.ts";
-import { buildManifest, isTarget, referencedFiles, zipName, TARGETS, type Manifest } from "./manifest.ts";
+import { buildManifest, forVariant, isTarget, referencedFiles, zipName, TARGETS, type FirefoxVariant, type Manifest } from "./manifest.ts";
 
 const EXT = dirname(dirname(fileURLToPath(import.meta.url)));
 const APP = join(EXT, "..", "sussurro");
 
 const target = process.argv[2];
-if (!isTarget(target)) {
-  console.error(`usage: node scripts/build.ts <${TARGETS.join("|")}>`);
+// Firefox only: `listed` builds the variant submitted to AMO's listed
+// channel (#268, #269) — same manifest minus `update_url`, which AMO
+// refuses there. Omit it (or pass nothing) for today's self-hosted release
+// build, unchanged.
+const variantArg = process.argv[3];
+if (variantArg !== undefined && variantArg !== "listed") {
+  console.error(`usage: node scripts/build.ts <${TARGETS.join("|")}> [listed]`);
   process.exit(2);
 }
+if (!isTarget(target) || (variantArg === "listed" && target !== "firefox")) {
+  console.error(`usage: node scripts/build.ts <${TARGETS.join("|")}> [listed]  ("listed" is Firefox-only)`);
+  process.exit(2);
+}
+const variant: FirefoxVariant = variantArg === "listed" ? "listed" : "self-hosted";
 
 const appVersion: string = JSON.parse(readFileSync(join(APP, "package.json"), "utf8")).version;
-const outDir = join(EXT, "dist", target);
+const outDir = join(EXT, "dist", variant === "listed" ? `${target}-listed` : target);
 
 const common: InlineConfig = {
   configFile: false,
@@ -102,7 +112,7 @@ for (const size of [32, 64, 128]) {
   copyFileSync(join(APP, "src-tauri", "icons", `${size}x${size}.png`), join(outDir, "icons", `${size}.png`));
 }
 const template: Manifest = JSON.parse(readFileSync(join(EXT, `manifest.${target}.json`), "utf8"));
-const manifest = buildManifest(template, target, appVersion);
+const manifest = forVariant(buildManifest(template, target, appVersion), variant);
 writeFileSync(join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
 
 const missing = referencedFiles(manifest).filter((f) => !existsSync(join(outDir, f)));
@@ -121,7 +131,9 @@ const walk = (dir: string) => {
   }
 };
 walk(outDir);
-const zipPath = join(EXT, "dist", zipName(target, appVersion));
+const zipPath = join(EXT, "dist", zipName(target, appVersion, variant));
 writeFileSync(zipPath, zipSync(files, { level: 9 }));
 
-console.log(`${target}: ${relative(EXT, outDir)}/ (${Object.keys(files).length} files) → ${relative(EXT, zipPath)} [v${manifest.version}]`);
+console.log(
+  `${target}${variant === "listed" ? " (listed)" : ""}: ${relative(EXT, outDir)}/ (${Object.keys(files).length} files) → ${relative(EXT, zipPath)} [v${manifest.version}]`,
+);

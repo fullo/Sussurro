@@ -376,9 +376,10 @@ check there (#184).
 | `src/sidepanel/`, `sidepanel.html` | side panel (Chrome) / sidebar (Firefox): live lines, Start/Stop, item actions (#129) |
 | `src/options/`, `options.html` | options page: pairing with the app, Test connection (#127), recording notice reset (#136), About with the third-party licences (#138) |
 | `src/shared/` | helpers shared by the entry points (`pairing.ts`: storage keys and URLs; `connection.ts`: the connection test) |
-| `scripts/build.ts` | the build: pages + scripts + manifest + icons + zip |
+| `scripts/build.ts` | the build: pages + scripts + manifest + icons + zip (`node scripts/build.ts <chrome\|firefox> [listed]`) |
 | `scripts/amo-sign-gate.sh` | release workflow: whether to sign the Firefox build on AMO (#228) |
 | `scripts/update-manifest.ts`, `scripts/updates.ts` | adds a released version to Firefox's self-hosted update manifest (`docs/extension/updates.json`) |
+| `store/` | store listing texts (English + Italian), permission justifications and screenshot guidance for the Chrome Web Store, Edge Add-ons and AMO's listed channel (#268) |
 
 Permissions stay minimal: `storage` (plus, on Chrome, `sidePanel` and the
 tab-capture fallback's `tabCapture` and `offscreen`), and host access only
@@ -403,14 +404,26 @@ Node's type stripping.
 ```bash
 cd extension
 npm ci
-npm run build:chrome     # → dist/chrome/  + dist/sussurro-extension-chrome-<version>.zip
-npm run build:firefox    # → dist/firefox/ + dist/sussurro-extension-firefox-<version>.zip
-npm run build            # both
+npm run build:chrome          # → dist/chrome/         + dist/sussurro-extension-chrome-<version>.zip
+npm run build:firefox         # → dist/firefox/        + dist/sussurro-extension-firefox-<version>.zip
+npm run build:firefox:listed  # → dist/firefox-listed/ + dist/sussurro-extension-firefox-listed-<version>.zip
+npm run build                 # chrome + firefox (not firefox:listed — see Store submissions below)
 
 npm run typecheck        # tsc
 npm test                 # vitest (pure helpers, manifest checks)
 npm run lint             # web-ext lint --self-hosted on dist/firefox (run after build:firefox)
+npm run lint:listed      # web-ext lint, listed mode, on dist/firefox-listed (run after build:firefox:listed)
 ```
+
+`build:firefox:listed` (#268, #269) produces the manifest submitted to
+AMO's **listed** channel: identical to the self-hosted build except
+`browser_specific_settings.gecko.update_url` is stripped (AMO refuses it on
+a listed add-on, see *Releases, signing and updates* below); `lint:listed`
+runs `web-ext lint` in its normal, non-`--self-hosted` mode, which is what
+an AMO listed submission is actually checked against. Both builds ship in
+parallel: existing self-hosted installs keep the `firefox` build and
+`docs/extension/updates.json` regardless of whether the add-on is later
+also listed.
 
 CI (`.github/workflows/test.yml`, `extension` job) runs all of the above,
 plus the capture harness.
@@ -530,15 +543,22 @@ submission:
 
 ## Releases, signing and updates (#228)
 
-The release workflow attaches both zips to the GitHub release. On a tag,
-with the `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` repository secrets set, it
-also signs the Firefox build on addons.mozilla.org through the **unlisted**
-channel (self-distribution: AMO signs it but does not list it) and attaches
+The release workflow attaches the Chrome zip, the self-hosted Firefox zip,
+the `firefox-listed` zip (#268, #269) and the AMO source archive to the
+GitHub release. On a tag, with the `AMO_JWT_ISSUER` / `AMO_JWT_SECRET`
+repository secrets set, it also signs the (self-hosted) Firefox build on
+addons.mozilla.org through the **unlisted** channel (self-distribution: AMO
+signs it but does not list it) and attaches
 `sussurro-extension-firefox-<version>.xpi`, which installs permanently in
 release Firefox. Without the secrets, on a build-only run or for a
 pre-release version, signing is skipped with a notice
 (`scripts/amo-sign-gate.sh`). Maintainer setup: `docs/releases.md` →
 *Firefox extension signing and updates*.
+
+The `firefox-listed` zip and the source archive are release assets, not
+things the workflow submits anywhere: they exist so the maintainer has a
+current, tested build and source bundle on hand whenever they choose to
+submit a listed AMO version (#269) — see `store/README.md`.
 
 - **The gecko id `sussurro@darumahq.it` must never change**: AMO ties the
   add-on and every signed version to it, and installed copies update only
@@ -585,6 +605,15 @@ npm run build:firefox      # → dist/firefox/, the directory that was signed
 ```
 
 The build is deterministic: the same sources give byte-identical files.
+
+## Store submissions (#268)
+
+Listing texts (English and Italian), permission justifications matched
+against the manifests, and screenshot guidance for the Chrome Web Store,
+Microsoft Edge Add-ons and AMO's listed channel live in
+[`store/`](store/README.md) — submitting to any of them is a maintainer
+account action (#269, #270, #271), not something this repository's agents
+can do.
 
 ## Load it unpacked
 

@@ -171,9 +171,13 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # Browser extension zips (Chrome/Edge/Brave + Firefox), attached to the draft
-  # release the build job created (a workflow artifact on a build-only run).
-  # Store listings are not part of the release.
+  # Browser extension zips (Chrome/Edge/Brave, Firefox self-hosted and
+  # Firefox listed-channel, plus the AMO source archive), attached to the
+  # draft release the build job created (a workflow artifact on a
+  # build-only run). These are the store-ready builds and the AMO source
+  # bundle (#268); submitting them to each store (#269, #270, #271) is a
+  # manual maintainer step — listing texts and permission justifications
+  # live in extension/store/.
   extension:
     needs: build
     if: ${{ !cancelled() }}
@@ -194,6 +198,25 @@ jobs:
           npm test
           npm run build
           npm run lint
+
+      # AMO's listed channel (#269) refuses update_url, so it needs its own
+      # build (#268); the Chrome build already serves both the Chrome Web
+      # Store and Edge Add-ons (#270, #271), no separate variant needed.
+      - name: Build Firefox (listed channel) and lint it
+        working-directory: extension
+        run: |
+          npm run build:firefox:listed
+          npm run lint:listed
+
+      # AMO reviewers get the sources every build (self-hosted or listed) is
+      # built from, whichever channel a version is submitted to (see
+      # extension/README.md, "Source code for AMO review").
+      - name: Source archive for AMO review
+        run: |
+          version="$(node -p "require('./sussurro/package.json').version")"
+          git archive --format=zip -o "extension/dist/sussurro-extension-source-$version.zip" HEAD \
+            LICENSE extension sussurro/package.json sussurro/src \
+            sussurro/src-tauri/icons/32x32.png sussurro/src-tauri/icons/64x64.png sussurro/src-tauri/icons/128x128.png
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/')
@@ -232,11 +255,9 @@ jobs:
           fi
           # The build bundles and minifies, so AMO gets the sources it was
           # built from (the extension + the app files it imports, the icons
-          # and the version); build steps: extension/README.md, "Source code
-          # for AMO review".
-          git archive --format=zip -o "$RUNNER_TEMP/sussurro-extension-source-$VERSION.zip" HEAD \
-            LICENSE extension sussurro/package.json sussurro/src \
-            sussurro/src-tauri/icons/32x32.png sussurro/src-tauri/icons/64x64.png sussurro/src-tauri/icons/128x128.png
+          # and the version): the archive the "Source archive for AMO
+          # review" step already produced; build steps:
+          # extension/README.md, "Source code for AMO review".
           cd extension
           # Version metadata (#234): AMO-REVIEWER-NOTES.md as the reviewers'
           # approval notes (the accepted lint warnings), and compatibility
@@ -244,7 +265,7 @@ jobs:
           node scripts/amo-metadata.ts "$RUNNER_TEMP/amo-metadata.json"
           npx web-ext sign --channel=unlisted --source-dir dist/firefox \
             --artifacts-dir "$RUNNER_TEMP/signed" \
-            --upload-source-code "$RUNNER_TEMP/sussurro-extension-source-$VERSION.zip" \
+            --upload-source-code "dist/sussurro-extension-source-$VERSION.zip" \
             --amo-metadata "$RUNNER_TEMP/amo-metadata.json" \
             --approval-timeout 2400000
           shopt -s nullglob
